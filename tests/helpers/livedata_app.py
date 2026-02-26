@@ -16,6 +16,7 @@ from streaming_data_types import eventdata_ev44, logdata_f144
 
 from ess.livedata import Service, StreamKind
 from ess.livedata.config import models
+from ess.livedata.config.env import StreamingEnv
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
@@ -60,6 +61,8 @@ class LivedataApp:
             instrument=self.instrument, kind=StreamKind.MONITOR_EVENTS
         )
         self._detector_config = get_config(self.instrument).detector_fakes
+        dev_mapping = get_config(self.instrument).stream_mapping[StreamingEnv.DEV]
+        self._monitor_source_names = [key.source_name for key in dev_mapping.monitors]
         self._rng = np.random.default_rng(seed=1234)  # Avoid test flakiness
         self._detector_events: bytes | None = None
         self._monitor_events: dict[str, bytes] = {}
@@ -131,7 +134,7 @@ class LivedataApp:
         method. This is useful for speeding up tests that need to send many event
         messages but do not require different events for each call.
         """
-        for monitor_name in ['monitor1', 'monitor2']:
+        for monitor_name in self._monitor_source_names:
             if not reuse_events or monitor_name not in self._monitor_events:
                 events = self.make_serialized_ev44(
                     name=monitor_name, size=size, with_ids=False

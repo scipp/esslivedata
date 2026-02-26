@@ -5,7 +5,7 @@
 import logging
 from contextlib import ExitStack
 from types import TracebackType
-from typing import Literal
+from typing import Literal, Self
 
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.dashboard.dashboard_services import DashboardServices
@@ -212,7 +212,7 @@ class DashboardBackend:
         self._stopped = True
         self._logger.info("DashboardBackend stopped")
 
-    def __enter__(self) -> 'DashboardBackend':
+    def __enter__(self) -> Self:
         """Enter context manager."""
         self.start()
         return self

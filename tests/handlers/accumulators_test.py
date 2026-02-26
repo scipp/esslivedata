@@ -2,6 +2,7 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 import pytest
 import scipp as sc
+from ess.reduce import streaming
 from streaming_data_types import logdata_f144
 
 from ess.livedata.core.handler import Accumulator
@@ -15,7 +16,6 @@ from ess.livedata.handlers.accumulators import (
     NullAccumulator,
 )
 from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
-from ess.reduce import streaming
 
 
 def test_LogData_from_f144() -> None:

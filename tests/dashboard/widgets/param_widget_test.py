@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -119,7 +119,7 @@ class TestWidgetTypeCreation:
         assert widget.widgets["value"].value == "/tmp/test"  # noqa: S108
 
     def test_enum_field_creates_select(self):
-        class Color(str, Enum):
+        class Color(StrEnum):
             RED = "red"
             BLUE = "blue"
             GREEN = "green"
@@ -272,7 +272,7 @@ class TestEnumHandling:
     """Tests for enum field handling."""
 
     def test_string_enum_uses_values_as_display_keys(self):
-        class Status(str, Enum):
+        class Status(StrEnum):
             ACTIVE = "active"
             INACTIVE = "inactive"
 
@@ -377,7 +377,7 @@ class TestGetValues:
         assert values["path"] is None
 
     def test_get_values_returns_enum_instance(self):
-        class Color(str, Enum):
+        class Color(StrEnum):
             RED = "red"
             BLUE = "blue"
 
@@ -428,7 +428,7 @@ class TestSetValues:
         assert widget.widgets["path"].value == "/home/user"
 
     def test_set_values_handles_enum_values(self):
-        class Color(str, Enum):
+        class Color(StrEnum):
             RED = "red"
             BLUE = "blue"
 
@@ -590,7 +590,7 @@ class TestComplexModels:
     """Tests for complex model scenarios."""
 
     def test_multiple_field_types(self):
-        class Color(str, Enum):
+        class Color(StrEnum):
             RED = "red"
             BLUE = "blue"
 

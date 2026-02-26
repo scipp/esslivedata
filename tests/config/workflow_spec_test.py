@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from enum import Enum
+from enum import StrEnum
 
 import pytest
 import scipp as sc
@@ -59,7 +59,7 @@ class TestWorkflowSpecAuxSources:
     def test_workflow_spec_with_aux_sources_model(self) -> None:
         """Test WorkflowSpec with aux_sources as a Pydantic model."""
 
-        class MonitorChoice(str, Enum):
+        class MonitorChoice(StrEnum):
             MONITOR1 = "monitor1"
             MONITOR2 = "monitor2"
 

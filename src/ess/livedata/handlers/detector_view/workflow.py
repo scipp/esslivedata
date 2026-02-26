@@ -14,7 +14,6 @@ from typing import Literal
 
 import sciline
 import scipp as sc
-
 from ess.reduce.live.raw import (
     DetectorViewResolution,
     PositionNoiseReplicaCount,

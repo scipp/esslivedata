@@ -47,9 +47,9 @@ def make_key(workflow_id: WorkflowId, source_name: str = "source") -> ResultKey:
 
 def assert_dict_equal_with_scipp(actual: dict, expected: dict) -> None:
     """Assert two dictionaries are equal, using scipp.testing for scipp objects."""
-    assert (
-        actual.keys() == expected.keys()
-    ), f"Keys differ: {actual.keys()} != {expected.keys()}"
+    assert actual.keys() == expected.keys(), (
+        f"Keys differ: {actual.keys()} != {expected.keys()}"
+    )
     for key in expected:
         actual_value = actual[key]
         expected_value = expected[key]

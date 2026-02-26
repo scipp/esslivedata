@@ -12,7 +12,6 @@ from collections.abc import Callable
 from typing import Any
 
 import scipp as sc
-
 from ess.reduce.live import raw
 
 from .workflow_factory import Workflow

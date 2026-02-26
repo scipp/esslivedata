@@ -10,7 +10,6 @@ from typing import Any
 import sciline
 import sciline.typing
 import scipp as sc
-
 from ess.reduce import streaming
 
 from .workflow_factory import Workflow
