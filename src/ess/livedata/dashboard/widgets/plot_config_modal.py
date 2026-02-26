@@ -31,6 +31,7 @@ from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
+from ess.livedata.dashboard.notifications import show_error
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
 from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
@@ -927,10 +928,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 self._plotter_selection.workflow_id
             )
             if workflow_spec is None:
-                self._show_error('Workflow spec not found')
+                show_error('Workflow spec not found')
                 return
             if not workflow_spec.source_names:
-                self._show_error('No sources available for workflow')
+                show_error('No sources available for workflow')
                 return
             source_names = workflow_spec.source_names
 
@@ -940,7 +941,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             )
         except Exception as e:
             logger.exception("Error getting plot spec")
-            self._show_error(f'Error getting plot spec: {e}')
+            show_error(f'Error getting plot spec: {e}')
             return
 
         # Create config_state and initial_source_names from initial_config
@@ -1022,11 +1023,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             plot_name=self._plotter_selection.plot_name,
             params=params,
         )
-
-    def _show_error(self, message: str) -> None:
-        """Display an error notification."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.error(message, duration=3000)
 
 
 class PlotConfigModal:

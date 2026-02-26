@@ -977,7 +977,7 @@ class TestExtractorBasedSubscription:
 
             @property
             def extractors(self) -> dict:
-                return {key: self._extractor for key in self._keys_set}
+                return dict.fromkeys(self._keys_set, self._extractor)
 
             def trigger(self, data: dict) -> None:
                 self.received_data.append(data)

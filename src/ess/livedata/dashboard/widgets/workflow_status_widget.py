@@ -24,6 +24,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
 from ..format_utils import extract_error_summary
+from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
 from .icons import get_icon
@@ -812,7 +813,7 @@ class WorkflowStatusWidget:
             structlog.get_logger().exception(
                 "Failed to create workflow configuration modal"
             )
-            pn.state.notifications.error("Failed to open configuration")
+            show_error("Failed to open configuration")
 
     def _cleanup_modal(self) -> None:
         """Clean up modal after completion."""

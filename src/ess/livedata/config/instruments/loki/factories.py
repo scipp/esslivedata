@@ -11,7 +11,6 @@ from .specs import SansWorkflowParams, TransmissionMode
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
     import ess.loki.data
-    import ess.loki.live  # noqa: F401
     import sciline
     import sciline.typing
     import scipp as sc

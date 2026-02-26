@@ -8,6 +8,7 @@ from typing import Any
 
 import panel as pn
 
+from ..notifications import show_error
 from ..plot_orchestrator import CellGeometry
 
 
@@ -422,11 +423,6 @@ class PlotGrid:
                 for c in range(col, col + col_span):
                     self._grid[r, c] = self._create_empty_cell(r, c)
 
-    def _show_error(self, message: str) -> None:
-        """Display a temporary error notification."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.error(message, duration=3000)
-
     def insert_widget_at(self, geometry: CellGeometry, widget: Any) -> None:
         """
         Insert a widget at an explicit position (for orchestrator-driven updates).
@@ -448,14 +444,14 @@ class PlotGrid:
             or geometry.col < 0
             or geometry.col >= self._ncols
         ):
-            self._show_error(f'Invalid position: ({geometry.row}, {geometry.col})')
+            show_error(f'Invalid position: ({geometry.row}, {geometry.col})')
             return
 
         if (
             geometry.row + geometry.row_span > self._nrows
             or geometry.col + geometry.col_span > self._ncols
         ):
-            self._show_error(
+            show_error(
                 f'Widget extends beyond grid: ({geometry.row}, {geometry.col}) + '
                 f'span ({geometry.row_span}, {geometry.col_span})'
             )

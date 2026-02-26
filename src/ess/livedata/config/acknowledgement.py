@@ -6,13 +6,13 @@ Command acknowledgement model for frontend-backend communication.
 This implements the acknowledgement pattern from the NICOS-ESSlivedata interface spec.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
 
-class AcknowledgementResponse(str, Enum):
+class AcknowledgementResponse(StrEnum):
     """Response type for command acknowledgements."""
 
     ACK = "ACK"
