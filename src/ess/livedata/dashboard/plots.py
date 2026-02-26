@@ -27,7 +27,14 @@ from .plot_params import (
     PlotScaleParams2d,
     TickParams,
 )
-from .scipp_to_holoviews import to_holoviews
+from .scipp_to_holoviews import (
+    convert_curve_1d,
+    convert_error_bars_1d,
+    convert_histogram_1d,
+    convert_scatter_1d,
+    convert_spread_1d,
+    to_holoviews,
+)
 from .time_utils import format_time_ns_local
 
 
@@ -482,14 +489,19 @@ class Plotter:
 
 
 class LinePlotter(Plotter):
-    """Plotter for line plots from scipp DataArrays."""
+    """Plotter for 1D plots from scipp DataArrays.
+
+    Supports line, scatter, and histogram rendering modes with optional
+    error display (bars, band, or none).
+    """
 
     def __init__(
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
         *,
-        as_histogram: bool = False,
+        mode: str = 'line',
+        errors: str = 'bars',
         **kwargs,
     ):
         """
@@ -501,14 +513,16 @@ class LinePlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
-        as_histogram:
-            If True, preserve bin edges and render as step-style histogram.
-            If False (default), convert bin edges to midpoints for smooth curves.
+        mode:
+            Rendering mode: 'line', 'points', or 'histogram'.
+        errors:
+            Error display mode: 'bars', 'band', or 'none'.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
-        self._as_histogram = as_histogram
+        self._mode = mode
+        self._errors = errors
         self._base_opts: dict[str, Any] = {
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
@@ -518,29 +532,55 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
-        from .plot_params import Curve1dRenderMode
-
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
+            mode=params.line.mode,
+            errors=params.line.errors,
         )
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
-    ) -> hv.Curve | hv.Histogram:
-        """Create a line or histogram plot from a scipp DataArray."""
-        if self._as_histogram:
+    ) -> hv.Element | hv.Overlay:
+        """Create a 1D plot from a scipp DataArray."""
+        is_histogram = self._mode == 'histogram'
+
+        if is_histogram:
             da = data
         else:
             da = self._convert_bin_edges_to_midpoints(data)
-        framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
-        plot = to_holoviews(da, label=label)
-        return plot.opts(framewise=framewise, **self._base_opts)
+        framewise = self._update_autoscaler_and_get_framewise(da, data_key)
+        opts = dict(framewise=framewise, **self._base_opts)
+
+        # Create base element
+        match self._mode:
+            case 'line':
+                base = convert_curve_1d(da, label=label)
+            case 'points':
+                base = convert_scatter_1d(da, label=label)
+            case 'histogram':
+                base = convert_histogram_1d(da, label=label)
+            case _:
+                base = convert_curve_1d(da, label=label)
+
+        base = base.opts(**opts)
+
+        # Add error overlay if data has variances and errors are enabled
+        if da.variances is not None and self._errors != 'none':
+            # For histogram mode, error elements need midpoint coords
+            error_da = self._convert_bin_edges_to_midpoints(da) if is_histogram else da
+            if self._errors == 'band':
+                error_element = convert_spread_1d(error_da, label=label)
+            else:
+                error_element = convert_error_bars_1d(error_da, label=label)
+            error_element = error_element.opts(**opts)
+            return base * error_element
+
+        return base
 
 
 class ImagePlotter(Plotter):

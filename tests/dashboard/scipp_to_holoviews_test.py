@@ -128,6 +128,132 @@ class TestConvertCurve1d:
         np.testing.assert_array_equal(curve_data['values'], [5, 10, 15])
 
 
+class TestConvertScatter1d:
+    def test_basic_conversion(self):
+        x_coord = sc.array(dims=['x'], values=[1, 2, 3, 4], unit='s')
+        y_values = sc.array(dims=['x'], values=[10, 15, 20, 25], unit='V')
+        data = sc.DataArray(data=y_values, coords={'x': x_coord})
+
+        result = scipp_to_holoviews.convert_scatter_1d(data)
+
+        assert isinstance(result, hv.Scatter)
+        assert len(result.kdims) == 1
+        assert len(result.vdims) == 1
+        assert result.kdims[0].name == 'x'
+        assert result.kdims[0].unit == 's'
+        assert result.vdims[0].unit == 'V'
+
+        scatter_data = result.data
+        np.testing.assert_array_equal(scatter_data['x'], [1, 2, 3, 4])
+        np.testing.assert_array_equal(scatter_data['values'], [10, 15, 20, 25])
+
+    def test_with_named_data(self):
+        coord = sc.array(dims=['time'], values=[0, 1, 2])
+        values = sc.array(dims=['time'], values=[5, 10, 15])
+        data = sc.DataArray(data=values, coords={'time': coord}, name='signal')
+
+        result = scipp_to_holoviews.convert_scatter_1d(data)
+
+        assert result.vdims[0].label == 'signal'
+
+    def test_with_missing_coord(self):
+        values = sc.array(dims=['time'], values=[5, 10, 15], unit='V')
+        data = sc.DataArray(data=values, name='signal')
+
+        result = scipp_to_holoviews.convert_scatter_1d(data)
+
+        assert isinstance(result, hv.Scatter)
+        assert result.kdims[0].name == 'time'
+        assert result.kdims[0].unit is None
+        scatter_data = result.data
+        np.testing.assert_array_equal(scatter_data['time'], [0, 1, 2])
+        np.testing.assert_array_equal(scatter_data['values'], [5, 10, 15])
+
+
+class TestConvertSpread1d:
+    def test_basic_conversion(self):
+        x_coord = sc.array(dims=['x'], values=[1, 2, 3, 4], unit='s')
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['x'],
+                values=[10.0, 15.0, 20.0, 25.0],
+                variances=[1.0, 2.0, 1.5, 3.0],
+                unit='V',
+            ),
+            coords={'x': x_coord},
+        )
+
+        result = scipp_to_holoviews.convert_spread_1d(data)
+
+        assert isinstance(result, hv.Spread)
+        assert len(result.kdims) == 1
+        assert len(result.vdims) == 2
+        assert result.kdims[0].name == 'x'
+        assert result.kdims[0].unit == 's'
+        assert result.vdims[0].unit == 'V'
+
+        spread_data = result.data
+        np.testing.assert_array_equal(spread_data['x'], [1, 2, 3, 4])
+        np.testing.assert_array_equal(spread_data['values'], [10.0, 15.0, 20.0, 25.0])
+        np.testing.assert_array_almost_equal(
+            spread_data['yerr'], [1, np.sqrt(2), np.sqrt(1.5), np.sqrt(3)]
+        )
+
+    def test_with_named_data(self):
+        coord = sc.array(dims=['time'], values=[0, 1, 2])
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['time'],
+                values=[5.0, 10.0, 15.0],
+                variances=[0.25, 1.0, 2.25],
+            ),
+            coords={'time': coord},
+            name='signal',
+        )
+
+        result = scipp_to_holoviews.convert_spread_1d(data)
+
+        assert result.vdims[0].label == 'signal'
+
+    def test_with_missing_coord(self):
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['time'],
+                values=[5.0, 10.0, 15.0],
+                variances=[1.0, 4.0, 9.0],
+                unit='V',
+            ),
+            name='signal',
+        )
+
+        result = scipp_to_holoviews.convert_spread_1d(data)
+
+        assert isinstance(result, hv.Spread)
+        assert result.kdims[0].name == 'time'
+        assert result.kdims[0].unit is None
+        spread_data = result.data
+        np.testing.assert_array_equal(spread_data['time'], [0, 1, 2])
+        np.testing.assert_array_equal(spread_data['values'], [5.0, 10.0, 15.0])
+        np.testing.assert_array_equal(spread_data['yerr'], [1, 2, 3])
+
+    def test_zero_variances(self):
+        x_coord = sc.array(dims=['x'], values=[1, 2, 3])
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['x'],
+                values=[10.0, 20.0, 30.0],
+                variances=[0.0, 0.0, 0.0],
+            ),
+            coords={'x': x_coord},
+        )
+
+        result = scipp_to_holoviews.convert_spread_1d(data)
+
+        assert isinstance(result, hv.Spread)
+        spread_data = result.data
+        np.testing.assert_array_equal(spread_data['yerr'], [0, 0, 0])
+
+
 class TestConvertErrorBars1d:
     def test_basic_conversion(self):
         x_coord = sc.array(dims=['x'], values=[1, 2, 3, 4], unit='s')
