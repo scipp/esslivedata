@@ -25,6 +25,7 @@ pn.config.throttled = True
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
+_STATIC_DIRS = {'assets': str(_TEMPLATES_DIR)}
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -265,6 +266,7 @@ class DashboardBase(ServiceBase, ABC):
             cookie_secret=self._basic_auth_cookie_secret,
             login_template=_LOGIN_TEMPLATE,
             logout_template=_LOGOUT_TEMPLATE,
+            static_dirs=_STATIC_DIRS,
         )
 
     def _start_impl(self) -> None:
@@ -287,6 +289,7 @@ class DashboardBase(ServiceBase, ABC):
                 cookie_secret=self._basic_auth_cookie_secret,
                 login_template=_LOGIN_TEMPLATE,
                 logout_template=_LOGOUT_TEMPLATE,
+                static_dirs=_STATIC_DIRS,
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")
