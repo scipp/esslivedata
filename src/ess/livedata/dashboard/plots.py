@@ -460,15 +460,29 @@ class Plotter:
         plots = [self._apply_generic_options(p) for p in plots]
 
         save_filename = _build_save_filename(data)
-        if save_filename is not None:
-            hook = _make_save_filename_hook(save_filename)
-            plots = [p.opts(hooks=[hook]) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
             result = hv.Overlay(plots).opts(shared_axes=True)
+            # Overlay has a single shared SaveTool; apply hook to the overlay
+            # so it fires once with the combined filename.
+            if save_filename is not None:
+                result = result.opts(hooks=[_make_save_filename_hook(save_filename)])
         elif len(plots) == 1:
             result = plots[0]
+            if save_filename is not None:
+                result = result.opts(hooks=[_make_save_filename_hook(save_filename)])
         else:
+            # Layout doesn't support hooks; apply per-element hooks instead.
+            # Each sub-figure has its own SaveTool and gets a per-element
+            # filename (instrument + source + output + timestamp).
+            data_keys = list(data.keys())
+            for i in range(min(len(plots), len(data_keys))):
+                key = data_keys[i]
+                elem_filename = _build_save_filename({key: data[key]})
+                if elem_filename is not None:
+                    plots[i] = plots[i].opts(
+                        hooks=[_make_save_filename_hook(elem_filename)]
+                    )
             result = (
                 hv.Layout(plots)
                 .opts(shared_axes=False)

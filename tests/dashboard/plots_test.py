@@ -29,6 +29,22 @@ from ess.livedata.dashboard.slicer_plotter import (
 hv.extension('bokeh')
 
 
+def _make_result_key(
+    source_name: str = 'test_source',
+    output_name: str = 'test_result',
+    instrument: str = 'test_instrument',
+) -> ResultKey:
+    """Create a ResultKey for testing."""
+    workflow_id = WorkflowId(
+        instrument=instrument,
+        namespace='test_namespace',
+        name='test_workflow',
+        version=1,
+    )
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name=output_name)
+
+
 @pytest.fixture
 def coordinates_2d():
     """Create test coordinates for 2D data."""
@@ -1513,20 +1529,72 @@ class TestComputeAppliesSaveFilenameHook:
             coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
         )
 
-    def test_compute_attaches_hooks_to_element(self, data_key, simple_data):
+    @staticmethod
+    def _render_and_get_save_tools(result):
+        from bokeh.models.tools import SaveTool
+
+        renderer = BokehRenderer.instance(mode='server')
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            bokeh_fig = renderer.get_plot(result).state
+        return [t for t in bokeh_fig.toolbar.tools if isinstance(t, SaveTool)]
+
+    def test_single_element_gets_save_hook(self, data_key, simple_data):
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({data_key: simple_data})
         result = plotter.get_cached_state()
 
-        # Render with Bokeh to trigger hooks
+        save_tools = self._render_and_get_save_tools(result)
+        assert len(save_tools) == 1
+        assert save_tools[0].filename.startswith('TEST_INSTRUMENT_')
+
+    def test_overlay_gets_combined_filename(self, simple_data):
+        """Hook on overlay sets combined filename from all data keys."""
+        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
+
+        key_a = _make_result_key(source_name='alpha', output_name='counts')
+        key_b = _make_result_key(source_name='beta', output_name='counts')
+        data = {key_a: simple_data, key_b: simple_data}
+
+        params = PlotParams1d(layout=LayoutParams(combine_mode=CombineMode.overlay))
+        plotter = plots.LinePlotter.from_params(params)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
+
+        save_tools = self._render_and_get_save_tools(result)
+        assert len(save_tools) == 1
+        assert 'alpha-beta' in save_tools[0].filename
+
+    def test_layout_gives_per_element_filenames(self, simple_data):
+        """Each sub-figure in a Layout gets its own SaveTool with a per-element name."""
+        from bokeh.models import GridPlot
+        from bokeh.models.tools import SaveTool
+
+        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
+
+        key_a = _make_result_key(source_name='alpha', output_name='counts')
+        key_b = _make_result_key(source_name='beta', output_name='counts')
+        data = {key_a: simple_data, key_b: simple_data}
+
+        params = PlotParams1d(layout=LayoutParams(combine_mode=CombineMode.layout))
+        plotter = plots.LinePlotter.from_params(params)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
+
         renderer = BokehRenderer.instance(mode='server')
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            bokeh_fig, _ = renderer.get_plot(result).state, None
+            grid = renderer.get_plot(result).state
 
-        # Verify SaveTool has the expected filename set
-        from bokeh.models.tools import SaveTool
+        assert isinstance(grid, GridPlot)
+        # Each child is a (figure, row, col) tuple
+        filenames = [
+            tool.filename
+            for child in grid.children
+            for tool in child[0].toolbar.tools
+            if isinstance(tool, SaveTool) and tool.filename is not None
+        ]
 
-        save_tools = [t for t in bokeh_fig.toolbar.tools if isinstance(t, SaveTool)]
-        assert len(save_tools) == 1
-        assert save_tools[0].filename.startswith('TEST_INSTRUMENT_')
+        assert len(filenames) == 2
+        assert any('alpha' in fn and 'beta' not in fn for fn in filenames)
+        assert any('beta' in fn and 'alpha' not in fn for fn in filenames)
