@@ -578,6 +578,11 @@ class LinePlotter(Plotter):
             else:
                 error_element = convert_error_bars_1d(error_da, label=label)
             error_element = error_element.opts(**opts)
+            # Apply sizing opts to child elements individually. Bokeh needs
+            # responsive/aspect on each element to size the figure correctly;
+            # applying them only to the composite Overlay is not sufficient.
+            base = base.opts(**self._sizing_opts)
+            error_element = error_element.opts(**self._sizing_opts)
             return base * error_element
 
         return base

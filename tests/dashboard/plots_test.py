@@ -443,6 +443,32 @@ class TestLinePlotter:
         assert isinstance(elements[0], hv.Histogram)
         assert isinstance(elements[1], hv.ErrorBars)
 
+    def test_error_overlay_children_have_sizing_opts(self, data_key):
+        """Sizing opts must be on child elements, not just the overlay.
+
+        Bokeh needs responsive/aspect on individual plot elements to size the
+        figure correctly; applying them only to the composite Overlay causes
+        the plot to collapse to a small default size.
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        for child in result:
+            opts = child.opts.get().kwargs
+            assert opts.get('responsive') is True
+
 
 class TestSlicerPlotter:
     """Tests for SlicerPlotter two-stage architecture.
