@@ -386,7 +386,11 @@ class Plotter:
                 name = resolve(data_key.job_id.source_name)
                 label = f'{name}/{data_key.output_name}'
                 plot_element = self.plot(
-                    da, data_key, label=label, source_title=resolve, **kwargs
+                    da,
+                    data_key,
+                    label=label,
+                    source_display_name=name,
+                    **kwargs,
                 )
                 plots.append(plot_element)
         except Exception as e:
@@ -656,15 +660,14 @@ class BarsPlotter(Plotter):
         data_key: ResultKey,
         *,
         label: str = '',
-        source_title: Callable[[str], str] | None = None,
+        source_display_name: str = '',
         **kwargs,
     ) -> hv.Bars:
         """Create a bar chart from a 0D scipp DataArray."""
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        resolve = source_title or _identity
-        bar_label = resolve(data_key.job_id.source_name)
+        bar_label = source_display_name or data_key.job_id.source_name
         value = float(data.value)
         bars = hv.Bars(
             [(bar_label, value)],

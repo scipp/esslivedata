@@ -888,12 +888,12 @@ class TestBarsPlotter:
         bar_data = result.data
         assert data_key.job_id.source_name in bar_data['source'].iloc[0]
 
-    def test_plot_uses_source_title_when_provided(
+    def test_plot_uses_source_display_name_when_provided(
         self, bars_plotter, scalar_data, data_key
     ):
-        """Test that the bar uses the resolved source title."""
+        """Test that the bar uses the provided display name."""
         result = bars_plotter.plot(
-            scalar_data, data_key, source_title=lambda _: 'My Title'
+            scalar_data, data_key, source_display_name='My Title'
         )
         bar_data = result.data
         assert bar_data['source'].iloc[0] == 'My Title'
