@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Generic, Protocol, TypeVar
 
 T = TypeVar('T')
@@ -13,7 +13,7 @@ Tin = TypeVar('Tin')
 Tout = TypeVar('Tout')
 
 
-class StreamKind(str, Enum):
+class StreamKind(StrEnum):
     __slots__ = ()
     UNKNOWN = "unknown"
     MONITOR_COUNTS = "monitor_counts"

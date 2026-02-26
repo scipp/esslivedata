@@ -418,7 +418,7 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
 
             for tp in assignment:
                 try:
-                    low, high = self._consumer.get_watermark_offsets(
+                    _low, high = self._consumer.get_watermark_offsets(
                         tp, timeout=self._lag_query_timeout
                     )
                     position = self._consumer.position([tp])[0].offset

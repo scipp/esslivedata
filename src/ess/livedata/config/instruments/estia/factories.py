@@ -18,12 +18,12 @@ SpectrumViewTOAEdges = NewType('SpectrumViewTOAEdges', sc.Variable)
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ESTIA-specific factories and workflows."""
-    from scippnexus import NXdetector
-
     from ess.estia import EstiaWorkflow
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import NeXusData, RawDetector, SampleRun
     from ess.reduce.streaming import EternalAccumulator
+    from scippnexus import NXdetector
+
+    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     def _make_spectrum_view(
         data: RawDetector[SampleRun],
@@ -37,8 +37,9 @@ def setup_factories(instrument: Instrument) -> None:
             .assign_coords(event_time_offset=toa_edges)
         )
 
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
     from ess.reduce.nexus.types import Filename
+
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
     reduction_workflow = EstiaWorkflow()
     reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('estia')

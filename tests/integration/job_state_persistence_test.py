@@ -72,9 +72,9 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
             workflow_id
         )
         assert restored_job_number is not None, "Current job should be restored"
-        assert (
-            restored_job_number == original_job_number
-        ), "Job number should match original"
+        assert restored_job_number == original_job_number, (
+            "Job number should match original"
+        )
 
         # Verify params were also restored correctly
         assert restored_active['monitor1'].params == custom_params.model_dump()

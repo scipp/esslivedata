@@ -10,21 +10,10 @@ from .specs import SansWorkflowParams, TransmissionMode
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
+    import ess.loki.data
     import sciline
     import sciline.typing
     import scipp as sc
-    from scippnexus import NXdetector
-
-    import ess.loki.data
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-    from ess.livedata.handlers.detector_view import (
-        DetectorViewFactory,
-        GeometricViewConfig,
-        NeXusDetectorSource,
-    )
-    from ess.livedata.handlers.stream_processor_workflow import (
-        StreamProcessorWorkflow,
-    )
     from ess.loki.workflow import LokiWorkflow
     from ess.reduce.nexus.types import (
         EmptyBeamRun,
@@ -48,6 +37,17 @@ def setup_factories(instrument: Instrument) -> None:
         ReturnEvents,
         Transmission,
         UncertaintyBroadcastMode,
+    )
+    from scippnexus import NXdetector
+
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
+    )
+    from ess.livedata.handlers.stream_processor_workflow import (
+        StreamProcessorWorkflow,
     )
 
     _base_workflow = LokiWorkflow()

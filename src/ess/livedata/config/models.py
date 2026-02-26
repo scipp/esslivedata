@@ -7,7 +7,7 @@ Models for configuration values that can be used to control services via Kafka.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import quote, unquote
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 TimeUnit = Literal['ns', 'us', 'μs', 'ms', 's']
 
 
-class WeightingMethod(str, Enum):
+class WeightingMethod(StrEnum):
     """
     Methods for pixel weighting.
 
@@ -139,7 +139,7 @@ class ConfigKey(BaseModel, frozen=True):
         return cls(source_name=source_name, service_name=service_name, key=key)
 
 
-class ROIType(str, Enum):
+class ROIType(StrEnum):
     """Types of Region of Interest (ROI) shapes."""
 
     RECTANGLE = 'rectangle'

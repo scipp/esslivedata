@@ -100,7 +100,7 @@ def make_screen_metadata_with_centers(
 
 def make_screen_metadata_with_none_coords(sizes: dict[str, int]) -> ScreenMetadata:
     """Create screen metadata with None coordinates (logical view)."""
-    return ScreenMetadata(coords={dim: None for dim in sizes}, sizes=sizes)
+    return ScreenMetadata(coords=dict.fromkeys(sizes, None), sizes=sizes)
 
 
 def make_uniform_histogram(
