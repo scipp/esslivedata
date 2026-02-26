@@ -1027,7 +1027,6 @@ class JobOrchestrator:
             NotificationEvent(
                 message=message,
                 notification_type=NotificationType.SUCCESS,
-                duration=3000,
             )
         )
 
@@ -1059,7 +1058,6 @@ class JobOrchestrator:
             NotificationEvent(
                 message=message,
                 notification_type=NotificationType.ERROR,
-                duration=5000,
             )
         )
 
