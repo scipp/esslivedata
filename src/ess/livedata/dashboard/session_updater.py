@@ -57,6 +57,7 @@ class SessionUpdater:
         session_id: SessionId,
         session_registry: SessionRegistry,
         notification_queue: NotificationQueue | None = None,
+        username: str | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
@@ -77,7 +78,7 @@ class SessionUpdater:
             self._notification_queue.register_session(session_id)
 
         # Auto-register this session with the registry
-        self._session_registry.register(session_id, self)
+        self._session_registry.register(session_id, self, username=username)
 
         logger.debug("SessionUpdater created for session %s", session_id)
 
