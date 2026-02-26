@@ -27,11 +27,7 @@ from .plot_params import (
     PlotScaleParams2d,
     TickParams,
 )
-from .scipp_to_holoviews import (
-    convert_histogram_1d,
-    prepare_1d,
-    to_holoviews,
-)
+from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
 
 
@@ -539,13 +535,14 @@ class LinePlotter(Plotter):
             errors=params.line.errors,
         )
 
-    _BASE_ELEMENT_TYPE: ClassVar[dict[str, type[hv.Element]]] = {
-        'line': hv.Curve,
-        'points': hv.Scatter,
+    _BASE_METHOD: ClassVar[dict[str, str]] = {
+        'line': 'curve',
+        'points': 'scatter',
+        'histogram': 'histogram',
     }
-    _ERROR_ELEMENT_TYPE: ClassVar[dict[str, type[hv.Element]]] = {
-        'bars': hv.ErrorBars,
-        'band': hv.Spread,
+    _ERROR_METHOD: ClassVar[dict[str, str]] = {
+        'bars': 'error_bars',
+        'band': 'spread',
     }
 
     def plot(
@@ -562,50 +559,22 @@ class LinePlotter(Plotter):
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
 
-        if is_histogram:
-            base = convert_histogram_1d(da, label=label).opts(**opts)
-            if da.variances is not None and self._errors != 'none':
-                # Error elements need midpoint coords (N values, not N+1 edges)
-                error_da = self._convert_bin_edges_to_midpoints(da)
-                error_da, kdims, vdims = prepare_1d(error_da)
-                error_element = self._make_error_element(
-                    error_da, kdims, vdims, label
-                ).opts(**opts, **self._sizing_opts)
-                return base.opts(**self._sizing_opts) * error_element
-            return base
-
-        # Non-histogram: prepare once, build base + error from same data
-        da, kdims, vdims = prepare_1d(da)
-        coord_vals = da.coords[da.dim].values
-
-        base_type = self._BASE_ELEMENT_TYPE.get(self._mode, hv.Curve)
-        base = base_type(
-            data=(coord_vals, da.values), kdims=kdims, vdims=vdims, label=label
-        ).opts(**opts)
+        converter = HvConverter1d(da)
+        base_method = getattr(converter, self._BASE_METHOD[self._mode])
+        base = base_method(label=label).opts(**opts)
 
         if da.variances is not None and self._errors != 'none':
-            error_element = self._make_error_element(da, kdims, vdims, label).opts(
-                **opts, **self._sizing_opts
-            )
+            if is_histogram:
+                # Error elements need midpoint coords (N values, not N+1 edges)
+                converter = HvConverter1d(self._convert_bin_edges_to_midpoints(da))
+            error_method = getattr(converter, self._ERROR_METHOD[self._errors])
+            error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
+            # Apply sizing opts to child elements individually. Bokeh needs
+            # responsive/aspect on each element to size the figure correctly;
+            # applying them only to the composite Overlay is not sufficient.
             return base.opts(**self._sizing_opts) * error_element
 
         return base
-
-    def _make_error_element(
-        self,
-        da: sc.DataArray,
-        kdims: list[hv.Dimension],
-        vdims: list[hv.Dimension],
-        label: str,
-    ) -> hv.Element:
-        """Construct error element from already-prepared data and dims."""
-        error_type = self._ERROR_ELEMENT_TYPE.get(self._errors, hv.ErrorBars)
-        return error_type(
-            data=(da.coords[da.dim].values, da.values, sc.stddevs(da).values),
-            kdims=kdims,
-            vdims=[*vdims, 'yerr'],
-            label=label,
-        )
 
 
 class ImagePlotter(Plotter):

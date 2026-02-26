@@ -74,12 +74,15 @@ class TestConvertHistogram1d:
         assert result.vdims[0].label == 'spectrum'
         assert result.kdims[0].name == 'energy'
 
-    def test_with_missing_coord_raises(self):
+    def test_with_missing_coord_uses_dummy(self):
         values = sc.array(dims=['x'], values=[10, 20, 30], unit='counts')
         data = sc.DataArray(data=values)
 
-        with pytest.raises(KeyError, match="Expected 'x'"):
-            scipp_to_holoviews.convert_histogram_1d(data)
+        result = scipp_to_holoviews.convert_histogram_1d(data)
+
+        assert isinstance(result, hv.Histogram)
+        assert result.kdims[0].name == 'x'
+        assert result.kdims[0].unit is None
 
 
 class TestConvertCurve1d:
