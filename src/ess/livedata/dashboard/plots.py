@@ -29,7 +29,7 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
-from .time_utils import format_time_ns_for_filename, format_time_ns_local
+from .time_utils import format_time_ns_local
 
 
 class PresenterBase:
@@ -159,50 +159,41 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
-def _build_save_filename(data: dict[ResultKey, sc.DataArray]) -> str | None:
+def build_save_filename(
+    instrument: str,
+    source_names: list[str],
+    output_names: list[str],
+) -> str:
     """
-    Build a descriptive filename for the Bokeh SaveTool from plot data.
+    Build a descriptive filename for the Bokeh SaveTool.
 
-    Extracts instrument, source names, output names, and the latest data
-    timestamp to produce a filename like "DREAM_monitor_counts_2026-02-23T12-34".
+    Produces a filename like "DREAM_monitor_counts" from instrument,
+    source, and output names. Timestamps are omitted because the
+    file-system creation time serves the same purpose.
 
     Parameters
     ----------
-    data:
-        Dictionary mapping ResultKeys to DataArrays.
+    instrument:
+        Instrument name (will be uppercased).
+    source_names:
+        Data source names.
+    output_names:
+        Output/result names.
 
     Returns
     -------
     :
-        Filename string (without extension), or None if data is empty.
+        Filename string (without extension).
     """
-    if not data:
-        return None
-
-    first_key = next(iter(data))
-    instrument = first_key.workflow_id.instrument.upper()
-
-    source_names = sorted({k.job_id.source_name for k in data})
-    output_names = sorted({k.output_name for k in data})
-
-    sources_part = '-'.join(source_names)
-    outputs_part = '-'.join(output_names)
-
-    max_end: int | None = None
-    for da in data.values():
-        if 'end_time' in da.coords:
-            end_ns = da.coords['end_time'].value
-            if max_end is None or end_ns > max_end:
-                max_end = end_ns
-
-    time_ns = max_end if max_end is not None else time.time_ns()
-    time_part = format_time_ns_for_filename(time_ns)
-
-    filename = f"{instrument}_{sources_part}_{outputs_part}_{time_part}"
-    return filename.replace('/', '-')
+    parts = [instrument.upper()]
+    if source_names:
+        parts.append('-'.join(sorted(source_names)))
+    if output_names:
+        parts.append('-'.join(sorted(output_names)))
+    return '_'.join(parts).replace('/', '-')
 
 
-def _make_save_filename_hook(
+def make_save_filename_hook(
     filename: str,
 ) -> Callable[[Any, Any], None]:
     """
@@ -459,30 +450,11 @@ class Plotter:
 
         plots = [self._apply_generic_options(p) for p in plots]
 
-        save_filename = _build_save_filename(data)
-
         if self.layout_params.combine_mode == 'overlay':
             result = hv.Overlay(plots).opts(shared_axes=True)
-            # Overlay has a single shared SaveTool; apply hook to the overlay
-            # so it fires once with the combined filename.
-            if save_filename is not None:
-                result = result.opts(hooks=[_make_save_filename_hook(save_filename)])
         elif len(plots) == 1:
             result = plots[0]
-            if save_filename is not None:
-                result = result.opts(hooks=[_make_save_filename_hook(save_filename)])
         else:
-            # Layout doesn't support hooks; apply per-element hooks instead.
-            # Each sub-figure has its own SaveTool and gets a per-element
-            # filename (instrument + source + output + timestamp).
-            data_keys = list(data.keys())
-            for i in range(min(len(plots), len(data_keys))):
-                key = data_keys[i]
-                elem_filename = _build_save_filename({key: data[key]})
-                if elem_filename is not None:
-                    plots[i] = plots[i].opts(
-                        hooks=[_make_save_filename_hook(elem_filename)]
-                    )
             result = (
                 hv.Layout(plots)
                 .opts(shared_axes=False)

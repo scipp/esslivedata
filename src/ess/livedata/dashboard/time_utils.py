@@ -35,24 +35,6 @@ def get_local_timezone_offset_ns() -> int:
     return int(offset.total_seconds() * 1_000_000_000)
 
 
-def format_time_ns_for_filename(ns: int) -> str:
-    """
-    Format nanoseconds since epoch as a filename-safe local time string.
-
-    Parameters
-    ----------
-    ns:
-        Nanoseconds since Unix epoch (UTC).
-
-    Returns
-    -------
-    :
-        Formatted string like "2026-02-23T12-34" (local time, minute precision).
-    """
-    dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
-    return dt.strftime('%Y-%m-%dT%H-%M')
-
-
 def format_time_ns_local(ns: int) -> str:
     """
     Format nanoseconds since epoch as HH:MM:SS.s in local time.

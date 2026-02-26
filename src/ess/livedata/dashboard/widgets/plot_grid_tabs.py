@@ -33,6 +33,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
+from ..plots import build_save_filename, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .plot_config_modal import PlotConfigModal
@@ -69,6 +70,28 @@ def _get_sizing_mode(config: PlotConfig) -> str:
             return 'stretch_width'
         return 'stretch_height'
     return 'stretch_both'
+
+
+def _build_save_filename_from_cell(cell: PlotCell) -> str | None:
+    """Build a descriptive SaveTool filename from a plot cell's layer configs.
+
+    Collects instrument, source names, and output names from all non-static
+    layers. Returns None if no non-static layers exist.
+    """
+    source_names: list[str] = []
+    output_names: list[str] = []
+    instrument: str | None = None
+    for layer in cell.layers:
+        config = layer.config
+        if config.is_static():
+            continue
+        if instrument is None:
+            instrument = config.workflow_id.instrument
+        source_names.extend(config.source_names)
+        output_names.append(config.output_name)
+    if instrument is None:
+        return None
+    return build_save_filename(instrument, source_names, output_names)
 
 
 class PlotGridTabs:
@@ -863,6 +886,8 @@ class PlotGridTabs:
         Get composed plot from session-local DynamicMaps or static elements.
 
         Ensures session components exist when data is available.
+        Sets a descriptive SaveTool filename on the result so that
+        browser "Save" downloads get a meaningful name.
 
         Parameters
         ----------
@@ -892,10 +917,18 @@ class PlotGridTabs:
         if not plots:
             return None
 
+        result: hv.DynamicMap | hv.Element
         if len(plots) == 1:
-            return plots[0]
+            result = plots[0]
+        else:
+            result = hv.Overlay(plots)
 
-        return hv.Overlay(plots)
+        filename = _build_save_filename_from_cell(cell)
+        if filename is not None:
+            hook = make_save_filename_hook(filename)
+            result = result.opts(hooks=[hook])
+
+        return result
 
     def _poll_for_plot_updates(self) -> None:
         """

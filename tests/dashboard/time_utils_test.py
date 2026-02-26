@@ -6,7 +6,6 @@ import time
 from datetime import UTC, datetime
 
 from ess.livedata.dashboard.time_utils import (
-    format_time_ns_for_filename,
     format_time_ns_local,
     get_local_timezone_offset_ns,
 )
@@ -90,31 +89,3 @@ class TestFormatTimeNsLocal:
         ns = 1733000000 * 1_000_000_000
         result = format_time_ns_local(ns)
         assert result.endswith('.0')
-
-
-class TestFormatTimeNsForFilename:
-    """Tests for format_time_ns_for_filename."""
-
-    def test_format_matches_expected_pattern(self):
-        """Format matches YYYY-MM-DDTHH-MM pattern."""
-        import re
-
-        ns = int(1.733e18)
-        result = format_time_ns_for_filename(ns)
-        assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}-\d{2}', result)
-
-    def test_format_uses_local_time(self):
-        """Format uses local time, not UTC."""
-        ns = time.time_ns()
-        result = format_time_ns_for_filename(ns)
-
-        dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
-        expected = dt.strftime('%Y-%m-%dT%H-%M')
-        assert result == expected
-
-    def test_format_is_filename_safe(self):
-        """Format contains no characters unsafe for filenames."""
-        ns = time.time_ns()
-        result = format_time_ns_for_filename(ns)
-        unsafe_chars = set(':/\\*?"<>| ')
-        assert not any(c in unsafe_chars for c in result)

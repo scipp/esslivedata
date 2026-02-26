@@ -29,22 +29,6 @@ from ess.livedata.dashboard.slicer_plotter import (
 hv.extension('bokeh')
 
 
-def _make_result_key(
-    source_name: str = 'test_source',
-    output_name: str = 'test_result',
-    instrument: str = 'test_instrument',
-) -> ResultKey:
-    """Create a ResultKey for testing."""
-    workflow_id = WorkflowId(
-        instrument=instrument,
-        namespace='test_namespace',
-        name='test_workflow',
-        version=1,
-    )
-    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name=output_name)
-
-
 @pytest.fixture
 def coordinates_2d():
     """Create test coordinates for 2D data."""
@@ -1404,91 +1388,39 @@ class TestTwoStageArchitecture:
 
 
 class TestBuildSaveFilename:
-    """Tests for _build_save_filename."""
+    """Tests for build_save_filename."""
 
-    @pytest.fixture
-    def make_key(self):
-        """Factory for creating ResultKeys with specified parameters."""
+    def test_single_source_and_output(self):
+        result = plots.build_save_filename('dream', ['monitor'], ['counts'])
+        assert result == 'DREAM_monitor_counts'
 
-        def _make(
-            instrument: str = 'dream',
-            source_name: str = 'monitor',
-            output_name: str = 'counts',
-        ) -> ResultKey:
-            workflow_id = WorkflowId(
-                instrument=instrument,
-                namespace='ns',
-                name='wf',
-                version=1,
-            )
-            job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-            return ResultKey(
-                workflow_id=workflow_id, job_id=job_id, output_name=output_name
-            )
+    def test_multiple_sources_sorted(self):
+        result = plots.build_save_filename('dream', ['beta', 'alpha'], ['counts'])
+        assert result == 'DREAM_alpha-beta_counts'
 
-        return _make
+    def test_multiple_outputs_sorted(self):
+        result = plots.build_save_filename('dream', ['mon'], ['z_result', 'a_result'])
+        assert result == 'DREAM_mon_a_result-z_result'
 
-    def test_returns_none_for_empty_data(self):
-        assert plots._build_save_filename({}) is None
-
-    def test_single_source_with_end_time(self, make_key):
-        key = make_key()
-        da = sc.DataArray(
-            data=sc.array(dims=['x'], values=[1.0]),
-            coords={
-                'x': sc.array(dims=['x'], values=[0.0]),
-                'end_time': sc.scalar(1_700_000_000_000_000_000),
-            },
-        )
-        result = plots._build_save_filename({key: da})
-        assert result is not None
-        assert result.startswith('DREAM_monitor_counts_')
-        # Verify it ends with a filename-safe timestamp pattern
-        time_part = result.split('_', 3)[3]
-        assert 'T' in time_part
-        assert ':' not in time_part
-
-    def test_multiple_sources_sorted(self, make_key):
-        key_b = make_key(source_name='beta')
-        key_a = make_key(source_name='alpha')
-        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
-        result = plots._build_save_filename({key_b: da, key_a: da})
-        assert result is not None
-        assert 'alpha-beta' in result
-
-    def test_multiple_outputs_sorted(self, make_key):
-        key_z = make_key(output_name='z_result')
-        key_a = make_key(output_name='a_result')
-        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
-        result = plots._build_save_filename({key_z: da, key_a: da})
-        assert result is not None
-        assert 'a_result-z_result' in result
-
-    def test_instrument_is_uppercased(self, make_key):
-        key = make_key(instrument='loki')
-        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
-        result = plots._build_save_filename({key: da})
-        assert result is not None
+    def test_instrument_is_uppercased(self):
+        result = plots.build_save_filename('loki', ['src'], ['out'])
         assert result.startswith('LOKI_')
 
-    def test_falls_back_to_current_time_without_end_time(self, make_key):
-        key = make_key()
-        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
-        result = plots._build_save_filename({key: da})
-        assert result is not None
-        # Should still produce a valid filename
-        assert result.startswith('DREAM_monitor_counts_')
-
-    def test_slash_in_source_name_replaced(self, make_key):
-        key = make_key(source_name='det/bank1')
-        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
-        result = plots._build_save_filename({key: da})
-        assert result is not None
+    def test_slash_in_source_name_replaced(self):
+        result = plots.build_save_filename('dream', ['det/bank1'], ['counts'])
         assert '/' not in result
+
+    def test_empty_sources(self):
+        result = plots.build_save_filename('dream', [], ['counts'])
+        assert result == 'DREAM_counts'
+
+    def test_empty_outputs(self):
+        result = plots.build_save_filename('dream', ['monitor'], [])
+        assert result == 'DREAM_monitor'
 
 
 class TestMakeSaveFilenameHook:
-    """Tests for _make_save_filename_hook."""
+    """Tests for make_save_filename_hook."""
 
     def test_sets_filename_on_save_tool(self):
         from bokeh.models.tools import SaveTool
@@ -1500,9 +1432,9 @@ class TestMakeSaveFilenameHook:
                 class toolbar:
                     tools: ClassVar = [save_tool]
 
-        hook = plots._make_save_filename_hook('DREAM_monitor_counts_2026-02-23T12-34')
+        hook = plots.make_save_filename_hook('DREAM_monitor_counts')
         hook(FakePlot(), None)
-        assert save_tool.filename == 'DREAM_monitor_counts_2026-02-23T12-34'
+        assert save_tool.filename == 'DREAM_monitor_counts'
 
     def test_ignores_non_save_tools(self):
         from bokeh.models.tools import PanTool
@@ -1514,87 +1446,6 @@ class TestMakeSaveFilenameHook:
                 class toolbar:
                     tools: ClassVar = [pan_tool]
 
-        hook = plots._make_save_filename_hook('test_filename')
+        hook = plots.make_save_filename_hook('test_filename')
         # Should not raise
         hook(FakePlot(), None)
-
-
-class TestComputeAppliesSaveFilenameHook:
-    """Tests that Plotter.compute() attaches the save filename hook."""
-
-    @pytest.fixture
-    def simple_data(self):
-        return sc.DataArray(
-            data=sc.array(dims=['x'], values=[1, 2, 3]),
-            coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
-        )
-
-    @staticmethod
-    def _render_and_get_save_tools(result):
-        from bokeh.models.tools import SaveTool
-
-        renderer = BokehRenderer.instance(mode='server')
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            bokeh_fig = renderer.get_plot(result).state
-        return [t for t in bokeh_fig.toolbar.tools if isinstance(t, SaveTool)]
-
-    def test_single_element_gets_save_hook(self, data_key, simple_data):
-        plotter = plots.LinePlotter.from_params(PlotParams1d())
-        plotter.compute({data_key: simple_data})
-        result = plotter.get_cached_state()
-
-        save_tools = self._render_and_get_save_tools(result)
-        assert len(save_tools) == 1
-        assert save_tools[0].filename.startswith('TEST_INSTRUMENT_')
-
-    def test_overlay_gets_combined_filename(self, simple_data):
-        """Hook on overlay sets combined filename from all data keys."""
-        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
-
-        key_a = _make_result_key(source_name='alpha', output_name='counts')
-        key_b = _make_result_key(source_name='beta', output_name='counts')
-        data = {key_a: simple_data, key_b: simple_data}
-
-        params = PlotParams1d(layout=LayoutParams(combine_mode=CombineMode.overlay))
-        plotter = plots.LinePlotter.from_params(params)
-        plotter.compute(data)
-        result = plotter.get_cached_state()
-
-        save_tools = self._render_and_get_save_tools(result)
-        assert len(save_tools) == 1
-        assert 'alpha-beta' in save_tools[0].filename
-
-    def test_layout_gives_per_element_filenames(self, simple_data):
-        """Each sub-figure in a Layout gets its own SaveTool with a per-element name."""
-        from bokeh.models import GridPlot
-        from bokeh.models.tools import SaveTool
-
-        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
-
-        key_a = _make_result_key(source_name='alpha', output_name='counts')
-        key_b = _make_result_key(source_name='beta', output_name='counts')
-        data = {key_a: simple_data, key_b: simple_data}
-
-        params = PlotParams1d(layout=LayoutParams(combine_mode=CombineMode.layout))
-        plotter = plots.LinePlotter.from_params(params)
-        plotter.compute(data)
-        result = plotter.get_cached_state()
-
-        renderer = BokehRenderer.instance(mode='server')
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            grid = renderer.get_plot(result).state
-
-        assert isinstance(grid, GridPlot)
-        # Each child is a (figure, row, col) tuple
-        filenames = [
-            tool.filename
-            for child in grid.children
-            for tool in child[0].toolbar.tools
-            if isinstance(tool, SaveTool) and tool.filename is not None
-        ]
-
-        assert len(filenames) == 2
-        assert any('alpha' in fn and 'beta' not in fn for fn in filenames)
-        assert any('beta' in fn and 'alpha' not in fn for fn in filenames)
