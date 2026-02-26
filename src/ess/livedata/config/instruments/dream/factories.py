@@ -173,7 +173,6 @@ def setup_factories(instrument: Instrument) -> None:
         normalization is fixed and/or we have setup a proton-charge stream.
         """
         fake_charge = sc.values(data.data).sum()
-        fake_charge.unit = 'counts/µAh'
         return powder.types.AccumulatedProtonCharge[RunType](fake_charge)
 
     _reduction_workflow.insert(_total_counts)
