@@ -33,7 +33,6 @@ class NotificationEvent:
 
     message: str
     notification_type: NotificationType = NotificationType.INFO
-    duration: int = 3000  # milliseconds
 
 
 @dataclass

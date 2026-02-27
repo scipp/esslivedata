@@ -16,6 +16,7 @@ import yaml
 
 from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..notifications import show_error
 from ..plot_orchestrator import (
     GridId,
     PlotCell,
@@ -622,7 +623,7 @@ class PlotGridManager:
             raw_config = yaml.safe_load(content)
 
             if not isinstance(raw_config, dict):
-                self._show_upload_error('Invalid format: expected YAML dictionary')
+                show_error('Invalid format: expected YAML dictionary')
                 return
 
             # Parse cells from the uploaded config
@@ -633,7 +634,7 @@ class PlotGridManager:
                     if cell is not None:
                         parsed_cells.append(cell)
                 except (KeyError, TypeError, ValueError) as e:
-                    self._show_upload_error(f'Invalid cell {i + 1}: {e}')
+                    show_error(f'Invalid cell {i + 1}: {e}')
                     return
 
             # Store parsed cells and config values from uploaded file
@@ -658,15 +659,10 @@ class PlotGridManager:
                 self._update_preview()
 
         except yaml.YAMLError as e:
-            self._show_upload_error(f'YAML parse error: {e}')
+            show_error(f'YAML parse error: {e}')
         finally:
             # Clear file input so the same file can be re-uploaded
             self._file_input.clear()
-
-    def _show_upload_error(self, message: str) -> None:
-        """Display an upload error notification."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.error(message, duration=5000)
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""

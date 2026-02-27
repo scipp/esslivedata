@@ -13,6 +13,9 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
+    ErrorDisplay,
+    Line1dParams,
+    Line1dRenderMode,
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
@@ -284,6 +287,205 @@ class TestLinePlotter:
         )
         result = line_plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
+
+    def test_compute_uses_source_title_in_overlay_label(self, line_plotter, data_key):
+        """Test that compute uses source_title for overlay labels."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        line_plotter.compute({data_key: data}, source_title=lambda _: 'Friendly Name')
+        result = line_plotter.get_cached_state()
+        assert result.label == 'Friendly Name/test_result'
+
+    def test_compute_falls_back_to_source_name_without_title(
+        self, line_plotter, data_key
+    ):
+        """Test that compute uses raw source_name when no title resolver."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        line_plotter.compute({data_key: data})
+        result = line_plotter.get_cached_state()
+        assert result.label == 'test_source/test_result'
+
+    def test_line_mode_produces_curve(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.line))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_points_mode_produces_scatter(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.points))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Scatter)
+
+    def test_histogram_mode_produces_histogram(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, 30.0], unit='m')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+
+    def test_line_with_error_bars(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_line_with_error_band(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.band)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.Spread)
+
+    def test_line_with_errors_none(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_points_with_error_bars(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.points, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Scatter)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_no_variances_never_shows_errors(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_histogram_mode_without_bin_edges_falls_back_to_curve(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_histogram_mode_with_errors(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.histogram, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, 30.0], unit='m')
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Histogram)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_error_overlay_children_have_sizing_opts(self, data_key):
+        """Sizing opts must be on child elements, not just the overlay.
+
+        Bokeh needs responsive/aspect on individual plot elements to size the
+        figure correctly; applying them only to the composite Overlay causes
+        the plot to collapse to a small default size.
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        for child in result:
+            opts = child.opts.get().kwargs
+            assert opts.get('responsive') is True
 
 
 class TestSlicerPlotter:
@@ -858,12 +1060,23 @@ class TestBarsPlotter:
         # The vdims column is named after output_name
         assert bar_data[data_key.output_name].iloc[0] == 42.0
 
-    def test_plot_uses_source_name_as_label(self, bars_plotter, scalar_data, data_key):
-        """Test that the bar is labeled with source_name."""
+    def test_plot_uses_source_name_as_default_label(
+        self, bars_plotter, scalar_data, data_key
+    ):
+        """Test that the bar is labeled with source_name when no title resolver."""
         result = bars_plotter.plot(scalar_data, data_key)
         bar_data = result.data
-        # The label should contain the source_name
         assert data_key.job_id.source_name in bar_data['source'].iloc[0]
+
+    def test_plot_uses_source_display_name_when_provided(
+        self, bars_plotter, scalar_data, data_key
+    ):
+        """Test that the bar uses the provided display name."""
+        result = bars_plotter.plot(
+            scalar_data, data_key, source_display_name='My Title'
+        )
+        bar_data = result.data
+        assert bar_data['source'].iloc[0] == 'My Title'
 
     def test_plot_uses_output_name_as_vdims(self, bars_plotter, scalar_data):
         """Test that output_name is used as the vdims column name."""

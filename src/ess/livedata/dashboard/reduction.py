@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
+import os
 import urllib.request
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -76,6 +77,8 @@ class ReductionApp(DashboardBase):
         log_level: int,
         transport: str = 'kafka',
         fetch_announcements: bool = True,
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
     ):
         super().__init__(
             instrument=instrument,
@@ -84,6 +87,8 @@ class ReductionApp(DashboardBase):
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
             transport=transport,
+            basic_auth_password=basic_auth_password,
+            basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
         self._fetch_announcements = fetch_announcements
         self._logger.info("Reduction dashboard initialized")
@@ -180,6 +185,19 @@ def get_arg_parser() -> argparse.ArgumentParser:
         action='store_false',
         dest='fetch_announcements',
         help='Disable fetching announcements from external URL',
+    )
+    parser.add_argument(
+        '--basic-auth-password',
+        default=os.environ.get('LIVEDATA_BASIC_AUTH_PASSWORD'),
+        help='Password for basic authentication. '
+        'Any username will be accepted. '
+        'Can also be set via LIVEDATA_BASIC_AUTH_PASSWORD env var.',
+    )
+    parser.add_argument(
+        '--basic-auth-cookie-secret',
+        default=os.environ.get('LIVEDATA_BASIC_AUTH_COOKIE_SECRET'),
+        help='Cookie secret for basic authentication sessions. '
+        'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
     )
     return parser
 

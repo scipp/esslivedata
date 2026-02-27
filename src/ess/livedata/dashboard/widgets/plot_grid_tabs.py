@@ -18,6 +18,7 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..data_roles import PRIMARY
+from ..format_utils import extract_error_summary
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -32,6 +33,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
+from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .plot_config_modal import PlotConfigModal
@@ -764,7 +766,7 @@ class PlotGridTabs:
             match state.state:
                 case LayerState.ERROR:
                     error_text = state.error_message or "Unknown error"
-                    status = f"Error: {error_text[:100]}..."
+                    status = f"Error: {extract_error_summary(error_text)}"
                     text_color = '#dc3545'
                 case LayerState.STOPPED:
                     status = "Workflow ended"
@@ -862,6 +864,8 @@ class PlotGridTabs:
         Get composed plot from session-local DynamicMaps or static elements.
 
         Ensures session components exist when data is available.
+        Sets a descriptive SaveTool filename on the result so that
+        browser "Save" downloads get a meaningful name.
 
         Parameters
         ----------
@@ -891,10 +895,20 @@ class PlotGridTabs:
         if not plots:
             return None
 
+        result: hv.DynamicMap | hv.Element
         if len(plots) == 1:
-            return plots[0]
+            result = plots[0]
+        else:
+            result = hv.Overlay(plots)
 
-        return hv.Overlay(plots)
+        filename = build_save_filename_from_cell(
+            cell, self._workflow_registry, self._orchestrator.get_source_title
+        )
+        if filename is not None:
+            hook = make_save_filename_hook(filename)
+            result = result.opts(hooks=[hook])
+
+        return result
 
     def _poll_for_plot_updates(self) -> None:
         """

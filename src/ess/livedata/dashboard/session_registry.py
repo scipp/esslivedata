@@ -24,6 +24,7 @@ class SessionInfo:
     """Information about an active session."""
 
     session_id: SessionId
+    username: str | None = None
     last_heartbeat: float = field(default_factory=time.monotonic)
     updater: SessionUpdater | None = None
 
@@ -62,7 +63,11 @@ class SessionRegistry:
         self._lock = threading.Lock()
 
     def register(
-        self, session_id: SessionId, updater: SessionUpdater | None = None
+        self,
+        session_id: SessionId,
+        updater: SessionUpdater | None = None,
+        *,
+        username: str | None = None,
     ) -> None:
         """
         Register a new session with its updater.
@@ -73,6 +78,8 @@ class SessionRegistry:
             Unique identifier for the session (typically from curdoc session).
         updater:
             The SessionUpdater instance for this session.
+        username:
+            Authenticated username for this session, if available.
         """
         with self._lock:
             if session_id in self._sessions:
@@ -82,11 +89,13 @@ class SessionRegistry:
                 # Update the updater if provided
                 if updater is not None:
                     self._sessions[session_id].updater = updater
+                if username is not None:
+                    self._sessions[session_id].username = username
                 self._sessions[session_id].last_heartbeat = time.monotonic()
             else:
                 logger.info("Registered new session: %s", session_id)
                 self._sessions[session_id] = SessionInfo(
-                    session_id=session_id, updater=updater
+                    session_id=session_id, username=username, updater=updater
                 )
 
     def unregister(self, session_id: SessionId) -> None:
@@ -225,3 +234,20 @@ class SessionRegistry:
             if session_id not in self._sessions:
                 return None
             return time.monotonic() - self._sessions[session_id].last_heartbeat
+
+    def get_session_info(self, session_id: SessionId) -> SessionInfo | None:
+        """
+        Get session info for a session.
+
+        Parameters
+        ----------
+        session_id:
+            Session ID to look up.
+
+        Returns
+        -------
+        :
+            SessionInfo if found, None otherwise.
+        """
+        with self._lock:
+            return self._sessions.get(session_id)

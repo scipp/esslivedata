@@ -159,9 +159,9 @@ class TestWindowAggregatingExtractor:
         # so the span from first to last end_time is ~2-3s
         start_time_ns = result.coords['start_time'].value
         window_duration = (end_time_ns - start_time_ns) / 1e9
-        assert (
-            1.5 <= window_duration <= 5.0
-        ), f"Window duration {window_duration}s should be ~2-3s"
+        assert 1.5 <= window_duration <= 5.0, (
+            f"Window duration {window_duration}s should be ~2-3s"
+        )
 
     def test_end_time_reflects_actual_window(self):
         """end_time should reflect the actual window, giving recent lag."""

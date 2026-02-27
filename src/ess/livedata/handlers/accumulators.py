@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 import scipp as sc
-from streaming_data_types import logdata_f144
-
 from ess.reduce import streaming
 from ess.reduce.streaming import EternalAccumulator
+from streaming_data_types import logdata_f144
 
 from ..core.handler import Accumulator
 from .to_nxevent_data import MonitorEvents

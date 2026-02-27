@@ -54,9 +54,9 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     # Verify that we received data with expected outputs
     job_data = all_job_data[job_id]
     output_names = {key.output_name for key in job_data}
-    assert (
-        'cumulative' in output_names
-    ), f"Expected 'cumulative' output, got outputs: {output_names}"
+    assert 'cumulative' in output_names, (
+        f"Expected 'cumulative' output, got outputs: {output_names}"
+    )
 
 
 @pytest.mark.integration

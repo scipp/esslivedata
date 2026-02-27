@@ -4,13 +4,14 @@
 LOKI instrument spec registration.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -18,26 +19,67 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
-from .views import get_wire_view
+from .views import get_tube_view
 
 
-class SansWorkflowOptions(pydantic.BaseModel):
-    use_transmission_run: bool = pydantic.Field(
-        title='Use transmission run',
-        description='Use transmission run instead of monitor readings of sample run',
-        default=False,
+class TransmissionMode(StrEnum):
+    """Transmission correction mode for SANS reduction."""
+
+    constant = 'constant'
+    current_run = 'current_run'
+
+
+class TransmissionOptions(pydantic.BaseModel):
+    """Transmission correction configuration.
+
+    The standard SANS transmission calculation normalizes sample monitors
+    against an empty-beam measurement. In live mode only simplified modes
+    are available that do not require a separate empty-beam run.
+    """
+
+    mode: TransmissionMode = pydantic.Field(
+        title='Mode',
+        description=(
+            '"constant": no correction (transmission fraction = 1).'
+            ' "current_run": estimate transmission from the ratio of'
+            ' transmission to incident monitor in the sample run.'
+        ),
+        default=TransmissionMode.current_run,
     )
+
+
+class BeamCenterXY(pydantic.BaseModel):
+    """Beam center position in detector coordinates."""
+
+    x: float = pydantic.Field(
+        default=0.0,
+        title='X',
+        description='Beam center X coordinate.',
+    )
+    y: float = pydantic.Field(
+        default=0.0,
+        title='Y',
+        description='Beam center Y coordinate.',
+    )
+    unit: parameter_models.LengthUnit = pydantic.Field(
+        default=parameter_models.LengthUnit.METER,
+        description='Unit of the beam center coordinates.',
+    )
+
+    def get_vector(self) -> sc.Variable:
+        """Get the beam center as a 3D scipp vector."""
+        return sc.vector([self.x, self.y, 0.0], unit=self.unit.value)
 
 
 class LokiAuxSources(AuxSourcesBase):
     """Auxiliary source names for LOKI SANS workflows."""
 
-    incident_monitor: Literal['monitor1'] = pydantic.Field(
-        default='monitor1',
+    incident_monitor: Literal['beam_monitor_1'] = pydantic.Field(
+        default='beam_monitor_1',
         description='Incident beam monitor for normalization.',
     )
-    transmission_monitor: Literal['monitor2'] = pydantic.Field(
-        default='monitor2',
+    transmission_monitor: Literal['beam_monitor_3'] = pydantic.Field(
+        default='beam_monitor_3',
         description='Transmission monitor for sample transmission calculation.',
     )
 
@@ -59,22 +101,17 @@ def _make_1d_wavelength_template() -> sc.DataArray:
 
 
 class IofQOutputs(WorkflowOutputsBase):
-    """Outputs for the basic I(Q) workflow."""
+    """Outputs for the I(Q) workflow."""
 
     i_of_q: sc.DataArray = pydantic.Field(
         default_factory=_make_1d_q_template,
         title='I(Q)',
         description='Scattered intensity as a function of momentum transfer Q.',
     )
-
-
-class IofQWithTransmissionOutputs(IofQOutputs):
-    """Outputs for I(Q) workflow with transmission from current run."""
-
     transmission_fraction: sc.DataArray = pydantic.Field(
         default_factory=_make_1d_wavelength_template,
         title='Transmission Fraction',
-        description='Sample transmission fraction calculated from current run.',
+        description='Sample transmission fraction calculated from monitor ratio.',
     )
 
 
@@ -99,10 +136,20 @@ class SansWorkflowParams(pydantic.BaseModel):
             unit=parameter_models.WavelengthUnit.ANGSTROM,
         ),
     )
-    options: SansWorkflowOptions = pydantic.Field(
-        title='Options',
-        description='Options for the SANS workflow.',
-        default=SansWorkflowOptions(),
+    beam_center: BeamCenterXY = pydantic.Field(
+        title='Beam center',
+        description='Beam center position in the detector plane.',
+        default_factory=BeamCenterXY,
+    )
+    transmission: TransmissionOptions = pydantic.Field(
+        title='Transmission',
+        description=(
+            'Transmission correction settings.'
+            ' The standard SANS transmission calculation normalizes sample'
+            ' monitors against an empty-beam measurement;'
+            ' this is not available in live mode.'
+        ),
+        default_factory=TransmissionOptions,
     )
 
 
@@ -113,7 +160,40 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 instrument = Instrument(
     name='loki',
     detector_names=detector_names,
-    monitors=['monitor1', 'monitor2'],
+    monitors=[
+        'beam_monitor_0',
+        'beam_monitor_1',
+        'beam_monitor_2',
+        'beam_monitor_3',
+        'beam_monitor_4',
+    ],
+    source_metadata={
+        'loki_detector_0': SourceMetadata(title='Rear'),
+        'loki_detector_1': SourceMetadata(title='Mid Bottom'),
+        'loki_detector_2': SourceMetadata(title='Mid Left'),
+        'loki_detector_3': SourceMetadata(title='Mid Top'),
+        'loki_detector_4': SourceMetadata(title='Mid Right'),
+        'loki_detector_5': SourceMetadata(title='Front Bottom'),
+        'loki_detector_6': SourceMetadata(title='Front Left'),
+        'loki_detector_7': SourceMetadata(title='Front Top'),
+        'loki_detector_8': SourceMetadata(title='Front Right'),
+        'beam_monitor_0': SourceMetadata(
+            title='Beam Monitor 0', description='Upstream, z = -16.8 m'
+        ),
+        'beam_monitor_1': SourceMetadata(
+            title='Incident Monitor', description='Upstream, z = -8.4 m'
+        ),
+        'beam_monitor_2': SourceMetadata(
+            title='Beam Monitor 2', description='Upstream, z = -2.04 m'
+        ),
+        'beam_monitor_3': SourceMetadata(
+            title='Transmission Monitor', description='Downstream, z = +0.2 m'
+        ),
+        'beam_monitor_4': SourceMetadata(
+            title='Beam Monitor 4',
+            description='Downstream, movable (on detector carriage)',
+        ),
+    },
 )
 
 # Register instrument
@@ -121,7 +201,7 @@ instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
 monitor_handle = register_monitor_workflow_specs(
-    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
+    instrument, instrument.monitors, params=TOAOnlyMonitorDataParams
 )
 
 xy_projection_handle = register_detector_view_spec(
@@ -130,35 +210,30 @@ xy_projection_handle = register_detector_view_spec(
     source_names=detector_names,
 )
 
-# Register wire view for all detector banks
+# Register tube view for all detector banks
 instrument.add_logical_view(
-    name='wire_view',
-    title='Wire View',
+    name='tube_view',
+    title='Tube View',
     description='Sum over straw and pixel dimensions to show layer x tube counts.',
     source_names=detector_names,
-    transform=get_wire_view,
+    transform=get_tube_view,
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register I(Q) workflow spec (basic)
+# Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(
     name='i_of_q',
     version=1,
     title='I(Q)',
+    description=(
+        'SANS I(Q) reduction for LOKI. Converts detector event data into'
+        ' scattered intensity as a function of momentum transfer Q.'
+        ' Direct-beam normalization (flat/efficiency correction) is not applied and '
+        'currently the transmission does not take into a account and empty run.'
+    ),
     source_names=detector_names,
     aux_sources=LokiAuxSources,
     outputs=IofQOutputs,
-)
-
-# Register I(Q) workflow spec (with params)
-i_of_q_with_params_handle = instrument.register_spec(
-    name='i_of_q_with_params',
-    version=1,
-    title='I(Q) with params',
-    description='I(Q) reduction with configurable parameters.',
-    source_names=detector_names,
-    aux_sources=LokiAuxSources,
-    outputs=IofQWithTransmissionOutputs,
     params=SansWorkflowParams,
 )

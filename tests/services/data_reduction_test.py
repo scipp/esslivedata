@@ -133,7 +133,7 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
         'dream': 'powder_reduction',
         'loki': 'i_of_q',
     }[instrument]
-    n_target = {'dream': 2, 'loki': 1}[instrument]
+    n_target = {'dream': 2, 'loki': 2}[instrument]
     workflow_id, spec = _get_workflow_from_registry(instrument, workflow_name)
 
     source_name = first_source_name[instrument]
@@ -239,7 +239,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app = make_reduction_app(instrument='dummy')
     sink = app.sink
     service = app.service
-    workflow_id, spec = _get_workflow_from_registry('dummy', 'total_counts')
+    workflow_id, _spec = _get_workflow_from_registry('dummy', 'total_counts')
 
     config_key = ConfigKey(
         source_name='panel_0', service_name="data_reduction", key="workflow_config"

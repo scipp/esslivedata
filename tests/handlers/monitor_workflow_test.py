@@ -234,9 +234,8 @@ class TestBuildMonitorWorkflow:
         workflow = build_monitor_workflow()
 
         # Create test data
-        from scippnexus import NXmonitor
-
         from ess.reduce.nexus.types import RawMonitor, SampleRun
+        from scippnexus import NXmonitor
 
         toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0, 4.0, 5.0], unit='ns')
         weights = sc.ones(sizes={'event': 5}, dtype='float64', unit='counts')

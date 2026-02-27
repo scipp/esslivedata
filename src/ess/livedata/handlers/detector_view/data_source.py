@@ -15,9 +15,8 @@ from typing import TYPE_CHECKING, Protocol
 
 import sciline
 import scipp as sc
-from scippnexus import NXdetector
-
 from ess.reduce.nexus.types import EmptyDetector, Filename, NeXusName, SampleRun
+from scippnexus import NXdetector
 
 if TYPE_CHECKING:
     from ess.livedata.config.instrument import Instrument

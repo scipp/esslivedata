@@ -194,8 +194,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
     counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
         title='Event Count in Range (Cumulative)',
         description=(
-            'Cumulative number of detector events '
-            'within the configured range filter.'
+            'Cumulative number of detector events within the configured range filter.'
         ),
         default_factory=_make_0d_template,
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, ClassVar
 
 import pydantic
@@ -54,7 +54,7 @@ class WorkflowNotFoundError(Exception):
     """Raised when a workflow specification is not found in this worker."""
 
 
-class JobAction(str, Enum):
+class JobAction(StrEnum):
     pause = "pause"
     resume = "resume"
     reset = "reset"
