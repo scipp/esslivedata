@@ -229,7 +229,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
-        shedder = self._load_shedder
+        shedder_state = self._load_shedder.state if self._load_shedder else None
         return ServiceStatus(
             instrument=self._instrument,
             namespace=self._namespace,
@@ -239,10 +239,9 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
             error=self._service_error,
-            is_shedding=shedder.state.is_shedding if shedder is not None else False,
-            messages_dropped=(
-                shedder.state.messages_dropped if shedder is not None else 0
-            ),
+            is_shedding=shedder_state.is_shedding if shedder_state else False,
+            messages_dropped=shedder_state.messages_dropped if shedder_state else 0,
+            messages_eligible=shedder_state.messages_eligible if shedder_state else 0,
         )
 
     def _maybe_log_metrics(self) -> None:
@@ -254,7 +253,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         if timestamp - self._last_metrics_time >= self._metrics_interval:
             active_jobs = len(self._job_manager.active_jobs)
-            shedder = self._load_shedder
+            shedder_state = self._load_shedder.state if self._load_shedder else None
             logger.info(
                 'processor_metrics',
                 messages=self._messages_processed,
@@ -262,9 +261,12 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 empty_batches=self._empty_batches,
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
-                shedding=shedder.state.is_shedding if shedder is not None else False,
+                shedding=shedder_state.is_shedding if shedder_state else False,
                 messages_dropped=(
-                    shedder.state.messages_dropped if shedder is not None else 0
+                    shedder_state.messages_dropped if shedder_state else 0
+                ),
+                messages_eligible=(
+                    shedder_state.messages_eligible if shedder_state else 0
                 ),
                 interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
             )

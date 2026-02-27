@@ -74,6 +74,17 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
+def _format_drop_rate(dropped: int, eligible: int) -> str:
+    """Format drop rate as percentage with counts over the rolling window."""
+    if eligible == 0:
+        return f"Dropped: {_format_messages(dropped)}"
+    pct = 100 * dropped / eligible
+    return (
+        f"Dropped: {pct:.0f}% "
+        f"({_format_messages(dropped)}/{_format_messages(eligible)})"
+    )
+
+
 class WorkerStatusRow:
     """Widget to display the status of a single backend worker.
 
@@ -194,9 +205,12 @@ class WorkerStatusRow:
         msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
         stats_parts = [jobs_text, msgs_text]
         if status.messages_dropped > 0:
+            drop_text = _format_drop_rate(
+                status.messages_dropped, status.messages_eligible
+            )
             stats_parts.append(
                 f'<span style="color: {WorkerUIConstants.SHEDDING_COLOR}">'
-                f"Dropped: {_format_messages(status.messages_dropped)}</span>"
+                f"{drop_text}</span>"
             )
         self._stats_pane.object = f"<span>{' | '.join(stats_parts)}</span>"
 

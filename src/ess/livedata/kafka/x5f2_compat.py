@@ -201,7 +201,10 @@ class ServiceStatusPayload(pydantic.BaseModel):
         default=False, description="Whether load shedding is active"
     )
     messages_dropped: int = pydantic.Field(
-        default=0, description="Cumulative messages dropped by load shedding"
+        default=0, description="Messages dropped in the rolling window"
+    )
+    messages_eligible: int = pydantic.Field(
+        default=0, description="Droppable messages seen in the rolling window"
     )
 
 
@@ -290,6 +293,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
                     error=status.error,
                     is_shedding=status.is_shedding,
                     messages_dropped=status.messages_dropped,
+                    messages_eligible=status.messages_eligible,
                 ),
             ),
         )
@@ -308,6 +312,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
             error=message.error,
             is_shedding=message.is_shedding,
             messages_dropped=message.messages_dropped,
+            messages_eligible=message.messages_eligible,
         )
 
 

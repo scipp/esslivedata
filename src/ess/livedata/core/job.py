@@ -124,6 +124,7 @@ class ServiceStatus:
     error: str | None = None
     is_shedding: bool = False
     messages_dropped: int = 0
+    messages_eligible: int = 0
 
 
 def _add_time_coords(
