@@ -265,36 +265,35 @@ class TestDetectorROIAuxSources:
 class TestDetectorViewParamsGetActiveRange:
     """Tests for DetectorViewParams.get_active_range() unit handling."""
 
-    def test_toa_range_preserves_user_unit(self):
-        """get_active_range returns TOA range in the user's unit, not forced to ns."""
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_toa_range_preserves_user_unit(self, unit: TimeUnit):
         params = DetectorViewParams(
             coordinate_mode=CoordinateModeSettings(mode='toa'),
-            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=TimeUnit.MS),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=unit),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None
         low, high = range_filter
-        assert low.unit == 'ms'
-        assert high.unit == 'ms'
+        assert low.unit == unit.value
+        assert high.unit == unit.value
 
-    def test_tof_range_preserves_user_unit(self):
-        """get_active_range returns TOF range in the user's unit."""
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_tof_range_preserves_user_unit(self, unit: TimeUnit):
         params = DetectorViewParams(
             coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=TimeUnit.MS),
+            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None
         low, high = range_filter
-        assert low.unit == 'ms'
-        assert high.unit == 'ms'
-
-    def test_wavelength_range_preserves_user_unit(self):
-        """get_active_range returns wavelength range in the user's unit."""
-        pytest.skip("wavelength mode not yet supported in CoordinateModeSettings")
+        assert low.unit == unit.value
+        assert high.unit == unit.value
 
     def test_disabled_range_returns_none(self):
-        """get_active_range returns None when the range filter is disabled."""
         params = DetectorViewParams(
             coordinate_mode=CoordinateModeSettings(mode='toa'),
             toa_range=TOARange(enabled=False),
