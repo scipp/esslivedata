@@ -74,15 +74,20 @@ class TestConvertHistogram1d:
         assert result.vdims[0].label == 'spectrum'
         assert result.kdims[0].name == 'energy'
 
-    def test_with_missing_coord_uses_dummy(self):
+    def test_without_bin_edges_raises(self):
         values = sc.array(dims=['x'], values=[10, 20, 30], unit='counts')
         data = sc.DataArray(data=values)
 
-        result = scipp_to_holoviews.convert_histogram_1d(data)
+        with pytest.raises(ValueError, match="bin-edge"):
+            scipp_to_holoviews.convert_histogram_1d(data)
 
-        assert isinstance(result, hv.Histogram)
-        assert result.kdims[0].name == 'x'
-        assert result.kdims[0].unit is None
+    def test_with_point_coords_raises(self):
+        coord = sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='m')
+        values = sc.array(dims=['x'], values=[10, 20, 30], unit='counts')
+        data = sc.DataArray(data=values, coords={'x': coord})
+
+        with pytest.raises(ValueError, match="bin-edge"):
+            scipp_to_holoviews.convert_histogram_1d(data)
 
 
 class TestConvertCurve1d:

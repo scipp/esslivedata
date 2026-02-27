@@ -545,26 +545,29 @@ class LinePlotter(Plotter):
         'band': 'spread',
     }
 
+    _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
+
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
-        is_histogram = self._mode == 'histogram'
-
-        if is_histogram:
+        converter = HvConverter1d(data)
+        if self._mode == 'histogram' and converter.has_edges:
+            mode = 'histogram'
             da = data
         else:
+            mode = self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK
             da = self._convert_bin_edges_to_midpoints(data)
+            converter = HvConverter1d(da)
 
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
 
-        converter = HvConverter1d(da)
-        base_method = getattr(converter, self._BASE_METHOD[self._mode])
+        base_method = getattr(converter, self._BASE_METHOD[mode])
         base = base_method(label=label).opts(**opts)
 
         if da.variances is not None and self._errors != 'none':
-            if is_histogram:
+            if mode == 'histogram':
                 # Error elements need midpoint coords (N values, not N+1 edges)
                 converter = HvConverter1d(self._convert_bin_edges_to_midpoints(da))
             error_method = getattr(converter, self._ERROR_METHOD[self._errors])

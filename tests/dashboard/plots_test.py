@@ -415,12 +415,8 @@ class TestLinePlotter:
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
         )
-        # Histogram mode with midpoint coords: convert_histogram_1d expects bin edges,
-        # so to_holoviews dispatches to Curve instead. The plotter passes the data
-        # through without converting edges, so the result depends on the data shape.
-        # With midpoint coords, hv.Histogram still works (it treats coords as edges).
         result = plotter.plot(data, data_key)
-        assert isinstance(result, hv.Histogram)
+        assert isinstance(result, hv.Curve)
 
     def test_histogram_mode_with_errors(self, data_key):
         params = PlotParams1d(

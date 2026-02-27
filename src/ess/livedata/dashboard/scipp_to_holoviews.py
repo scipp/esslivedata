@@ -46,9 +46,16 @@ class HvConverter1d:
 
     def __init__(self, data: sc.DataArray) -> None:
         self._data = _ensure_coords(data)
-        coord = self._data.coords[self._data.dim]
+        dim = self._data.dim
+        self._has_edges = dim in self._data.coords and self._data.coords.is_edges(dim)
+        coord = self._data.coords[dim]
         self._kdims = [coord_to_dimension(coord)]
         self._vdims = [create_value_dimension(self._data)]
+
+    @property
+    def has_edges(self) -> bool:
+        """Whether the data has bin-edge coordinates."""
+        return self._has_edges
 
     def _xy(self) -> tuple:
         return (self._data.coords[self._data.dim].values, self._data.values)
@@ -57,7 +64,19 @@ class HvConverter1d:
         return (*self._xy(), sc.stddevs(self._data).values)
 
     def histogram(self, label: str = '') -> hv.Histogram:
-        """Create a Histogram (step plot, supports bin-edge coordinates)."""
+        """Create a Histogram (step plot, requires bin-edge coordinates).
+
+        Raises
+        ------
+        ValueError
+            If the data does not have bin-edge coordinates. Check ``has_edges``
+            before calling, or use ``curve()`` as a fallback.
+        """
+        if not self._has_edges:
+            raise ValueError(
+                "Cannot create a histogram without bin-edge coordinates. "
+                "Use curve() or scatter() for point data."
+            )
         return hv.Histogram(
             data=self._xy(), kdims=self._kdims, vdims=self._vdims, label=label
         )
@@ -94,7 +113,13 @@ class HvConverter1d:
 
 
 def convert_histogram_1d(data: sc.DataArray, label: str = '') -> hv.Histogram:
-    """Convert a 1D scipp DataArray to a Holoviews Histogram."""
+    """Convert a 1D scipp DataArray to a Holoviews Histogram.
+
+    Raises
+    ------
+    ValueError
+        If the data does not have bin-edge coordinates.
+    """
     return HvConverter1d(data).histogram(label=label)
 
 
