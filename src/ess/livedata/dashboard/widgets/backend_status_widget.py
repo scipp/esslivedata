@@ -77,9 +77,9 @@ def _format_messages(count: int) -> str:
 def _format_drop_rate(dropped: int, eligible: int) -> str:
     """Format drop rate as percentage over the rolling window."""
     if eligible == 0:
-        return "Dropped: <1%"
+        return "Dropping: <1%"
     pct = 100 * dropped / eligible
-    return f"Dropped: {pct:.0f}%"
+    return f"Dropping: {pct:.0f}%"
 
 
 class WorkerStatusRow:
