@@ -23,8 +23,8 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import (
-    Curve1dParams,
-    Curve1dRenderMode,
+    Line1dParams,
+    Line1dRenderMode,
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
@@ -110,9 +110,9 @@ class CorrelationHistogram1dParams(_CorrelationHistogramBase, PlotDisplayParams1
         title="Histogram Bins",
         description="Bin configuration for the histogram.",
     )
-    curve: Curve1dParams = pydantic.Field(
-        default_factory=lambda: Curve1dParams(mode=Curve1dRenderMode.histogram),
-        description="1D curve rendering options (defaults to histogram mode).",
+    line: Line1dParams = pydantic.Field(
+        default_factory=lambda: Line1dParams(mode=Line1dRenderMode.histogram),
+        description="1D line rendering options (defaults to histogram mode).",
     )
 
 

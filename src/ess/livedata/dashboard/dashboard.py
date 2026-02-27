@@ -5,6 +5,7 @@
 import logging
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
+from pathlib import Path
 
 import panel as pn
 from holoviews import Dimension
@@ -20,6 +21,10 @@ from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
+
+_TEMPLATES_DIR = Path(__file__).parent / 'templates'
+_LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
+_LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -132,6 +137,7 @@ class DashboardBase(ServiceBase, ABC):
             session_id=self._get_session_id(),
             session_registry=self._services.session_registry,
             notification_queue=self._services.notification_queue,
+            username=pn.state.user,
         )
 
     def _start_periodic_callback(
@@ -166,6 +172,30 @@ class DashboardBase(ServiceBase, ABC):
         pn.state.on_session_destroyed(_cleanup_session)
         self._logger.info("Periodic updates started for session %s", session_id)
 
+    def _create_logout_header(self) -> list[pn.viewable.Viewable]:
+        """Create a logout button for the header when auth is enabled."""
+        # ruff: disable[E501]
+        logout_link = pn.pane.HTML(
+            """<div style="text-align: right; padding-right: 8px;">
+            <a href="/logout" style="
+                color: white;
+                text-decoration: none;
+                font-size: 13px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                padding: 6px 18px;
+                border: 1.5px solid rgba(255, 255, 255, 0.7);
+                border-radius: 20px;
+                display: inline-block;
+                transition: background 0.2s, border-color 0.2s;
+                " onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.borderColor='white'"
+                onmouseout="this.style.background='none';this.style.borderColor='rgba(255,255,255,0.7)'"
+            >Log out</a></div>""",
+            sizing_mode='stretch_width',
+        )
+        # ruff: enable[E501]
+        return [logout_link]
+
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
         # Create session updater first so widgets can register handlers
@@ -182,11 +212,14 @@ class DashboardBase(ServiceBase, ABC):
             sizing_mode='stretch_both',
         )
 
+        header = self._create_logout_header() if self._basic_auth_password else []
+
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_content,
             main=main_with_heartbeat,
             header_background=self.get_header_background(),
+            header=header,
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
@@ -231,6 +264,8 @@ class DashboardBase(ServiceBase, ABC):
             dev=self._dev,
             basic_auth=self._basic_auth_password,
             cookie_secret=self._basic_auth_cookie_secret,
+            login_template=_LOGIN_TEMPLATE,
+            logout_template=_LOGOUT_TEMPLATE,
         )
 
     def _start_impl(self) -> None:
@@ -251,6 +286,8 @@ class DashboardBase(ServiceBase, ABC):
                 dev=self._dev,
                 basic_auth=self._basic_auth_password,
                 cookie_secret=self._basic_auth_cookie_secret,
+                login_template=_LOGIN_TEMPLATE,
+                logout_template=_LOGOUT_TEMPLATE,
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")
