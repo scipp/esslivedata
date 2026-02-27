@@ -37,6 +37,7 @@ class LoadShedderState:
     """Snapshot of load shedder state for status reporting."""
 
     is_shedding: bool
+    shedding_level: int
     messages_dropped: int
     messages_eligible: int
 
@@ -94,14 +95,18 @@ class LoadShedder:
     """Selectively drops bulk event data when the backend falls behind.
 
     Detection uses consecutive non-None batcher results as the overload signal.
-    When active, keeps every 2nd droppable message (50% reduction).
+    Shedding uses exponential levels: level N keeps every ``2**N``-th droppable
+    message.  Each level handles a 2x increase in overload (level 1 = 50% drop,
+    level 2 = 75%, level 3 = 87.5%, …).  The level escalates by 1 after
+    ``_ACTIVATION_THRESHOLD`` consecutive non-idle batcher cycles and
+    de-escalates by 1 after ``_DEACTIVATION_THRESHOLD`` consecutive idle cycles.
     Drop statistics are tracked over a rolling 60-second window.
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._consecutive_batches: int = 0
         self._consecutive_idle: int = 0
-        self._is_shedding: bool = False
+        self._level: int = 0
         self._subsample_counter: int = 0
         self._rolling = _RollingCounter(clock=clock)
 
@@ -109,7 +114,8 @@ class LoadShedder:
     def state(self) -> LoadShedderState:
         dropped, eligible = self._rolling.totals()
         return LoadShedderState(
-            is_shedding=self._is_shedding,
+            is_shedding=self._level > 0,
+            shedding_level=self._level,
             messages_dropped=dropped,
             messages_eligible=eligible,
         )
@@ -125,32 +131,33 @@ class LoadShedder:
         if batch_produced:
             self._consecutive_batches += 1
             self._consecutive_idle = 0
-            if (
-                not self._is_shedding
-                and self._consecutive_batches >= _ACTIVATION_THRESHOLD
-            ):
-                self._is_shedding = True
+            if self._consecutive_batches >= _ACTIVATION_THRESHOLD:
+                self._level += 1
+                self._consecutive_batches = 0
         else:
             self._consecutive_idle += 1
             self._consecutive_batches = 0
-            if self._is_shedding and self._consecutive_idle >= _DEACTIVATION_THRESHOLD:
-                self._is_shedding = False
-                self._subsample_counter = 0
+            if self._level > 0 and self._consecutive_idle >= _DEACTIVATION_THRESHOLD:
+                self._level -= 1
+                self._consecutive_idle = 0
+                if self._level == 0:
+                    self._subsample_counter = 0
 
     def shed(self, messages: list[Message]) -> list[Message]:
         """Filter messages when shedding is active.
 
         When inactive, returns all messages unchanged.
-        When active, drops every other droppable message (50% reduction).
+        When active, keeps every ``2**level``-th droppable message.
         Non-droppable messages (control, f144 logs) are always preserved.
 
         Both active and inactive calls record eligible message counts into the
         rolling window so the drop rate reflects what fraction is being shed.
         """
         eligible = sum(1 for m in messages if m.stream.kind in DROPPABLE_KINDS)
-        if not self._is_shedding:
+        if self._level == 0:
             self._rolling.record(dropped=0, eligible=eligible)
             return messages
+        keep_every = 2**self._level
         dropped = 0
         result: list[Message] = []
         for msg in messages:
@@ -158,7 +165,7 @@ class LoadShedder:
                 result.append(msg)
             else:
                 self._subsample_counter += 1
-                if self._subsample_counter % 2 == 0:
+                if self._subsample_counter % keep_every == 0:
                     result.append(msg)
                 else:
                     dropped += 1

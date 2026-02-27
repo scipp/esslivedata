@@ -123,6 +123,7 @@ class ServiceStatus:
     messages_processed: int
     error: str | None = None
     is_shedding: bool = False
+    shedding_level: int = 0
     messages_dropped: int = 0
     messages_eligible: int = 0
 

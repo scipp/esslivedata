@@ -244,6 +244,12 @@ class TestLoadShedderState:
         _activate(shedder)
         assert shedder.state.is_shedding is True
 
+    def test_state_reports_shedding_level(self):
+        shedder = _make_shedder()
+        assert shedder.state.shedding_level == 0
+        _activate(shedder)
+        assert shedder.state.shedding_level == 1
+
     def test_state_is_snapshot(self):
         shedder = _make_shedder()
         state = shedder.state
@@ -251,3 +257,78 @@ class TestLoadShedderState:
         # Original snapshot unchanged (frozen dataclass)
         assert state.is_shedding is False
         assert shedder.state.is_shedding is True
+
+
+def _escalate_to(shedder: LoadShedder, level: int) -> None:
+    """Escalate the shedder to the given level."""
+    for _ in range(level):
+        for _ in range(_ACTIVATION_THRESHOLD):
+            shedder.report_batch_result(batch_produced=True)
+    assert shedder.state.shedding_level == level
+
+
+def _deescalate_by(shedder: LoadShedder, steps: int) -> None:
+    """De-escalate the shedder by the given number of steps."""
+    for _ in range(steps):
+        for _ in range(_DEACTIVATION_THRESHOLD):
+            shedder.report_batch_result(batch_produced=False)
+
+
+class TestMultiLevelEscalation:
+    def test_escalates_to_level_2(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 2)
+        assert shedder.state.shedding_level == 2
+
+    def test_escalates_to_level_3(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 3)
+        assert shedder.state.shedding_level == 3
+
+    def test_escalation_requires_threshold_per_level(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 1)
+        # Not enough batches for next level
+        for _ in range(_ACTIVATION_THRESHOLD - 1):
+            shedder.report_batch_result(batch_produced=True)
+        assert shedder.state.shedding_level == 1
+
+
+class TestMultiLevelDeescalation:
+    def test_deescalates_one_level_at_a_time(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 3)
+        _deescalate_by(shedder, 1)
+        assert shedder.state.shedding_level == 2
+
+    def test_deescalates_to_zero(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 2)
+        _deescalate_by(shedder, 2)
+        assert shedder.state.shedding_level == 0
+        assert shedder.state.is_shedding is False
+
+    def test_deescalation_requires_threshold_per_level(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, 2)
+        for _ in range(_DEACTIVATION_THRESHOLD - 1):
+            shedder.report_batch_result(batch_produced=False)
+        assert shedder.state.shedding_level == 2
+
+
+class TestMultiLevelDropRates:
+    @pytest.mark.parametrize(
+        ("level", "expected_kept"),
+        [
+            (1, 128),  # keep 1/2 of 256
+            (2, 64),  # keep 1/4 of 256
+            (3, 32),  # keep 1/8 of 256
+            (4, 16),  # keep 1/16 of 256
+        ],
+    )
+    def test_drop_rate_at_level(self, level, expected_kept):
+        shedder = _make_shedder()
+        _escalate_to(shedder, level)
+        messages = [_make_message(StreamKind.DETECTOR_EVENTS) for _ in range(256)]
+        result = shedder.shed(messages)
+        assert len(result) == expected_kept

@@ -784,12 +784,16 @@ class TestServiceStatusMessage:
     def test_round_trip_with_shedding_fields(self):
         """Test that shedding fields survive model round-trip."""
         original = make_service_status(
-            is_shedding=True, messages_dropped=42, messages_eligible=100
+            is_shedding=True,
+            shedding_level=2,
+            messages_dropped=42,
+            messages_eligible=100,
         )
         msg = ServiceStatusMessage.from_service_status(original)
         converted = msg.to_service_status()
 
         assert converted.is_shedding is True
+        assert converted.shedding_level == 2
         assert converted.messages_dropped == 42
         assert converted.messages_eligible == 100
 
@@ -800,6 +804,7 @@ class TestServiceStatusMessage:
         converted = msg.to_service_status()
 
         assert converted.is_shedding is False
+        assert converted.shedding_level == 0
         assert converted.messages_dropped == 0
         assert converted.messages_eligible == 0
 
@@ -833,12 +838,16 @@ class TestServiceStatusX5F2Integration:
     def test_service_status_x5f2_round_trip_with_shedding(self):
         """Test x5f2 round-trip includes load shedding fields."""
         original = make_service_status(
-            is_shedding=True, messages_dropped=1234, messages_eligible=3000
+            is_shedding=True,
+            shedding_level=3,
+            messages_dropped=1234,
+            messages_eligible=3000,
         )
         x5f2_data = service_status_to_x5f2(original)
         converted = x5f2_to_service_status(x5f2_data)
 
         assert converted.is_shedding is True
+        assert converted.shedding_level == 3
         assert converted.messages_dropped == 1234
         assert converted.messages_eligible == 3000
 

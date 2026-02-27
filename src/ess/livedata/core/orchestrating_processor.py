@@ -240,6 +240,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             messages_processed=self._messages_processed,
             error=self._service_error,
             is_shedding=shedder_state.is_shedding if shedder_state else False,
+            shedding_level=shedder_state.shedding_level if shedder_state else 0,
             messages_dropped=shedder_state.messages_dropped if shedder_state else 0,
             messages_eligible=shedder_state.messages_eligible if shedder_state else 0,
         )
@@ -262,6 +263,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
                 shedding=shedder_state.is_shedding if shedder_state else False,
+                shedding_level=(shedder_state.shedding_level if shedder_state else 0),
                 messages_dropped=(
                     shedder_state.messages_dropped if shedder_state else 0
                 ),
