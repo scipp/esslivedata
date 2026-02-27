@@ -13,6 +13,9 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
+    ErrorDisplay,
+    Line1dParams,
+    Line1dRenderMode,
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
@@ -284,6 +287,183 @@ class TestLinePlotter:
         )
         result = line_plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
+
+    def test_line_mode_produces_curve(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.line))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_points_mode_produces_scatter(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.points))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Scatter)
+
+    def test_histogram_mode_produces_histogram(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, 30.0], unit='m')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+
+    def test_line_with_error_bars(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_line_with_error_band(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.band)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.Spread)
+
+    def test_line_with_errors_none(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_points_with_error_bars(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.points, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Scatter)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_no_variances_never_shows_errors(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_histogram_mode_without_bin_edges_falls_back_to_curve(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_histogram_mode_with_errors(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.histogram, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, 30.0], unit='m')
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Histogram)
+        assert isinstance(elements[1], hv.ErrorBars)
+
+    def test_error_overlay_children_have_sizing_opts(self, data_key):
+        """Sizing opts must be on child elements, not just the overlay.
+
+        Bokeh needs responsive/aspect on individual plot elements to size the
+        figure correctly; applying them only to the composite Overlay causes
+        the plot to collapse to a small default size.
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        for child in result:
+            opts = child.opts.get().kwargs
+            assert opts.get('responsive') is True
 
 
 class TestSlicerPlotter:

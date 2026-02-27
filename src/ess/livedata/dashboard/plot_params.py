@@ -34,22 +34,40 @@ class PlotScale(enum.StrEnum):
     log = 'log'
 
 
-class Curve1dRenderMode(StrEnum):
-    """Enumeration of rendering modes for 1D curves."""
+class Line1dRenderMode(StrEnum):
+    """Enumeration of rendering modes for 1D plots."""
 
-    curve = 'curve'
+    line = 'line'
+    points = 'points'
     histogram = 'histogram'
 
 
-class Curve1dParams(pydantic.BaseModel):
-    """Parameters for 1D curve rendering."""
+class ErrorDisplay(StrEnum):
+    """Enumeration of error display modes for 1D plots."""
 
-    mode: Curve1dRenderMode = pydantic.Field(
-        default=Curve1dRenderMode.curve,
+    bars = 'bars'
+    band = 'band'
+    none = 'none'
+
+
+class Line1dParams(pydantic.BaseModel):
+    """Parameters for 1D line rendering."""
+
+    mode: Line1dRenderMode = pydantic.Field(
+        default=Line1dRenderMode.line,
         description=(
-            "Rendering mode: 'curve' for smooth lines or 'histogram' for step plot."
+            "Rendering mode: 'line' for smooth curves, 'points' for discrete "
+            "markers, or 'histogram' for step plot."
         ),
-        title="Curve Mode",
+        title="Line Mode",
+    )
+    errors: ErrorDisplay = pydantic.Field(
+        default=ErrorDisplay.bars,
+        description=(
+            "Error display mode: 'bars' for error whiskers, 'band' for filled "
+            "band, or 'none' to suppress errors."
+        ),
+        title="Error Display",
     )
 
 
@@ -225,9 +243,9 @@ class PlotDisplayParams1d(PlotParamsBase):
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
     )
-    curve: Curve1dParams = pydantic.Field(
-        default_factory=Curve1dParams,
-        description="1D curve rendering options.",
+    line: Line1dParams = pydantic.Field(
+        default_factory=Line1dParams,
+        description="1D line rendering options.",
     )
 
 
