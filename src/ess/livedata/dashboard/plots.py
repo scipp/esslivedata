@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import weakref
+from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
 import holoviews as hv
@@ -29,6 +30,10 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
+
+
+def _identity(x: str) -> str:
+    return x
 
 
 class PresenterBase:
@@ -350,7 +355,13 @@ class Plotter:
             return (1.0, 10.0)
         return None
 
-    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
+    def compute(
+        self,
+        data: dict[ResultKey, sc.DataArray],
+        *,
+        source_title: Callable[[str], str] | None = None,
+        **kwargs,
+    ) -> None:
         """
         Compute plot elements from input data and cache the result.
 
@@ -362,14 +373,25 @@ class Plotter:
         ----------
         data:
             Dictionary mapping ResultKeys to DataArrays.
+        source_title:
+            Callable that maps a source name to a display title. If None, the
+            raw source name is used.
         **kwargs:
             Additional keyword arguments passed to plot().
         """
+        resolve = source_title or _identity
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                label = f'{data_key.job_id.source_name}/{data_key.output_name}'
-                plot_element = self.plot(da, data_key, label=label, **kwargs)
+                name = resolve(data_key.job_id.source_name)
+                label = f'{name}/{data_key.output_name}'
+                plot_element = self.plot(
+                    da,
+                    data_key,
+                    label=label,
+                    source_display_name=name,
+                    **kwargs,
+                )
                 plots.append(plot_element)
         except Exception as e:
             plots = [
@@ -670,13 +692,19 @@ class BarsPlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        label: str = '',
+        source_display_name: str = '',
+        **kwargs,
     ) -> hv.Bars:
         """Create a bar chart from a 0D scipp DataArray."""
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        bar_label = data_key.job_id.source_name
+        bar_label = source_display_name or data_key.job_id.source_name
         value = float(data.value)
         bars = hv.Bars(
             [(bar_label, value)],

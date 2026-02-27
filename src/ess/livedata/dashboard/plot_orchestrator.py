@@ -662,7 +662,7 @@ class PlotOrchestrator:
             return
 
         try:
-            plotter.compute(data)
+            plotter.compute(data, source_title=self.get_source_title)
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()

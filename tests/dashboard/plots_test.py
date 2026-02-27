@@ -288,6 +288,28 @@ class TestLinePlotter:
         result = line_plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
 
+    def test_compute_uses_source_title_in_overlay_label(self, line_plotter, data_key):
+        """Test that compute uses source_title for overlay labels."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        line_plotter.compute({data_key: data}, source_title=lambda _: 'Friendly Name')
+        result = line_plotter.get_cached_state()
+        assert result.label == 'Friendly Name/test_result'
+
+    def test_compute_falls_back_to_source_name_without_title(
+        self, line_plotter, data_key
+    ):
+        """Test that compute uses raw source_name when no title resolver."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        line_plotter.compute({data_key: data})
+        result = line_plotter.get_cached_state()
+        assert result.label == 'test_source/test_result'
+
     def test_line_mode_produces_curve(self, data_key):
         params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.line))
         plotter = plots.LinePlotter.from_params(params)
@@ -1038,12 +1060,23 @@ class TestBarsPlotter:
         # The vdims column is named after output_name
         assert bar_data[data_key.output_name].iloc[0] == 42.0
 
-    def test_plot_uses_source_name_as_label(self, bars_plotter, scalar_data, data_key):
-        """Test that the bar is labeled with source_name."""
+    def test_plot_uses_source_name_as_default_label(
+        self, bars_plotter, scalar_data, data_key
+    ):
+        """Test that the bar is labeled with source_name when no title resolver."""
         result = bars_plotter.plot(scalar_data, data_key)
         bar_data = result.data
-        # The label should contain the source_name
         assert data_key.job_id.source_name in bar_data['source'].iloc[0]
+
+    def test_plot_uses_source_display_name_when_provided(
+        self, bars_plotter, scalar_data, data_key
+    ):
+        """Test that the bar uses the provided display name."""
+        result = bars_plotter.plot(
+            scalar_data, data_key, source_display_name='My Title'
+        )
+        bar_data = result.data
+        assert bar_data['source'].iloc[0] == 'My Title'
 
     def test_plot_uses_output_name_as_vdims(self, bars_plotter, scalar_data):
         """Test that output_name is used as the vdims column name."""

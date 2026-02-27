@@ -55,10 +55,13 @@ class FakePlotter:
         """Return a fake presenter."""
         return FakePresenter(self)
 
-    def compute(self, data):
+    def compute(self, data, **kwargs):
         result = FakePlot()
         self._cached_state = result
         return result
+
+    def mark_presenters_dirty(self):
+        pass
 
     def get_cached_state(self):
         return self._cached_state
