@@ -1420,6 +1420,34 @@ class TestPushFailureCascade:
         assert len(results) == 1
         assert results[0].error_message is None
 
+    def test_finalize_failure_retries_without_new_push(
+        self, fake_job_factory, base_workflow_config
+    ):
+        """Successful push followed by finalize failure retries on next cycle."""
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job("test_source", base_workflow_config)
+
+        processor = fake_job_factory.processors[job_id]
+
+        data = WorkflowData(
+            start_time=100,
+            end_time=200,
+            data={StreamId(name="test_source"): sc.scalar(42.0)},
+        )
+        manager.push_data(data)
+
+        # Finalize fails (e.g., waiting for auxiliary data)
+        processor.should_fail_finalize = True
+        results = manager.compute_results()
+        assert len(results) == 1
+        assert results[0].error_message is not None
+
+        # Fix finalize and retry without pushing new data
+        processor.should_fail_finalize = False
+        results = manager.compute_results()
+        assert len(results) == 1
+        assert results[0].error_message is None
+
 
 class TestJobFactoryRender:
     """Tests for JobFactory calling render() on aux sources."""
