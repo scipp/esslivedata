@@ -309,6 +309,7 @@ class TestLinePlotter:
         line_plotter.compute({data_key: data})
         result = line_plotter.get_cached_state()
         assert result.label == 'test_source/test_result'
+
     def test_line_mode_produces_curve(self, data_key):
         params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.line))
         plotter = plots.LinePlotter.from_params(params)
