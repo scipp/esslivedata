@@ -230,7 +230,7 @@ class TestInterval:
         assert interval.unit == 'mm'
 
     def test_validation_bounds(self):
-        with pytest.raises(ValidationError, match="min .* must be < max"):
+        with pytest.raises(ValidationError, match=r"min .* must be < max"):
             models.Interval(min=20.0, max=10.0, unit='mm')
 
     def test_to_bounds_with_unit(self):
@@ -270,14 +270,14 @@ class TestRectangleROI:
         assert roi.y.unit == 'mm'
 
     def test_validation_x_bounds(self):
-        with pytest.raises(ValidationError, match="min .* must be < max"):
+        with pytest.raises(ValidationError, match=r"min .* must be < max"):
             models.RectangleROI(
                 x=models.Interval(min=20.0, max=10.0, unit='mm'),
                 y=models.Interval(min=5.0, max=15.0, unit='mm'),
             )
 
     def test_validation_y_bounds(self):
-        with pytest.raises(ValidationError, match="min .* must be < max"):
+        with pytest.raises(ValidationError, match=r"min .* must be < max"):
             models.RectangleROI(
                 x=models.Interval(min=10.0, max=20.0, unit='mm'),
                 y=models.Interval(min=15.0, max=5.0, unit='mm'),

@@ -11,7 +11,7 @@ See https://backend.orbit.dtu.dk/ws/portalfiles/portal/409340969/RSI25-AR-00125.
 for full instrument details.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 import pydantic
@@ -31,7 +31,7 @@ from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 
 # Arc energies in meV
-class ArcEnergy(str, Enum):
+class ArcEnergy(StrEnum):
     """Arc energy transfer values."""
 
     ARC_2_7 = '2.7 meV'
@@ -156,7 +156,7 @@ class BifrostQMapParams(pydantic.BaseModel):
     )
 
 
-class QAxisOption(str, Enum):
+class QAxisOption(StrEnum):
     Qx = 'Qx'
     Qy = 'Qy'
     Qz = 'Qz'

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import time
 import weakref
-from typing import Any, cast
+from collections.abc import Callable
+from typing import Any, ClassVar, cast
 
 import holoviews as hv
 import numpy as np
@@ -27,7 +28,7 @@ from .plot_params import (
     PlotScaleParams2d,
     TickParams,
 )
-from .scipp_to_holoviews import to_holoviews
+from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
 
 
@@ -48,6 +49,10 @@ def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
     if duration_s.value <= 0:
         return da
     return da / duration_s
+
+
+def _identity(x: str) -> str:
+    return x
 
 
 class PresenterBase:
@@ -374,7 +379,13 @@ class Plotter:
             return (1.0, 10.0)
         return None
 
-    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
+    def compute(
+        self,
+        data: dict[ResultKey, sc.DataArray],
+        *,
+        source_title: Callable[[str], str] | None = None,
+        **kwargs,
+    ) -> None:
         """
         Compute plot elements from input data and cache the result.
 
@@ -386,17 +397,28 @@ class Plotter:
         ----------
         data:
             Dictionary mapping ResultKeys to DataArrays.
+        source_title:
+            Callable that maps a source name to a display title. If None, the
+            raw source name is used.
         **kwargs:
             Additional keyword arguments passed to plot().
         """
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
+        resolve = source_title or _identity
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                label = f'{data_key.job_id.source_name}/{data_key.output_name}'
-                plot_element = self.plot(da, data_key, label=label, **kwargs)
+                name = resolve(data_key.job_id.source_name)
+                label = f'{name}/{data_key.output_name}'
+                plot_element = self.plot(
+                    da,
+                    data_key,
+                    label=label,
+                    source_display_name=name,
+                    **kwargs,
+                )
                 plots.append(plot_element)
         except Exception as e:
             plots = [
@@ -509,14 +531,19 @@ class Plotter:
 
 
 class LinePlotter(Plotter):
-    """Plotter for line plots from scipp DataArrays."""
+    """Plotter for 1D plots from scipp DataArrays.
+
+    Supports line, scatter, and histogram rendering modes with optional
+    error display (bars, band, or none).
+    """
 
     def __init__(
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
         *,
-        as_histogram: bool = False,
+        mode: str = 'line',
+        errors: str = 'bars',
         **kwargs,
     ):
         """
@@ -528,14 +555,16 @@ class LinePlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
-        as_histogram:
-            If True, preserve bin edges and render as step-style histogram.
-            If False (default), convert bin edges to midpoints for smooth curves.
+        mode:
+            Rendering mode: 'line', 'points', or 'histogram'.
+        errors:
+            Error display mode: 'bars', 'band', or 'none'.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
-        self._as_histogram = as_histogram
+        self._mode = mode
+        self._errors = errors
         self._base_opts: dict[str, Any] = {
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
@@ -545,8 +574,6 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
-        from .plot_params import Curve1dRenderMode
-
         rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
@@ -554,22 +581,54 @@ class LinePlotter(Plotter):
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
+            mode=params.line.mode,
+            errors=params.line.errors,
             normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
 
+    _BASE_METHOD: ClassVar[dict[str, str]] = {
+        'line': 'curve',
+        'points': 'scatter',
+        'histogram': 'histogram',
+    }
+    _ERROR_METHOD: ClassVar[dict[str, str]] = {
+        'bars': 'error_bars',
+        'band': 'spread',
+    }
+
+    _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
+
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
-    ) -> hv.Curve | hv.Histogram:
-        """Create a line or histogram plot from a scipp DataArray."""
-        if self._as_histogram:
+    ) -> hv.Element | hv.Overlay:
+        """Create a 1D plot from a scipp DataArray."""
+        converter = HvConverter1d(data)
+        if self._mode == 'histogram' and converter.has_edges:
+            mode = 'histogram'
             da = data
         else:
+            mode = self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK
             da = self._convert_bin_edges_to_midpoints(data)
-        framewise = self._update_autoscaler_and_get_framewise(da, data_key)
+            converter = HvConverter1d(da)
 
-        plot = to_holoviews(da, label=label)
-        return plot.opts(framewise=framewise, **self._base_opts)
+        framewise = self._update_autoscaler_and_get_framewise(da, data_key)
+        opts = dict(framewise=framewise, **self._base_opts)
+
+        base_method = getattr(converter, self._BASE_METHOD[mode])
+        base = base_method(label=label).opts(**opts)
+
+        if da.variances is not None and self._errors != 'none':
+            if mode == 'histogram':
+                # Error elements need midpoint coords (N values, not N+1 edges)
+                converter = HvConverter1d(self._convert_bin_edges_to_midpoints(da))
+            error_method = getattr(converter, self._ERROR_METHOD[self._errors])
+            error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
+            # Apply sizing opts to child elements individually. Bokeh needs
+            # responsive/aspect on each element to size the figure correctly;
+            # applying them only to the composite Overlay is not sufficient.
+            return base.opts(**self._sizing_opts) * error_element
+
+        return base
 
 
 class ImagePlotter(Plotter):
@@ -665,13 +724,19 @@ class BarsPlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        label: str = '',
+        source_display_name: str = '',
+        **kwargs,
     ) -> hv.Bars:
         """Create a bar chart from a 0D scipp DataArray."""
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        bar_label = data_key.job_id.source_name
+        bar_label = source_display_name or data_key.job_id.source_name
         value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
         vdim = hv.Dimension(data_key.output_name or 'values', unit=unit)

@@ -98,6 +98,14 @@ class DspacingUnit(StrEnum):
     NANOMETER = 'nm'
 
 
+class LengthUnit(StrEnum):
+    """Allowed units for length."""
+
+    METER = 'm'
+    CENTIMETER = 'cm'
+    MILLIMETER = 'mm'
+
+
 class AngleUnit(StrEnum):
     """Allowed units for angles."""
 
@@ -133,12 +141,9 @@ class TOARange(RangeModel):
     )
 
     @property
-    def range_ns(self) -> tuple[sc.Variable, sc.Variable]:
-        """Time window range in nanoseconds as a scipp scalar."""
-        return (
-            self.get_start().to(unit='ns'),
-            self.get_stop().to(unit='ns'),
-        )
+    def range(self) -> tuple[sc.Variable, sc.Variable]:
+        """Time of arrival range as a tuple of scipp scalars."""
+        return (self.get_start(), self.get_stop())
 
 
 class TOAEdges(EdgesModel):

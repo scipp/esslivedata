@@ -10,7 +10,7 @@ from enum import StrEnum
 import pydantic
 
 
-class WindowMode(str, enum.Enum):
+class WindowMode(enum.StrEnum):
     """Enumeration of extraction modes."""
 
     latest = 'latest'
@@ -27,40 +27,58 @@ class WindowAggregation(StrEnum):
     mean = 'mean'
 
 
-class PlotScale(str, enum.Enum):
+class PlotScale(enum.StrEnum):
     """Enumeration of plot scales."""
 
     linear = 'linear'
     log = 'log'
 
 
-class Curve1dRenderMode(StrEnum):
-    """Enumeration of rendering modes for 1D curves."""
+class Line1dRenderMode(StrEnum):
+    """Enumeration of rendering modes for 1D plots."""
 
-    curve = 'curve'
+    line = 'line'
+    points = 'points'
     histogram = 'histogram'
 
 
-class Curve1dParams(pydantic.BaseModel):
-    """Parameters for 1D curve rendering."""
+class ErrorDisplay(StrEnum):
+    """Enumeration of error display modes for 1D plots."""
 
-    mode: Curve1dRenderMode = pydantic.Field(
-        default=Curve1dRenderMode.curve,
+    bars = 'bars'
+    band = 'band'
+    none = 'none'
+
+
+class Line1dParams(pydantic.BaseModel):
+    """Parameters for 1D line rendering."""
+
+    mode: Line1dRenderMode = pydantic.Field(
+        default=Line1dRenderMode.line,
         description=(
-            "Rendering mode: 'curve' for smooth lines or 'histogram' for step plot."
+            "Rendering mode: 'line' for smooth curves, 'points' for discrete "
+            "markers, or 'histogram' for step plot."
         ),
-        title="Curve Mode",
+        title="Line Mode",
+    )
+    errors: ErrorDisplay = pydantic.Field(
+        default=ErrorDisplay.bars,
+        description=(
+            "Error display mode: 'bars' for error whiskers, 'band' for filled "
+            "band, or 'none' to suppress errors."
+        ),
+        title="Error Display",
     )
 
 
-class CombineMode(str, enum.Enum):
+class CombineMode(enum.StrEnum):
     """Enumeration of combine modes for multiple datasets."""
 
     overlay = 'overlay'
     layout = 'layout'
 
 
-class PlotAspectType(str, enum.Enum):
+class PlotAspectType(enum.StrEnum):
     """Enumeration of aspect types."""
 
     square = 'Square'
@@ -70,7 +88,7 @@ class PlotAspectType(str, enum.Enum):
     free = 'Free'
 
 
-class StretchMode(str, enum.Enum):
+class StretchMode(enum.StrEnum):
     """Stretch mode for responsive plots with fixed aspect.
 
     When using a fixed aspect ratio, choose how the plot fills its container:
@@ -225,9 +243,9 @@ class PlotDisplayParams1d(PlotParamsBase):
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
     )
-    curve: Curve1dParams = pydantic.Field(
-        default_factory=Curve1dParams,
-        description="1D curve rendering options.",
+    line: Line1dParams = pydantic.Field(
+        default_factory=Line1dParams,
+        description="1D line rendering options.",
     )
 
 

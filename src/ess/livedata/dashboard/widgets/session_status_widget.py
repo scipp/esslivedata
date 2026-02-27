@@ -70,6 +70,7 @@ class SessionStatusRow:
         session_id: SessionId,
         is_current_session: bool,
         seconds_since_heartbeat: float | None,
+        username: str | None = None,
     ) -> None:
         # Create stable pane references
         self._session_id_pane = pn.pane.HTML(
@@ -97,18 +98,23 @@ class SessionStatusRow:
         )
 
         # Set initial content
-        self.update(session_id, is_current_session, seconds_since_heartbeat)
+        self.update(session_id, is_current_session, seconds_since_heartbeat, username)
 
     def update(
         self,
         session_id: SessionId,
         is_current_session: bool,
         seconds_since_heartbeat: float | None,
+        username: str | None = None,
     ) -> None:
         """Update the row content in-place."""
-        # Session ID (truncated)
         session_id_short = session_id[:12]
-        self._session_id_pane.object = f"<code>{session_id_short}</code>"
+        if username:
+            self._session_id_pane.object = (
+                f"{username} <code>({session_id_short})</code>"
+            )
+        else:
+            self._session_id_pane.object = f"<code>{session_id_short}</code>"
 
         # Determine if session is stale (no recent heartbeat)
         threshold = SessionUIConstants.STALE_DISPLAY_THRESHOLD_SECONDS
@@ -179,7 +185,7 @@ class SessionStatusWidget:
         )
         self._table_header = pn.Row(
             pn.pane.HTML(
-                f'<span style="{header_style}">Session ID</span>',
+                f'<span style="{header_style}">Session</span>',
                 width=SessionUIConstants.SESSION_ID_WIDTH,
                 margin=SessionUIConstants.STANDARD_MARGIN,
             ),
@@ -278,16 +284,18 @@ class SessionStatusWidget:
         # Update existing rows and add new ones
         for session_id in sorted_sessions:
             is_current = session_id == self._current_session_id
+            info = self._session_registry.get_session_info(session_id)
             seconds_ago = self._session_registry.get_seconds_since_heartbeat(session_id)
+            username = info.username if info is not None else None
 
             if session_id in self._session_rows:
                 # Update existing row in-place
                 self._session_rows[session_id].update(
-                    session_id, is_current, seconds_ago
+                    session_id, is_current, seconds_ago, username
                 )
             else:
                 # Create new row
-                row = SessionStatusRow(session_id, is_current, seconds_ago)
+                row = SessionStatusRow(session_id, is_current, seconds_ago, username)
                 self._session_rows[session_id] = row
                 self._session_list.append(row.panel)
 

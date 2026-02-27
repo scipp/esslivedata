@@ -55,10 +55,13 @@ class FakePlotter:
         """Return a fake presenter."""
         return FakePresenter(self)
 
-    def compute(self, data):
+    def compute(self, data, **kwargs):
         result = FakePlot()
         self._cached_state = result
         return result
+
+    def mark_presenters_dirty(self):
+        pass
 
     def get_cached_state(self):
         return self._cached_state
@@ -1591,9 +1594,9 @@ class TestSourceNameFiltering:
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Plotter created when workflow commits (regardless of data)
-        assert (
-            fake_plotting_controller.call_count() == 1
-        ), "Plotter should be created when workflow commits"
+        assert fake_plotting_controller.call_count() == 1, (
+            "Plotter should be created when workflow commits"
+        )
         calls = fake_plotting_controller.get_calls()
         assert calls[0]['_from_create_plotter'] is True
 
@@ -1642,9 +1645,9 @@ class TestSourceNameFiltering:
         fake_data_service[result_key_A] = sc.scalar(1.0)
 
         # Plotter SHOULD be created with partial data (progressive plotting)
-        assert (
-            fake_plotting_controller.call_count() == 1
-        ), "Plotter should be created as soon as first source has data"
+        assert fake_plotting_controller.call_count() == 1, (
+            "Plotter should be created as soon as first source has data"
+        )
         calls = fake_plotting_controller.get_calls()
         # With multi-session architecture, create_plotter is called
         assert calls[0]['_from_create_plotter'] is True
@@ -1705,9 +1708,9 @@ class TestSourceNameFiltering:
         add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
 
         # Plot should be created immediately (data already exists)
-        assert (
-            fake_plotting_controller.call_count() == 1
-        ), "Plot should be created immediately when subscribing to running job"
+        assert fake_plotting_controller.call_count() == 1, (
+            "Plot should be created immediately when subscribing to running job"
+        )
 
     def test_late_subscription_creates_plotter_immediately(
         self,
@@ -1741,9 +1744,9 @@ class TestSourceNameFiltering:
         add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
 
         # Plotter is created immediately (workflow already running)
-        assert (
-            fake_plotting_controller.call_count() == 1
-        ), "Plotter should be created when subscribing to running workflow"
+        assert fake_plotting_controller.call_count() == 1, (
+            "Plotter should be created when subscribing to running workflow"
+        )
 
 
 class TestPlotConfigIsStatic:

@@ -3,9 +3,8 @@
 """
 Tests for monitor source name indexing.
 
-These tests verify that monitor source names (cbm1, cbm2, ...) are correctly
-mapped to internal monitor names. The cbm source names from production Kafka
-start at cbm1, not cbm0.
+These tests verify that monitor source names (cbm0, cbm1, cbm2, ...) are
+correctly mapped to internal monitor names.
 
 See https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
 """
@@ -15,14 +14,19 @@ import pytest
 from ess.livedata.config import streams
 from ess.livedata.config.instruments import available_instruments
 
+# LOKI uses 0-based cbm source names (cbm0, cbm1, ...), verified against
+# NeXus data file ``coda_loki_999999_00019778.hdf``.
+_INSTRUMENTS_WITH_CBM0 = {'loki'}
 
-@pytest.mark.parametrize('instrument', available_instruments())
+
+@pytest.mark.parametrize(
+    'instrument',
+    [i for i in available_instruments() if i not in _INSTRUMENTS_WITH_CBM0],
+)
 def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
-    """Production monitor mappings should not include cbm0.
+    """Most instruments use 1-based cbm source names (cbm1, cbm2, ...).
 
-    The cbm (common beam monitor) source names in production start at cbm1,
-    not cbm0. Having cbm0 in the mapping would create a dead entry with no
-    producer.
+    LOKI is excluded because it uses 0-based indexing.
     """
     stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
     cbm_source_names = [
@@ -31,34 +35,31 @@ def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
         if key.source_name.startswith('cbm')
     ]
     assert 'cbm0' not in cbm_source_names, (
-        f"Monitor mapping for {instrument} includes cbm0, but production uses "
-        "1-indexed cbm source names (cbm1, cbm2, ...)"
+        f"Monitor mapping for {instrument} includes cbm0, but this instrument "
+        "is expected to use 1-indexed cbm source names (cbm1, cbm2, ...)"
     )
 
 
-@pytest.mark.parametrize('instrument', available_instruments())
-def test_production_monitors_start_at_cbm1(instrument: str) -> None:
-    """Production monitor mappings should start at cbm1.
+def test_loki_monitors_correctly_mapped() -> None:
+    """LOKI monitors use 0-based cbm source names matching NeXus group indices.
 
-    For instruments with monitors, the first monitor should be mapped to cbm1.
+    Verified against NeXus data file ``coda_loki_999999_00019778.hdf``:
+    cbm0 -> beam_monitor_0, ..., cbm4 -> beam_monitor_4.
     """
-    stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
-    if not stream_mapping.monitors:
-        pytest.skip(f"No monitors configured for {instrument}")
-
-    cbm_source_names = sorted(
-        [
-            key.source_name
-            for key in stream_mapping.monitors
-            if key.source_name.startswith('cbm')
-        ],
-        key=lambda x: int(x[3:]),  # Sort by numeric suffix
-    )
-    if cbm_source_names:
-        assert cbm_source_names[0] == 'cbm1', (
-            f"First cbm source name for {instrument} is {cbm_source_names[0]}, "
-            "expected cbm1"
-        )
+    stream_mapping = streams.get_stream_mapping(instrument='loki', dev=False)
+    actual_mapping = {
+        key.source_name: value
+        for key, value in stream_mapping.monitors.items()
+        if key.source_name.startswith('cbm')
+    }
+    expected_mapping = {
+        'cbm0': 'beam_monitor_0',
+        'cbm1': 'beam_monitor_1',
+        'cbm2': 'beam_monitor_2',
+        'cbm3': 'beam_monitor_3',
+        'cbm4': 'beam_monitor_4',
+    }
+    assert actual_mapping == expected_mapping
 
 
 def test_bifrost_monitors_correctly_mapped() -> None:
@@ -107,8 +108,8 @@ def test_dream_monitors_use_correct_cbm_indices() -> None:
     }
 
     # First monitor should be cbm1 -> monitor_bunker (consistent 1-based indexing)
-    assert (
-        cbm_to_monitor.get('cbm1') == 'monitor_bunker'
-    ), "DREAM's first monitor (monitor_bunker) should be mapped to cbm1"
+    assert cbm_to_monitor.get('cbm1') == 'monitor_bunker', (
+        "DREAM's first monitor (monitor_bunker) should be mapped to cbm1"
+    )
     # cbm0 should not exist
     assert 'cbm0' not in cbm_to_monitor, "cbm0 should not exist in DREAM's mapping"

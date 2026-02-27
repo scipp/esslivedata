@@ -27,7 +27,13 @@ from ess.livedata.handlers.monitor_workflow_types import (
     MonitorHistogram,
     WindowMonitorHistogram,
 )
-from ess.livedata.parameter_models import TimeUnit, TOAEdges, TOFEdges, TOFRange
+from ess.livedata.parameter_models import (
+    TimeUnit,
+    TOAEdges,
+    TOARange,
+    TOFEdges,
+    TOFRange,
+)
 
 
 class TestMonitorDataParams:
@@ -99,17 +105,33 @@ class TestMonitorDataParams:
         )
         assert params.get_active_range() is None
 
-    def test_get_active_range_tof_mode(self):
-        """Test get_active_range returns TOF range in TOF mode."""
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_get_active_range_toa_mode_preserves_user_unit(self, unit: TimeUnit):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=TimeUnit.MS),
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=unit),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None
         low, high = range_filter
-        assert low.unit == 'ms'
-        assert high.unit == 'ms'
+        assert low.unit == unit.value
+        assert high.unit == unit.value
+
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_get_active_range_tof_mode_preserves_user_unit(self, unit: TimeUnit):
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == unit.value
+        assert high.unit == unit.value
 
 
 class TestMonitorWorkflowProviders:
@@ -212,9 +234,8 @@ class TestBuildMonitorWorkflow:
         workflow = build_monitor_workflow()
 
         # Create test data
-        from scippnexus import NXmonitor
-
         from ess.reduce.nexus.types import RawMonitor, SampleRun
+        from scippnexus import NXmonitor
 
         toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0, 4.0, 5.0], unit='ns')
         weights = sc.ones(sizes={'event': 5}, dtype='float64', unit='counts')

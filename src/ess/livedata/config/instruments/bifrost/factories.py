@@ -34,8 +34,6 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports
     import sciline
     import scippnexus as snx
-    from scippnexus import NXdetector
-
     from ess.bifrost.data import (
         simulated_elastic_incoherent_with_phonon,
         tof_lookup_table_simulation,
@@ -47,13 +45,6 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
-    from ess.livedata.handlers.accumulators import LatestValue
-    from ess.livedata.handlers.detector_view import (
-        DetectorViewFactory,
-        InstrumentDetectorSource,
-        LogicalViewConfig,
-    )
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -67,6 +58,15 @@ def setup_factories(instrument: Instrument) -> None:
         SampleAngle,
         TimeOfFlightLookupTableFilename,
     )
+    from scippnexus import NXdetector
+
+    from ess.livedata.handlers.accumulators import LatestValue
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        InstrumentDetectorSource,
+        LogicalViewConfig,
+    )
+    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     from .streams import detector_number
 
@@ -326,9 +326,6 @@ def _create_base_reduction_workflow():
     # Lazy imports
     from typing import NewType
 
-    from scippnexus import NXdetector
-
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
     from ess.reduce.nexus.types import (
         EmptyDetector,
         Filename,
@@ -337,6 +334,9 @@ def _create_base_reduction_workflow():
         SampleRun,
     )
     from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
+    from scippnexus import NXdetector
+
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
     _detector_names = [
         f'{123 + 4 * (arc - 1) + (5 * 4 + 1) * (channel - 1)}'

@@ -6,8 +6,13 @@ import pytest
 
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+from ess.livedata.handlers.detector_view_specs import (
+    CoordinateModeSettings,
+    DetectorROIAuxSources,
+    DetectorViewParams,
+)
 from ess.livedata.handlers.workflow_factory import SpecHandle
+from ess.livedata.parameter_models import TimeUnit, TOARange, TOFRange
 
 
 class TestRegisterDetectorViewSpecs:
@@ -255,3 +260,42 @@ class TestDetectorROIAuxSources:
             rendered_high_res['roi_rectangle']
             == f"high_resolution/{shared_job_number}/roi_rectangle"
         )
+
+
+class TestDetectorViewParamsGetActiveRange:
+    """Tests for DetectorViewParams.get_active_range() unit handling."""
+
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_toa_range_preserves_user_unit(self, unit: TimeUnit):
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=unit),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == unit.value
+        assert high.unit == unit.value
+
+    @pytest.mark.parametrize(
+        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+    )
+    def test_tof_range_preserves_user_unit(self, unit: TimeUnit):
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == unit.value
+        assert high.unit == unit.value
+
+    def test_disabled_range_returns_none(self):
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=False),
+        )
+        assert params.get_active_range() is None

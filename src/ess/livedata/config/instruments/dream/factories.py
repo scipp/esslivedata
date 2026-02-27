@@ -17,18 +17,8 @@ from .specs import DreamMonitorDataParams, PowderWorkflowParams
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
     # Lazy imports - all expensive imports go inside the function
-    from scippnexus import NXdetector
-
     import ess.powder.types  # noqa: F401
-    from ess import dream, powder
     from ess.dream import DreamPowderWorkflow
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-    from ess.livedata.handlers.detector_view import (
-        DetectorViewFactory,
-        GeometricViewConfig,
-        NeXusDetectorSource,
-    )
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -38,6 +28,16 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         VanadiumRun,
     )
+    from scippnexus import NXdetector
+
+    from ess import dream, powder
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
+    )
+    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     from .specs import DreamDetectorViewParams
 

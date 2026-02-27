@@ -29,7 +29,7 @@ hv.extension('bokeh')
 
 def _make_line_renderer() -> LinePlotter:
     """Create a LinePlotter for testing."""
-    return LinePlotter(scale_opts=PlotScaleParams(), as_histogram=True)
+    return LinePlotter(scale_opts=PlotScaleParams(), mode='histogram')
 
 
 def _make_result_key(source_name: str) -> ResultKey:

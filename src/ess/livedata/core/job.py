@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
-from enum import Enum, StrEnum, auto
+from enum import StrEnum, auto
 from typing import Any
 
 import scipp as sc
@@ -90,7 +90,7 @@ class JobReply:
         return self.error_message is not None
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     scheduled = "scheduled"
     active = "active"
     paused = "paused"

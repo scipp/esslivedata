@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for JobOrchestrator initialization and config management."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import pydantic
@@ -45,7 +45,7 @@ class ParamsWithRequiredFields(pydantic.BaseModel):
     required_value: float  # No default!
 
 
-class SampleEnum(str, Enum):
+class SampleEnum(StrEnum):
     """Sample enum for verifying enum serialization."""
 
     OPTION_A = 'option_a'

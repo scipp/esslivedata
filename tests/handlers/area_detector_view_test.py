@@ -2,9 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pytest
 import scipp as sc
+from ess.reduce.live import raw
 
 from ess.livedata.handlers.area_detector_view import AreaDetectorView
-from ess.reduce.live import raw
 
 
 class TestAreaDetectorViewFactory:

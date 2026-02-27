@@ -8,8 +8,6 @@ from typing import Literal
 
 import sciline
 import scipp as sc
-from scippnexus import NXmonitor
-
 from ess.reduce.nexus.types import (
     EmptyMonitor,
     Filename,
@@ -20,6 +18,7 @@ from ess.reduce.nexus.types import (
 )
 from ess.reduce.time_of_flight import GenericTofWorkflow
 from ess.reduce.time_of_flight.types import TofLookupTableFilename, TofMonitor
+from scippnexus import NXmonitor
 
 from .monitor_workflow_types import (
     CumulativeMonitorHistogram,
