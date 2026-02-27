@@ -122,6 +122,8 @@ class ServiceStatus:
     active_job_count: int
     messages_processed: int
     error: str | None = None
+    is_shedding: bool = False
+    messages_dropped: int = 0
 
 
 def _add_time_coords(
