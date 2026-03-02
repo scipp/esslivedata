@@ -257,6 +257,14 @@ class PowderReductionOutputs(WorkflowOutputsBase):
         title='I(d, 2θ)',
         description='Focussed intensity as a function of d-spacing and two-theta.',
     )
+    focussed_data_tof: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['tof'], shape=[0], unit='dimensionless'),
+            coords={'tof': sc.arange('tof', 0, unit='us')},
+        ),
+        title='I(TOF)',
+        description='Focussed intensity as a function of time-of-flight.',
+    )
 
 
 class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
@@ -284,6 +292,16 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
         description=(
             'Normalized intensity as a function of d-spacing and two-theta '
             '(vanadium-corrected).'
+        ),
+    )
+    i_of_tof: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['tof'], shape=[0], unit='counts'),
+            coords={'tof': sc.arange('tof', 0, unit='us')},
+        ),
+        title='Normalized I(TOF)',
+        description=(
+            'Normalized intensity as a function of time-of-flight (vanadium-corrected).'
         ),
     )
 

@@ -18,7 +18,7 @@ attrs==25.4.0
     #   referencing
 autodoc-pydantic==2.2.0
     # via -r docs.in
-babel==2.17.0
+babel==2.18.0
     # via
     #   pydata-sphinx-theme
     #   sphinx
@@ -32,7 +32,7 @@ comm==0.2.3
     # via
     #   ipykernel
     #   ipywidgets
-debugpy==1.8.19
+debugpy==1.8.20
     # via ipykernel
 decorator==5.2.1
     # via ipython
@@ -52,11 +52,11 @@ imagesize==1.4.1
     # via sphinx
 ipydatawidgets==4.3.5
     # via pythreejs
-ipykernel==7.1.0
+ipykernel==7.2.0
     # via -r docs.in
-ipympl==0.9.8
+ipympl==0.10.0
     # via -r docs.in
-ipython==9.9.0
+ipython==9.10.0
     # via
     #   -r docs.in
     #   ipykernel
@@ -108,7 +108,7 @@ myst-parser==5.0.0
     # via -r docs.in
 nbclient==0.10.4
     # via nbconvert
-nbconvert==7.16.6
+nbconvert==7.17.0
     # via nbsphinx
 nbformat==5.10.4
     # via
@@ -119,17 +119,17 @@ nbsphinx==0.9.8
     # via -r docs.in
 nest-asyncio==1.6.0
     # via ipykernel
-pandas==2.3.3
+pandas==3.0.1
     # via -r docs.in
 pandocfilters==1.5.1
     # via nbconvert
-parso==0.8.5
+parso==0.8.6
     # via jedi
 pexpect==4.9.0
     # via ipython
 prompt-toolkit==3.0.52
     # via ipython
-psutil==7.2.1
+psutil==7.2.2
     # via
     #   -r docs.in
     #   ipykernel
@@ -137,9 +137,9 @@ ptyprocess==0.7.0
     # via pexpect
 pure-eval==0.2.3
     # via stack-data
-pyarrow==23.0.0
+pyarrow==23.0.1
     # via -r docs.in
-pydantic-settings==2.12.0
+pydantic-settings==2.13.1
     # via autodoc-pydantic
 pydata-sphinx-theme==0.16.1
     # via -r docs.in
@@ -151,12 +151,10 @@ pygments==2.19.2
     #   nbconvert
     #   pydata-sphinx-theme
     #   sphinx
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via pydantic-settings
 pythreejs==2.4.2
     # via -r docs.in
-pytz==2025.2
-    # via pandas
 pyzmq==27.1.0
     # via
     #   ipykernel
@@ -166,10 +164,6 @@ referencing==0.37.0
     #   jsonschema
     #   jsonschema-specifications
 roman-numerals==4.1.0
-    # via
-    #   roman-numerals-py
-    #   sphinx
-roman-numerals-py==4.1.0
     # via sphinx
 rpds-py==0.30.0
     # via
@@ -177,7 +171,7 @@ rpds-py==0.30.0
     #   referencing
 snowballstemmer==3.0.1
     # via sphinx
-soupsieve==2.8.1
+soupsieve==2.8.3
     # via beautifulsoup4
 sphinx==9.0.4
     # via
@@ -235,9 +229,7 @@ traitlets==5.14.3
     #   traittypes
 traittypes==0.2.3
     # via ipydatawidgets
-tzdata==2025.3
-    # via pandas
-wcwidth==0.2.14
+wcwidth==0.6.0
     # via prompt-toolkit
 webencodings==0.5.1
     # via
