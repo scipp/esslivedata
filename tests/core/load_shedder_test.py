@@ -40,7 +40,7 @@ def _make_shedder(clock: FakeClock | None = None) -> LoadShedder:
 
 def _activate(shedder: LoadShedder) -> None:
     for _ in range(_ACTIVATION_THRESHOLD):
-        shedder.report_batch_result(batch_produced=True)
+        shedder.report_batch_result(batch_message_count=10)
     assert shedder.state.is_shedding is True
 
 
@@ -66,17 +66,17 @@ class TestLoadShedderActivation:
     def test_does_not_activate_below_threshold(self):
         shedder = _make_shedder()
         for _ in range(_ACTIVATION_THRESHOLD - 1):
-            shedder.report_batch_result(batch_produced=True)
+            shedder.report_batch_result(batch_message_count=10)
         assert shedder.state.is_shedding is False
 
     def test_idle_cycle_resets_consecutive_count(self):
         shedder = _make_shedder()
         for _ in range(_ACTIVATION_THRESHOLD - 1):
-            shedder.report_batch_result(batch_produced=True)
-        shedder.report_batch_result(batch_produced=False)
+            shedder.report_batch_result(batch_message_count=10)
+        shedder.report_batch_result(batch_message_count=0)
         # Restart counting — should not activate after fewer than threshold
         for _ in range(_ACTIVATION_THRESHOLD - 1):
-            shedder.report_batch_result(batch_produced=True)
+            shedder.report_batch_result(batch_message_count=10)
         assert shedder.state.is_shedding is False
 
 
@@ -89,21 +89,21 @@ class TestLoadShedderDeactivation:
 
     def test_deactivates_after_consecutive_idle(self, active_shedder):
         for _ in range(_DEACTIVATION_THRESHOLD):
-            active_shedder.report_batch_result(batch_produced=False)
+            active_shedder.report_batch_result(batch_message_count=0)
         assert active_shedder.state.is_shedding is False
 
     def test_does_not_deactivate_below_threshold(self, active_shedder):
         for _ in range(_DEACTIVATION_THRESHOLD - 1):
-            active_shedder.report_batch_result(batch_produced=False)
+            active_shedder.report_batch_result(batch_message_count=0)
         assert active_shedder.state.is_shedding is True
 
     def test_batch_resets_idle_count(self, active_shedder):
         for _ in range(_DEACTIVATION_THRESHOLD - 1):
-            active_shedder.report_batch_result(batch_produced=False)
-        active_shedder.report_batch_result(batch_produced=True)
+            active_shedder.report_batch_result(batch_message_count=0)
+        active_shedder.report_batch_result(batch_message_count=10)
         # Restart idle counting
         for _ in range(_DEACTIVATION_THRESHOLD - 1):
-            active_shedder.report_batch_result(batch_produced=False)
+            active_shedder.report_batch_result(batch_message_count=0)
         assert active_shedder.state.is_shedding is True
 
 
@@ -264,7 +264,7 @@ def _escalate_to(shedder: LoadShedder, level: int) -> None:
     """Escalate the shedder to the given level."""
     for _ in range(level):
         for _ in range(_ACTIVATION_THRESHOLD):
-            shedder.report_batch_result(batch_produced=True)
+            shedder.report_batch_result(batch_message_count=10)
     assert shedder.state.shedding_level == level
 
 
@@ -272,7 +272,7 @@ def _deescalate_by(shedder: LoadShedder, steps: int) -> None:
     """De-escalate the shedder by the given number of steps."""
     for _ in range(steps):
         for _ in range(_DEACTIVATION_THRESHOLD):
-            shedder.report_batch_result(batch_produced=False)
+            shedder.report_batch_result(batch_message_count=0)
 
 
 class TestMultiLevelEscalation:
@@ -290,7 +290,7 @@ class TestMultiLevelEscalation:
         shedder = _make_shedder()
         _escalate_to(shedder, _MAX_LEVEL)
         for _ in range(_ACTIVATION_THRESHOLD):
-            shedder.report_batch_result(batch_produced=True)
+            shedder.report_batch_result(batch_message_count=10)
         assert shedder.state.shedding_level == _MAX_LEVEL
 
     def test_escalation_requires_threshold_per_level(self):
@@ -298,7 +298,7 @@ class TestMultiLevelEscalation:
         _escalate_to(shedder, 1)
         # Not enough batches for next level
         for _ in range(_ACTIVATION_THRESHOLD - 1):
-            shedder.report_batch_result(batch_produced=True)
+            shedder.report_batch_result(batch_message_count=10)
         assert shedder.state.shedding_level == 1
 
 
@@ -320,7 +320,7 @@ class TestMultiLevelDeescalation:
         shedder = _make_shedder()
         _escalate_to(shedder, 2)
         for _ in range(_DEACTIVATION_THRESHOLD - 1):
-            shedder.report_batch_result(batch_produced=False)
+            shedder.report_batch_result(batch_message_count=0)
         assert shedder.state.shedding_level == 2
 
 
@@ -339,3 +339,56 @@ class TestMultiLevelDropRates:
         messages = [_make_message(StreamKind.DETECTOR_EVENTS) for _ in range(256)]
         result = shedder.shed(messages)
         assert len(result) == expected_kept
+
+
+class TestEmptyBatchesIgnored:
+    """Empty batches from batcher timestamp catch-up must not trigger shedding.
+
+    The SimpleMessageBatcher emits empty batches (non-None with 0 messages) when
+    message timestamps jump forward (e.g., after a pause between measurement runs).
+    These are reported as batch_message_count=0 and must be treated as idle cycles.
+    """
+
+    def test_consecutive_empty_batches_do_not_activate(self):
+        shedder = _make_shedder()
+        for _ in range(_ACTIVATION_THRESHOLD + 5):
+            shedder.report_batch_result(batch_message_count=0)
+        assert shedder.state.is_shedding is False
+
+    def test_empty_batches_reset_consecutive_count(self):
+        """An empty batch between data batches resets the overload counter."""
+        shedder = _make_shedder()
+        for _ in range(_ACTIVATION_THRESHOLD - 1):
+            shedder.report_batch_result(batch_message_count=10)
+        # Empty batch interrupts the streak
+        shedder.report_batch_result(batch_message_count=0)
+        for _ in range(_ACTIVATION_THRESHOLD - 1):
+            shedder.report_batch_result(batch_message_count=10)
+        assert shedder.state.is_shedding is False
+
+    def test_empty_batches_count_toward_deactivation(self):
+        """Empty batches count as idle and contribute to de-escalation."""
+        shedder = _make_shedder()
+        _activate(shedder)
+        for _ in range(_DEACTIVATION_THRESHOLD):
+            shedder.report_batch_result(batch_message_count=0)
+        assert shedder.state.is_shedding is False
+
+    def test_timestamp_gap_scenario(self):
+        """Simulate the batcher catch-up after a 5+ second timestamp gap.
+
+        The batcher emits one empty batch per window to step through the gap.
+        None of these should trigger shedding.
+        """
+        shedder = _make_shedder()
+        # Normal operation: occasional data batches with idle cycles between
+        shedder.report_batch_result(batch_message_count=50)
+        for _ in range(5):
+            shedder.report_batch_result(batch_message_count=0)
+        # Gap: 7 consecutive empty batches (batcher catching up through gap)
+        for _ in range(7):
+            shedder.report_batch_result(batch_message_count=0)
+        assert shedder.state.is_shedding is False
+        # Normal operation resumes with one data batch
+        shedder.report_batch_result(batch_message_count=50)
+        assert shedder.state.is_shedding is False

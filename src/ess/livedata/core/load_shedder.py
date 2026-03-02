@@ -4,6 +4,20 @@
 
 When the backend can't keep up with the Kafka message stream, the LoadShedder
 selectively drops bulk event data while preserving control messages and f144 logs.
+
+Overload detection relies on the ``SimpleMessageBatcher`` producing consecutive
+non-empty batches.  Under normal operation, the batcher uses 1-second time windows
+aligned to message timestamps.  Because the processing loop runs at ~10 ms intervals,
+each cycle fetches only ~10 ms worth of messages — well within the current window —
+so ``batch()`` returns None roughly 99 out of 100 calls.  A non-None result means
+messages have crossed a window boundary.  Consecutive non-None results mean the
+processor could not drain the window before the next boundary arrived, i.e., it is
+falling behind real-time.
+
+Empty batches (non-None but with zero messages) are excluded from the overload signal.
+The batcher emits these when message timestamps jump forward (e.g., after a pause
+between measurement runs) to step through the gap one window at a time.  These do not
+indicate overload and must not trigger shedding.
 """
 
 from __future__ import annotations
@@ -27,9 +41,10 @@ DROPPABLE_KINDS = frozenset(
     }
 )
 
-# Consecutive non-None batcher results before entering shedding mode
+# Consecutive non-empty batcher results before entering shedding mode.
+# With 1-second batch windows this means ~5 seconds of sustained overload.
 _ACTIVATION_THRESHOLD = 5
-# Consecutive idle (None) batcher results before exiting shedding mode
+# Consecutive idle cycles (no batch, or empty batch) before de-escalating one level.
 _DEACTIVATION_THRESHOLD = 3
 
 _MAX_LEVEL = 3
@@ -100,13 +115,24 @@ class _RollingCounter:
 class LoadShedder:
     """Selectively drops bulk event data when the backend falls behind.
 
-    Detection uses consecutive non-None batcher results as the overload signal.
+    Overload detection counts consecutive non-empty batches produced by the
+    message batcher.  A non-empty batch means messages crossed a time-window
+    boundary, which happens approximately once per batch window under normal
+    load.  Consecutive non-empty batches mean the processor is not keeping up:
+    by the time one batch is processed, enough new messages have arrived to
+    immediately complete the next window.
+
+    Empty batches (non-None result with zero messages) are explicitly excluded.
+    The ``SimpleMessageBatcher`` emits these to step through timestamp gaps
+    (e.g., after a pause between measurements) and they do not indicate load.
+
     Shedding uses exponential levels: level N keeps every ``2**N``-th droppable
     message.  Each level handles a 2x increase in overload (level 1 = 50% drop,
     level 2 = 75%, level 3 = 87.5%).  The level escalates by 1 after
-    ``_ACTIVATION_THRESHOLD`` consecutive non-idle batcher cycles, up to
+    ``_ACTIVATION_THRESHOLD`` consecutive non-empty batches, up to
     ``_MAX_LEVEL``, and de-escalates by 1 after ``_DEACTIVATION_THRESHOLD``
     consecutive idle cycles.
+
     Drop statistics are tracked over a rolling 60-second window.
     """
 
@@ -127,15 +153,21 @@ class LoadShedder:
             messages_eligible=eligible,
         )
 
-    def report_batch_result(self, batch_produced: bool) -> None:
+    def report_batch_result(self, batch_message_count: int) -> None:
         """Update overload detection counters after a batcher cycle.
+
+        Only batches with at least one message count toward the activation
+        threshold.  Empty batches (zero messages) are treated as idle because
+        they arise from the batcher stepping through timestamp gaps, not from
+        genuine overload.
 
         Parameters
         ----------
-        batch_produced:
-            True if the batcher returned a batch (non-None), False if idle (None).
+        batch_message_count:
+            Number of messages in the batch returned by the batcher, or 0 if
+            the batcher returned None (no batch) or an empty batch.
         """
-        if batch_produced:
+        if batch_message_count > 0:
             self._consecutive_batches += 1
             self._consecutive_idle = 0
             if (

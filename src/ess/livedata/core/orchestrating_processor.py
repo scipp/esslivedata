@@ -150,7 +150,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             data_messages = self._load_shedder.shed(data_messages)
         message_batch = self._message_batcher.batch(data_messages)
         if self._load_shedder is not None:
-            self._load_shedder.report_batch_result(message_batch is not None)
+            # Empty batches (from batcher timestamp catch-up) are not an
+            # overload signal — only count batches that carry data.
+            count = len(message_batch.messages) if message_batch is not None else 0
+            self._load_shedder.report_batch_result(count)
         if message_batch is None:
             self._empty_batches += 1
             self._maybe_log_metrics()
