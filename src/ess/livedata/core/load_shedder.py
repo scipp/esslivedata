@@ -12,7 +12,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import structlog
+
 from .message import Message, StreamKind
+
+logger = structlog.get_logger(__name__)
 
 DROPPABLE_KINDS = frozenset(
     {
@@ -134,6 +138,12 @@ class LoadShedder:
             if self._consecutive_batches >= _ACTIVATION_THRESHOLD:
                 self._level += 1
                 self._consecutive_batches = 0
+                keep_rate = 100 / 2**self._level
+                logger.warning(
+                    'shedding_escalated',
+                    level=self._level,
+                    keep_rate=f"{keep_rate:.1f}%",
+                )
         else:
             self._consecutive_idle += 1
             self._consecutive_batches = 0
@@ -142,6 +152,14 @@ class LoadShedder:
                 self._consecutive_idle = 0
                 if self._level == 0:
                     self._subsample_counter = 0
+                    logger.warning('shedding_stopped')
+                else:
+                    keep_rate = 100 / 2**self._level
+                    logger.warning(
+                        'shedding_deescalated',
+                        level=self._level,
+                        keep_rate=f"{keep_rate:.1f}%",
+                    )
 
     def shed(self, messages: list[Message]) -> list[Message]:
         """Filter messages when shedding is active.
