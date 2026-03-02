@@ -122,7 +122,7 @@ class TestKafkaToMonitorEventsAdapter:
                 InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
             }
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "monitor_0"
@@ -149,9 +149,33 @@ class TestKafkaToMonitorEventsAdapter:
                 InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
             }
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.timestamp == 9999
+
+    def test_multi_pulse(self) -> None:
+        multi_pulse_ev44 = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=np.array([100, 200]),
+            reference_time_index=np.array([0, 2]),
+            time_of_flight=np.array([10, 20, 30]),
+            pixel_id=np.array([1, 1, 1]),
+        )
+        message = FakeKafkaMessage(value=multi_pulse_ev44, topic="monitors")
+        adapter = KafkaToMonitorEventsAdapter(
+            stream_lut={
+                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
+            }
+        )
+        results = adapter.adapt(message)
+        assert len(results) == 2
+
+        assert results[0].timestamp == 100
+        assert list(results[0].value.time_of_arrival) == [10, 20]
+
+        assert results[1].timestamp == 200
+        assert list(results[1].value.time_of_arrival) == [30]
 
     def test_wrong_schema_raises_exception(self, monkeypatch) -> None:
         """Test that providing wrong schema raises exception."""
@@ -322,14 +346,14 @@ class TestEv44ToDetectorEventsAdapter:
             ),
         )
         adapter = Ev44ToDetectorEventsAdapter()
-        result = adapter.adapt(ev44_message)
+        [result] = adapter.adapt(ev44_message)
 
         assert result.timestamp == 1234
         assert result.stream.kind == StreamKind.DETECTOR_EVENTS
         assert result.stream.name == "detector1"
         assert isinstance(result.value, DetectorEvents)
-        assert result.value.time_of_arrival == [123456]
-        assert result.value.pixel_id == [1]
+        assert list(result.value.time_of_arrival) == [123456]
+        assert list(result.value.pixel_id) == [1]
 
     def test_adapter_merge_detectors(self) -> None:
         ev44_message = Message(
@@ -345,10 +369,53 @@ class TestEv44ToDetectorEventsAdapter:
             ),
         )
         adapter = Ev44ToDetectorEventsAdapter(merge_detectors=True)
-        result = adapter.adapt(ev44_message)
+        [result] = adapter.adapt(ev44_message)
 
         assert result.stream.name == "unified_detector"
         assert isinstance(result.value, DetectorEvents)
+
+    def test_multi_pulse(self) -> None:
+        ev44_message = Message(
+            timestamp=1234,
+            stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector1"),
+            value=eventdata_ev44.EventData(
+                source_name="detector1",
+                message_id=0,
+                reference_time=np.array([100, 200]),
+                reference_time_index=[0, 2],
+                time_of_flight=np.array([10, 20, 30, 40]),
+                pixel_id=np.array([1, 2, 3, 4]),
+            ),
+        )
+        adapter = Ev44ToDetectorEventsAdapter()
+        results = adapter.adapt(ev44_message)
+        assert len(results) == 2
+
+        assert results[0].timestamp == 100
+        assert list(results[0].value.time_of_arrival) == [10, 20]
+        assert list(results[0].value.pixel_id) == [1, 2]
+
+        assert results[1].timestamp == 200
+        assert list(results[1].value.time_of_arrival) == [30, 40]
+        assert list(results[1].value.pixel_id) == [3, 4]
+
+    def test_multi_pulse_merge_detectors(self) -> None:
+        ev44_message = Message(
+            timestamp=1234,
+            stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector2"),
+            value=eventdata_ev44.EventData(
+                source_name="detector2",
+                message_id=0,
+                reference_time=np.array([100, 200]),
+                reference_time_index=[0, 1],
+                time_of_flight=np.array([10, 20]),
+                pixel_id=np.array([1, 2]),
+            ),
+        )
+        adapter = Ev44ToDetectorEventsAdapter(merge_detectors=True)
+        results = adapter.adapt(ev44_message)
+        assert len(results) == 2
+        assert all(r.stream.name == "unified_detector" for r in results)
 
 
 def message_with_schema(schema: str) -> KafkaMessage:

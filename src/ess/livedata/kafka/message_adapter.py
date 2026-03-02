@@ -161,16 +161,19 @@ class F144ToLogDataAdapter(
 
 
 class Ev44ToMonitorEventsAdapter(
-    MessageAdapter[Message[eventdata_ev44.EventData], Message[MonitorEvents]]
+    MessageAdapter[Message[eventdata_ev44.EventData], list[Message[MonitorEvents]]]
 ):
     def adapt(
         self, message: Message[eventdata_ev44.EventData]
-    ) -> Message[MonitorEvents]:
-        return Message(
-            timestamp=message.timestamp,
-            stream=message.stream,
-            value=MonitorEvents.from_ev44(message.value),
-        )
+    ) -> list[Message[MonitorEvents]]:
+        return [
+            Message(
+                timestamp=ts if ts is not None else message.timestamp,
+                stream=message.stream,
+                value=events,
+            )
+            for ts, events in MonitorEvents.from_ev44(message.value)
+        ]
 
 
 class X5f2ToStatusAdapter(
@@ -202,7 +205,7 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
     def __init__(self, stream_lut: StreamLUT):
         super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.MONITOR_EVENTS)
 
-    def adapt(self, message: KafkaMessage) -> Message[MonitorEvents]:
+    def adapt(self, message: KafkaMessage) -> list[Message[MonitorEvents]]:
         buffer = message.value()
         eventdata_ev44.check_schema_identifier(buffer, eventdata_ev44.FILE_IDENTIFIER)
         event = Event44Message.Event44Message.GetRootAs(buffer, 0)
@@ -210,22 +213,41 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
             topic=message.topic(), source_name=event.SourceName().decode("utf-8")
         )
         reference_time = event.ReferenceTimeAsNumpy()
+        reference_time_index = event.ReferenceTimeIndexAsNumpy()
         time_of_arrival = event.TimeOfFlightAsNumpy()
 
-        # A fallback, useful in particular for testing so serialized data can be reused.
-        if reference_time.size > 0:
-            timestamp = reference_time[-1]
-        else:
-            timestamp = message.timestamp()[1]
-        return Message(
-            timestamp=timestamp,
-            stream=stream,
-            value=MonitorEvents(time_of_arrival=time_of_arrival, unit='ns'),
-        )
+        if reference_time.size == 0:
+            # A fallback, useful for testing so serialized data can be reused.
+            return [
+                Message(
+                    timestamp=message.timestamp()[1],
+                    stream=stream,
+                    value=MonitorEvents(time_of_arrival=time_of_arrival, unit='ns'),
+                )
+            ]
+
+        results: list[Message[MonitorEvents]] = []
+        for i in range(len(reference_time)):
+            start = reference_time_index[i]
+            end = (
+                reference_time_index[i + 1]
+                if i + 1 < len(reference_time_index)
+                else len(time_of_arrival)
+            )
+            results.append(
+                Message(
+                    timestamp=int(reference_time[i]),
+                    stream=stream,
+                    value=MonitorEvents(
+                        time_of_arrival=time_of_arrival[start:end], unit='ns'
+                    ),
+                )
+            )
+        return results
 
 
 class Ev44ToDetectorEventsAdapter(
-    MessageAdapter[Message[eventdata_ev44.EventData], Message[DetectorEvents]]
+    MessageAdapter[Message[eventdata_ev44.EventData], list[Message[DetectorEvents]]]
 ):
     def __init__(self, *, merge_detectors: bool = False):
         """
@@ -241,15 +263,18 @@ class Ev44ToDetectorEventsAdapter(
 
     def adapt(
         self, message: Message[eventdata_ev44.EventData]
-    ) -> Message[DetectorEvents]:
+    ) -> list[Message[DetectorEvents]]:
         stream = message.stream
         if self._merge_detectors:
             stream = replace(stream, name='unified_detector')
-        return Message(
-            timestamp=message.timestamp,
-            stream=stream,
-            value=DetectorEvents.from_ev44(message.value),
-        )
+        return [
+            Message(
+                timestamp=ts if ts is not None else message.timestamp,
+                stream=stream,
+                value=events,
+            )
+            for ts, events in DetectorEvents.from_ev44(message.value)
+        ]
 
 
 class Da00ToScippAdapter(
@@ -403,7 +428,7 @@ class AdaptingMessageSource(MessageSource[U]):
         adapted = []
         for msg in raw_messages:
             try:
-                adapted.append(self._adapter.adapt(msg))
+                result = self._adapter.adapt(msg)
             except streaming_data_types.exceptions.WrongSchemaException:
                 logger.warning('Message %s has an unknown schema. Skipping.', msg)
                 if self._raise_on_error:
@@ -412,4 +437,9 @@ class AdaptingMessageSource(MessageSource[U]):
                 logger.exception('Error adapting message %s: %s', msg, e)
                 if self._raise_on_error:
                     raise
+            else:
+                if isinstance(result, list):
+                    adapted.extend(result)
+                else:
+                    adapted.append(result)
         return adapted
