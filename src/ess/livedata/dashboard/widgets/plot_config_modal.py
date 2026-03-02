@@ -62,29 +62,54 @@ _NO_TRANSITION_CSS = """
 """
 
 
+def _resolve_axis_source_titles(
+    axis_sources: dict[str, DataSourceConfig],
+    instrument_config: Instrument | None = None,
+) -> dict[str, str]:
+    """Build a mapping from bins field name to display title for axis sources.
+
+    Parameters
+    ----------
+    axis_sources:
+        Axis role -> DataSourceConfig mapping.
+    instrument_config:
+        Optional instrument config to resolve source names to titles.
+
+    Returns
+    -------
+    :
+        Mapping of bins field name (e.g. 'x_axis_source') to display title.
+    """
+    role_to_field = {X_AXIS: 'x_axis_source', Y_AXIS: 'y_axis_source'}
+    result: dict[str, str] = {}
+    for role, field_name in role_to_field.items():
+        if role in axis_sources and axis_sources[role].source_names:
+            source_name = axis_sources[role].source_names[0]
+            if instrument_config is not None:
+                result[field_name] = instrument_config.get_source_title(source_name)
+            else:
+                result[field_name] = source_name
+    return result
+
+
 def _inject_axis_source_names(
-    params: pydantic.BaseModel, axis_sources: dict[str, DataSourceConfig]
+    params: pydantic.BaseModel,
+    axis_sources: dict[str, DataSourceConfig],
+    instrument_config: Instrument | None = None,
 ) -> pydantic.BaseModel:
-    """Inject axis source names into correlation histogram params for display.
+    """Inject axis source titles into correlation histogram params for display.
 
     Updates the bins.x_axis_source and bins.y_axis_source fields with
-    the source names from axis_sources, so they appear in the UI as labels.
+    human-readable titles resolved from axis_sources.
     """
     if not hasattr(params, 'bins'):
         return params
 
-    bins = params.bins
-    updates: dict[str, str] = {}
-
-    if X_AXIS in axis_sources and axis_sources[X_AXIS].source_names:
-        updates['x_axis_source'] = axis_sources[X_AXIS].source_names[0]
-    if Y_AXIS in axis_sources and axis_sources[Y_AXIS].source_names:
-        updates['y_axis_source'] = axis_sources[Y_AXIS].source_names[0]
-
+    updates = _resolve_axis_source_titles(axis_sources, instrument_config)
     if not updates:
         return params
 
-    new_bins = bins.model_copy(update=updates)
+    new_bins = params.bins.model_copy(update=updates)
     return params.model_copy(update={'bins': new_bins})
 
 
@@ -463,6 +488,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         initial_config: PlotConfig | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize plotter selection step.
@@ -475,11 +501,14 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             Controller for determining available plotters from specs.
         initial_config
             Optional initial configuration for edit mode.
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._initial_config = initial_config
+        self._instrument_config = instrument_config
         self._output_selection: OutputSelection | None = None
         self._selected_plot_name: str | None = None
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
@@ -715,12 +744,23 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Build options: display name -> (workflow_id, source_name, output_name)
         options: dict[str, tuple[WorkflowId, str, str]] = {}
         for workflow_id, source_name, output_name in available_timeseries:
-            # Get human-readable title from workflow spec
             spec = self._workflow_registry.get(workflow_id)
             workflow_title = spec.title if spec else workflow_id.name
-            display_name = f"{workflow_title}: {source_name}"
-            if output_name != 'delta':  # Only show output name if not the default
-                display_name = f"{display_name} ({output_name})"
+            if self._instrument_config is not None:
+                source_title = self._instrument_config.get_source_title(source_name)
+            else:
+                source_title = source_name
+            display_name = f"{workflow_title}: {source_title}"
+            if output_name != 'delta':
+                output_field = (
+                    spec.outputs.model_fields.get(output_name) if spec else None
+                )
+                output_title = (
+                    output_field.title
+                    if output_field is not None and output_field.title
+                    else output_name
+                )
+                display_name = f"{display_name} ({output_title})"
             options[display_name] = (workflow_id, source_name, output_name)
 
         # Map roles to display labels
@@ -833,6 +873,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._last_workflow_id: WorkflowId | None = None
         self._last_output: str | None = None
         self._last_plot_name: str | None = None
+        self._last_axis_sources: dict[str, DataSourceConfig] | None = None
         # Store result from callback
         self._last_config_result: PlotConfig | None = None
 
@@ -906,6 +947,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             self._plotter_selection.workflow_id != self._last_workflow_id
             or self._plotter_selection.output_name != self._last_output
             or self._plotter_selection.plot_name != self._last_plot_name
+            or self._plotter_selection.axis_sources != self._last_axis_sources
         ):
             # Recreate panel with new configuration
             self._create_config_panel()
@@ -913,6 +955,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             self._last_workflow_id = self._plotter_selection.workflow_id
             self._last_output = self._plotter_selection.output_name
             self._last_plot_name = self._plotter_selection.plot_name
+            self._last_axis_sources = self._plotter_selection.axis_sources
 
     def _create_config_panel(self) -> None:
         """Create the configuration panel for the selected plotter."""
@@ -948,32 +991,34 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         # if in edit mode
         config_state = None
         initial_source_names = None
+        axis_sources = self._plotter_selection.axis_sources or {}
         if self._initial_config is not None:
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 
-            config_state = ConfigurationState(
-                params=(
-                    self._initial_config.params.model_dump(mode='json')
-                    if isinstance(self._initial_config.params, pydantic.BaseModel)
-                    else self._initial_config.params
-                ),
+            params_dict = (
+                self._initial_config.params.model_dump(mode='json')
+                if isinstance(self._initial_config.params, pydantic.BaseModel)
+                else dict(self._initial_config.params)
             )
+            # Inject current axis source titles into bins (overrides stale names)
+            if axis_sources and 'bins' in params_dict:
+                titles = _resolve_axis_source_titles(
+                    axis_sources, self._instrument_config
+                )
+                if isinstance(params_dict['bins'], dict):
+                    params_dict['bins'].update(titles)
+            config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
         elif (
             self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
-            and self._plotter_selection.axis_sources
+            and axis_sources
         ):
-            # For new correlation histograms, pre-populate axis source names
+            # For new correlation histograms, pre-populate axis source titles
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 
-            axis_sources = self._plotter_selection.axis_sources
-            bins_params: dict[str, str] = {}
-            if X_AXIS in axis_sources and axis_sources[X_AXIS].source_names:
-                bins_params['x_axis_source'] = axis_sources[X_AXIS].source_names[0]
-            if Y_AXIS in axis_sources and axis_sources[Y_AXIS].source_names:
-                bins_params['y_axis_source'] = axis_sources[Y_AXIS].source_names[0]
-            if bins_params:
-                config_state = ConfigurationState(params={'bins': bins_params})
+            titles = _resolve_axis_source_titles(axis_sources, self._instrument_config)
+            if titles:
+                config_state = ConfigurationState(params={'bins': titles})
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
@@ -1016,7 +1061,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         ):
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
-                params = _inject_axis_source_names(params, axis_sources)
+                params = _inject_axis_source_names(
+                    params, axis_sources, self._instrument_config
+                )
 
         self._last_config_result = PlotConfig(
             data_sources=data_sources,
@@ -1081,6 +1128,7 @@ class PlotConfigModal:
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
             initial_config=initial_config,
+            instrument_config=instrument_config,
         )
         step3 = SpecBasedConfigurationStep(
             workflow_registry=workflow_registry,
