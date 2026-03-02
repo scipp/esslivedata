@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 ESSlivedata is a live data reduction visualization framework for the European Spallation Source (ESS). It processes real-time neutron detector data via Kafka streams and provides interactive dashboards for monitoring and data reduction workflows.
@@ -18,25 +14,26 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ```sh
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[test]"
 ```
 
-This ensures dependencies are isolated to the worktree and pre-commit hooks work correctly. The local `.venv/` will take precedence over the base environment.
+### Tests
 
-### Running Tests
-
-All unit tests run without Kafka - no Docker container needed.
+- Tests are in `tests/` mirroring the `src/ess/livedata/` structure
+- **All unit tests run without Kafka** - use fakes from `fakes.py` (e.g., `FakeMessageSource`, `FakeMessageSink`)
+- Test files follow pattern `*_test.py`
+- Tests use `pytest` with `--import-mode=importlib`
+- Tests marked with `@pytest.mark.slow` are excluded by default when running `pytest` directly:
 
 ```sh
-# Run all tests
-tox
-
-# Run tests manually with pytest
+# Default: runs fast tests only (~25s)
 python -m pytest
-
-# Run specific test file
-python -m pytest tests/core/processor_test.py
+# Include slow tests (~85s total)
+python -m pytest -m "not integration"
+# Run only slow tests
+python -m pytest -m slow
+tox  # Includes 'slow' tests, used by CI
 ```
 
 ### Code Quality
@@ -59,21 +56,12 @@ python -m sphinx -v -b doctest -d .tox/docs_doctrees docs html
 tox -e linkcheck
 ```
 
-### Dependency Management
-
-```sh
-# Update dependencies (runs pip-compile-multi)
-tox -e deps
-```
-
-**Important**: After changing dependencies in `pyproject.toml`, always run `tox -e deps` to update the requirement files.
-
 ### Project Template Management
 
-This project uses [Copier](https://copier.readthedocs.io/) with the Scipp template (https://github.com/scipp/copier_template):
+We [Copier](https://copier.readthedocs.io/) with the Scipp template (https://github.com/scipp/copier_template):
 
 ```sh
-# Update project skeleton from template
+# Update from template
 copier update
 ```
 
@@ -111,10 +99,7 @@ python -m ess.livedata.dashboard.reduction --instrument dummy
 The codebase follows a **message-driven service architecture** with these key abstractions:
 
 - **Service**: Top-level lifecycle manager that runs processors in a loop
-- **Processor**: Orchestrates message processing (always `OrchestratingProcessor`)
-- **PreprocessorFactory**: Creates accumulators for different message stream types
-- **Accumulator**: Preprocesses and accumulates messages before workflow execution
-- **Workflow**: Scientific reduction logic that processes accumulated data
+- **Workflow**: Scientific reduction logic that processes accumulated data. Workflow instances are running as `Job`.
 - **MessageSource**: Abstraction for consuming messages (e.g., from Kafka)
 - **MessageSink**: Abstraction for publishing results (e.g., to Kafka)
 
@@ -160,74 +145,13 @@ Kafka Topics → MessageSource → Processor → Preprocessor → JobManager →
 **Dashboard** (`src/ess/livedata/dashboard/`):
 - Uses Panel/Holoviews for interactive visualizations
 - Implements MVC pattern with controllers mediating between services and widgets
-- `ConfigService`: Central configuration management with Pydantic models
 - `DataService`: Manages data streams and notifies subscribers
-- `WorkflowController`: Orchestrates workflow configuration and execution
-
-### Dashboard Architecture
-
-The dashboard follows a **layered MVC architecture**:
-
-1. **Presentation Layer**: Panel widgets and Holoviews plots
-2. **Application Layer**: Controllers (`WorkflowController`), Services (`ConfigService`, `DataService`)
-3. **Infrastructure Layer**: Kafka integration (`KafkaTransport`, `BackgroundMessageBridge`)
-
-**Key Pattern**: Separation between:
-- **Pydantic models**: Backend validation, serialization, Kafka communication
-- **Param models**: GUI widgets and user interaction. Concrete fields (such as `int`, `bool`, ...) must be in a nested model or widget generation will fail.
-- **ConfigBackedParam**: Translation layer bridging the two (for simple controls)
-
-**Threading Model**:
-- Background threads handle Kafka polling/publishing
-- Queue-based communication prevents blocking the GUI
-- Batched message processing for efficiency
-
-See [docs/developer/design/dashboard-architecture.md](docs/developer/design/dashboard-architecture.md) for detailed architecture diagrams.
-
-## Detailed Architecture Documentation
-
-For in-depth understanding of ESSlivedata's architecture, see the following design documents:
-
-- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Workflow pattern, job management, and service lifecycle. Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
-- **[Message Flow and Transformation](docs/developer/design/message-flow-and-transformation.md)**: End-to-end message journey, adapters, stream mapping, and batching strategies
-- **[Dashboard Architecture](docs/developer/design/dashboard-architecture.md)**: MVC pattern, configuration management, and threading model
-
-## Service Factory Pattern
-
-New services are created using `DataServiceBuilder`:
-All services use `OrchestratingProcessor` for job-based processing. See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
 
 ## Configuration System
 
 - Configuration files are in YAML (with Jinja2 templating support)
 - Located in `src/ess/livedata/config/defaults/`
-- Environment variable `LIVEDATA_ENV` selects configuration (dev, staging, production)
 - Instrument-specific configs are in `src/ess/livedata/config/instruments/`
-- Use `config_names.CONFIG_STREAM` etc. for accessing config stream names
-
-## Testing
-
-- Tests are in `tests/` mirroring the `src/ess/livedata/` structure
-- **All unit tests run without Kafka** - use fakes from `fakes.py` (e.g., `FakeMessageSource`, `FakeMessageSink`)
-- Test files follow pattern `*_test.py`
-- Tests use `pytest` with `--import-mode=importlib`
-
-### Slow Tests
-
-Tests marked with `@pytest.mark.slow` are excluded by default when running `pytest` directly:
-
-```sh
-# Default: runs fast tests only (~25s)
-python -m pytest
-
-# Include slow tests (~85s total)
-python -m pytest -m "not integration"
-
-# Run only slow tests
-python -m pytest -m slow
-```
-
-Slow tests are automatically included when running via `tox` (CI). The slow marker is applied to tests taking >2s, primarily Bifrost and LOKI data reduction workflow tests.
 
 ## Code Style Conventions
 
@@ -262,15 +186,6 @@ def simple_method(self) -> int:
     """Returns the number of dimensions."""
 ```
 
-## Important Patterns
-
-### Message Processing
-
-- Messages have `timestamp`, `stream`, and `value` fields
-- `StreamId` identifies message type (kind + name)
-- Preprocessors accumulate messages via `add()`, return accumulated data via `get()`
-- Workflows receive accumulated data and execute scientific reduction logic
-
 ## Instrument Support
 
 Available instruments are registered in `src/ess/livedata/config/instruments/`:
@@ -286,11 +201,5 @@ Install optional dependencies: `pip install esslivedata[dream]`, `pip install es
 
 ## Common Gotchas
 
-- Always run `tox -e deps` after changing dependencies in `pyproject.toml`
 - Use `--dev` flag when testing services locally to use simplified topic structure
 - Services (not unit tests) require Kafka to be running; use `docker-compose up kafka` for local development
-- All unit tests run independently without Kafka
-- Dashboard runs on port 5009
-- Pre-commit hooks will auto-format code; if they make changes, commit will be rejected (re-stage and commit again)
-- When adding new message types, register them in `StreamKind` enum
-- Project skeleton is managed by Copier template - use `copier update` to sync with upstream template changes
