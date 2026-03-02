@@ -15,6 +15,15 @@ in the next cycle still fall within the same window — ``batch()`` returns None
 Consecutive non-None results mean the processing cycle consistently takes longer
 than the batch window, so messages accumulate past the next boundary on every call.
 
+The effective capacity threshold is slightly below 100% because of the 100 ms idle
+sleep in ``OrchestratingProcessor.process()``.  When the batcher returns None (no
+boundary crossed yet), the processor sleeps 100 ms before the next poll.  This means
+the total cycle time is ``processing_time + N * 100 ms`` (where N ≥ 1 idle cycles).
+With 1-second batch windows, shedding can activate when processing alone takes
+roughly 900 ms or more — about 90% utilization.  This built-in safety margin is
+desirable: a system at 90%+ utilization has almost no headroom for traffic bursts
+or GC pauses.
+
 Empty batches (non-None but with zero messages) are excluded from the overload signal.
 The batcher emits these when message timestamps jump forward (e.g., after a pause
 between measurement runs) to step through the gap one window at a time.  These do not
