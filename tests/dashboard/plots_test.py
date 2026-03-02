@@ -1597,3 +1597,102 @@ class TestTwoStageArchitecture:
         assert current is not None
         # The result should be the same as the computed element (pass-through)
         assert type(current) is type(computed)
+
+
+class TestSaveFilenameHookOnDynamicMap:
+    """
+    Tests for applying save filename hooks to DynamicMaps wrapping plotter output.
+
+    Reproduces the dashboard composition flow where _get_session_composed_plot
+    applies .opts(hooks=[hook]) to a DynamicMap. When the plotter produces a
+    Layout (multiple data keys in layout mode), the deferred .opts() fails
+    because 'hooks' is not valid for Layout type.
+    """
+
+    @staticmethod
+    def _make_key(source_name: str) -> ResultKey:
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        )
+
+    @staticmethod
+    def _make_2d_data() -> sc.DataArray:
+        return sc.DataArray(
+            data=sc.array(dims=['y', 'x'], values=np.arange(12.0).reshape(3, 4)),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0, 3.0]),
+                'y': sc.array(dims=['y'], values=[0.0, 1.0, 2.0]),
+            },
+        )
+
+    @staticmethod
+    def _save_hook(plot, element):
+        """Dummy save filename hook."""
+
+    def test_hooks_on_dmap_single_element(self):
+        """Hooks on a DynamicMap with a single element work."""
+        plotter = plots.ImagePlotter.from_params(PlotParams2d())
+        key = self._make_key('rear')
+        plotter.compute({key: self._make_2d_data()})
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = presenter.present(pipe)
+        dmap = dmap.opts(hooks=[self._save_hook])
+
+        # Evaluating the DynamicMap should not raise
+        dmap[()]
+
+    def test_hooks_on_dmap_overlay(self):
+        """Hooks on a DynamicMap with overlay mode work."""
+        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode=CombineMode.overlay))
+        plotter = plots.ImagePlotter.from_params(params)
+        data = {
+            self._make_key('rear'): self._make_2d_data(),
+            self._make_key('front'): self._make_2d_data(),
+        }
+        plotter.compute(data)
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = presenter.present(pipe)
+        dmap = dmap.opts(hooks=[self._save_hook])
+
+        # Evaluating the DynamicMap should not raise
+        dmap[()]
+
+    def test_hooks_on_dmap_layout_raises(self):
+        """Applying .opts(hooks=...) to a DynamicMap returning Layout raises.
+
+        This documents the HoloViews limitation: 'hooks' is not a valid option
+        for Layout type. The dashboard avoids this by skipping hooks when the
+        plotter produces a Layout.
+        """
+        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode=CombineMode.layout))
+        plotter = plots.ImagePlotter.from_params(params)
+        data = {
+            self._make_key('rear'): self._make_2d_data(),
+            self._make_key('front'): self._make_2d_data(),
+        }
+        plotter.compute(data)
+
+        assert isinstance(plotter.get_cached_state(), hv.Layout)
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = presenter.present(pipe)
+        dmap = dmap.opts(hooks=[self._save_hook])
+
+        with pytest.raises(ValueError, match="Unexpected option 'hooks' for Layout"):
+            dmap[()]
