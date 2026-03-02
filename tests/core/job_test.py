@@ -48,6 +48,7 @@ class FakeProcessor(Workflow):
         self.clear_calls = 0
         self.should_fail_accumulate = False
         self.should_fail_finalize = False
+        self.fail_finalize_when_empty = False
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int
@@ -64,6 +65,8 @@ class FakeProcessor(Workflow):
     def finalize(self) -> dict[str, Any]:
         if self.should_fail_finalize:
             raise RuntimeError("Finalize failure")
+        if self.fail_finalize_when_empty and not self.data:
+            raise RuntimeError("No data has been added")
         self.finalize_calls += 1
         return self.data.copy()
 
