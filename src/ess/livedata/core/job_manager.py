@@ -367,10 +367,11 @@ class JobManager:
         if job_data.is_empty():
             return None
 
-        # Track primary data updates
-        if job_data.is_active():
-            self._jobs_with_primary_data.add(job.job_id)
         reply = job.add(job_data)
+        # Track primary data updates only after successful add, so that a
+        # failed push does not trigger a finalize attempt on empty accumulators.
+        if not reply.has_error and job_data.is_active():
+            self._jobs_with_primary_data.add(job.job_id)
 
         # Track warnings from job operations, or clear them on success
         if reply.has_error and reply.error_message is not None:
