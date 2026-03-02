@@ -184,15 +184,14 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> FocussedDataTof:
         """Convert focussed d-spacing data to time-of-flight using DIFC.
 
-        Mirrors ``ess.powder.conversion._convert_reduced_to_tof_impl`` but
-        operates on the un-normalized ``FocussedDataDspacing`` type, for which
-        essdiffraction does not provide a built-in provider.
+        Wraps ``ess.powder.conversion._convert_reduced_to_tof_impl``.
+        essdiffraction only provides d→TOF providers for the vanadium-normalized
+        types (``IntensityDspacing`` → ``IntensityTof``), not for the
+        un-normalized ``FocussedDataDspacing``.
         """
-        return FocussedDataTof(
-            data.transform_coords(
-                tof=calibration.d_to_tof_transformer(), keep_inputs=False
-            )
-        )
+        from ess.powder.conversion import _convert_reduced_to_tof_impl
+
+        return FocussedDataTof(_convert_reduced_to_tof_impl(data, calibration))
 
     _reduction_workflow.insert(_convert_focussed_dspacing_to_tof)
     _reduction_workflow.insert(_total_counts)
