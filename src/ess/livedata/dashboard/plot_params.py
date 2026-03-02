@@ -266,12 +266,27 @@ class PlotDisplayParams2d(PlotParamsBase):
     )
 
 
+class RateNormalizationParams(pydantic.BaseModel):
+    """Parameters for normalizing counts to rate (counts per second)."""
+
+    normalize_to_rate: bool = pydantic.Field(
+        default=False,
+        description="Display as rate (counts per second) by dividing by the "
+        "time duration between start_time and end_time.",
+        title="Counts Per Second",
+    )
+
+
 class PlotParams1d(PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description="Windowing and aggregation options.",
+    )
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
     )
 
 
@@ -281,6 +296,10 @@ class PlotParams2d(PlotDisplayParams2d):
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description="Windowing and aggregation options.",
+    )
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
     )
 
 
@@ -298,6 +317,10 @@ class PlotParams3d(PlotParamsBase):
     ticks: TickParams = pydantic.Field(
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
+    )
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
     )
 
 
@@ -321,4 +344,8 @@ class PlotParamsBars(PlotParamsBase):
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
+    )
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
     )
