@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Generic, Protocol, TypeVar
 
+import numpy as np
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
@@ -125,12 +126,31 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
+def _extract_reference_time(
+    variables: list[dataarray_da00.Variable],
+) -> int | None:
+    """Extract the last reference_time value from da00 variables.
+
+    Mirrors the ev44 convention of using ``reference_time[-1]`` as the message
+    timestamp, providing data-derived timestamps for consistent batching.
+    """
+    for var in variables:
+        if var.name == 'reference_time':
+            data = np.asarray(var.data)
+            if data.size > 0:
+                return int(data[-1])
+    return None
+
+
 class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
     def adapt(self, message: KafkaMessage) -> Message[list[dataarray_da00.Variable]]:
         da00: dataarray_da00.da00_DataArray_t
         da00 = dataarray_da00.deserialise_da00(message.value())  # type: ignore[reportAssignmentType]
         key = self.get_stream_id(topic=message.topic(), source_name=da00.source_name)
-        timestamp = da00.timestamp_ns
+        # Prefer reference_time from the data variables (mirroring ev44 behavior)
+        # over the opaque top-level timestamp_ns whose semantics are unspecified.
+        ref_time = _extract_reference_time(da00.data)
+        timestamp = ref_time if ref_time is not None else da00.timestamp_ns
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
