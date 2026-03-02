@@ -32,6 +32,8 @@ _ACTIVATION_THRESHOLD = 5
 # Consecutive idle (None) batcher results before exiting shedding mode
 _DEACTIVATION_THRESHOLD = 3
 
+_MAX_LEVEL = 3
+
 _N_BUCKETS = 10
 _BUCKET_DURATION_S = 6.0  # 10 buckets x 6s = 60s rolling window
 
@@ -101,9 +103,10 @@ class LoadShedder:
     Detection uses consecutive non-None batcher results as the overload signal.
     Shedding uses exponential levels: level N keeps every ``2**N``-th droppable
     message.  Each level handles a 2x increase in overload (level 1 = 50% drop,
-    level 2 = 75%, level 3 = 87.5%, …).  The level escalates by 1 after
-    ``_ACTIVATION_THRESHOLD`` consecutive non-idle batcher cycles and
-    de-escalates by 1 after ``_DEACTIVATION_THRESHOLD`` consecutive idle cycles.
+    level 2 = 75%, level 3 = 87.5%).  The level escalates by 1 after
+    ``_ACTIVATION_THRESHOLD`` consecutive non-idle batcher cycles, up to
+    ``_MAX_LEVEL``, and de-escalates by 1 after ``_DEACTIVATION_THRESHOLD``
+    consecutive idle cycles.
     Drop statistics are tracked over a rolling 60-second window.
     """
 
@@ -135,14 +138,16 @@ class LoadShedder:
         if batch_produced:
             self._consecutive_batches += 1
             self._consecutive_idle = 0
-            if self._consecutive_batches >= _ACTIVATION_THRESHOLD:
+            if (
+                self._consecutive_batches >= _ACTIVATION_THRESHOLD
+                and self._level < _MAX_LEVEL
+            ):
                 self._level += 1
                 self._consecutive_batches = 0
-                keep_rate = 100 / 2**self._level
                 logger.warning(
                     'shedding_escalated',
                     level=self._level,
-                    keep_rate=f"{keep_rate:.1f}%",
+                    keeping=f"1/{2**self._level}",
                 )
         else:
             self._consecutive_idle += 1
@@ -154,11 +159,10 @@ class LoadShedder:
                     self._subsample_counter = 0
                     logger.warning('shedding_stopped')
                 else:
-                    keep_rate = 100 / 2**self._level
                     logger.warning(
                         'shedding_deescalated',
                         level=self._level,
-                        keep_rate=f"{keep_rate:.1f}%",
+                        keeping=f"1/{2**self._level}",
                     )
 
     def shed(self, messages: list[Message]) -> list[Message]:

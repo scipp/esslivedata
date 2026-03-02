@@ -7,6 +7,7 @@ from ess.livedata.core.load_shedder import (
     _ACTIVATION_THRESHOLD,
     _BUCKET_DURATION_S,
     _DEACTIVATION_THRESHOLD,
+    _MAX_LEVEL,
     _N_BUCKETS,
     DROPPABLE_KINDS,
     LoadShedder,
@@ -280,10 +281,17 @@ class TestMultiLevelEscalation:
         _escalate_to(shedder, 2)
         assert shedder.state.shedding_level == 2
 
-    def test_escalates_to_level_3(self):
+    def test_escalates_to_max_level(self):
         shedder = _make_shedder()
-        _escalate_to(shedder, 3)
-        assert shedder.state.shedding_level == 3
+        _escalate_to(shedder, _MAX_LEVEL)
+        assert shedder.state.shedding_level == _MAX_LEVEL
+
+    def test_does_not_escalate_beyond_max_level(self):
+        shedder = _make_shedder()
+        _escalate_to(shedder, _MAX_LEVEL)
+        for _ in range(_ACTIVATION_THRESHOLD):
+            shedder.report_batch_result(batch_produced=True)
+        assert shedder.state.shedding_level == _MAX_LEVEL
 
     def test_escalation_requires_threshold_per_level(self):
         shedder = _make_shedder()
@@ -323,7 +331,6 @@ class TestMultiLevelDropRates:
             (1, 128),  # keep 1/2 of 256
             (2, 64),  # keep 1/4 of 256
             (3, 32),  # keep 1/8 of 256
-            (4, 16),  # keep 1/16 of 256
         ],
     )
     def test_drop_rate_at_level(self, level, expected_kept):
