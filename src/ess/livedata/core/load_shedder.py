@@ -6,13 +6,14 @@ When the backend can't keep up with the Kafka message stream, the LoadShedder
 selectively drops bulk event data while preserving control messages and f144 logs.
 
 Overload detection relies on the ``SimpleMessageBatcher`` producing consecutive
-non-empty batches.  Under normal operation, the batcher uses 1-second time windows
-aligned to message timestamps.  Because the processing loop runs at ~10 ms intervals,
-each cycle fetches only ~10 ms worth of messages — well within the current window —
-so ``batch()`` returns None roughly 99 out of 100 calls.  A non-None result means
-messages have crossed a window boundary.  Consecutive non-None results mean the
-processor could not drain the window before the next boundary arrived, i.e., it is
-falling behind real-time.
+non-empty batches.  The batcher uses 1-second time windows aligned to message
+timestamps: ``batch()`` returns None while all incoming messages fall within the
+current window, and returns a non-None batch only when a message crosses the window
+boundary.  Under normal load, the total processing cycle (fetch → preprocess →
+workflow → publish) completes well within one batch window, so the messages fetched
+in the next cycle still fall within the same window — ``batch()`` returns None.
+Consecutive non-None results mean the processing cycle consistently takes longer
+than the batch window, so messages accumulate past the next boundary on every call.
 
 Empty batches (non-None but with zero messages) are excluded from the overload signal.
 The batcher emits these when message timestamps jump forward (e.g., after a pause
