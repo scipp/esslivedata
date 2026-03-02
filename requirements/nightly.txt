@@ -56,7 +56,7 @@ email-validator==2.3.0
     # via scippneutron
 ess-streaming-data-types==0.27.0
     # via -r nightly.in
-essdiffraction==25.12.0
+essdiffraction==26.3.0
     # via -r nightly.in
 esspolarization==25.10.0
     # via essreflectometry

@@ -176,6 +176,17 @@ def setup_factories(instrument: Instrument) -> None:
         fake_charge.unit = 'counts/µAh'
         return powder.types.AccumulatedProtonCharge[RunType](fake_charge)
 
+    FocussedDataTof = NewType('FocussedDataTof', sc.DataArray)
+
+    def _convert_focussed_dspacing_to_tof(
+        data: powder.types.FocussedDataDspacing[SampleRun],
+        calibration: powder.calibration.OutputCalibrationData,
+    ) -> FocussedDataTof:
+        """Convert focussed d-spacing data to time-of-flight using DIFC."""
+        d_to_tof = calibration.d_to_tof_transformer()
+        return FocussedDataTof(data.transform_coords(tof=d_to_tof))
+
+    _reduction_workflow.insert(_convert_focussed_dspacing_to_tof)
     _reduction_workflow.insert(_total_counts)
     _reduction_workflow.insert(_fake_proton_charge)
     _reduction_workflow[powder.types.CalibrationData] = None
@@ -223,6 +234,7 @@ def setup_factories(instrument: Instrument) -> None:
         'focussed_data_dspacing_two_theta': (
             powder.types.FocussedDataDspacingTwoTheta[SampleRun]
         ),
+        'focussed_data_tof': FocussedDataTof,
     }
 
     @specs.powder_reduction_handle.attach_factory()
@@ -253,6 +265,7 @@ def setup_factories(instrument: Instrument) -> None:
                 'i_of_dspacing_two_theta': powder.types.IntensityDspacingTwoTheta[
                     SampleRun
                 ],
+                'i_of_tof': powder.types.IntensityTof,
             },
             accumulators=_powder_accumulators,
         )
