@@ -13,10 +13,33 @@ from streaming_data_types import eventdata_ev44
 from ess.livedata.core.handler import Accumulator
 
 
-def _require_single_pulse(ev44: eventdata_ev44.EventData) -> None:
+def split_ev44_pulses(
+    ev44: eventdata_ev44.EventData,
+) -> list[eventdata_ev44.EventData]:
+    """Split a multi-pulse ev44 message into one EventData per pulse.
+
+    For single-pulse messages the input is returned as-is (no copy).
+    """
+    n_pulses = len(ev44.reference_time)
+    if n_pulses <= 1:
+        return [ev44]
     index = ev44.reference_time_index
-    if len(index) > 1 or index[0] != 0 or len(ev44.reference_time) > 1:
-        raise NotImplementedError("Processing multi-pulse messages is not supported.")
+    n_events = len(ev44.time_of_flight)
+    pulses: list[eventdata_ev44.EventData] = []
+    for i in range(n_pulses):
+        start = index[i]
+        end = index[i + 1] if i + 1 < len(index) else n_events
+        pulses.append(
+            eventdata_ev44.EventData(
+                source_name=ev44.source_name,
+                message_id=ev44.message_id,
+                reference_time=ev44.reference_time[i : i + 1],
+                reference_time_index=np.array([0]),
+                time_of_flight=ev44.time_of_flight[start:end],
+                pixel_id=ev44.pixel_id[start:end] if ev44.pixel_id is not None else [],
+            )
+        )
+    return pulses
 
 
 @dataclass
@@ -36,7 +59,6 @@ class MonitorEvents:
 
     @staticmethod
     def from_ev44(ev44: eventdata_ev44.EventData) -> MonitorEvents:
-        _require_single_pulse(ev44)
         return MonitorEvents(time_of_arrival=ev44.time_of_flight, unit='ns')
 
 
@@ -63,7 +85,6 @@ class DetectorEvents(MonitorEvents):
 
     @staticmethod
     def from_ev44(ev44: eventdata_ev44.EventData) -> DetectorEvents:
-        _require_single_pulse(ev44)
         return DetectorEvents(
             pixel_id=ev44.pixel_id, time_of_arrival=ev44.time_of_flight, unit='ns'
         )

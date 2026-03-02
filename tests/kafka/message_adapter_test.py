@@ -122,7 +122,7 @@ class TestKafkaToMonitorEventsAdapter:
                 InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
             }
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "monitor_0"
@@ -149,7 +149,7 @@ class TestKafkaToMonitorEventsAdapter:
                 InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
             }
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.timestamp == 9999
 
@@ -176,7 +176,7 @@ class TestKafkaToF144Adapter:
     def test_adapter(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_f144(), topic="sensors")
         adapter = KafkaToF144Adapter()
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "temperature1"
@@ -192,7 +192,7 @@ class TestKafkaToF144Adapter:
                 ): "mapped_temperature"
             }
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "mapped_temperature"
@@ -202,10 +202,10 @@ class TestF144ToLogDataAdapter:
     def test_adapter(self) -> None:
         f144_adapter = KafkaToF144Adapter()
         message = FakeKafkaMessage(value=make_serialized_f144(), topic="sensors")
-        adapted_f144 = f144_adapter.adapt(message)
+        [adapted_f144] = f144_adapter.adapt(message)
 
         log_data_adapter = F144ToLogDataAdapter()
-        result = log_data_adapter.adapt(adapted_f144)
+        [result] = log_data_adapter.adapt(adapted_f144)
 
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "temperature1"
@@ -218,7 +218,7 @@ class TestKafkaToDa00Adapter:
     def test_adapter(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.MONITOR_COUNTS
         assert result.stream.name == "instrument"
@@ -236,7 +236,7 @@ class TestKafkaToDa00Adapter:
                 ): "mapped_instrument"
             },
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.MONITOR_COUNTS
         assert result.stream.name == "mapped_instrument"
@@ -246,10 +246,10 @@ class TestDa00ToScippAdapter:
     def test_adapter(self) -> None:
         da00_adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
-        adapted_da00 = da00_adapter.adapt(message)
+        [adapted_da00] = da00_adapter.adapt(message)
 
         scipp_adapter = Da00ToScippAdapter()
-        result = scipp_adapter.adapt(adapted_da00)
+        [result] = scipp_adapter.adapt(adapted_da00)
 
         assert result.stream.kind == StreamKind.MONITOR_COUNTS
         assert result.stream.name == "instrument"
@@ -263,7 +263,7 @@ class TestKafkaToAd00Adapter:
     def test_adapter(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_ad00(), topic="detector")
         adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.AREA_DETECTOR
         assert result.stream.name == "area_detector"
@@ -284,7 +284,7 @@ class TestKafkaToAd00Adapter:
                 ): "mapped_detector"
             },
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.AREA_DETECTOR
         assert result.stream.name == "mapped_detector"
@@ -294,10 +294,10 @@ class TestAd00ToScippAdapter:
     def test_adapter(self) -> None:
         ad00_adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
         message = FakeKafkaMessage(value=make_serialized_ad00(), topic="detector")
-        adapted_ad00 = ad00_adapter.adapt(message)
+        [adapted_ad00] = ad00_adapter.adapt(message)
 
         scipp_adapter = Ad00ToScippAdapter()
-        result = scipp_adapter.adapt(adapted_ad00)
+        [result] = scipp_adapter.adapt(adapted_ad00)
 
         assert result.stream.kind == StreamKind.AREA_DETECTOR
         assert result.stream.name == "area_detector"
@@ -322,7 +322,7 @@ class TestEv44ToDetectorEventsAdapter:
             ),
         )
         adapter = Ev44ToDetectorEventsAdapter()
-        result = adapter.adapt(ev44_message)
+        [result] = adapter.adapt(ev44_message)
 
         assert result.timestamp == 1234
         assert result.stream.kind == StreamKind.DETECTOR_EVENTS
@@ -345,7 +345,7 @@ class TestEv44ToDetectorEventsAdapter:
             ),
         )
         adapter = Ev44ToDetectorEventsAdapter(merge_detectors=True)
-        result = adapter.adapt(ev44_message)
+        [result] = adapter.adapt(ev44_message)
 
         assert result.stream.name == "unified_detector"
         assert isinstance(result.value, DetectorEvents)
@@ -371,14 +371,14 @@ class TestRouteBySchemaAdapter:
             def __init__(self, value: str):
                 self._value = value
 
-            def adapt(self, message: KafkaMessage) -> Message[str]:
-                return fake_message_with_value(message, self._value)
+            def adapt(self, message: KafkaMessage) -> tuple[Message[str]]:
+                return (fake_message_with_value(message, self._value),)
 
         adapter = RouteBySchemaAdapter(
             routes={"ev44": TestAdapter('adapter1'), "da00": TestAdapter('adapter2')}
         )
-        assert adapter.adapt(message_with_schema('ev44')).value == "adapter1"
-        assert adapter.adapt(message_with_schema('da00')).value == "adapter2"
+        assert adapter.adapt(message_with_schema('ev44'))[0].value == "adapter1"
+        assert adapter.adapt(message_with_schema('da00'))[0].value == "adapter2"
 
 
 class TestRouteByTopicAdapter:
@@ -389,10 +389,10 @@ class TestRouteByTopicAdapter:
                 self.last_message = None
                 self.return_value = return_value
 
-            def adapt(self, message: KafkaMessage) -> Message[str]:
+            def adapt(self, message: KafkaMessage) -> tuple[Message[str]]:
                 self.adapt_called = True
                 self.last_message = message
-                return fake_message_with_value(message, self.return_value)
+                return (fake_message_with_value(message, self.return_value),)
 
         adapter1 = TestAdapter("adapter1")
         adapter2 = TestAdapter("adapter2")
@@ -402,13 +402,13 @@ class TestRouteByTopicAdapter:
         assert router.topics == ["topic1", "topic2"]
 
         msg1 = FakeKafkaMessage(value=b"dummy", topic="topic1")
-        result1 = router.adapt(msg1)
+        [result1] = router.adapt(msg1)
         assert adapter1.adapt_called is True
         assert adapter1.last_message == msg1
         assert result1.value == "adapter1"
 
         msg2 = FakeKafkaMessage(value=b"dummy", topic="topic2")
-        result2 = router.adapt(msg2)
+        [result2] = router.adapt(msg2)
         assert adapter2.adapt_called is True
         assert adapter2.last_message == msg2
         assert result2.value == "adapter2"
@@ -432,7 +432,7 @@ class TestKafkaToEv44Adapter:
                 ): "mapped_monitor1"
             },
         )
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "mapped_monitor1"
@@ -455,9 +455,83 @@ class TestKafkaToEv44Adapter:
         )
 
         adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
-        result = adapter.adapt(message)
+        [result] = adapter.adapt(message)
 
         assert result.timestamp == 9999
+
+    def test_multi_pulse_splits_into_multiple_messages(self) -> None:
+        multi_pulse_ev44 = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=np.array([100, 200]),
+            reference_time_index=np.array([0, 2]),
+            time_of_flight=np.array([10, 20, 30]),
+            pixel_id=np.array([1, 2, 3]),
+        )
+        message = FakeKafkaMessage(value=multi_pulse_ev44, topic="monitors")
+        adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
+        results = adapter.adapt(message)
+
+        assert len(results) == 2
+        assert results[0].timestamp == 100
+        np.testing.assert_array_equal(results[0].value.time_of_flight, [10, 20])
+        np.testing.assert_array_equal(results[0].value.pixel_id, [1, 2])
+
+        assert results[1].timestamp == 200
+        np.testing.assert_array_equal(results[1].value.time_of_flight, [30])
+        np.testing.assert_array_equal(results[1].value.pixel_id, [3])
+
+
+class TestKafkaToMonitorEventsAdapterMultiPulse:
+    def test_multi_pulse_splits_into_multiple_messages(self) -> None:
+        multi_pulse_ev44 = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=np.array([100, 200]),
+            reference_time_index=np.array([0, 2]),
+            time_of_flight=np.array([10, 20, 30]),
+            pixel_id=np.array([1, 2, 3]),
+        )
+        message = FakeKafkaMessage(value=multi_pulse_ev44, topic="monitors")
+        adapter = KafkaToMonitorEventsAdapter(
+            stream_lut={
+                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
+            }
+        )
+        results = adapter.adapt(message)
+
+        assert len(results) == 2
+        assert results[0].timestamp == 100
+        np.testing.assert_array_equal(results[0].value.time_of_arrival, [10, 20])
+        assert results[1].timestamp == 200
+        np.testing.assert_array_equal(results[1].value.time_of_arrival, [30])
+
+
+class TestMultiPulseChainIntegration:
+    def test_multi_pulse_ev44_through_chain_produces_multiple_detector_events(
+        self,
+    ) -> None:
+        multi_pulse_ev44 = eventdata_ev44.serialise_ev44(
+            source_name="det1",
+            message_id=0,
+            reference_time=np.array([100, 200]),
+            reference_time_index=np.array([0, 1]),
+            time_of_flight=np.array([10, 20, 30]),
+            pixel_id=np.array([1, 2, 3]),
+        )
+        message = FakeKafkaMessage(value=multi_pulse_ev44, topic="detectors")
+        adapter = ChainedAdapter(
+            first=KafkaToEv44Adapter(stream_kind=StreamKind.DETECTOR_EVENTS),
+            second=Ev44ToDetectorEventsAdapter(),
+        )
+        results = adapter.adapt(message)
+        assert len(results) == 2
+        assert results[0].timestamp == 100
+        np.testing.assert_array_equal(results[0].value.time_of_arrival, [10])
+        np.testing.assert_array_equal(results[0].value.pixel_id, [1])
+        assert results[1].timestamp == 200
+        np.testing.assert_array_equal(results[1].value.time_of_arrival, [20, 30])
+        np.testing.assert_array_equal(results[1].value.pixel_id, [2, 3])
 
 
 class TestAdaptingMessageSource:
@@ -537,7 +611,7 @@ class TestCommandsAdapter:
             key=key, value=encoded, topic="dummy_livedata_commands"
         )
         adapter = CommandsAdapter()
-        adapted_message = adapter.adapt(message)
+        [adapted_message] = adapter.adapt(message)
         assert adapted_message.stream == COMMANDS_STREAM_ID
         assert adapted_message.value == RawConfigItem(key=key, value=encoded)
 
@@ -559,7 +633,7 @@ class TestResponsesAdapter:
             key=b'', value=encoded, topic="dummy_livedata_responses"
         )
         adapter = ResponsesAdapter()
-        adapted_message = adapter.adapt(message)
+        [adapted_message] = adapter.adapt(message)
         assert adapted_message.stream == RESPONSES_STREAM_ID
         assert adapted_message.value == ack
 

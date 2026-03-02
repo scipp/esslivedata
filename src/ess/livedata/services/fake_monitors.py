@@ -90,11 +90,13 @@ class EventsToHistogramAdapter(
     def __init__(self, toa: sc.Variable):
         self._toa = toa
 
-    def adapt(self, message: Message[sc.Variable]) -> Message[sc.DataArray]:
-        return replace(
-            message,
-            stream=replace(message.stream, kind=StreamKind.MONITOR_COUNTS),
-            value=message.value.hist({self._toa.dim: self._toa}),
+    def adapt(self, message: Message[sc.Variable]) -> tuple[Message[sc.DataArray], ...]:
+        return (
+            replace(
+                message,
+                stream=replace(message.stream, kind=StreamKind.MONITOR_COUNTS),
+                value=message.value.hist({self._toa.dim: self._toa}),
+            ),
         )
 
 

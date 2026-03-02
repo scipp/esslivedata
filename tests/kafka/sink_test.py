@@ -48,7 +48,7 @@ class TestDa00Serializer:
         )
 
         # Deserialize back to scipp
-        result_msg = roundtrip_adapter.adapt(kafka_msg)
+        [result_msg] = roundtrip_adapter.adapt(kafka_msg)
 
         # Verify the roundtrip preserved the data and payload timestamp
         assert sc.identical(result_msg.value, original_data)
@@ -85,7 +85,7 @@ class TestDa00Serializer:
             timestamp=kafka_timestamp,  # Should be ignored
         )
 
-        result_msg = roundtrip_adapter.adapt(kafka_msg)
+        [result_msg] = roundtrip_adapter.adapt(kafka_msg)
 
         # Verify roundtrip uses payload timestamp, not Kafka timestamp
         assert sc.identical(result_msg.value, original_data)
@@ -124,7 +124,7 @@ class TestF144Serializer:
         )
 
         # Deserialize back to f144 log data
-        result_msg = f144_adapter.adapt(kafka_msg)
+        [result_msg] = f144_adapter.adapt(kafka_msg)
 
         # Verify the roundtrip preserved the value and used time coordinate as timestamp
         assert result_msg.value.value == 42.5  # Value preserved
@@ -156,7 +156,7 @@ class TestF144Serializer:
             timestamp=2222222222,  # Should be ignored
         )
 
-        result_msg = f144_adapter.adapt(kafka_msg)
+        [result_msg] = f144_adapter.adapt(kafka_msg)
 
         # Verify array values are preserved and timestamp comes from time coordinate
         np.testing.assert_array_equal(result_msg.value.value, [1.0, 2.0, 3.0])
@@ -180,7 +180,7 @@ class TestF144Serializer:
             value=serialized_bytes, topic='log_topic', timestamp=0
         )
 
-        result_msg = f144_adapter.adapt(kafka_msg)
+        [result_msg] = f144_adapter.adapt(kafka_msg)
 
         # Time should be converted to nanoseconds
         expected_time_ns = time_us * 1000  # us to ns conversion

@@ -111,7 +111,7 @@ Isolates ESSlivedata from Kafka topic structure: Kafka uses `(topic, source_name
 
 ### Adapter Pattern
 
-`MessageAdapter` protocol: `adapt(message: T) -> U`. Benefits: composable, type-safe, testable, reusable.
+`MessageAdapter` protocol: `adapt(message: T) -> Sequence[U]`. Each adapter returns a sequence, enabling 1:N message expansion (e.g., splitting multi-pulse ev44 messages into one message per pulse). Most adapters return a single-element tuple. Benefits: composable, type-safe, testable, reusable.
 
 ### Core Adapters
 
@@ -127,7 +127,7 @@ Isolates ESSlivedata from Kafka topic structure: Kafka uses `(topic, source_name
 
 ### Adapter Composition
 
-**ChainedAdapter**: Chains two adapters sequentially (`second.adapt(first.adapt(message))`).
+**ChainedAdapter**: Chains two adapters with flatmap semantics — for each intermediate result from the first adapter, all results from the second adapter are collected into a flat sequence.
 
 **RouteByTopicAdapter**: Routes by Kafka topic to different adapters. Provides `.topics` list for subscription.
 

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from scipp.testing import assert_identical
@@ -9,6 +10,7 @@ from ess.livedata.handlers.to_nxevent_data import (
     DetectorEvents,
     MonitorEvents,
     ToNXevent_data,
+    split_ev44_pulses,
 )
 
 
@@ -26,20 +28,57 @@ def test_MonitorEvents_from_ev44() -> None:
     assert monitor_events.unit == 'ns'
 
 
-@pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
-def test_MonitorEvents_from_ev44_raises_with_multi_pulse_message(
-    events_cls: MonitorEvents,
-) -> None:
+def test_split_ev44_pulses_single_pulse_returns_input_as_is() -> None:
     ev44 = eventdata_ev44.EventData(
-        source_name='ignored',
+        source_name='src',
         message_id=0,
-        reference_time=[1, 2],
-        reference_time_index=[0, 1],
-        pixel_id=[1, 1, 1],
-        time_of_flight=[1, 2, 3],
+        reference_time=[100],
+        reference_time_index=[0],
+        time_of_flight=[10, 20, 30],
+        pixel_id=[1, 2, 3],
     )
-    with pytest.raises(NotImplementedError):
-        events_cls.from_ev44(ev44)
+    result = split_ev44_pulses(ev44)
+    assert len(result) == 1
+    assert result[0] is ev44
+
+
+def test_split_ev44_pulses_empty_reference_time() -> None:
+    ev44 = eventdata_ev44.EventData(
+        source_name='src',
+        message_id=0,
+        reference_time=[],
+        reference_time_index=[0],
+        time_of_flight=[10, 20],
+        pixel_id=[1, 2],
+    )
+    result = split_ev44_pulses(ev44)
+    assert len(result) == 1
+    assert result[0] is ev44
+
+
+def test_split_ev44_pulses_multi_pulse() -> None:
+    ev44 = eventdata_ev44.EventData(
+        source_name='src',
+        message_id=7,
+        reference_time=np.array([100, 200, 300]),
+        reference_time_index=np.array([0, 2, 5]),
+        time_of_flight=np.array([10, 20, 30, 40, 50, 60, 70]),
+        pixel_id=np.array([1, 2, 3, 4, 5, 6, 7]),
+    )
+    pulses = split_ev44_pulses(ev44)
+    assert len(pulses) == 3
+
+    np.testing.assert_array_equal(pulses[0].reference_time, [100])
+    np.testing.assert_array_equal(pulses[0].time_of_flight, [10, 20])
+    np.testing.assert_array_equal(pulses[0].pixel_id, [1, 2])
+
+    np.testing.assert_array_equal(pulses[1].reference_time, [200])
+    np.testing.assert_array_equal(pulses[1].time_of_flight, [30, 40, 50])
+    np.testing.assert_array_equal(pulses[1].pixel_id, [3, 4, 5])
+
+    np.testing.assert_array_equal(pulses[2].reference_time, [300])
+    np.testing.assert_array_equal(pulses[2].time_of_flight, [60, 70])
+    np.testing.assert_array_equal(pulses[2].pixel_id, [6, 7])
 
 
 def test_MonitorEvents_ToNXevent_data() -> None:
