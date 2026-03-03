@@ -5,7 +5,7 @@
 PyYAML
 confluent_kafka
 ess-streaming-data-types
-essreduce>=26.01.1
+essreduce>=26.2.1
 jinja2
 pydantic>=2
 scipp>=25.02.0

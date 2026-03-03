@@ -204,20 +204,21 @@ class DashboardBase(ServiceBase, ABC):
         sidebar_content = self.create_sidebar_content()
         main_content = self.create_main_content(session_updater)
 
-        # Include heartbeat widget in layout (invisible but required for
-        # browser heartbeat JavaScript to run)
-        main_with_heartbeat = pn.Column(
+        # Append heartbeat widget to sidebar (invisible but required for
+        # browser heartbeat JavaScript to run). Placing it in the sidebar
+        # avoids adding a wrapping Column around the main content, which
+        # causes layout overflow and a vertical scrollbar.
+        sidebar_with_heartbeat = pn.Column(
+            sidebar_content,
             session_updater.heartbeat_widget,
-            main_content,
-            sizing_mode='stretch_both',
         )
 
         header = self._create_logout_header() if self._basic_auth_password else []
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
-            sidebar=sidebar_content,
-            main=main_with_heartbeat,
+            sidebar=sidebar_with_heartbeat,
+            main=main_content,
             header_background=self.get_header_background(),
             header=header,
         )

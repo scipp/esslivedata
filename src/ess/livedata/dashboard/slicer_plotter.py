@@ -14,7 +14,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
-from .plots import Plotter, PresenterBase
+from .plots import Plotter, PresenterBase, _normalize_to_rate
 from .scipp_to_holoviews import to_holoviews
 
 
@@ -276,6 +276,7 @@ class SlicerPlotter(Plotter):
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
+            normalize_to_rate=params.rate.normalize_to_rate,
         )
 
     def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
@@ -296,6 +297,8 @@ class SlicerPlotter(Plotter):
             Unused (required by base class signature).
         """
         del kwargs  # Unused for SlicerPlotter
+        if self._normalize_to_rate:
+            data = {key: _normalize_to_rate(da) for key, da in data.items()}
         clim = self._compute_global_clim(data)
         # Pre-prepare 3D data (dtype conversion + log masking)
         use_log_scale = self._scale_opts.color_scale == PlotScale.log

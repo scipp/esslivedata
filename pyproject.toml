@@ -33,7 +33,7 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=26.01.1",
+  "essreduce>=26.2.1",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -46,7 +46,7 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = [
-    "essdiffraction>=25.11.1",
+    "essdiffraction>=26.3.0",
     "essreflectometry>=25.12.0",
     "esssans",
     "essspectroscopy>=25.11.1",
@@ -61,7 +61,7 @@ bifrost = [
     "essspectroscopy>=25.11.1",
 ]
 dream = [
-    "essdiffraction>=25.11.1",
+    "essdiffraction>=26.3.0",
 ]
 loki = [
     "esssans>=25.11.0",

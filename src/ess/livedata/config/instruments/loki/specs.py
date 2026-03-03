@@ -74,12 +74,12 @@ class BeamCenterXY(pydantic.BaseModel):
 class LokiAuxSources(AuxSourcesBase):
     """Auxiliary source names for LOKI SANS workflows."""
 
-    incident_monitor: Literal['beam_monitor_1'] = pydantic.Field(
-        default='beam_monitor_1',
+    incident_monitor: Literal['beam_monitor_m1'] = pydantic.Field(
+        default='beam_monitor_m1',
         description='Incident beam monitor for normalization.',
     )
-    transmission_monitor: Literal['beam_monitor_3'] = pydantic.Field(
-        default='beam_monitor_3',
+    transmission_monitor: Literal['beam_monitor_m3'] = pydantic.Field(
+        default='beam_monitor_m3',
         description='Transmission monitor for sample transmission calculation.',
     )
 
@@ -161,11 +161,11 @@ instrument = Instrument(
     name='loki',
     detector_names=detector_names,
     monitors=[
-        'beam_monitor_0',
-        'beam_monitor_1',
-        'beam_monitor_2',
-        'beam_monitor_3',
-        'beam_monitor_4',
+        'beam_monitor_m0',
+        'beam_monitor_m1',
+        'beam_monitor_m2',
+        'beam_monitor_m3',
+        'beam_monitor_m4',
     ],
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
@@ -177,19 +177,19 @@ instrument = Instrument(
         'loki_detector_6': SourceMetadata(title='Front Left'),
         'loki_detector_7': SourceMetadata(title='Front Top'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
-        'beam_monitor_0': SourceMetadata(
+        'beam_monitor_m0': SourceMetadata(
             title='Beam Monitor 0', description='Upstream, z = -16.8 m'
         ),
-        'beam_monitor_1': SourceMetadata(
+        'beam_monitor_m1': SourceMetadata(
             title='Incident Monitor', description='Upstream, z = -8.4 m'
         ),
-        'beam_monitor_2': SourceMetadata(
+        'beam_monitor_m2': SourceMetadata(
             title='Beam Monitor 2', description='Upstream, z = -2.04 m'
         ),
-        'beam_monitor_3': SourceMetadata(
+        'beam_monitor_m3': SourceMetadata(
             title='Transmission Monitor', description='Downstream, z = +0.2 m'
         ),
-        'beam_monitor_4': SourceMetadata(
+        'beam_monitor_m4': SourceMetadata(
             title='Beam Monitor 4',
             description='Downstream, movable (on detector carriage)',
         ),
