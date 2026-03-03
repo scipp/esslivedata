@@ -32,6 +32,25 @@ from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
 
 
+def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
+    """Normalize data to rate (per second) using start_time/end_time coords.
+
+    Only applies to data with unit 'counts'. Returns the input unchanged if
+    the unit is not 'counts', the required time coordinates are missing, or
+    the duration is not positive.
+    """
+    if da.unit != 'counts':
+        return da
+    if 'start_time' not in da.coords or 'end_time' not in da.coords:
+        return da
+    duration_s = (da.coords['end_time'] - da.coords['start_time']).to(
+        unit='s', dtype='float64'
+    )
+    if duration_s.value <= 0:
+        return da
+    return da / duration_s
+
+
 def _identity(x: str) -> str:
     return x
 
@@ -176,6 +195,7 @@ class Plotter:
         *,
         aspect_params: PlotAspect | None = None,
         layout_params: LayoutParams | None = None,
+        normalize_to_rate: bool = False,
         **kwargs,
     ):
         """
@@ -185,9 +205,13 @@ class Plotter:
         ----------
         layout_params:
             Layout parameters for combining multiple datasets. If None, uses defaults.
+        normalize_to_rate:
+            If True, normalize counts data to rate (counts/s) using
+            start_time/end_time coordinates before plotting.
         **kwargs:
             Additional keyword arguments passed to the autoscaler if created.
         """
+        self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
@@ -379,6 +403,9 @@ class Plotter:
         **kwargs:
             Additional keyword arguments passed to plot().
         """
+        if self._normalize_to_rate:
+            data = {key: _normalize_to_rate(da) for key, da in data.items()}
+
         resolve = source_title or _identity
         plots: list[hv.Element] = []
         try:
@@ -547,6 +574,7 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
+        rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
@@ -555,6 +583,7 @@ class LinePlotter(Plotter):
             tick_params=params.ticks,
             mode=params.line.mode,
             errors=params.line.errors,
+            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
 
     _BASE_METHOD: ClassVar[dict[str, str]] = {
@@ -630,12 +659,14 @@ class ImagePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
+        rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
 
     def plot(
@@ -689,6 +720,7 @@ class BarsPlotter(Plotter):
             horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
+            normalize_to_rate=params.rate.normalize_to_rate,
         )
 
     def plot(
@@ -706,10 +738,12 @@ class BarsPlotter(Plotter):
 
         bar_label = source_display_name or data_key.job_id.source_name
         value = float(data.value)
+        unit = str(data.unit) if data.unit is not None else None
+        vdim = hv.Dimension(data_key.output_name or 'values', unit=unit)
         bars = hv.Bars(
             [(bar_label, value)],
             kdims=['source'],
-            vdims=[data_key.output_name or ''],
+            vdims=[vdim],
             label=label,
         )
         opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
@@ -769,6 +803,7 @@ class Overlay1DPlotter(Plotter):
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            normalize_to_rate=params.rate.normalize_to_rate,
         )
 
     def plot(
