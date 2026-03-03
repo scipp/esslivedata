@@ -59,6 +59,8 @@ class _BatchedTabs(pn.Tabs):
 
     Wrapping the cascade in ``pn.io.hold()`` + ``doc.models.freeze()``
     collapses N dispatches/recomputes into 1 each.
+    
+    See https://github.com/holoviz/panel/issues/8461.
     """
 
     def _update_active(self, *events) -> None:
