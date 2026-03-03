@@ -140,3 +140,53 @@ class TestCreateExtractorsFromParams:
         assert sc.allclose(
             result.data, sc.array(dims=['x'], values=[3.0, 5.0], unit='m')
         )
+
+
+class TestRateNormalizationParams:
+    """Tests for RateNormalizationParams on windowed param classes."""
+
+    def test_plot_params_1d_has_rate_field_default_false(self):
+        from ess.livedata.dashboard.plot_params import PlotParams1d
+
+        params = PlotParams1d()
+        assert params.rate.normalize_to_rate is False
+
+    def test_plot_params_2d_has_rate_field_default_false(self):
+        from ess.livedata.dashboard.plot_params import PlotParams2d
+
+        params = PlotParams2d()
+        assert params.rate.normalize_to_rate is False
+
+    def test_plot_params_3d_has_rate_field_default_false(self):
+        from ess.livedata.dashboard.plot_params import PlotParams3d
+
+        params = PlotParams3d()
+        assert params.rate.normalize_to_rate is False
+
+    def test_plot_params_bars_has_rate_field_default_false(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsBars
+
+        params = PlotParamsBars()
+        assert params.rate.normalize_to_rate is False
+
+    def test_rate_field_can_be_set_to_true(self):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParams1d,
+            RateNormalizationParams,
+        )
+
+        params = PlotParams1d(
+            rate=RateNormalizationParams(normalize_to_rate=True),
+        )
+        assert params.rate.normalize_to_rate is True
+
+    def test_display_params_do_not_have_rate_field(self):
+        """PlotDisplayParams1d/2d (used by correlation histograms) should not
+        have a rate field, to avoid conflict with their own normalization."""
+        from ess.livedata.dashboard.plot_params import (
+            PlotDisplayParams1d,
+            PlotDisplayParams2d,
+        )
+
+        assert not hasattr(PlotDisplayParams1d(), 'rate')
+        assert not hasattr(PlotDisplayParams2d(), 'rate')

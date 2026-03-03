@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import json
 import logging
 
 import numpy as np
 import pytest
+import scipp as sc
 from streaming_data_types import eventdata_ev44
 from structlog.testing import capture_logs
 
@@ -59,7 +61,7 @@ def test_can_configure_and_stop_workflow_with_detector(
         'dummy': 'total_counts',
         'dream': 'powder_reduction',
     }[instrument]
-    n_target = {'bifrost': 1, 'dummy': 1, 'dream': 2}[instrument]
+    n_target = {'bifrost': 1, 'dummy': 1, 'dream': 3}[instrument]
     check_counts = instrument != 'dream'
     # WorkflowSpec (second arg) unused here since the workflow does not take params.
     workflow_id, _ = _get_workflow_from_registry(instrument, workflow_name)
@@ -109,6 +111,41 @@ def test_can_configure_and_stop_workflow_with_detector(
     app.publish_events(size=1000, time=20)
     service.step()
     assert len(sink.messages) == 3 * n_target
+
+
+def test_dream_powder_reduction_produces_tof_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """DREAM powder reduction outputs I(TOF) alongside I(d) and I(d, 2theta)."""
+    caplog.set_level(logging.INFO)
+    app = make_reduction_app(instrument='dream')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('dream', 'powder_reduction')
+
+    source_name = first_source_name['dream']
+    config_key = ConfigKey(
+        source_name=source_name, service_name="data_reduction", key="workflow_config"
+    )
+    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    service.step()
+
+    app.publish_events(size=2000, time=2)
+    service.step()
+
+    outputs: dict[str, sc.DataArray] = {}
+    for msg in sink.messages:
+        result_key = json.loads(msg.stream.name)
+        outputs[result_key['output_name']] = msg.value
+
+    assert 'focussed_data_tof' in outputs
+    tof_output = outputs['focussed_data_tof']
+    assert isinstance(tof_output, sc.DataArray)
+    assert tof_output.dims == ('tof',)
+    assert 'tof' in tof_output.coords
+    assert tof_output.coords['tof'].unit == 'us'
+    assert len(tof_output.coords['tof']) > 0
 
 
 @pytest.mark.parametrize(
