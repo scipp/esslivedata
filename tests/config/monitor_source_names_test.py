@@ -3,7 +3,7 @@
 """
 Tests for monitor source name indexing.
 
-These tests verify that monitor source names (cbm0, cbm1, cbm2, ...) are
+These tests verify that monitor source names (cbm1, cbm2, ...) are
 correctly mapped to internal monitor names.
 
 See https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
@@ -14,20 +14,10 @@ import pytest
 from ess.livedata.config import streams
 from ess.livedata.config.instruments import available_instruments
 
-# LOKI uses 0-based cbm source names (cbm0, cbm1, ...), verified against
-# NeXus data file ``coda_loki_999999_00019778.hdf``.
-_INSTRUMENTS_WITH_CBM0 = {'loki'}
 
-
-@pytest.mark.parametrize(
-    'instrument',
-    [i for i in available_instruments() if i not in _INSTRUMENTS_WITH_CBM0],
-)
+@pytest.mark.parametrize('instrument', available_instruments())
 def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
-    """Most instruments use 1-based cbm source names (cbm1, cbm2, ...).
-
-    LOKI is excluded because it uses 0-based indexing.
-    """
+    """All instruments use 1-based cbm source names (cbm1, cbm2, ...)."""
     stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
     cbm_source_names = [
         key.source_name
@@ -41,10 +31,10 @@ def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
 
 
 def test_loki_monitors_correctly_mapped() -> None:
-    """LOKI monitors use 0-based cbm source names matching NeXus group indices.
+    """LOKI monitors use 1-based cbm source names.
 
-    Verified against NeXus data file ``coda_loki_999999_00019778.hdf``:
-    cbm0 -> beam_monitor_0, ..., cbm4 -> beam_monitor_4.
+    Source names verified against NeXus data file
+    ``coda_loki_999999_00020680.hdf`` (cbm1 through cbm5).
     """
     stream_mapping = streams.get_stream_mapping(instrument='loki', dev=False)
     actual_mapping = {
@@ -53,11 +43,11 @@ def test_loki_monitors_correctly_mapped() -> None:
         if key.source_name.startswith('cbm')
     }
     expected_mapping = {
-        'cbm0': 'beam_monitor_0',
-        'cbm1': 'beam_monitor_1',
-        'cbm2': 'beam_monitor_2',
-        'cbm3': 'beam_monitor_3',
-        'cbm4': 'beam_monitor_4',
+        'cbm1': 'beam_monitor_m0',
+        'cbm2': 'beam_monitor_m1',
+        'cbm3': 'beam_monitor_m2',
+        'cbm4': 'beam_monitor_m3',
+        'cbm5': 'beam_monitor_m4',
     }
     assert actual_mapping == expected_mapping
 
