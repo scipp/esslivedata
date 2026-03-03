@@ -64,7 +64,7 @@ _NO_TRANSITION_CSS = """
 
 def _resolve_axis_source_titles(
     axis_sources: dict[str, DataSourceConfig],
-    instrument_config: Instrument | None = None,
+    instrument_config: Instrument,
 ) -> dict[str, str]:
     """Build a mapping from bins field name to display title for axis sources.
 
@@ -73,7 +73,7 @@ def _resolve_axis_source_titles(
     axis_sources:
         Axis role -> DataSourceConfig mapping.
     instrument_config:
-        Optional instrument config to resolve source names to titles.
+        Instrument config to resolve source names to titles.
 
     Returns
     -------
@@ -85,17 +85,14 @@ def _resolve_axis_source_titles(
     for role, field_name in role_to_field.items():
         if role in axis_sources and axis_sources[role].source_names:
             source_name = axis_sources[role].source_names[0]
-            if instrument_config is not None:
-                result[field_name] = instrument_config.get_source_title(source_name)
-            else:
-                result[field_name] = source_name
+            result[field_name] = instrument_config.get_source_title(source_name)
     return result
 
 
 def _inject_axis_source_names(
     params: pydantic.BaseModel,
     axis_sources: dict[str, DataSourceConfig],
-    instrument_config: Instrument | None = None,
+    instrument_config: Instrument,
 ) -> pydantic.BaseModel:
     """Inject axis source titles into correlation histogram params for display.
 

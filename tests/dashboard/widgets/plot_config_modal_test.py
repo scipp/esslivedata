@@ -53,14 +53,6 @@ def _make_axis_sources(
 
 
 class TestResolveAxisSourceTitles:
-    def test_returns_raw_names_without_instrument_config(self):
-        axis_sources = _make_axis_sources("monitor_cave", "monitor_bunker")
-        result = _resolve_axis_source_titles(axis_sources)
-        assert result == {
-            "x_axis_source": "monitor_cave",
-            "y_axis_source": "monitor_bunker",
-        }
-
     def test_resolves_titles_with_instrument_config(self):
         axis_sources = _make_axis_sources("monitor_cave", "monitor_bunker")
         instrument = FakeInstrumentConfig(
@@ -79,7 +71,8 @@ class TestResolveAxisSourceTitles:
         assert result == {"x_axis_source": "unknown_source"}
 
     def test_empty_axis_sources_returns_empty(self):
-        assert _resolve_axis_source_titles({}) == {}
+        instrument = FakeInstrumentConfig({})
+        assert _resolve_axis_source_titles({}, instrument) == {}
 
 
 class TestInjectAxisSourceNames:
@@ -90,15 +83,10 @@ class TestInjectAxisSourceNames:
         result = _inject_axis_source_names(params, axis_sources, instrument)
         assert result.bins.x_axis_source == "Cave Monitor"
 
-    def test_injects_raw_names_without_instrument_config(self):
-        params = Params()
-        axis_sources = _make_axis_sources("monitor_cave")
-        result = _inject_axis_source_names(params, axis_sources)
-        assert result.bins.x_axis_source == "monitor_cave"
-
     def test_no_change_when_no_axis_sources(self):
         params = Params(bins=Bins(x_axis_source="existing"))
-        result = _inject_axis_source_names(params, {})
+        instrument = FakeInstrumentConfig({})
+        result = _inject_axis_source_names(params, {}, instrument)
         assert result.bins.x_axis_source == "existing"
 
     def test_no_change_when_no_bins(self):
@@ -107,5 +95,6 @@ class TestInjectAxisSourceNames:
 
         params = NoBinsParams()
         axis_sources = _make_axis_sources("monitor_cave")
-        result = _inject_axis_source_names(params, axis_sources)
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+        result = _inject_axis_source_names(params, axis_sources, instrument)
         assert result.color == "red"
