@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -24,7 +24,12 @@ import pydantic
 import structlog
 
 from ess.livedata.config.grid_template import GridSpec
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    JobNumber,
+    ResultKey,
+    WorkflowId,
+    WorkflowSpec,
+)
 
 from .config_store import ConfigStore
 from .data_roles import PRIMARY
@@ -84,6 +89,10 @@ class JobOrchestratorProtocol(Protocol):
         subscription_id
             The subscription ID returned from subscribe_to_workflow.
         """
+        ...
+
+    def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """Get the workflow registry containing all managed workflows."""
         ...
 
 
@@ -322,6 +331,18 @@ class PlotOrchestrator:
         if self._instrument_config is not None:
             return self._instrument_config.get_source_title(source_name)
         return source_name
+
+    def get_output_title(self, workflow_id: WorkflowId, output_name: str) -> str:
+        """Get display title for an output field name.
+
+        Falls back to the raw output_name if the workflow is not found
+        or no title is defined for the output.
+        """
+        registry = self._job_orchestrator.get_workflow_registry()
+        spec = registry.get(workflow_id)
+        if spec is not None:
+            return spec.get_output_title(output_name)
+        return output_name
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -642,6 +663,20 @@ class PlotOrchestrator:
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
 
+    def _make_output_title_resolver(self, data: dict) -> Callable[[str], str] | None:
+        """Create an output title resolver from the data's workflow_id.
+
+        Returns None if the data dict is empty (no workflow_id to resolve from).
+        """
+        workflow_id = None
+        for key in data:
+            if isinstance(key, ResultKey):
+                workflow_id = key.workflow_id
+                break
+        if workflow_id is None:
+            return None
+        return lambda output_name: self.get_output_title(workflow_id, output_name)
+
     def _run_compute(self, layer_id: LayerId, plotter: Any, data: dict) -> None:
         """
         Compute plot state and transition layer to READY.
@@ -662,7 +697,12 @@ class PlotOrchestrator:
             return
 
         try:
-            plotter.compute(data, source_title=self.get_source_title)
+            output_title = self._make_output_title_resolver(data)
+            plotter.compute(
+                data,
+                source_title=self.get_source_title,
+                output_title=output_title,
+            )
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()

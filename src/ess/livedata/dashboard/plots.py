@@ -384,6 +384,7 @@ class Plotter:
         data: dict[ResultKey, sc.DataArray],
         *,
         source_title: Callable[[str], str] | None = None,
+        output_title: Callable[[str], str] | None = None,
         **kwargs,
     ) -> None:
         """
@@ -400,23 +401,29 @@ class Plotter:
         source_title:
             Callable that maps a source name to a display title. If None, the
             raw source name is used.
+        output_title:
+            Callable that maps an output name to a display title. If None, the
+            raw output name is used.
         **kwargs:
             Additional keyword arguments passed to plot().
         """
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
-        resolve = source_title or _identity
+        resolve_source = source_title or _identity
+        resolve_output = output_title or _identity
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                name = resolve(data_key.job_id.source_name)
-                label = f'{name}/{data_key.output_name}'
+                source = resolve_source(data_key.job_id.source_name)
+                output = resolve_output(data_key.output_name)
+                label = f'{source}/{output}'
                 plot_element = self.plot(
                     da,
                     data_key,
                     label=label,
-                    source_display_name=name,
+                    source_display_name=source,
+                    output_display_name=output,
                     **kwargs,
                 )
                 plots.append(plot_element)
@@ -730,6 +737,7 @@ class BarsPlotter(Plotter):
         *,
         label: str = '',
         source_display_name: str = '',
+        output_display_name: str = '',
         **kwargs,
     ) -> hv.Bars:
         """Create a bar chart from a 0D scipp DataArray."""
@@ -739,7 +747,10 @@ class BarsPlotter(Plotter):
         bar_label = source_display_name or data_key.job_id.source_name
         value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
-        vdim = hv.Dimension(data_key.output_name or 'values', unit=unit)
+        vdim_label = output_display_name or data_key.output_name or 'values'
+        vdim = hv.Dimension(
+            data_key.output_name or 'values', label=vdim_label, unit=unit
+        )
         bars = hv.Bars(
             [(bar_label, value)],
             kdims=['source'],

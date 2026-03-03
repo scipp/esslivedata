@@ -260,12 +260,10 @@ def get_workflow_display_info(
         workflow_title = str(workflow_id)
 
     # Get output title from spec if available
-    output_title = output_name or ''
-    if workflow_spec and workflow_spec.outputs and output_name:
-        output_fields = workflow_spec.outputs.model_fields
-        if output_name in output_fields:
-            field_info = output_fields[output_name]
-            output_title = field_info.title or output_name
+    if workflow_spec is not None and output_name:
+        output_title = workflow_spec.get_output_title(output_name)
+    else:
+        output_title = output_name or ''
 
     return workflow_title, output_title
 
