@@ -59,7 +59,11 @@ def visualize_workflows(
         try:
             graph = workflow.visualize(**kwargs)
         except Exception as e:
-            logger.warning("Failed to visualize %s: %s", workflow_id, e)
+            logger.warning(
+                "Failed to visualize workflow",
+                workflow_id=str(workflow_id),
+                error=str(e),
+            )
             continue
 
         key = str(workflow_id)
@@ -84,5 +88,7 @@ def _try_create_workflow(
     try:
         return factory.create(source_name=source_name, config=config)
     except Exception as e:
-        logger.warning("Failed to create workflow %s: %s", workflow_id, e)
+        logger.warning(
+            "Failed to create workflow", workflow_id=str(workflow_id), error=str(e)
+        )
         return None
