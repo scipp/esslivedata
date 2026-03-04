@@ -878,6 +878,7 @@ class PlotGridTabs:
             Composed plot from session DMaps/elements, or None if none available.
         """
         plots = []
+        has_layout = False
         for layer in cell.layers:
             layer_id = layer.layer_id
             session_layer = self._session_layers.get(layer_id)
@@ -888,6 +889,10 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
+                if state.plotter is not None and isinstance(
+                    state.plotter.get_cached_state(), hv.Layout
+                ):
+                    has_layout = True
 
             if session_layer.dmap is not None:
                 plots.append(session_layer.dmap)
@@ -901,12 +906,15 @@ class PlotGridTabs:
         else:
             result = hv.Overlay(plots)
 
-        filename = build_save_filename_from_cell(
-            cell, self._workflow_registry, self._orchestrator.get_source_title
-        )
-        if filename is not None:
-            hook = make_save_filename_hook(filename)
-            result = result.opts(hooks=[hook])
+        # Skip hooks for Layouts — each sub-figure has its own SaveTool,
+        # so a single cell-level filename is not meaningful.
+        if not has_layout:
+            filename = build_save_filename_from_cell(
+                cell, self._workflow_registry, self._orchestrator.get_source_title
+            )
+            if filename is not None:
+                hook = make_save_filename_hook(filename)
+                result = result.opts(hooks=[hook])
 
         return result
 
