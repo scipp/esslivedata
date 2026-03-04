@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+import graphviz
 import sciline
 import sciline.typing
 import scipp as sc
@@ -115,3 +116,10 @@ class StreamProcessorWorkflow(Workflow):
         self._stream_processor.clear()
         self._current_start_time = None
         self._current_end_time = None
+
+    def visualize(self, **kwargs: Any) -> graphviz.Digraph:
+        """Visualize the streaming workflow graph.
+
+        See :py:meth:`ess.reduce.streaming.StreamProcessor.visualize` for parameters.
+        """
+        return self._stream_processor.visualize(**kwargs)
