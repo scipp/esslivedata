@@ -196,7 +196,6 @@ class CorrelationHistogramPlotter:
         data: dict[str, Any],
         *,
         source_title: Callable[[str], str] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Compute histograms for all data sources and render.
 

@@ -89,25 +89,98 @@ def _resolve_axis_source_titles(
     return result
 
 
-def _inject_axis_source_names(
-    params: pydantic.BaseModel,
+def _inject_axis_source_titles(
+    params: pydantic.BaseModel | dict,
     axis_sources: dict[str, DataSourceConfig],
     instrument_config: Instrument,
-) -> pydantic.BaseModel:
-    """Inject axis source titles into correlation histogram params for display.
+) -> pydantic.BaseModel | dict:
+    """Inject axis source titles into correlation histogram params.
 
     Updates the bins.x_axis_source and bins.y_axis_source fields with
     human-readable titles resolved from axis_sources.
+    Accepts either a pydantic model or a plain dict of params.
     """
+    titles = _resolve_axis_source_titles(axis_sources, instrument_config)
+    if not titles:
+        return params
+
+    if isinstance(params, dict):
+        if 'bins' in params and isinstance(params['bins'], dict):
+            params['bins'].update(titles)
+        return params
+
     if not hasattr(params, 'bins'):
         return params
-
-    updates = _resolve_axis_source_titles(axis_sources, instrument_config)
-    if not updates:
-        return params
-
-    new_bins = params.bins.model_copy(update=updates)
+    new_bins = params.bins.model_copy(update=titles)
     return params.model_copy(update={'bins': new_bins})
+
+
+def _build_timeseries_options(
+    available_timeseries: list[tuple[WorkflowId, str, str]],
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    instrument_config: Instrument | None,
+) -> dict[str, tuple[WorkflowId, str, str]]:
+    """Build display-name to timeseries-identity mapping for axis dropdowns.
+
+    Parameters
+    ----------
+    available_timeseries:
+        (workflow_id, source_name, output_name) tuples.
+    workflow_registry:
+        Registry to look up workflow specs.
+    instrument_config:
+        Instrument config for resolving source titles.
+
+    Returns
+    -------
+    :
+        Mapping of display name to (workflow_id, source_name, output_name).
+    """
+    options: dict[str, tuple[WorkflowId, str, str]] = {}
+    for workflow_id, source_name, output_name in available_timeseries:
+        spec = workflow_registry.get(workflow_id)
+        workflow_title = spec.title if spec else workflow_id.name
+        if instrument_config is not None:
+            source_title = instrument_config.get_source_title(source_name)
+        else:
+            source_title = source_name
+        display_name = f"{workflow_title}: {source_title}"
+        # Append output name only when the workflow has multiple outputs,
+        # to disambiguate which output is being selected.
+        has_multiple_outputs = (
+            spec is not None
+            and spec.outputs is not None
+            and len(spec.outputs.model_fields) > 1
+        )
+        if has_multiple_outputs:
+            output_field = spec.outputs.model_fields.get(output_name) if spec else None
+            output_title = (
+                output_field.title
+                if output_field is not None and output_field.title
+                else output_name
+            )
+            display_name = f"{display_name} ({output_title})"
+        options[display_name] = (workflow_id, source_name, output_name)
+    return options
+
+
+def _find_initial_axis_value(
+    role: str,
+    initial_axis_sources: dict[str, DataSourceConfig],
+    options: dict[str, tuple[WorkflowId, str, str]],
+) -> tuple[WorkflowId, str, str] | None:
+    """Find the dropdown option matching the initial config for a given axis role."""
+    if role not in initial_axis_sources:
+        return None
+    initial_ds = initial_axis_sources[role]
+    for wf_id, src_name, out_name in options.values():
+        if (
+            wf_id == initial_ds.workflow_id
+            and src_name in initial_ds.source_names
+            and out_name == initial_ds.output_name
+        ):
+            return (wf_id, src_name, out_name)
+    return None
 
 
 @dataclass
@@ -738,27 +811,11 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             )
             return
 
-        # Build options: display name -> (workflow_id, source_name, output_name)
-        options: dict[str, tuple[WorkflowId, str, str]] = {}
-        for workflow_id, source_name, output_name in available_timeseries:
-            spec = self._workflow_registry.get(workflow_id)
-            workflow_title = spec.title if spec else workflow_id.name
-            if self._instrument_config is not None:
-                source_title = self._instrument_config.get_source_title(source_name)
-            else:
-                source_title = source_name
-            display_name = f"{workflow_title}: {source_title}"
-            if output_name != 'delta':
-                output_field = (
-                    spec.outputs.model_fields.get(output_name) if spec else None
-                )
-                output_title = (
-                    output_field.title
-                    if output_field is not None and output_field.title
-                    else output_name
-                )
-                display_name = f"{display_name} ({output_title})"
-            options[display_name] = (workflow_id, source_name, output_name)
+        options = _build_timeseries_options(
+            available_timeseries,
+            self._workflow_registry,
+            self._instrument_config,
+        )
 
         # Map roles to display labels
         role_labels = {X_AXIS: 'X-Axis', Y_AXIS: 'Y-Axis'}
@@ -774,19 +831,9 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
 
         for role in required_roles:
             label = role_labels.get(role, role)
-            # Find initial value for this axis from edit mode config
-            initial_value = None
-            if role in initial_axis_sources:
-                initial_ds = initial_axis_sources[role]
-                # Find matching option in dropdown
-                for wf_id, src_name, out_name in options.values():
-                    if (
-                        wf_id == initial_ds.workflow_id
-                        and src_name in initial_ds.source_names
-                        and out_name == initial_ds.output_name
-                    ):
-                        initial_value = (wf_id, src_name, out_name)
-                        break
+            initial_value = _find_initial_axis_value(
+                role, initial_axis_sources, options
+            )
 
             selector = pn.widgets.Select(
                 name=f'{label} (correlate against)',
@@ -800,7 +847,6 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._axis_selectors[role] = selector
             self._axis_selectors_container.append(selector)
 
-            # If we have an initial value, add it to selected axes
             if initial_value is not None:
                 workflow_id, source_name, output_name = initial_value
                 self._selected_axis_sources[role] = DataSourceConfig(
@@ -997,13 +1043,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 if isinstance(self._initial_config.params, pydantic.BaseModel)
                 else dict(self._initial_config.params)
             )
-            # Inject current axis source titles into bins (overrides stale names)
-            if axis_sources and 'bins' in params_dict:
-                titles = _resolve_axis_source_titles(
-                    axis_sources, self._instrument_config
+            if axis_sources:
+                _inject_axis_source_titles(
+                    params_dict, axis_sources, self._instrument_config
                 )
-                if isinstance(params_dict['bins'], dict):
-                    params_dict['bins'].update(titles)
             config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
         elif (
@@ -1058,7 +1101,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         ):
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
-                params = _inject_axis_source_names(
+                params = _inject_axis_source_titles(
                     params, axis_sources, self._instrument_config
                 )
 

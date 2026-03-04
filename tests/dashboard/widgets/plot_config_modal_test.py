@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pydantic
+import scipp as sc
 
-from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.config.workflow_spec import (
+    WorkflowId,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
 from ess.livedata.dashboard.data_roles import X_AXIS, Y_AXIS
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
 from ess.livedata.dashboard.widgets.plot_config_modal import (
-    _inject_axis_source_names,
+    _build_timeseries_options,
+    _inject_axis_source_titles,
     _resolve_axis_source_titles,
 )
 
@@ -75,18 +81,18 @@ class TestResolveAxisSourceTitles:
         assert _resolve_axis_source_titles({}, instrument) == {}
 
 
-class TestInjectAxisSourceNames:
+class TestInjectAxisSourceTitles:
     def test_injects_titles_with_instrument_config(self):
         params = Params()
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_names(params, axis_sources, instrument)
+        result = _inject_axis_source_titles(params, axis_sources, instrument)
         assert result.bins.x_axis_source == "Cave Monitor"
 
     def test_no_change_when_no_axis_sources(self):
         params = Params(bins=Bins(x_axis_source="existing"))
         instrument = FakeInstrumentConfig({})
-        result = _inject_axis_source_names(params, {}, instrument)
+        result = _inject_axis_source_titles(params, {}, instrument)
         assert result.bins.x_axis_source == "existing"
 
     def test_no_change_when_no_bins(self):
@@ -96,5 +102,88 @@ class TestInjectAxisSourceNames:
         params = NoBinsParams()
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_names(params, axis_sources, instrument)
+        result = _inject_axis_source_titles(params, axis_sources, instrument)
         assert result.color == "red"
+
+    def test_injects_titles_into_dict(self):
+        params = {"bins": {"x_axis_source": "old", "n_bins": 50}}
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        assert result["bins"]["x_axis_source"] == "Cave Monitor"
+        assert result["bins"]["n_bins"] == 50
+
+    def test_dict_without_bins_unchanged(self):
+        params = {"color": "red"}
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        assert result == {"color": "red"}
+
+
+def _make_workflow_spec(title: str, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:
+    return WorkflowSpec(
+        instrument="test",
+        name="test_wf",
+        version=1,
+        title=title,
+        description="",
+        params=None,
+        outputs=outputs,
+    )
+
+
+class TestBuildTimeseriesOptions:
+    def test_single_output_workflow_omits_output_name(self):
+        """When a workflow has only one output, the display name has no suffix."""
+
+        class SingleOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Timeseries data", SingleOutput)
+        timeseries = [(wf_id, "mon1", "delta")]
+        instrument = FakeInstrumentConfig({"mon1": "Monitor 1"})
+
+        options = _build_timeseries_options(timeseries, {wf_id: spec}, instrument)
+        display_names = list(options.keys())
+        assert display_names == ["Timeseries data: Monitor 1"]
+
+    def test_multi_output_workflow_includes_output_title(self):
+        """When a workflow has multiple outputs, the display name includes the title."""
+
+        class MultiOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Monitor data", MultiOutput)
+        timeseries = [(wf_id, "mon1", "delta")]
+        instrument = FakeInstrumentConfig({"mon1": "Monitor 1"})
+
+        options = _build_timeseries_options(timeseries, {wf_id: spec}, instrument)
+        display_names = list(options.keys())
+        assert display_names == ["Monitor data: Monitor 1 (Delta)"]
+
+    def test_no_instrument_config_uses_source_name(self):
+        class SingleOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Timeseries data", SingleOutput)
+        timeseries = [(wf_id, "raw_source", "delta")]
+
+        options = _build_timeseries_options(timeseries, {wf_id: spec}, None)
+        assert list(options.keys()) == ["Timeseries data: raw_source"]
