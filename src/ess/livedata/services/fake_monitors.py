@@ -124,7 +124,7 @@ def run_service(
 ) -> NoReturn:
     from contextlib import ExitStack
 
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
+    kafka_config = load_config(namespace=config_names.kafka)
     if mode == 'ev44':
         adapter = None
         serializer = serialize_variable_to_monitor_ev44
