@@ -191,6 +191,13 @@ class DataServiceRunner:
         self._make_builder = make_builder
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
+            '--sync-scheduler',
+            action='store_true',
+            default=False,
+            help='Use synchronous dask scheduler instead of threaded'
+            ' (reduces GIL contention)',
+        )
+        self._parser.add_argument(
             '--sink-type',
             choices=['kafka', 'png'],
             default='kafka',

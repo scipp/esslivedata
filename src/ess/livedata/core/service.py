@@ -242,13 +242,6 @@ class Service(ServiceBase):
             default=False,
             help='Disable logging to stdout',
         )
-        parser.add_argument(
-            '--sync-scheduler',
-            action='store_true',
-            default=False,
-            help='Use synchronous dask scheduler instead of threaded'
-            ' (reduces GIL contention)',
-        )
         return parser
 
 

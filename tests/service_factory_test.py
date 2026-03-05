@@ -7,7 +7,11 @@ import dask
 import pytest
 import sciline
 
-from ess.livedata.core.service import Service
+from ess.livedata.service_factory import DataServiceRunner
+
+
+def _make_runner() -> DataServiceRunner:
+    return DataServiceRunner(pretty_name='test', make_builder=lambda **kw: None)
 
 
 @pytest.fixture(autouse=True)
@@ -18,14 +22,14 @@ def _clean_dask_pool_config():
 
 
 def test_sync_scheduler_flag_is_registered():
-    parser = Service.setup_arg_parser(description='test')
-    args = parser.parse_args(['--sync-scheduler'])
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--sync-scheduler', '--instrument', 'dummy'])
     assert args.sync_scheduler is True
 
 
 def test_sync_scheduler_flag_defaults_to_false():
-    parser = Service.setup_arg_parser(description='test')
-    args = parser.parse_args([])
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--instrument', 'dummy'])
     assert args.sync_scheduler is False
 
 
