@@ -25,7 +25,7 @@ class LogProducerWidget:
 
         self._sink = exit_stack.enter_context(
             KafkaSink(
-                kafka_config=load_config(namespace=config_names.kafka_upstream),
+                kafka_config=load_config(namespace=config_names.kafka),
                 instrument=instrument,
                 serializer=serialize_dataarray_to_f144,
             )

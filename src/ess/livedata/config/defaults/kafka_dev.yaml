@@ -1,0 +1,3 @@
+bootstrap.servers: localhost:9092
+message.max.bytes: 100971520
+queue.buffering.max.kbytes: 104857600

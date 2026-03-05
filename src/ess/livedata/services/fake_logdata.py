@@ -116,7 +116,7 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     from contextlib import ExitStack
 
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
+    kafka_config = load_config(namespace=config_names.kafka)
     serializer = serialize_dataarray_to_f144
 
     resources = ExitStack()

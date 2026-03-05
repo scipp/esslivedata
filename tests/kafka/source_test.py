@@ -10,7 +10,6 @@ from ess.livedata.kafka.source import (
     BackgroundMessageSource,
     ConsumerHealthStatus,
     KafkaMessageSource,
-    MultiConsumer,
 )
 
 
@@ -624,94 +623,16 @@ class LagSupportingConsumer:
         return result
 
 
-class TestMultiConsumer:
-    def test_assignment_aggregates_from_all_consumers(self) -> None:
-        consumer1 = LagSupportingConsumer("topic1", [0, 1])
-        consumer2 = LagSupportingConsumer("topic2", [0])
+class TestBackgroundMessageSourceLagMonitoring:
+    def test_get_consumer_lag_with_lag_supporting_consumer(self) -> None:
+        """Test that get_consumer_lag works with a consumer supporting lag methods."""
+        consumer = LagSupportingConsumer("topic1", [0, 1])
+        consumer.set_position(0, 50)
+        consumer.set_watermarks(0, 0, 100)
+        consumer.set_position(1, 25)
+        consumer.set_watermarks(1, 0, 75)
 
-        multi = MultiConsumer([consumer1, consumer2])
-        assignment = multi.assignment()
-
-        assert len(assignment) == 3
-        topics = {(tp.topic, tp.partition) for tp in assignment}
-        assert topics == {("topic1", 0), ("topic1", 1), ("topic2", 0)}
-
-    def test_get_watermark_offsets_delegates_to_owning_consumer(self) -> None:
-        consumer1 = LagSupportingConsumer("topic1", [0])
-        consumer1.set_watermarks(0, 10, 200)
-        consumer2 = LagSupportingConsumer("topic2", [0])
-        consumer2.set_watermarks(0, 5, 50)
-
-        multi = MultiConsumer([consumer1, consumer2])
-
-        tp1 = FakeTopicPartition("topic1", 0)
-        tp2 = FakeTopicPartition("topic2", 0)
-
-        assert multi.get_watermark_offsets(tp1) == (10, 200)
-        assert multi.get_watermark_offsets(tp2) == (5, 50)
-
-    def test_get_watermark_offsets_raises_for_unknown_partition(self) -> None:
-        consumer = LagSupportingConsumer("topic1", [0])
-        multi = MultiConsumer([consumer])
-
-        unknown_tp = FakeTopicPartition("unknown", 0)
-        with pytest.raises(ValueError, match="No consumer found"):
-            multi.get_watermark_offsets(unknown_tp)
-
-    def test_position_delegates_to_owning_consumers(self) -> None:
-        consumer1 = LagSupportingConsumer("topic1", [0])
-        consumer1.set_position(0, 42)
-        consumer2 = LagSupportingConsumer("topic2", [0])
-        consumer2.set_position(0, 99)
-
-        multi = MultiConsumer([consumer1, consumer2])
-
-        partitions = [FakeTopicPartition("topic1", 0), FakeTopicPartition("topic2", 0)]
-        positions = multi.position(partitions)
-
-        assert len(positions) == 2
-        assert positions[0].offset == 42
-        assert positions[1].offset == 99
-
-    def test_consume_aggregates_from_all_consumers(self) -> None:
-        consumer1 = ControllableKafkaConsumer()
-        consumer1.add_messages([FakeKafkaMessage(value=b'msg1', topic="topic1")])
-        consumer2 = ControllableKafkaConsumer()
-        consumer2.add_messages([FakeKafkaMessage(value=b'msg2', topic="topic2")])
-
-        multi = MultiConsumer([consumer1, consumer2])
-        messages = multi.consume(10, 0.01)
-
-        assert len(messages) == 2
-
-    def test_works_with_mixed_consumers(self) -> None:
-        """MultiConsumer works even if some consumers don't support lag methods."""
-        lag_consumer = LagSupportingConsumer("topic1", [0])
-        simple_consumer = ControllableKafkaConsumer()
-
-        multi = MultiConsumer([lag_consumer, simple_consumer])
-
-        # assignment should only include partitions from lag-supporting consumer
-        assignment = multi.assignment()
-        assert len(assignment) == 1
-        assert assignment[0].topic == "topic1"
-
-
-class TestBackgroundMessageSourceWithMultiConsumer:
-    def test_get_consumer_lag_works_through_multi_consumer(self) -> None:
-        """Test that get_consumer_lag works through MultiConsumer wrapper."""
-        consumer1 = LagSupportingConsumer("topic1", [0])
-        consumer1.set_position(0, 50)
-        consumer1.set_watermarks(0, 0, 100)
-
-        consumer2 = LagSupportingConsumer("topic2", [0])
-        consumer2.set_position(0, 25)
-        consumer2.set_watermarks(0, 0, 75)
-
-        multi = MultiConsumer([consumer1, consumer2])
-
-        with BackgroundMessageSource(multi, timeout=0.01) as source:
-            # Wait for lag monitor thread to compute first measurement
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
             lag = None
             for _ in range(50):
                 lag = source.get_consumer_lag()
@@ -722,4 +643,4 @@ class TestBackgroundMessageSourceWithMultiConsumer:
             assert lag is not None
             assert lag["total_lag"] == (100 - 50) + (75 - 25)  # 50 + 50 = 100
             assert lag["partitions"]["topic1:0"] == 50
-            assert lag["partitions"]["topic2:0"] == 50
+            assert lag["partitions"]["topic1:1"] == 50
