@@ -262,7 +262,7 @@ def run_service(
 ) -> NoReturn:
     from contextlib import ExitStack
 
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
+    kafka_config = load_config(namespace=config_names.kafka)
     name = 'fake_producer'
 
     if mode == 'ad00':

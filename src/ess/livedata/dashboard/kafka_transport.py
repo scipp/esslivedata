@@ -53,10 +53,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         """Set up Kafka connections and return dashboard resources."""
         try:
             # Load configurations
-            kafka_downstream_config = load_config(
-                namespace=config_names.kafka_downstream
-            )
-            kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+            kafka_config = load_config(namespace=config_names.kafka)
             consumer_config = load_config(
                 namespace=config_names.reduced_data_consumer, env=''
             )
@@ -64,13 +61,13 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             # Create message source
             message_source = self._create_message_source(
                 consumer_config=consumer_config,
-                kafka_downstream_config=kafka_downstream_config,
+                kafka_config=kafka_config,
             )
 
             # Create command sink
             command_sink = self._exit_stack.enter_context(
                 KafkaSink[ConfigUpdate](
-                    kafka_config=kafka_downstream_config,
+                    kafka_config=kafka_config,
                     instrument=self._instrument,
                 )
             )
@@ -78,7 +75,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             # Create ROI sink
             roi_sink = self._exit_stack.enter_context(
                 KafkaSink[sc.DataArray](
-                    kafka_config=kafka_upstream_config,
+                    kafka_config=kafka_config,
                     instrument=self._instrument,
                     serializer=serialize_dataarray_to_da00,
                 )
@@ -119,7 +116,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         self,
         *,
         consumer_config: dict,
-        kafka_downstream_config: dict,
+        kafka_config: dict,
     ) -> AdaptingMessageSource:
         """Create unified Kafka consumer for all dashboard message streams."""
         # Define topics to subscribe to
@@ -136,7 +133,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
                 topics=topics,
-                config={**consumer_config, **kafka_downstream_config},
+                config={**consumer_config, **kafka_config},
                 group='dashboard',
             )
         )

@@ -20,12 +20,11 @@ from ess.livedata.sinks import PlotToPngSink
 
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     consumer_config = load_config(namespace=config_names.reduced_data_consumer, env='')
-    kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+    kafka_config = load_config(namespace=config_names.kafka)
     config = load_config(namespace=config_names.visualization, env='')
     with kafka_consumer.make_consumer_from_config(
         topics=config['topics'],
-        config={**consumer_config, **kafka_downstream_config},
-        instrument=instrument,
+        config={**consumer_config, **kafka_config},
         group='visualization',
     ) as consumer:
         processor = IdentityProcessor(

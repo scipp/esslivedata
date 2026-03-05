@@ -25,7 +25,6 @@ from .kafka.source import (
     BackgroundMessageSource,
     KafkaConsumer,
     KafkaMessageSource,
-    MultiConsumer,
 )
 from .logging_config import configure_logging
 from .sinks import PlotToPngSink
@@ -95,17 +94,13 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         """Create a service from a consumer config."""
         resources = ExitStack()
         try:
-            config_topic, config_consumer = resources.enter_context(
-                kafka_consumer.make_control_consumer(instrument=self._instrument)
-            )
-            topics = self._adapter.topics
-            data_topics = [topic for topic in topics if topic != config_topic]
-            data_consumer = resources.enter_context(
+            consumer = resources.enter_context(
                 kafka_consumer.make_consumer_from_config(
-                    topics=data_topics, config=kafka_config, group=self._name
+                    topics=self._adapter.topics,
+                    config=kafka_config,
+                    group=self._name,
                 )
             )
-            consumer = MultiConsumer([config_consumer, data_consumer])
 
             if use_background_source:
                 source = resources.enter_context(
@@ -223,15 +218,14 @@ class DataServiceRunner:
 
         logger.info("service_starting", **args)
         consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+        kafka_config = load_config(namespace=config_names.kafka)
 
         sink_type = args.pop('sink_type')
         builder = self._make_builder(**args)
 
         if sink_type == 'kafka':
             kafka_sink = KafkaSink(
-                instrument=builder.instrument, kafka_config=kafka_downstream_config
+                instrument=builder.instrument, kafka_config=kafka_config
             )
         else:
             kafka_sink = PlotToPngSink()
@@ -241,7 +235,7 @@ class DataServiceRunner:
             sink = UnrollingSinkAdapter(sink)
 
             with builder.from_consumer_config(
-                kafka_config={**consumer_config, **kafka_upstream_config},
+                kafka_config={**consumer_config, **kafka_config},
                 sink=sink,
                 use_background_source=True,
             ) as service:

@@ -173,10 +173,6 @@ Non-blocking Kafka consumer. Background thread polls continuously, messages queu
 
 Wraps source to apply adapters. Returns `list[Message[DomainType]]`. Error handling: catches exceptions during adaptation, logs/skips messages (if `raise_on_error=False`).
 
-### MultiConsumer
-
-Combines multiple Kafka consumers. Use case: different offset strategies for config topics (earliest) vs data topics (latest).
-
 ## Serialization and Schema
 
 ### FlatBuffers Schemas
