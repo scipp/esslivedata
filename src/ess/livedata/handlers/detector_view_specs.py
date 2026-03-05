@@ -219,10 +219,22 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     """Outputs for detector view workflows with ROI support."""
 
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
+    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
+        title='ROI spectra (cumulative)',
+        description=(
+            'Histogram for each active ROI region '
+            'accumulated since the start of the run.'
+        ),
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
     roi_spectra_current: sc.DataArray = pydantic.Field(
         title='ROI spectra (current)',
         description=(
-            'Histogram for each active ROI region, for the latest update interval only.'
+            'Histogram for each active ROI region '
+            'for the latest update interval only. Resets each update interval.'
         ),
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
@@ -230,17 +242,6 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
                 'roi': sc.array(dims=['roi'], values=[], unit=None),
                 'time': sc.scalar(0, unit='ns'),
             },
-        ),
-    )
-    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
-        title='ROI spectra (cumulative)',
-        description=(
-            'Histogram for each active ROI region, '
-            'accumulated since the start of the run.'
-        ),
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
         ),
     )
 
