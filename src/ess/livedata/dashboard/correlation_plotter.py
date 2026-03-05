@@ -13,15 +13,21 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pydantic
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import ResultKey, WorkflowId, WorkflowSpec
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
+
+    from .plot_orchestrator import DataSourceConfig
 from .plot_params import (
     Line1dParams,
     Line1dRenderMode,
@@ -135,6 +141,78 @@ class CorrelationHistogram2dParams(_CorrelationHistogramBase, PlotDisplayParams2
 CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
     {'correlation_histogram_1d', 'correlation_histogram_2d'}
 )
+
+
+def resolve_axis_source_titles(
+    axis_sources: dict[str, DataSourceConfig],
+    instrument_config: Instrument,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
+) -> dict[str, str]:
+    """Build a mapping from bins field name to display title for axis sources.
+
+    Parameters
+    ----------
+    axis_sources:
+        Axis role -> DataSourceConfig mapping.
+    instrument_config:
+        Instrument config to resolve source names to titles.
+    workflow_registry:
+        Optional registry used to look up output titles. When provided and the
+        workflow has multiple outputs, the output title is appended to the source
+        title to disambiguate (e.g. "Cave Monitor (wavelength)").
+
+    Returns
+    -------
+    :
+        Mapping of bins field name (e.g. 'x_axis_source') to display title.
+    """
+    role_to_field = {X_AXIS: 'x_axis_source', Y_AXIS: 'y_axis_source'}
+    result: dict[str, str] = {}
+    for role, field_name in role_to_field.items():
+        if role in axis_sources and axis_sources[role].source_names:
+            ds = axis_sources[role]
+            source_name = ds.source_names[0]
+            title = instrument_config.get_source_title(source_name)
+            if workflow_registry is not None:
+                spec = workflow_registry.get(ds.workflow_id)
+                if (
+                    spec is not None
+                    and spec.outputs is not None
+                    and len(spec.outputs.model_fields) > 1
+                ):
+                    output_title = spec.get_output_title(ds.output_name)
+                    title = f"{title} ({output_title})"
+            result[field_name] = title
+    return result
+
+
+def inject_axis_source_titles(
+    params: pydantic.BaseModel | dict,
+    axis_sources: dict[str, DataSourceConfig],
+    instrument_config: Instrument,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
+) -> pydantic.BaseModel | dict:
+    """Inject axis source titles into correlation histogram params.
+
+    Updates the bins.x_axis_source and bins.y_axis_source fields with
+    human-readable titles resolved from axis_sources.
+    Accepts either a pydantic model or a plain dict of params.
+    """
+    titles = resolve_axis_source_titles(
+        axis_sources, instrument_config, workflow_registry
+    )
+    if not titles:
+        return params
+
+    if isinstance(params, dict):
+        if 'bins' in params and isinstance(params['bins'], dict):
+            params['bins'].update(titles)
+        return params
+
+    if not hasattr(params, 'bins'):
+        return params
+    new_bins = params.bins.model_copy(update=titles)
+    return params.model_copy(update={'bins': new_bins})
 
 
 def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:

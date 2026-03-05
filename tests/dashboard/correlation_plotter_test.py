@@ -316,6 +316,28 @@ class TestCorrelationHistogram1dPlotter:
         assert plotter._axes[0].name == 'position'
         assert plotter._axes[0].bins == 50
 
+    def test_axis_source_with_output_title_becomes_dimension_name(self):
+        """When x_axis_source includes output title, it becomes the histogram
+        dimension name and thus the X-axis label on the plot."""
+        title = 'Cave Monitor (Delta)'
+        params = CorrelationHistogram1dParams(
+            bins=Bin1dParams(x_axis_source=title, x_bins=10)
+        )
+        plotter = CorrelationHistogram1dPlotter(params)
+
+        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
+        source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
+        data = {
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('monitor'): axis_data},
+        }
+
+        plotter.compute(data)
+        result = plotter.get_cached_state()
+        # Overlay wraps the histogram; get the first child element
+        element = next(iter(result.values()))
+        assert element.kdims[0].label == title
+
     def test_from_params_factory(self):
         """Verifies from_params factory method works."""
         params = CorrelationHistogram1dParams()

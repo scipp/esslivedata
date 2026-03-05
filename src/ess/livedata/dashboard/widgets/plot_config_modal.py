@@ -26,7 +26,11 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
     find_timeseries_outputs,
 )
-from ess.livedata.dashboard.correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
+from ess.livedata.dashboard.correlation_plotter import (
+    CORRELATION_HISTOGRAM_PLOTTERS,
+    inject_axis_source_titles,
+    resolve_axis_source_titles,
+)
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 
 if TYPE_CHECKING:
@@ -60,59 +64,6 @@ _NO_TRANSITION_CSS = """
     transition: none !important;
 }
 """
-
-
-def _resolve_axis_source_titles(
-    axis_sources: dict[str, DataSourceConfig],
-    instrument_config: Instrument,
-) -> dict[str, str]:
-    """Build a mapping from bins field name to display title for axis sources.
-
-    Parameters
-    ----------
-    axis_sources:
-        Axis role -> DataSourceConfig mapping.
-    instrument_config:
-        Instrument config to resolve source names to titles.
-
-    Returns
-    -------
-    :
-        Mapping of bins field name (e.g. 'x_axis_source') to display title.
-    """
-    role_to_field = {X_AXIS: 'x_axis_source', Y_AXIS: 'y_axis_source'}
-    result: dict[str, str] = {}
-    for role, field_name in role_to_field.items():
-        if role in axis_sources and axis_sources[role].source_names:
-            source_name = axis_sources[role].source_names[0]
-            result[field_name] = instrument_config.get_source_title(source_name)
-    return result
-
-
-def _inject_axis_source_titles(
-    params: pydantic.BaseModel | dict,
-    axis_sources: dict[str, DataSourceConfig],
-    instrument_config: Instrument,
-) -> pydantic.BaseModel | dict:
-    """Inject axis source titles into correlation histogram params.
-
-    Updates the bins.x_axis_source and bins.y_axis_source fields with
-    human-readable titles resolved from axis_sources.
-    Accepts either a pydantic model or a plain dict of params.
-    """
-    titles = _resolve_axis_source_titles(axis_sources, instrument_config)
-    if not titles:
-        return params
-
-    if isinstance(params, dict):
-        if 'bins' in params and isinstance(params['bins'], dict):
-            params['bins'].update(titles)
-        return params
-
-    if not hasattr(params, 'bins'):
-        return params
-    new_bins = params.bins.model_copy(update=titles)
-    return params.model_copy(update={'bins': new_bins})
 
 
 def _build_timeseries_options(
@@ -1091,8 +1042,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 else dict(self._initial_config.params)
             )
             if axis_sources:
-                _inject_axis_source_titles(
-                    params_dict, axis_sources, self._instrument_config
+                inject_axis_source_titles(
+                    params_dict,
+                    axis_sources,
+                    self._instrument_config,
+                    self._workflow_registry,
                 )
             config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
@@ -1103,7 +1057,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             # For new correlation histograms, pre-populate axis source titles
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 
-            titles = _resolve_axis_source_titles(axis_sources, self._instrument_config)
+            titles = resolve_axis_source_titles(
+                axis_sources, self._instrument_config, self._workflow_registry
+            )
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
@@ -1148,8 +1104,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         ):
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
-                params = _inject_axis_source_titles(
-                    params, axis_sources, self._instrument_config
+                params = inject_axis_source_titles(
+                    params,
+                    axis_sources,
+                    self._instrument_config,
+                    self._workflow_registry,
                 )
 
         self._last_config_result = PlotConfig(

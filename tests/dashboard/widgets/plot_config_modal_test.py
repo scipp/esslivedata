@@ -8,12 +8,14 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.dashboard.correlation_plotter import (
+    inject_axis_source_titles,
+    resolve_axis_source_titles,
+)
 from ess.livedata.dashboard.data_roles import X_AXIS, Y_AXIS
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
 from ess.livedata.dashboard.widgets.plot_config_modal import (
     _build_timeseries_options,
-    _inject_axis_source_titles,
-    _resolve_axis_source_titles,
 )
 
 
@@ -64,7 +66,7 @@ class TestResolveAxisSourceTitles:
         instrument = FakeInstrumentConfig(
             {"monitor_cave": "Cave Monitor", "monitor_bunker": "Bunker Monitor"}
         )
-        result = _resolve_axis_source_titles(axis_sources, instrument)
+        result = resolve_axis_source_titles(axis_sources, instrument)
         assert result == {
             "x_axis_source": "Cave Monitor",
             "y_axis_source": "Bunker Monitor",
@@ -73,12 +75,77 @@ class TestResolveAxisSourceTitles:
     def test_falls_back_to_source_name_when_title_not_found(self):
         axis_sources = _make_axis_sources("unknown_source")
         instrument = FakeInstrumentConfig({})
-        result = _resolve_axis_source_titles(axis_sources, instrument)
+        result = resolve_axis_source_titles(axis_sources, instrument)
         assert result == {"x_axis_source": "unknown_source"}
 
     def test_empty_axis_sources_returns_empty(self):
         instrument = FakeInstrumentConfig({})
-        assert _resolve_axis_source_titles({}, instrument) == {}
+        assert resolve_axis_source_titles({}, instrument) == {}
+
+    def test_single_output_workflow_omits_output_title(self):
+        class SingleOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Timeseries data", SingleOutput)
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+
+        result = resolve_axis_source_titles(axis_sources, instrument, {wf_id: spec})
+        assert result == {"x_axis_source": "Cave Monitor"}
+
+    def test_multi_output_workflow_appends_output_title(self):
+        class MultiOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Monitor data", MultiOutput)
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+
+        result = resolve_axis_source_titles(axis_sources, instrument, {wf_id: spec})
+        assert result == {"x_axis_source": "Cave Monitor (Delta)"}
+
+    def test_without_workflow_registry_omits_output_title(self):
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+
+        result = resolve_axis_source_titles(axis_sources, instrument)
+        assert result == {"x_axis_source": "Cave Monitor"}
+
+    def test_multi_output_both_axes(self):
+        class MultiOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Monitor data", MultiOutput)
+        axis_sources = _make_axis_sources("monitor_cave", "monitor_bunker")
+        instrument = FakeInstrumentConfig(
+            {"monitor_cave": "Cave Monitor", "monitor_bunker": "Bunker Monitor"}
+        )
+
+        result = resolve_axis_source_titles(axis_sources, instrument, {wf_id: spec})
+        assert result == {
+            "x_axis_source": "Cave Monitor (Delta)",
+            "y_axis_source": "Bunker Monitor (Delta)",
+        }
 
 
 class TestInjectAxisSourceTitles:
@@ -86,13 +153,13 @@ class TestInjectAxisSourceTitles:
         params = Params()
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        result = inject_axis_source_titles(params, axis_sources, instrument)
         assert result.bins.x_axis_source == "Cave Monitor"
 
     def test_no_change_when_no_axis_sources(self):
         params = Params(bins=Bins(x_axis_source="existing"))
         instrument = FakeInstrumentConfig({})
-        result = _inject_axis_source_titles(params, {}, instrument)
+        result = inject_axis_source_titles(params, {}, instrument)
         assert result.bins.x_axis_source == "existing"
 
     def test_no_change_when_no_bins(self):
@@ -102,14 +169,14 @@ class TestInjectAxisSourceTitles:
         params = NoBinsParams()
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        result = inject_axis_source_titles(params, axis_sources, instrument)
         assert result.color == "red"
 
     def test_injects_titles_into_dict(self):
         params = {"bins": {"x_axis_source": "old", "n_bins": 50}}
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        result = inject_axis_source_titles(params, axis_sources, instrument)
         assert result["bins"]["x_axis_source"] == "Cave Monitor"
         assert result["bins"]["n_bins"] == 50
 
@@ -117,8 +184,29 @@ class TestInjectAxisSourceTitles:
         params = {"color": "red"}
         axis_sources = _make_axis_sources("monitor_cave")
         instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
-        result = _inject_axis_source_titles(params, axis_sources, instrument)
+        result = inject_axis_source_titles(params, axis_sources, instrument)
         assert result == {"color": "red"}
+
+    def test_injects_output_title_for_multi_output_workflow(self):
+        class MultiOutput(WorkflowOutputsBase):
+            delta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Delta',
+            )
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+
+        wf_id = _make_workflow_id()
+        spec = _make_workflow_spec("Monitor data", MultiOutput)
+        params = Params()
+        axis_sources = _make_axis_sources("monitor_cave")
+        instrument = FakeInstrumentConfig({"monitor_cave": "Cave Monitor"})
+        result = inject_axis_source_titles(
+            params, axis_sources, instrument, {wf_id: spec}
+        )
+        assert result.bins.x_axis_source == "Cave Monitor (Delta)"
 
 
 def _make_workflow_spec(title: str, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:

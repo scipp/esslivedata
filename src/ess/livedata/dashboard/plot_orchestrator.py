@@ -31,7 +31,7 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .config_store import ConfigStore
-from .data_roles import PRIMARY
+from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
@@ -644,8 +644,9 @@ class PlotOrchestrator:
             On failure, error is logged and PlotDataService is notified.
         """
         try:
+            params = self._resolve_axis_titles_if_needed(config)
             plotter = self._plotting_controller.create_plotter(
-                config.plot_name, params=config.params
+                config.plot_name, params=params
             )
             self._plot_data_service.job_started(layer_id, plotter)
             return plotter
@@ -654,6 +655,37 @@ class PlotOrchestrator:
             self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
+
+    def _resolve_axis_titles_if_needed(
+        self, config: PlotConfig
+    ) -> pydantic.BaseModel | dict:
+        """Resolve axis source titles for correlation histograms.
+
+        Ensures that the axis labels include the output title when the
+        axis source workflow has multiple outputs. This is needed because
+        configs loaded from persistence or templates may not have the
+        output title baked into x_axis_source / y_axis_source.
+        """
+        from .correlation_plotter import (
+            CORRELATION_HISTOGRAM_PLOTTERS,
+            inject_axis_source_titles,
+        )
+
+        if config.plot_name not in CORRELATION_HISTOGRAM_PLOTTERS:
+            return config.params
+
+        axis_sources = {
+            role: ds
+            for role, ds in config.data_sources.items()
+            if role in (X_AXIS, Y_AXIS)
+        }
+        if not axis_sources or self._instrument_config is None:
+            return config.params
+
+        registry = self._job_orchestrator.get_workflow_registry()
+        return inject_axis_source_titles(
+            config.params, axis_sources, self._instrument_config, registry
+        )
 
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
         """Build a TitleResolver for a layer, checking cell-level output uniqueness.
