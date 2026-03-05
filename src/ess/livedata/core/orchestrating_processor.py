@@ -89,12 +89,15 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
+        job_threads: int = 1,
     ) -> None:
         self._source = source
         self._sink = sink
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
-        self._job_manager = JobManager(job_factory=JobFactory(instrument=instrument))
+        self._job_manager = JobManager(
+            job_factory=JobFactory(instrument=instrument), job_threads=job_threads
+        )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or SimpleMessageBatcher()
         self._config_processor = ConfigProcessor(

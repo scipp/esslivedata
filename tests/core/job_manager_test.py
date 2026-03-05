@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import threading
+
 import pydantic
 import pytest
 import scipp as sc
@@ -1754,3 +1756,172 @@ class TestJobFactoryRender:
 
         # Should use default 'monitor1' and render it with source prefix
         assert job.aux_source_names == ['detector1/monitor1']
+
+
+class ThreadTrackingProcessor(FakeProcessor):
+    """Processor that records which thread called accumulate and finalize."""
+
+    def __init__(self):
+        super().__init__()
+        self.accumulate_thread_ids: list[int] = []
+        self.finalize_thread_ids: list[int] = []
+
+    def accumulate(self, data: dict, *, start_time: int, end_time: int) -> None:
+        self.accumulate_thread_ids.append(threading.current_thread().ident)
+        super().accumulate(data, start_time=start_time, end_time=end_time)
+
+    def finalize(self) -> dict:
+        self.finalize_thread_ids.append(threading.current_thread().ident)
+        return super().finalize()
+
+
+class ThreadTrackingJobFactory(FakeJobFactory):
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
+        processor = ThreadTrackingProcessor()
+        self.processors[job_id] = processor
+        job = Job(
+            job_id=job_id,
+            workflow_id=config.identifier,
+            processor=processor,
+            source_names=[job_id.source_name],
+            aux_source_names=config.aux_source_names,
+        )
+        self.created_jobs.append((job_id, config))
+        return job
+
+
+def _make_workflow_config(source_name: str) -> WorkflowConfig:
+    return WorkflowConfig(
+        identifier=WorkflowId(
+            instrument="test",
+            namespace="data_reduction",
+            name=f"workflow_{source_name}",
+            version=1,
+        )
+    )
+
+
+class TestJobManagerThreading:
+    def _setup_threaded_manager(
+        self, n_jobs: int, job_threads: int
+    ) -> tuple[JobManager, ThreadTrackingJobFactory, list[JobId]]:
+        factory = ThreadTrackingJobFactory()
+        manager = JobManager(factory, job_threads=job_threads)
+        job_ids = []
+        for i in range(n_jobs):
+            source = f"source_{i}"
+            config = _make_workflow_config(source)
+            job_ids.append(manager.schedule_job(source, config))
+        return manager, factory, job_ids
+
+    def _make_data(self, source_names: list[str]) -> WorkflowData:
+        return WorkflowData(
+            start_time=100,
+            end_time=200,
+            data={StreamId(name=name): sc.scalar(1.0) for name in source_names},
+        )
+
+    def test_threaded_push_data_uses_worker_threads(self):
+        manager, factory, job_ids = self._setup_threaded_manager(
+            n_jobs=3, job_threads=3
+        )
+        sources = [jid.source_name for jid in job_ids]
+        data = self._make_data(sources)
+
+        manager.push_data(data)
+
+        main_thread = threading.current_thread().ident
+        all_thread_ids = []
+        for jid in job_ids:
+            proc = factory.processors[jid]
+            assert len(proc.accumulate_thread_ids) == 1
+            all_thread_ids.append(proc.accumulate_thread_ids[0])
+
+        # At least one job should have run on a non-main thread
+        assert any(tid != main_thread for tid in all_thread_ids)
+
+    def test_threaded_compute_results_uses_worker_threads(self):
+        manager, factory, job_ids = self._setup_threaded_manager(
+            n_jobs=3, job_threads=3
+        )
+        sources = [jid.source_name for jid in job_ids]
+        data = self._make_data(sources)
+
+        manager.push_data(data)
+        manager.compute_results()
+
+        main_thread = threading.current_thread().ident
+        all_thread_ids = []
+        for jid in job_ids:
+            proc = factory.processors[jid]
+            assert len(proc.finalize_thread_ids) == 1
+            all_thread_ids.append(proc.finalize_thread_ids[0])
+
+        assert any(tid != main_thread for tid in all_thread_ids)
+
+    def test_sequential_push_data_uses_calling_thread(self):
+        """With job_threads=1, all work runs on the calling thread."""
+        manager, factory, job_ids = self._setup_threaded_manager(
+            n_jobs=3, job_threads=1
+        )
+        sources = [jid.source_name for jid in job_ids]
+        data = self._make_data(sources)
+
+        manager.push_data(data)
+        manager.compute_results()
+
+        main_thread = threading.current_thread().ident
+        for jid in job_ids:
+            proc = factory.processors[jid]
+            assert all(tid == main_thread for tid in proc.accumulate_thread_ids)
+            assert all(tid == main_thread for tid in proc.finalize_thread_ids)
+
+    def test_threaded_results_match_sequential(self):
+        """Threaded and sequential produce identical results."""
+        n_jobs = 4
+        sources = [f"source_{i}" for i in range(n_jobs)]
+        configs = [_make_workflow_config(s) for s in sources]
+
+        results_by_mode: dict[int, list[JobResult]] = {}
+        for job_threads in (1, 4):
+            factory = FakeJobFactory()
+            manager = JobManager(factory, job_threads=job_threads)
+            for source, config in zip(sources, configs, strict=True):
+                manager.schedule_job(source, config)
+
+            data = WorkflowData(
+                start_time=100,
+                end_time=200,
+                data={
+                    StreamId(name=name): sc.scalar(float(i))
+                    for i, name in enumerate(sources)
+                },
+            )
+            manager.push_data(data)
+            results_by_mode[job_threads] = manager.compute_results()
+
+        seq_results = sorted(results_by_mode[1], key=lambda r: str(r.job_id))
+        thr_results = sorted(results_by_mode[4], key=lambda r: str(r.job_id))
+        assert len(seq_results) == len(thr_results) == n_jobs
+        for seq, thr in zip(seq_results, thr_results, strict=True):
+            assert seq.error_message == thr.error_message
+            assert set(seq.data.keys()) == set(thr.data.keys())
+
+    def test_threaded_push_data_tracks_errors(self):
+        """Errors from threaded push_data are tracked correctly."""
+        manager, factory, job_ids = self._setup_threaded_manager(
+            n_jobs=3, job_threads=3
+        )
+        # Make one processor fail
+        factory.processors[job_ids[1]].should_fail_accumulate = True
+
+        sources = [jid.source_name for jid in job_ids]
+        data = self._make_data(sources)
+        replies = manager.push_data(data)
+
+        error_replies = [r for r in replies if r.has_error]
+        assert len(error_replies) == 1
+        assert error_replies[0].job_id == job_ids[1]
+
+        status = manager.get_job_status(job_ids[1])
+        assert status.state == JobState.warning

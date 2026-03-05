@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar
@@ -161,7 +162,7 @@ class JobFactory:
 
 
 class JobManager:
-    def __init__(self, job_factory: JobFactory) -> None:
+    def __init__(self, job_factory: JobFactory, job_threads: int = 1) -> None:
         self.service_name = 'data_reduction'
         self._last_update: int = 0
         self._job_factory = job_factory
@@ -176,6 +177,9 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
+        self._executor: ThreadPoolExecutor | None = (
+            ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
+        )
 
     @property
     def all_jobs(self) -> list[Job]:
@@ -345,29 +349,23 @@ class JobManager:
     def push_data(self, data: WorkflowData) -> list[JobReply]:
         """Push data into the active jobs and return status for each job."""
         self._advance_to_time(data.start_time, data.end_time)
-        replies = [self._push_data_to_job(job, data) for job in self.active_jobs]
-        return [reply for reply in replies if reply is not None]
 
-    def _push_data_to_job(self, job: Job, data: WorkflowData) -> JobReply | None:
-        # Filter data for this specific job
-        job_data = JobData(
-            start_time=data.start_time,
-            end_time=data.end_time,
-            primary_data={},
-            aux_data={},
-        )
+        # Filter data per job (cheap)
+        job_items: list[tuple[Job, JobData]] = []
+        for job in self.active_jobs:
+            job_data = _filter_data_for_job(job, data)
+            if not job_data.is_empty():
+                job_items.append((job, job_data))
 
-        for stream, value in data.data.items():
-            if stream.name in job.source_names:
-                job_data.primary_data[stream.name] = value
-            elif stream.name in job.aux_source_names:
-                job_data.aux_data[stream.name] = value
+        # Run job.add() — parallelized when executor is available
+        replies = self._map(_add_data, job_items)
 
-        # Only process if we have relevant data
-        if job_data.is_empty():
-            return None
+        # Bookkeeping (cheap, sequential)
+        for (job, job_data), reply in zip(job_items, replies, strict=True):
+            self._record_push_result(job, job_data, reply)
+        return replies
 
-        reply = job.add(job_data)
+    def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
         # Track primary data updates only after successful add, so that a
         # failed push does not trigger a finalize attempt on empty accumulators.
         if not reply.has_error and job_data.is_active():
@@ -390,51 +388,63 @@ class JobManager:
             # Only update state if it was warning (preserve error state)
             if self._job_states.get(job.job_id) == JobState.warning:
                 self._job_states[job.job_id] = JobState.active
-        return reply
 
     def compute_results(self) -> list[JobResult]:
         """
         Compute results from jobs that received primary data since last successful call.
         """
+        jobs_to_compute = [
+            job
+            for job in self._active_jobs.values()
+            if job.job_id in self._jobs_with_primary_data
+        ]
+
+        # Run job.get() — parallelized when executor is available
+        raw_results = self._map(_finalize_job, jobs_to_compute)
+
+        # Enrich and bookkeeping (cheap, sequential)
         results = []
-        # Only compute results for jobs that received primary data
-        for job in self._active_jobs.values():
-            if job.job_id not in self._jobs_with_primary_data:
-                continue
-            result = job.get()
-            # Enrich result with human-readable names from workflow spec
+        for job, result in zip(jobs_to_compute, raw_results, strict=True):
             result = self._job_factory.enrich_result(result)
             results.append(result)
-            # Track errors from job finalization, or clear them on success
-            if result.error_message is not None:
-                # Finalizing failed, put job into error state, cannot compute results.
-                self._job_error_messages[job.job_id] = result.error_message
-                self._job_states[job.job_id] = JobState.error
-                logger.error(
-                    "job_error",
-                    job_id=str(job.job_id),
-                    error_message=result.error_message,
-                )
-            else:
-                # Clear error state on successful finalization
-                self._job_error_messages.pop(job.job_id, None)
-                # Track warnings from job finalization (e.g., None values in result)
-                if result.warning_message is not None:
-                    self._job_warning_messages[job.job_id] = result.warning_message
-                    self._job_states[job.job_id] = JobState.warning
-                elif job.job_id in self._job_warning_messages:
-                    # Preserve existing warnings from data processing
-                    self._job_states[job.job_id] = JobState.warning
-                else:
-                    self._job_states[job.job_id] = JobState.active
-                # Remove from the tracking set only if we successfully computed results.
-                # If there was an error we keep it in the set to retry next time, which
-                # can be important if a job has not yet initialized itself with the
-                # first auxiliary data.
-                self._jobs_with_primary_data.remove(job.job_id)
+            self._record_compute_result(job, result)
 
         self._finish_jobs()
         return results
+
+    def _record_compute_result(self, job: Job, result: JobResult) -> None:
+        # Track errors from job finalization, or clear them on success
+        if result.error_message is not None:
+            # Finalizing failed, put job into error state, cannot compute results.
+            self._job_error_messages[job.job_id] = result.error_message
+            self._job_states[job.job_id] = JobState.error
+            logger.error(
+                "job_error",
+                job_id=str(job.job_id),
+                error_message=result.error_message,
+            )
+        else:
+            # Clear error state on successful finalization
+            self._job_error_messages.pop(job.job_id, None)
+            # Track warnings from job finalization (e.g., None values in result)
+            if result.warning_message is not None:
+                self._job_warning_messages[job.job_id] = result.warning_message
+                self._job_states[job.job_id] = JobState.warning
+            elif job.job_id in self._job_warning_messages:
+                # Preserve existing warnings from data processing
+                self._job_states[job.job_id] = JobState.warning
+            else:
+                self._job_states[job.job_id] = JobState.active
+            # Remove from the tracking set only if we successfully computed results.
+            # If there was an error we keep it in the set to retry next time, which
+            # can be important if a job has not yet initialized itself with the
+            # first auxiliary data.
+            self._jobs_with_primary_data.remove(job.job_id)
+
+    def _map(self, fn: Callable, items: list) -> list:
+        if self._executor is not None:
+            return list(self._executor.map(fn, items))
+        return [fn(item) for item in items]
 
     def _finish_jobs(self):
         for job_id in self._finishing_jobs:
@@ -522,3 +532,30 @@ class JobManager:
             f"Job {job._workflow_id}/{status.job_id.source_name} "
             f"error: {status.error_message}"
         )
+
+
+def _filter_data_for_job(job: Job, data: WorkflowData) -> JobData:
+    """Filter workflow data for a specific job."""
+    job_data = JobData(
+        start_time=data.start_time,
+        end_time=data.end_time,
+        primary_data={},
+        aux_data={},
+    )
+    for stream, value in data.data.items():
+        if stream.name in job.source_names:
+            job_data.primary_data[stream.name] = value
+        elif stream.name in job.aux_source_names:
+            job_data.aux_data[stream.name] = value
+    return job_data
+
+
+def _add_data(item: tuple[Job, JobData]) -> JobReply:
+    """Add data to a job. Used as a map target for thread pool execution."""
+    job, job_data = item
+    return job.add(job_data)
+
+
+def _finalize_job(job: Job) -> JobResult:
+    """Finalize a job. Used as a map target for thread pool execution."""
+    return job.get()
