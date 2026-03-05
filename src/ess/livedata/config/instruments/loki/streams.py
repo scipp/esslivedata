@@ -4,9 +4,7 @@
 LOKI instrument stream mapping configuration.
 """
 
-from ess.livedata import StreamKind
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
@@ -24,12 +22,16 @@ detector_fakes = {
 }
 
 
+# Monitor names use 0-based indices matching the NeXus beam monitor groups
+# (beam_monitor_mN). The underlying Kafka source names (cbm1 … cbm5) are
+# 1-based; the positional mapping is handled by ``_make_cbm_monitors``.
+# Ref: ``coda_loki_999999_00020680.hdf``
 monitor_names = [
-    'beam_monitor_0',
-    'beam_monitor_1',
-    'beam_monitor_2',
-    'beam_monitor_3',
-    'beam_monitor_4',
+    'beam_monitor_m0',
+    'beam_monitor_m1',
+    'beam_monitor_m2',
+    'beam_monitor_m3',
+    'beam_monitor_m4',
 ]
 
 
@@ -48,22 +50,10 @@ def _make_loki_detectors() -> StreamLUT:
     }
 
 
-def _make_loki_monitors() -> StreamLUT:
-    """Loki beam monitor mapping.
-
-    Source names and topic extracted from NeXus file
-    ``coda_loki_999999_00017735.hdf`` using ``nexus_helpers``.
-    """
-    topic = stream_kind_to_topic(instrument='loki', kind=StreamKind.MONITOR_EVENTS)
-    return {
-        InputStreamKey(topic=topic, source_name=f'cbm{i}'): f'beam_monitor_{i}'
-        for i in range(0, 5)
-    }
-
-
-_common_prod = make_common_stream_mapping_inputs(instrument='loki')
+_common_prod = make_common_stream_mapping_inputs(
+    instrument='loki', monitor_names=monitor_names
+)
 _common_prod['detectors'] = _make_loki_detectors()
-_common_prod['monitors'] = _make_loki_monitors()
 
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
