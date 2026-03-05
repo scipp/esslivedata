@@ -171,33 +171,42 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
 
     cumulative: sc.DataArray = pydantic.Field(
         title='Image (cumulative)',
-        description='Time-integrated detector counts accumulated over all time.',
+        description='Detector image accumulated since the start of the run.',
         default_factory=_make_2d_template,
     )
     current: sc.DataArray = pydantic.Field(
         title='Image (current)',
-        description='Detector counts for the current time window since last update.',
+        description=(
+            'Detector image for the latest update interval only. '
+            'Resets each update interval.'
+        ),
         default_factory=_make_2d_template_with_time,
     )
     counts_total: sc.DataArray = pydantic.Field(
         title='Total (current)',
-        description='Total number of detector events in the current time window.',
+        description='Total number of detector events in the latest update interval.',
         default_factory=_make_0d_template_with_time,
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
         title='Total in interval (current)',
-        description=('Number of detector events within the configured range filter.'),
+        description=(
+            'Number of detector events within the configured range filter '
+            'for the latest update interval.'
+        ),
         default_factory=_make_0d_template_with_time,
     )
     counts_total_cumulative: sc.DataArray = pydantic.Field(
         title='Total (cumulative)',
-        description='Cumulative total number of detector events.',
+        description=(
+            'Total number of detector events accumulated since the start of the run.'
+        ),
         default_factory=_make_0d_template,
     )
     counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
         title='Total in interval (cumulative)',
         description=(
-            'Cumulative number of detector events within the configured range filter.'
+            'Number of detector events within the configured range filter, '
+            'accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
     )
@@ -209,8 +218,9 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
     roi_spectra_current: sc.DataArray = pydantic.Field(
         title='ROI spectra (current)',
-        description='Time-of-arrival spectra for active ROIs in current time window. '
-        'Stacked 2D array with roi coordinate containing ROI indices.',
+        description=(
+            'Histogram for each active ROI region, for the latest update interval only.'
+        ),
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
             coords={
@@ -221,8 +231,10 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     )
     roi_spectra_cumulative: sc.DataArray = pydantic.Field(
         title='ROI spectra (cumulative)',
-        description='Cumulative time-of-arrival spectra for active ROIs. '
-        'Stacked 2D array with roi coordinate containing ROI indices.',
+        description=(
+            'Histogram for each active ROI region, '
+            'accumulated since the start of the run.'
+        ),
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
             coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
@@ -280,13 +292,14 @@ def make_detector_view_outputs(
     class CustomDetectorViewOutputs(base_class):  # type: ignore[valid-type]
         cumulative: sc.DataArray = pydantic.Field(
             title='Image (cumulative)',
-            description='Time-integrated detector counts accumulated over all time.',
+            description='Detector image accumulated since the start of the run.',
             default_factory=make_cumulative_template,
         )
         current: sc.DataArray = pydantic.Field(
             title='Image (current)',
             description=(
-                'Detector counts for the current time window since last update.'
+                'Detector image for the latest update interval only. '
+                'Resets each update interval.'
             ),
             default_factory=make_current_template,
         )

@@ -170,7 +170,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
         ),
         title='Histogram (cumulative)',
-        description='Time-integrated monitor counts accumulated over all time.',
+        description='Monitor histogram accumulated since the start of the run.',
     )
     current: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -181,7 +181,10 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             },
         ),
         title='Histogram (current)',
-        description='Monitor counts for the current time window since last update.',
+        description=(
+            'Monitor histogram for the latest update interval only. '
+            'Resets each update interval.'
+        ),
     )
     counts_total: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -189,7 +192,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             coords={'time': sc.scalar(0, unit='ns')},
         ),
         title='Total (current)',
-        description='Total monitor counts in the current time window.',
+        description='Total number of monitor events in the latest update interval.',
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -197,7 +200,10 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             coords={'time': sc.scalar(0, unit='ns')},
         ),
         title='Total in interval (current)',
-        description='Number of monitor events within the configured range filter.',
+        description=(
+            'Number of monitor events within the configured range filter '
+            'for the latest update interval.'
+        ),
     )
 
 

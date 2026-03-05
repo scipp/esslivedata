@@ -237,6 +237,25 @@ class WorkflowSpec(BaseModel):
                 return field_info.title
         return output_name
 
+    def get_output_description(self, output_name: str) -> str | None:
+        """Get description for an output field.
+
+        Parameters
+        ----------
+        output_name:
+            Name of the output field.
+
+        Returns
+        -------
+        :
+            The field's description if defined, otherwise None.
+        """
+        if self.outputs is not None:
+            field_info = self.outputs.model_fields.get(output_name)
+            if field_info is not None:
+                return field_info.description
+        return None
+
     def get_output_template(self, output_name: str) -> sc.DataArray | None:
         """
         Get a template DataArray for the specified output.
