@@ -682,7 +682,6 @@ class PlotOrchestrator:
         layer_id: LayerId,
         plotter: Any,
         data: dict,
-        title_resolver: Any = None,
     ) -> None:
         """
         Compute plot state and transition layer to READY.
@@ -698,13 +697,12 @@ class PlotOrchestrator:
             The plotter instance to compute with.
         data
             Data dict to pass to plotter.compute(). Empty dict for static plotters.
-        title_resolver
-            Pre-built TitleResolver for this layer.
         """
         if layer_id not in self._layer_to_cell:
             return
 
         try:
+            title_resolver = self._build_title_resolver(layer_id) if data else None
             plotter.compute(data, title_resolver=title_resolver)
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
@@ -814,17 +812,13 @@ class PlotOrchestrator:
         if plotter is None:
             return
 
-        title_resolver = self._build_title_resolver(layer_id)
-
         # Set up data pipeline - _run_compute will be called when data arrives
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(
-                    layer_id, plotter, data, title_resolver=title_resolver
-                ),
+                on_data=lambda data: self._run_compute(layer_id, plotter, data),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:
