@@ -47,6 +47,7 @@ class FakePlotter:
         self.kdims = None
         self._initialized_data = None
         self._cached_state = None
+        self.compute_calls: list[dict] = []
 
     def initialize_from_data(self, data):
         self._initialized_data = data
@@ -56,6 +57,7 @@ class FakePlotter:
         return FakePresenter(self)
 
     def compute(self, data, **kwargs):
+        self.compute_calls.append({'data': data, **kwargs})
         result = FakePlot()
         self._cached_state = result
         return result
@@ -171,6 +173,7 @@ class FakePlottingController:
         self._calls: list[dict] = []
         self._pipeline_setups: list[dict] = []
         self._fake_spec = FakePlotterSpec()
+        self.created_plotters: list[FakePlotter] = []
 
     def get_spec(self, plot_name: str) -> FakePlotterSpec:
         """Return a fake plotter spec that accepts any params."""
@@ -245,7 +248,9 @@ class FakePlottingController:
         )
         if self._should_raise:
             raise self._exception_to_raise
-        return FakePlotter()
+        plotter = FakePlotter()
+        self.created_plotters.append(plotter)
+        return plotter
 
 
 @pytest.fixture
@@ -1900,3 +1905,65 @@ class TestDataSubscriptionCleanup:
 
         # Subscriber should be removed
         assert len(fake_data_service._subscribers) == subscriber_count_with_layer - 1
+
+
+class TestTitleResolver:
+    """Tests for TitleResolver construction in multi-layer cells."""
+
+    def test_all_layers_include_output_in_label_when_output_names_differ(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """When layers in a cell have different output names, all layers must
+        include the output name in legend labels — not just the second one.
+
+        Commits the workflow before adding layers so that _on_all_jobs_ready
+        fires synchronously for each add_layer call. This reproduces the real
+        dashboard scenario where workflows are already running when the grid
+        is configured.
+        """
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        # Commit workflow first so it is already running
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+
+        config_a = make_plot_config(
+            workflow_id,
+            source_names=['monitor_0'],
+            output_name='output_a',
+        )
+        config_b = make_plot_config(
+            workflow_id,
+            source_names=['monitor_0'],
+            output_name='output_b',
+        )
+
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(cell_id, config_a)
+        plot_orchestrator.add_layer(cell_id, config_b)
+
+        # Simulate data arrival for both layers
+        for output_name in ('output_a', 'output_b'):
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name='monitor_0', job_number=job_number),
+                output_name=output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        assert len(fake_plotting_controller.created_plotters) == 2
+        for plotter in fake_plotting_controller.created_plotters:
+            assert len(plotter.compute_calls) == 1
+            resolver = plotter.compute_calls[0].get('title_resolver')
+            assert resolver is not None
+            assert resolver.include_output_in_label is True

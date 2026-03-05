@@ -304,6 +304,7 @@ class PlotOrchestrator:
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
         self._data_subscriptions: dict[LayerId, Any] = {}  # DataServiceSubscriber
+        self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -488,6 +489,7 @@ class PlotOrchestrator:
 
         self._layer_to_cell[layer_id] = cell_id
         self._subscribe_layer(grid_id, cell_id, layer)
+        self._refresh_resolvers_for_cell(cell_id)
 
         return layer_id
 
@@ -517,6 +519,7 @@ class PlotOrchestrator:
             self.remove_cell(cell_id)
             return
 
+        self._refresh_resolvers_for_cell(cell_id)
         self._persist_to_store()
 
         # Notify with updated cell config
@@ -567,6 +570,7 @@ class PlotOrchestrator:
 
         # Subscribe new layer to workflow
         self._subscribe_layer(grid_id, cell_id, new_layer)
+        self._refresh_resolvers_for_cell(cell_id)
 
     def _remove_cell_and_cleanup(
         self, grid_id: GridId, cell_id: CellId, cell: PlotCell
@@ -616,6 +620,7 @@ class PlotOrchestrator:
             del self._data_subscriptions[layer_id]
         # Clean up from PlotDataService
         self._plot_data_service.remove(layer_id)
+        self._layer_resolvers.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
 
@@ -650,13 +655,54 @@ class PlotOrchestrator:
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
 
+    def _build_title_resolver(self, layer_id: LayerId) -> Any:
+        """Build a TitleResolver for a layer, checking cell-level output uniqueness.
+
+        When all non-static layers in the same cell share the same primary output_name,
+        the output title is already shown on the Y-axis and is stripped from the legend
+        label to reduce redundancy.
+        """
+        from .plots import TitleResolver, _identity
+
+        config = self.get_layer_config(layer_id)
+        registry = self._job_orchestrator.get_workflow_registry()
+        spec = registry.get(config.workflow_id)
+
+        cell_id = self._layer_to_cell[layer_id]
+        cell = self.get_cell(cell_id)
+        output_names = {
+            layer.config.output_name
+            for layer in cell.layers
+            if not layer.config.is_static()
+        }
+
+        return TitleResolver(
+            source=self.get_source_title,
+            output=spec.get_output_title if spec is not None else _identity,
+            include_output_in_label=len(output_names) != 1,
+        )
+
+    def _refresh_resolvers_for_cell(self, cell_id: CellId) -> None:
+        """Rebuild cached TitleResolvers for all layers in a cell.
+
+        Called when cell composition changes (layer added/removed) to keep
+        the cell-level ``include_output_in_label`` flag consistent across
+        all layers.
+        """
+        cell = self.get_cell(cell_id)
+        if cell is None:
+            return
+        for layer in cell.layers:
+            if layer.layer_id in self._layer_resolvers:
+                self._layer_resolvers[layer.layer_id] = self._build_title_resolver(
+                    layer.layer_id
+                )
+
     def _run_compute(
         self,
         layer_id: LayerId,
         plotter: Any,
         data: dict,
-        *,
-        title_resolver: Any = None,
     ) -> None:
         """
         Compute plot state and transition layer to READY.
@@ -672,13 +718,12 @@ class PlotOrchestrator:
             The plotter instance to compute with.
         data
             Data dict to pass to plotter.compute(). Empty dict for static plotters.
-        title_resolver
-            Resolves source/output names to display titles.
         """
         if layer_id not in self._layer_to_cell:
             return
 
         try:
+            title_resolver = self._layer_resolvers.get(layer_id)
             plotter.compute(data, title_resolver=title_resolver)
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
@@ -788,15 +833,7 @@ class PlotOrchestrator:
         if plotter is None:
             return
 
-        # Build title resolver once from static config
-        from .plots import TitleResolver, _identity
-
-        registry = self._job_orchestrator.get_workflow_registry()
-        spec = registry.get(config.workflow_id)
-        title_resolver = TitleResolver(
-            source=self.get_source_title,
-            output=spec.get_output_title if spec is not None else _identity,
-        )
+        self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
 
         # Set up data pipeline - _run_compute will be called when data arrives
         try:
@@ -804,9 +841,7 @@ class PlotOrchestrator:
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(
-                    layer_id, plotter, data, title_resolver=title_resolver
-                ),
+                on_data=lambda data: self._run_compute(layer_id, plotter, data),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:
