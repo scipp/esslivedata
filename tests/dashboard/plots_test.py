@@ -238,6 +238,20 @@ class TestImagePlotter:
         labeled = plot_element.relabel('test_label')
         assert labeled is not None
 
+    def test_plot_uses_output_display_name_as_vdim_label(self, zero_data, data_key):
+        """Test that output_display_name is used as the vdim label."""
+        params = PlotParams2d()
+        plotter = plots.ImagePlotter.from_params(params)
+        result = plotter.plot(zero_data, data_key, output_display_name='Total counts')
+        assert result.vdims[0].label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(self, zero_data, data_key):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        params = PlotParams2d()
+        plotter = plots.ImagePlotter.from_params(params)
+        result = plotter.plot(zero_data, data_key)
+        assert result.vdims[0].label == 'values'
+
 
 class TestLinePlotter:
     @pytest.fixture
@@ -502,6 +516,24 @@ class TestLinePlotter:
         for child in result:
             opts = child.opts.get().kwargs
             assert opts.get('responsive') is True
+
+    def test_plot_uses_output_display_name_as_vdim_label(self, line_plotter, data_key):
+        """Test that output_display_name is used as the vdim label."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = line_plotter.plot(data, data_key, output_display_name='Total counts')
+        assert result.vdims[0].label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(self, line_plotter, data_key):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert result.vdims[0].label == 'values'
 
 
 class TestSlicerPlotter:
@@ -1399,6 +1431,26 @@ class TestOverlay1DPlotter:
             opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
             assert opts.get('responsive') is True
             assert 'aspect' not in opts or opts.get('aspect') is None
+
+    def test_plot_uses_output_display_name_as_vdim_label(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that output_display_name is used as the vdim label."""
+        result = overlay_plotter.plot(
+            data_2d_with_roi_coord, data_key, output_display_name='Total counts'
+        )
+        for curve in result:
+            vdim = curve.vdims[0]
+            assert vdim.label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        for curve in result:
+            vdim = curve.vdims[0]
+            assert vdim.label == 'values'
 
 
 class TestLagIndicator:
