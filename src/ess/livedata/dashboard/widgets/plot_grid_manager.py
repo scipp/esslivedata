@@ -436,15 +436,13 @@ class PlotGridManager:
             # Look up workflow title from the first layer's config
             first_layer = cell.layers[0]
             config = first_layer.config
-            workflow_title, _ = get_workflow_display_info(
+            workflow_title, output_title = get_workflow_display_info(
                 self._workflow_registry, config.workflow_id, config.output_name
             )
 
             # Truncate long titles for the compact preview
             if len(workflow_title) > 20:
                 workflow_title = workflow_title[:17] + '...'
-
-            output_name = config.output_name or ''
             layer_count = len(cell.layers)
 
             color = _CELL_COLORS[i % len(_CELL_COLORS)]
@@ -453,7 +451,7 @@ class PlotGridManager:
             label_html = (
                 f'<div style="font-size: 10px; font-weight: 500;">'
                 f'{workflow_title}{layer_info}</div>'
-                f'<div style="font-size: 9px; color: #666;">{output_name}</div>'
+                f'<div style="font-size: 9px; color: #666;">{output_title}</div>'
             )
             grid[row_start:row_end, col_start:col_end] = pn.pane.HTML(
                 label_html,

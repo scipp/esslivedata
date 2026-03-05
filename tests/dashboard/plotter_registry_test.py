@@ -4,6 +4,7 @@
 
 import pytest
 
+from ess.livedata.dashboard.plots import TitleResolver
 from ess.livedata.dashboard.plotter_registry import PlotterCategory, plotter_registry
 
 
@@ -20,8 +21,8 @@ class TestPlotterComputeSignature:
     """Verify all registered plotters accept the kwargs passed by PlotOrchestrator."""
 
     @pytest.mark.parametrize("plotter_name", _data_plotter_names())
-    def test_compute_accepts_source_title_kwarg(self, plotter_name):
-        """PlotOrchestrator passes source_title= to all plotters.
+    def test_compute_accepts_title_resolver_kwarg(self, plotter_name):
+        """PlotOrchestrator passes title_resolver= to all plotters.
 
         Each plotter's compute() must accept this keyword argument
         (either explicitly or via **kwargs) without raising TypeError.
@@ -31,12 +32,12 @@ class TestPlotterComputeSignature:
         plotter = entry.factory(default_params)
 
         try:
-            plotter.compute({}, source_title=lambda x: x)
+            plotter.compute({}, title_resolver=TitleResolver())
         except TypeError as e:
-            if "source_title" in str(e):
+            if "title_resolver" in str(e):
                 pytest.fail(
-                    f"Plotter '{plotter_name}' does not accept 'source_title' kwarg. "
-                    f"Add **kwargs to its compute() signature."
+                    f"Plotter '{plotter_name}' does not accept 'title_resolver' kwarg. "
+                    f"Add title_resolver to its compute() signature."
                 )
         except Exception:  # noqa: S110
             pass  # Other errors (empty data, missing keys, etc.) are expected

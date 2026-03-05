@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -24,7 +24,11 @@ import pydantic
 import structlog
 
 from ess.livedata.config.grid_template import GridSpec
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    JobNumber,
+    WorkflowId,
+    WorkflowSpec,
+)
 
 from .config_store import ConfigStore
 from .data_roles import PRIMARY
@@ -84,6 +88,10 @@ class JobOrchestratorProtocol(Protocol):
         subscription_id
             The subscription ID returned from subscribe_to_workflow.
         """
+        ...
+
+    def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """Get the workflow registry containing all managed workflows."""
         ...
 
 
@@ -642,7 +650,14 @@ class PlotOrchestrator:
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
 
-    def _run_compute(self, layer_id: LayerId, plotter: Any, data: dict) -> None:
+    def _run_compute(
+        self,
+        layer_id: LayerId,
+        plotter: Any,
+        data: dict,
+        *,
+        title_resolver: Any = None,
+    ) -> None:
         """
         Compute plot state and transition layer to READY.
 
@@ -657,12 +672,14 @@ class PlotOrchestrator:
             The plotter instance to compute with.
         data
             Data dict to pass to plotter.compute(). Empty dict for static plotters.
+        title_resolver
+            Resolves source/output names to display titles.
         """
         if layer_id not in self._layer_to_cell:
             return
 
         try:
-            plotter.compute(data, source_title=self.get_source_title)
+            plotter.compute(data, title_resolver=title_resolver)
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
@@ -771,13 +788,25 @@ class PlotOrchestrator:
         if plotter is None:
             return
 
+        # Build title resolver once from static config
+        from .plots import TitleResolver, _identity
+
+        registry = self._job_orchestrator.get_workflow_registry()
+        spec = registry.get(config.workflow_id)
+        title_resolver = TitleResolver(
+            source=self.get_source_title,
+            output=spec.get_output_title if spec is not None else _identity,
+        )
+
         # Set up data pipeline - _run_compute will be called when data arrives
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(layer_id, plotter, data),
+                on_data=lambda data: self._run_compute(
+                    layer_id, plotter, data, title_resolver=title_resolver
+                ),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:

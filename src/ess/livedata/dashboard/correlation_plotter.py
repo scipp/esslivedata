@@ -13,7 +13,6 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,7 +28,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, PresenterBase
+from .plots import ImagePlotter, LinePlotter, PresenterBase, TitleResolver
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -195,7 +194,7 @@ class CorrelationHistogramPlotter:
         self,
         data: dict[str, Any],
         *,
-        source_title: Callable[[str], str] | None = None,
+        title_resolver: TitleResolver | None = None,
     ) -> None:
         """Compute histograms for all data sources and render.
 
@@ -203,8 +202,8 @@ class CorrelationHistogramPlotter:
         ----------
         data
             Structured data from DataSubscriber with "primary" role and axis roles.
-        source_title
-            Callable that maps a source name to a display title.
+        title_resolver
+            Resolves source/output names to display titles.
         """
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
@@ -247,7 +246,7 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        self._renderer.compute(histograms, source_title=source_title)
+        self._renderer.compute(histograms, title_resolver=title_resolver)
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""

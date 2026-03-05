@@ -481,8 +481,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             return
 
         options = {}
-        for field_name, field_info in output_fields.items():
-            title = field_info.title if field_info.title else field_name
+        for field_name in output_fields:
+            title = workflow_spec.get_output_title(field_name)
             options[title] = field_name
         self._output_buttons.options = options
 

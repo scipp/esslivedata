@@ -290,13 +290,29 @@ class TestLinePlotter:
 
     def test_compute_uses_source_title_in_overlay_label(self, line_plotter, data_key):
         """Test that compute uses source_title for overlay labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        line_plotter.compute({data_key: data}, source_title=lambda _: 'Friendly Name')
+        resolver = TitleResolver(source=lambda _: 'Friendly Name')
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Friendly Name/test_result'
+
+    def test_compute_uses_output_title_in_overlay_label(self, line_plotter, data_key):
+        """Test that compute uses output_title for overlay labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        resolver = TitleResolver(source=lambda _: 'Source', output=lambda _: 'I(d)')
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
+        result = line_plotter.get_cached_state()
+        assert result.label == 'Source/I(d)'
 
     def test_compute_falls_back_to_source_name_without_title(
         self, line_plotter, data_key
@@ -1096,6 +1112,14 @@ class TestBarsPlotter:
         # output_name is used as the column name for values
         assert 'roi_sum' in bar_data.columns
         assert bar_data['roi_sum'].iloc[0] == 42.0
+
+    def test_plot_uses_output_display_name_as_vdim_label(
+        self, bars_plotter, scalar_data, data_key
+    ):
+        """Test that output_display_name is used as the vdim label."""
+        result = bars_plotter.plot(scalar_data, data_key, output_display_name='I(d)')
+        vdim = result.vdims[0]
+        assert vdim.label == 'I(d)'
 
     def test_vertical_bars_default(self, bars_plotter, scalar_data, data_key):
         """Test that bars are vertical by default (invert_axes=False)."""

@@ -218,6 +218,25 @@ class WorkflowSpec(BaseModel):
             version=self.version,
         )
 
+    def get_output_title(self, output_name: str) -> str:
+        """Get human-readable title for an output field name.
+
+        Parameters
+        ----------
+        output_name:
+            Name of the output field.
+
+        Returns
+        -------
+        :
+            The field's title if defined, otherwise the raw output_name.
+        """
+        if self.outputs is not None:
+            field_info = self.outputs.model_fields.get(output_name)
+            if field_info is not None and field_info.title is not None:
+                return field_info.title
+        return output_name
+
     def get_output_template(self, output_name: str) -> sc.DataArray | None:
         """
         Get a template DataArray for the specified output.
