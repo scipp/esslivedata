@@ -211,6 +211,14 @@ class DataServiceRunner:
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
 
+        sync_scheduler = args.pop('sync_scheduler')
+        if sync_scheduler:
+            import dask
+            from dask.local import SynchronousExecutor
+
+            dask.config.set(pool=SynchronousExecutor())
+            logger.info("dask_scheduler", mode="synchronous")
+
         # Configure logging with parsed arguments
         log_level = getattr(logging, args.pop('log_level'))
         log_json_file = args.pop('log_json_file')
