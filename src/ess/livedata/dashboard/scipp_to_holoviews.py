@@ -11,9 +11,11 @@ def coord_to_dimension(var: sc.Variable) -> hv.Dimension:
     return hv.Dimension(dim, label=dim, unit=unit)
 
 
-def create_value_dimension(data: sc.DataArray) -> hv.Dimension:
+def create_value_dimension(
+    data: sc.DataArray, *, value_label: str = ''
+) -> hv.Dimension:
     """Create a Holoviews Dimension for the values."""
-    label = data.name if data.name else 'values'
+    label = value_label or data.name or 'values'
     unit = str(data.unit) if data.unit is not None else None
     return hv.Dimension('values', label=label, unit=unit)
 
@@ -42,15 +44,18 @@ class HvConverter1d:
     ----------
     data:
         Input 1D DataArray (may be missing dimension coordinates).
+    value_label:
+        Label for the value dimension. If empty, falls back to ``data.name``
+        or ``'values'``.
     """
 
-    def __init__(self, data: sc.DataArray) -> None:
+    def __init__(self, data: sc.DataArray, *, value_label: str = '') -> None:
         self._data = _ensure_coords(data)
         dim = self._data.dim
         self._has_edges = dim in self._data.coords and self._data.coords.is_edges(dim)
         coord = self._data.coords[dim]
         self._kdims = [coord_to_dimension(coord)]
-        self._vdims = [create_value_dimension(self._data)]
+        self._vdims = [create_value_dimension(self._data, value_label=value_label)]
 
     @property
     def has_edges(self) -> bool:
