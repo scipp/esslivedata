@@ -186,6 +186,13 @@ class DataServiceRunner:
         self._make_builder = make_builder
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
+            '--sync-scheduler',
+            action='store_true',
+            default=False,
+            help='Use synchronous dask scheduler instead of threaded'
+            ' (reduces GIL contention)',
+        )
+        self._parser.add_argument(
             '--sink-type',
             choices=['kafka', 'png'],
             default='kafka',
@@ -205,6 +212,14 @@ class DataServiceRunner:
         self,
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
+
+        sync_scheduler = args.pop('sync_scheduler')
+        if sync_scheduler:
+            import dask
+            from dask.local import SynchronousExecutor
+
+            dask.config.set(pool=SynchronousExecutor())
+            logger.info("dask_scheduler", mode="synchronous")
 
         # Configure logging with parsed arguments
         log_level = getattr(logging, args.pop('log_level'))
