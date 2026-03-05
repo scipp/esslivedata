@@ -314,6 +314,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._workflow_buttons.param.watch(self._on_workflow_change, 'value')
         self._output_buttons.param.watch(self._on_output_change, 'value')
         self._name_input.param.watch(self._on_name_input_change, 'value')
+        self._update_output_description()
         self._validate()
 
     def _create_namespace_buttons(self) -> pn.widgets.RadioButtonGroup:
@@ -503,10 +504,9 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._output_buttons.options = {}
             return
 
-        options = {}
-        for field_name in output_fields:
-            title = workflow_spec.get_output_title(field_name)
-            options[title] = field_name
+        # Field definition order is intentional: spec authors put the primary output
+        # first, as it will be auto-selected when the wizard opens.
+        options = {workflow_spec.get_output_title(name): name for name in output_fields}
         self._output_buttons.options = options
 
     def _update_content(self) -> None:

@@ -182,25 +182,17 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         ),
         default_factory=_make_2d_template_with_time,
     )
-    counts_total: sc.DataArray = pydantic.Field(
-        title='Total (current)',
-        description='Total number of detector events in the latest update interval.',
-        default_factory=_make_0d_template_with_time,
-    )
-    counts_in_toa_range: sc.DataArray = pydantic.Field(
-        title='Total in interval (current)',
-        description=(
-            'Number of detector events within the configured range filter '
-            'for the latest update interval.'
-        ),
-        default_factory=_make_0d_template_with_time,
-    )
     counts_total_cumulative: sc.DataArray = pydantic.Field(
         title='Total (cumulative)',
         description=(
             'Total number of detector events accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
+    )
+    counts_total: sc.DataArray = pydantic.Field(
+        title='Total (current)',
+        description='Total number of detector events in the latest update interval.',
+        default_factory=_make_0d_template_with_time,
     )
     counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
         title='Total in interval (cumulative)',
@@ -209,6 +201,14 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
             'accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
+    )
+    counts_in_toa_range: sc.DataArray = pydantic.Field(
+        title='Total in interval (current)',
+        description=(
+            'Number of detector events within the configured range filter '
+            'for the latest update interval.'
+        ),
+        default_factory=_make_0d_template_with_time,
     )
 
 
