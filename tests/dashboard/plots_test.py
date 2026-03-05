@@ -101,6 +101,46 @@ def render_to_bokeh(hv_element):
     return bokeh_plot
 
 
+class TestTitleResolver:
+    def test_get_legend_label_includes_output_by_default(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver()
+        assert resolver.get_legend_label('src', 'out') == 'src/out'
+
+    def test_get_legend_label_applies_title_functions(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1', output=lambda _: 'Total counts'
+        )
+        assert (
+            resolver.get_legend_label('raw_src', 'raw_out') == 'Monitor 1/Total counts'
+        )
+
+    def test_get_legend_label_strips_output_when_not_included(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1',
+            output=lambda _: 'Total counts',
+            include_output_in_label=False,
+        )
+        assert resolver.get_legend_label('raw_src', 'raw_out') == 'Monitor 1'
+
+    def test_get_axis_label(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(output=lambda _: 'I(d)')
+        assert resolver.get_axis_label('raw_output') == 'I(d)'
+
+    def test_get_axis_label_identity(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver()
+        assert resolver.get_axis_label('total_counts') == 'total_counts'
+
+
 class TestImagePlotter:
     def test_plot_with_all_zeros_does_not_raise(
         self, image_plotter, zero_data, data_key
@@ -310,7 +350,9 @@ class TestLinePlotter:
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        resolver = TitleResolver(source=lambda _: 'Friendly Name')
+        resolver = TitleResolver(
+            source=lambda _: 'Friendly Name', include_output_in_label=True
+        )
         line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Friendly Name/test_result'
@@ -323,10 +365,33 @@ class TestLinePlotter:
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        resolver = TitleResolver(source=lambda _: 'Source', output=lambda _: 'I(d)')
+        resolver = TitleResolver(
+            source=lambda _: 'Source',
+            output=lambda _: 'I(d)',
+            include_output_in_label=True,
+        )
         line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Source/I(d)'
+
+    def test_compute_strips_output_from_label_when_not_included(
+        self, line_plotter, data_key
+    ):
+        """Test that include_output_in_label=False produces source-only labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1',
+            output=lambda _: 'Total counts',
+            include_output_in_label=False,
+        )
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
+        result = line_plotter.get_cached_state()
+        assert result.label == 'Monitor 1'
 
     def test_compute_falls_back_to_source_name_without_title(
         self, line_plotter, data_key

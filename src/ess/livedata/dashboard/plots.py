@@ -58,10 +58,34 @@ def _identity(x: str) -> str:
 
 @dataclass(frozen=True)
 class TitleResolver:
-    """Resolves raw source and output names to human-readable display titles."""
+    """Resolves raw source and output names to human-readable display titles.
+
+    Parameters
+    ----------
+    source:
+        Maps raw source names to display titles.
+    output:
+        Maps raw output names to display titles.
+    include_output_in_label:
+        Whether to include the output name in legend labels. When all layers
+        in a cell share the same output, the output is already on the Y-axis
+        and repeating it in the legend is redundant.
+    """
 
     source: Callable[[str], str] = _identity
     output: Callable[[str], str] = _identity
+    include_output_in_label: bool = True
+
+    def get_legend_label(self, source_name: str, output_name: str) -> str:
+        """Build the legend label for a data layer."""
+        source = self.source(source_name)
+        if self.include_output_in_label:
+            return f'{source}/{self.output(output_name)}'
+        return source
+
+    def get_axis_label(self, output_name: str) -> str:
+        """Resolve an output name to a display title for axis labels."""
+        return self.output(output_name)
 
 
 class PresenterBase:
@@ -419,15 +443,17 @@ class Plotter:
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                source = resolver.source(data_key.job_id.source_name)
-                output = resolver.output(data_key.output_name)
-                label = f'{source}/{output}'
+                label = resolver.get_legend_label(
+                    data_key.job_id.source_name, data_key.output_name
+                )
+                output_display_name = resolver.get_axis_label(data_key.output_name)
+                source_display_name = resolver.source(data_key.job_id.source_name)
                 plot_element = self.plot(
                     da,
                     data_key,
                     label=label,
-                    source_display_name=source,
-                    output_display_name=output,
+                    source_display_name=source_display_name,
+                    output_display_name=output_display_name,
                     **kwargs,
                 )
                 plots.append(plot_element)
