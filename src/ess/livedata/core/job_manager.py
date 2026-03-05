@@ -384,34 +384,29 @@ class JobManager:
         self._advance_to_time(data.start_time, data.end_time)
 
         # Build work items (cheap, sequential)
-        work_items: list[_JobWorkItem] = []
+        work_items: list[tuple[Job, JobData, bool]] = []
         for job in self.active_jobs:
             job_data = _filter_data_for_job(job, data)
             has_data = not job_data.is_empty()
             has_pending = job.job_id in self._jobs_with_primary_data
             if has_data or has_pending:
-                work_items.append(
-                    _JobWorkItem(
-                        job=job,
-                        job_data=job_data if has_data else None,
-                        has_pending_primary=has_pending,
-                    )
-                )
+                work_items.append((job, job_data, has_pending))
 
         # Run push+finalize per job — parallelized when executor is available
-        outcomes = self._map(_process_single_job, work_items)
+        outcomes = self._map(_process_job, work_items)
 
         # Bookkeeping (cheap, sequential)
         all_replies: list[JobReply] = []
         all_results: list[JobResult] = []
-        for item, outcome in zip(work_items, outcomes, strict=True):
-            if outcome.reply is not None:
-                self._record_push_result(item.job, item.job_data, outcome.reply)
-                all_replies.append(outcome.reply)
-            if outcome.result is not None:
-                result = self._job_factory.enrich_result(outcome.result)
+        for (job, job_data, _), (reply, result) in zip(
+            work_items, outcomes, strict=True
+        ):
+            self._record_push_result(job, job_data, reply)
+            all_replies.append(reply)
+            if result is not None:
+                result = self._job_factory.enrich_result(result)
                 all_results.append(result)
-                self._record_compute_result(item.job, result)
+                self._record_compute_result(job, result)
 
         self._finish_jobs()
         return all_replies, all_results
@@ -578,32 +573,12 @@ def _filter_data_for_job(job: Job, data: WorkflowData) -> JobData:
     return job_data
 
 
-@dataclass(slots=True)
-class _JobWorkItem:
-    job: Job
-    job_data: JobData | None
-    has_pending_primary: bool
-
-
-@dataclass(slots=True)
-class _JobWorkOutcome:
-    reply: JobReply | None
-    result: JobResult | None
-
-
-def _process_single_job(item: _JobWorkItem) -> _JobWorkOutcome:
+def _process_job(
+    item: tuple[Job, JobData, bool],
+) -> tuple[JobReply, JobResult | None]:
     """Push data and optionally finalize a single job.
 
     Used as a map target for thread pool execution.
     """
-    reply = None
-    pushed_primary = False
-    if item.job_data is not None:
-        reply = item.job.add(item.job_data)
-        pushed_primary = not reply.has_error and item.job_data.is_active()
-
-    result = None
-    if pushed_primary or item.has_pending_primary:
-        result = item.job.get()
-
-    return _JobWorkOutcome(reply=reply, result=result)
+    job, job_data, has_pending_primary = item
+    return job.process(job_data, finalize=has_pending_primary)
