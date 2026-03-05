@@ -235,6 +235,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._namespace_buttons = self._create_namespace_buttons()
         self._workflow_buttons = self._create_workflow_buttons()
         self._output_buttons = self._create_output_buttons()
+        self._workflow_description = pn.pane.HTML(
+            '',
+            sizing_mode='stretch_width',
+            styles={'font-size': '12px', 'color': '#6c757d'},
+            visible=False,
+        )
         self._output_description = pn.pane.HTML(
             '',
             sizing_mode='stretch_width',
@@ -245,6 +251,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
 
         # Add buttons to containers
         self._workflow_container.append(self._workflow_buttons)
+        self._workflow_container.append(self._workflow_description)
         self._output_container.append(self._output_buttons)
         self._output_container.append(self._output_description)
 
@@ -314,6 +321,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._workflow_buttons.param.watch(self._on_workflow_change, 'value')
         self._output_buttons.param.watch(self._on_output_change, 'value')
         self._name_input.param.watch(self._on_name_input_change, 'value')
+        self._update_workflow_description()
         self._update_output_description()
         self._validate()
 
@@ -396,6 +404,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._selected_namespace = None
                 self._selected_workflow_id = None
                 self._selected_output = None
+        self._update_workflow_description()
         self._validate()
 
     def _on_workflow_change(self, event) -> None:
@@ -417,6 +426,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             else:
                 self._selected_workflow_id = None
                 self._selected_output = None
+        self._update_workflow_description()
         self._validate()
 
     def _on_output_change(self, event) -> None:
@@ -427,6 +437,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._selected_output = None
         self._update_output_description()
         self._validate()
+
+    def _update_workflow_description(self) -> None:
+        """Update the workflow description pane for the selected workflow."""
+        desc = None
+        if self._selected_workflow_id is not None:
+            spec = self._workflow_registry.get(self._selected_workflow_id)
+            if spec is not None:
+                desc = spec.description
+        if desc:
+            self._workflow_description.object = desc
+            self._workflow_description.visible = True
+        else:
+            self._workflow_description.object = ''
+            self._workflow_description.visible = False
 
     def _update_output_description(self) -> None:
         """Update the output description pane for the selected output."""
