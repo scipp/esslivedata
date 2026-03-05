@@ -13,6 +13,7 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -190,13 +191,20 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def compute(self, data: dict[str, Any]) -> None:
+    def compute(
+        self,
+        data: dict[str, Any],
+        *,
+        source_title: Callable[[str], str] | None = None,
+    ) -> None:
         """Compute histograms for all data sources and render.
 
         Parameters
         ----------
         data
             Structured data from DataSubscriber with "primary" role and axis roles.
+        source_title
+            Callable that maps a source name to a display title.
         """
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
@@ -239,7 +247,7 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        self._renderer.compute(histograms)
+        self._renderer.compute(histograms, source_title=source_title)
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""

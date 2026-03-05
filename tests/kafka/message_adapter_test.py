@@ -215,7 +215,7 @@ class TestF144ToLogDataAdapter:
 
 
 class TestKafkaToDa00Adapter:
-    def test_adapter(self) -> None:
+    def test_uses_timestamp_ns_when_no_reference_time(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         result = adapter.adapt(message)
@@ -225,6 +225,50 @@ class TestKafkaToDa00Adapter:
         assert result.timestamp == 5678
         assert len(result.value) == 2  # signal and temperature
         assert {var.name for var in result.value} == {"signal", "temperature"}
+
+    def test_uses_last_reference_time_as_timestamp(self) -> None:
+        da00_with_ref_time = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0, 2.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000]),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_with_ref_time, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == 3000
+
+    def test_uses_timestamp_ns_when_reference_time_is_empty(self) -> None:
+        da00_with_empty_ref_time = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([], dtype=np.int64),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_with_empty_ref_time, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == 5678
 
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
