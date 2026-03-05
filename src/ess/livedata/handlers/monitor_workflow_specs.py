@@ -192,7 +192,10 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             coords={'time': sc.scalar(0, unit='ns')},
         ),
         title='Total (current)',
-        description='Total number of monitor events in the latest update interval.',
+        description=(
+            'Total number of monitor events for the latest update interval only. '
+            'Resets each update interval.'
+        ),
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -202,7 +205,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         title='Total in interval (current)',
         description=(
             'Number of monitor events within the configured range filter '
-            'for the latest update interval.'
+            'for the latest update interval only. Resets each update interval.'
         ),
     )
 
