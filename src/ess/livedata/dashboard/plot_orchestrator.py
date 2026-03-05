@@ -666,16 +666,28 @@ class PlotOrchestrator:
     def _make_output_title_resolver(self, data: dict) -> Callable[[str], str] | None:
         """Create an output title resolver from the data's workflow_id.
 
-        Returns None if the data dict is empty (no workflow_id to resolve from).
+        Returns None if no workflow_id can be found. Handles both flat data dicts
+        (``{ResultKey: DataArray}``) and role-grouped dicts used by correlation
+        plotters (``{role_str: {ResultKey: DataArray}}``).
         """
-        workflow_id = None
-        for key in data:
-            if isinstance(key, ResultKey):
-                workflow_id = key.workflow_id
-                break
+        workflow_id = self._find_workflow_id(data)
         if workflow_id is None:
             return None
         return lambda output_name: self.get_output_title(workflow_id, output_name)
+
+    @staticmethod
+    def _find_workflow_id(data: dict) -> WorkflowId | None:
+        """Extract a WorkflowId from a data dict."""
+        for key in data:
+            if isinstance(key, ResultKey):
+                return key.workflow_id
+        # Correlation plotters: data is {role: {ResultKey: DataArray}}
+        for value in data.values():
+            if isinstance(value, dict):
+                for key in value:
+                    if isinstance(key, ResultKey):
+                        return key.workflow_id
+        return None
 
     def _run_compute(self, layer_id: LayerId, plotter: Any, data: dict) -> None:
         """

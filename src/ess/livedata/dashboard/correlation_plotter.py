@@ -196,6 +196,7 @@ class CorrelationHistogramPlotter:
         data: dict[str, Any],
         *,
         source_title: Callable[[str], str] | None = None,
+        output_title: Callable[[str], str] | None = None,
     ) -> None:
         """Compute histograms for all data sources and render.
 
@@ -205,6 +206,8 @@ class CorrelationHistogramPlotter:
             Structured data from DataSubscriber with "primary" role and axis roles.
         source_title
             Callable that maps a source name to a display title.
+        output_title
+            Callable that maps an output name to a display title.
         """
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
@@ -247,7 +250,9 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        self._renderer.compute(histograms, source_title=source_title)
+        self._renderer.compute(
+            histograms, source_title=source_title, output_title=output_title
+        )
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""

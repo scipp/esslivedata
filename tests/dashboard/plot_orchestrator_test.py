@@ -390,6 +390,37 @@ class TestGetOutputTitle:
         )
 
 
+class TestFindWorkflowId:
+    """Tests for PlotOrchestrator._find_workflow_id()."""
+
+    def test_finds_workflow_id_in_flat_dict(self):
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        wf_id = WorkflowId(instrument='test', namespace='test', name='test', version=1)
+        key = ResultKey(
+            workflow_id=wf_id,
+            job_id=JobId(source_name='src', job_number=1),
+            output_name='out',
+        )
+        assert PlotOrchestrator._find_workflow_id({key: 'data'}) == wf_id
+
+    def test_finds_workflow_id_in_role_grouped_dict(self):
+        """Correlation plotters use {role: {ResultKey: DataArray}} structure."""
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        wf_id = WorkflowId(instrument='test', namespace='test', name='test', version=1)
+        key = ResultKey(
+            workflow_id=wf_id,
+            job_id=JobId(source_name='src', job_number=1),
+            output_name='out',
+        )
+        data = {'primary': {key: 'data'}, 'x_axis': {}}
+        assert PlotOrchestrator._find_workflow_id(data) == wf_id
+
+    def test_returns_none_for_empty_dict(self):
+        assert PlotOrchestrator._find_workflow_id({}) is None
+
+
 class TestGridManagement:
     """Tests for basic grid creation and removal."""
 
