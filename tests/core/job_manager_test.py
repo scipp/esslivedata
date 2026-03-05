@@ -1821,45 +1821,45 @@ class TestJobManagerThreading:
             data={StreamId(name=name): sc.scalar(1.0) for name in source_names},
         )
 
-    def test_threaded_push_data_uses_worker_threads(self):
+    def test_process_jobs_uses_worker_threads(self):
+        """With job_threads > 1, accumulate and finalize run on worker threads."""
         manager, factory, job_ids = self._setup_threaded_manager(
             n_jobs=3, job_threads=3
         )
         sources = [jid.source_name for jid in job_ids]
         data = self._make_data(sources)
 
-        manager.push_data(data)
+        manager.process_jobs(data)
 
         main_thread = threading.current_thread().ident
-        all_thread_ids = []
+        accumulate_tids = []
+        finalize_tids = []
         for jid in job_ids:
             proc = factory.processors[jid]
             assert len(proc.accumulate_thread_ids) == 1
-            all_thread_ids.append(proc.accumulate_thread_ids[0])
+            assert len(proc.finalize_thread_ids) == 1
+            accumulate_tids.append(proc.accumulate_thread_ids[0])
+            finalize_tids.append(proc.finalize_thread_ids[0])
 
         # At least one job should have run on a non-main thread
-        assert any(tid != main_thread for tid in all_thread_ids)
+        assert any(tid != main_thread for tid in accumulate_tids)
+        assert any(tid != main_thread for tid in finalize_tids)
 
-    def test_threaded_compute_results_uses_worker_threads(self):
+    def test_process_jobs_runs_push_and_get_on_same_thread_per_job(self):
+        """Each job's accumulate and finalize run on the same worker thread."""
         manager, factory, job_ids = self._setup_threaded_manager(
             n_jobs=3, job_threads=3
         )
         sources = [jid.source_name for jid in job_ids]
         data = self._make_data(sources)
 
-        manager.push_data(data)
-        manager.compute_results()
+        manager.process_jobs(data)
 
-        main_thread = threading.current_thread().ident
-        all_thread_ids = []
         for jid in job_ids:
             proc = factory.processors[jid]
-            assert len(proc.finalize_thread_ids) == 1
-            all_thread_ids.append(proc.finalize_thread_ids[0])
+            assert proc.accumulate_thread_ids[0] == proc.finalize_thread_ids[0]
 
-        assert any(tid != main_thread for tid in all_thread_ids)
-
-    def test_sequential_push_data_uses_calling_thread(self):
+    def test_process_jobs_sequential_uses_calling_thread(self):
         """With job_threads=1, all work runs on the calling thread."""
         manager, factory, job_ids = self._setup_threaded_manager(
             n_jobs=3, job_threads=1
@@ -1867,8 +1867,7 @@ class TestJobManagerThreading:
         sources = [jid.source_name for jid in job_ids]
         data = self._make_data(sources)
 
-        manager.push_data(data)
-        manager.compute_results()
+        manager.process_jobs(data)
 
         main_thread = threading.current_thread().ident
         for jid in job_ids:
@@ -1876,7 +1875,7 @@ class TestJobManagerThreading:
             assert all(tid == main_thread for tid in proc.accumulate_thread_ids)
             assert all(tid == main_thread for tid in proc.finalize_thread_ids)
 
-    def test_threaded_results_match_sequential(self):
+    def test_process_jobs_results_match_sequential(self):
         """Threaded and sequential produce identical results."""
         n_jobs = 4
         sources = [f"source_{i}" for i in range(n_jobs)]
@@ -1897,8 +1896,8 @@ class TestJobManagerThreading:
                     for i, name in enumerate(sources)
                 },
             )
-            manager.push_data(data)
-            results_by_mode[job_threads] = manager.compute_results()
+            _, results = manager.process_jobs(data)
+            results_by_mode[job_threads] = results
 
         seq_results = sorted(results_by_mode[1], key=lambda r: str(r.job_id))
         thr_results = sorted(results_by_mode[4], key=lambda r: str(r.job_id))
@@ -1907,17 +1906,16 @@ class TestJobManagerThreading:
             assert seq.error_message == thr.error_message
             assert set(seq.data.keys()) == set(thr.data.keys())
 
-    def test_threaded_push_data_tracks_errors(self):
-        """Errors from threaded push_data are tracked correctly."""
+    def test_process_jobs_tracks_push_errors(self):
+        """Errors from accumulation are tracked correctly."""
         manager, factory, job_ids = self._setup_threaded_manager(
             n_jobs=3, job_threads=3
         )
-        # Make one processor fail
         factory.processors[job_ids[1]].should_fail_accumulate = True
 
         sources = [jid.source_name for jid in job_ids]
         data = self._make_data(sources)
-        replies = manager.push_data(data)
+        replies, _ = manager.process_jobs(data)
 
         error_replies = [r for r in replies if r.has_error]
         assert len(error_replies) == 1

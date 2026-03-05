@@ -349,21 +349,72 @@ class JobManager:
     def push_data(self, data: WorkflowData) -> list[JobReply]:
         """Push data into the active jobs and return status for each job."""
         self._advance_to_time(data.start_time, data.end_time)
-
-        # Filter data per job (cheap)
-        job_items: list[tuple[Job, JobData]] = []
+        replies = []
         for job in self.active_jobs:
             job_data = _filter_data_for_job(job, data)
             if not job_data.is_empty():
-                job_items.append((job, job_data))
+                reply = job.add(job_data)
+                self._record_push_result(job, job_data, reply)
+                replies.append(reply)
+        return replies
 
-        # Run job.add() — parallelized when executor is available
-        replies = self._map(_add_data, job_items)
+    def compute_results(self) -> list[JobResult]:
+        """
+        Compute results from jobs that received primary data since last successful call.
+        """
+        results = []
+        for job in self._active_jobs.values():
+            if job.job_id not in self._jobs_with_primary_data:
+                continue
+            result = job.get()
+            result = self._job_factory.enrich_result(result)
+            results.append(result)
+            self._record_compute_result(job, result)
+        self._finish_jobs()
+        return results
+
+    def process_jobs(
+        self, data: WorkflowData
+    ) -> tuple[list[JobReply], list[JobResult]]:
+        """Push data and compute results in a single pass over active jobs.
+
+        When a thread pool is configured, each job's accumulation and
+        finalization run as a single task, avoiding two fan-out/fan-in cycles.
+        """
+        self._advance_to_time(data.start_time, data.end_time)
+
+        # Build work items (cheap, sequential)
+        work_items: list[_JobWorkItem] = []
+        for job in self.active_jobs:
+            job_data = _filter_data_for_job(job, data)
+            has_data = not job_data.is_empty()
+            has_pending = job.job_id in self._jobs_with_primary_data
+            if has_data or has_pending:
+                work_items.append(
+                    _JobWorkItem(
+                        job=job,
+                        job_data=job_data if has_data else None,
+                        has_pending_primary=has_pending,
+                    )
+                )
+
+        # Run push+finalize per job — parallelized when executor is available
+        outcomes = self._map(_process_single_job, work_items)
 
         # Bookkeeping (cheap, sequential)
-        for (job, job_data), reply in zip(job_items, replies, strict=True):
-            self._record_push_result(job, job_data, reply)
-        return replies
+        all_replies: list[JobReply] = []
+        all_results: list[JobResult] = []
+        for item, outcome in zip(work_items, outcomes, strict=True):
+            if outcome.reply is not None:
+                self._record_push_result(item.job, item.job_data, outcome.reply)
+                all_replies.append(outcome.reply)
+            if outcome.result is not None:
+                result = self._job_factory.enrich_result(outcome.result)
+                all_results.append(result)
+                self._record_compute_result(item.job, result)
+
+        self._finish_jobs()
+        return all_replies, all_results
 
     def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
         # Track primary data updates only after successful add, so that a
@@ -388,29 +439,6 @@ class JobManager:
             # Only update state if it was warning (preserve error state)
             if self._job_states.get(job.job_id) == JobState.warning:
                 self._job_states[job.job_id] = JobState.active
-
-    def compute_results(self) -> list[JobResult]:
-        """
-        Compute results from jobs that received primary data since last successful call.
-        """
-        jobs_to_compute = [
-            job
-            for job in self._active_jobs.values()
-            if job.job_id in self._jobs_with_primary_data
-        ]
-
-        # Run job.get() — parallelized when executor is available
-        raw_results = self._map(_finalize_job, jobs_to_compute)
-
-        # Enrich and bookkeeping (cheap, sequential)
-        results = []
-        for job, result in zip(jobs_to_compute, raw_results, strict=True):
-            result = self._job_factory.enrich_result(result)
-            results.append(result)
-            self._record_compute_result(job, result)
-
-        self._finish_jobs()
-        return results
 
     def _record_compute_result(self, job: Job, result: JobResult) -> None:
         # Track errors from job finalization, or clear them on success
@@ -550,12 +578,32 @@ def _filter_data_for_job(job: Job, data: WorkflowData) -> JobData:
     return job_data
 
 
-def _add_data(item: tuple[Job, JobData]) -> JobReply:
-    """Add data to a job. Used as a map target for thread pool execution."""
-    job, job_data = item
-    return job.add(job_data)
+@dataclass(slots=True)
+class _JobWorkItem:
+    job: Job
+    job_data: JobData | None
+    has_pending_primary: bool
 
 
-def _finalize_job(job: Job) -> JobResult:
-    """Finalize a job. Used as a map target for thread pool execution."""
-    return job.get()
+@dataclass(slots=True)
+class _JobWorkOutcome:
+    reply: JobReply | None
+    result: JobResult | None
+
+
+def _process_single_job(item: _JobWorkItem) -> _JobWorkOutcome:
+    """Push data and optionally finalize a single job.
+
+    Used as a map target for thread pool execution.
+    """
+    reply = None
+    pushed_primary = False
+    if item.job_data is not None:
+        reply = item.job.add(item.job_data)
+        pushed_primary = not reply.has_error and item.job_data.is_active()
+
+    result = None
+    if pushed_primary or item.has_pending_primary:
+        result = item.job.get()
+
+    return _JobWorkOutcome(reply=reply, result=result)

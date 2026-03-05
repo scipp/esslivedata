@@ -161,25 +161,20 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # Pre-process message batch
         workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
 
-        # Handle data messages with the workflow manager, accumulating data as needed.
-        job_errors = self._job_manager.push_data(workflow_data)
+        # Push data into jobs and compute results in a single pass.
+        # When job_threads > 1, each job's accumulation and finalization run as
+        # a single threaded task, avoiding two fan-out/fan-in cycles.
+        job_replies, results = self._job_manager.process_jobs(workflow_data)
 
         # Log any errors from data processing
-        for error in job_errors:
-            if error.has_error:
+        for reply in job_replies:
+            if reply.has_error:
                 self._errors_since_last_metrics += 1
                 logger.error(
                     'job_data_error',
-                    job_id=str(error.job_id),
-                    error=error.error_message,
+                    job_id=str(reply.job_id),
+                    error=reply.error_message,
                 )
-
-        # We used to compute results only after 1-N accumulation calls, reasoning that
-        # processing data (partially) immediately (instead of waiting for more data)
-        # would increase the latency. A closer look, the contrary is true, based on
-        # a simple model with a constant plus linear (per event) time for preprocessing
-        # (including accumulation).
-        results = self._job_manager.compute_results()
 
         # Filter valid results and log errors
         valid_results = []
