@@ -165,6 +165,10 @@ class WorkflowSpec(BaseModel):
             "be scipp.DataArray. Field metadata (title, description) provides "
             "human-readable names and explanations for the UI. "
             "\n\n"
+            "IMPORTANT: Field definition order matters. The UI presents outputs in "
+            "this order and auto-selects the first one, so put the primary output "
+            "first. "
+            "\n\n"
             "IMPORTANT: Use default_factory to provide an empty DataArray template "
             "with the correct structure (dims, coords, units). This enables the "
             "dashboard to perform automatic plotter selection before data exists. "
@@ -236,6 +240,25 @@ class WorkflowSpec(BaseModel):
             if field_info is not None and field_info.title is not None:
                 return field_info.title
         return output_name
+
+    def get_output_description(self, output_name: str) -> str | None:
+        """Get description for an output field.
+
+        Parameters
+        ----------
+        output_name:
+            Name of the output field.
+
+        Returns
+        -------
+        :
+            The field's description if defined, otherwise None.
+        """
+        if self.outputs is not None:
+            field_info = self.outputs.model_fields.get(output_name)
+            if field_info is not None:
+                return field_info.description
+        return None
 
     def get_output_template(self, output_name: str) -> sc.DataArray | None:
         """

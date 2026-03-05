@@ -166,37 +166,52 @@ def _make_0d_template_with_time() -> sc.DataArray:
 class DetectorViewOutputsBase(WorkflowOutputsBase):
     """Base outputs for detector view workflows (without ROI support)."""
 
+    # Field names are legacy identifiers kept for compatibility with existing
+    # workflow templates and serialized configs. Titles are user-facing names.
+
     cumulative: sc.DataArray = pydantic.Field(
-        title='Cumulative Counts',
-        description='Time-integrated detector counts accumulated over all time.',
+        title='Image (cumulative)',
+        description='Detector image accumulated since the start of the run.',
         default_factory=_make_2d_template,
     )
     current: sc.DataArray = pydantic.Field(
-        title='Current Counts',
-        description='Detector counts for the current time window since last update.',
+        title='Image (current)',
+        description=(
+            'Detector image for the latest update interval only. '
+            'Resets each update interval.'
+        ),
         default_factory=_make_2d_template_with_time,
     )
-    counts_total: sc.DataArray = pydantic.Field(
-        title='Total Event Count',
-        description='Total number of detector events in the current time window.',
-        default_factory=_make_0d_template_with_time,
-    )
-    counts_in_toa_range: sc.DataArray = pydantic.Field(
-        title='Event Count in TOA Range',
-        description='Number of detector events within the configured TOA range filter.',
-        default_factory=_make_0d_template_with_time,
-    )
     counts_total_cumulative: sc.DataArray = pydantic.Field(
-        title='Total Event Count (Cumulative)',
-        description='Cumulative total number of detector events.',
-        default_factory=_make_0d_template,
-    )
-    counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
-        title='Event Count in Range (Cumulative)',
+        title='Total (cumulative)',
         description=(
-            'Cumulative number of detector events within the configured range filter.'
+            'Total number of detector events accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
+    )
+    counts_total: sc.DataArray = pydantic.Field(
+        title='Total (current)',
+        description=(
+            'Total number of detector events for the latest update interval only. '
+            'Resets each update interval.'
+        ),
+        default_factory=_make_0d_template_with_time,
+    )
+    counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
+        title='Total in interval (cumulative)',
+        description=(
+            'Number of detector events within the configured range filter '
+            'accumulated since the start of the run.'
+        ),
+        default_factory=_make_0d_template,
+    )
+    counts_in_toa_range: sc.DataArray = pydantic.Field(
+        title='Total in interval (current)',
+        description=(
+            'Number of detector events within the configured range filter '
+            'for the latest update interval only. Resets each update interval.'
+        ),
+        default_factory=_make_0d_template_with_time,
     )
 
 
@@ -204,25 +219,29 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     """Outputs for detector view workflows with ROI support."""
 
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
+    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
+        title='ROI spectra (cumulative)',
+        description=(
+            'Histogram for each active ROI region '
+            'accumulated since the start of the run.'
+        ),
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
     roi_spectra_current: sc.DataArray = pydantic.Field(
-        title='ROI Spectra (Current)',
-        description='Time-of-arrival spectra for active ROIs in current time window. '
-        'Stacked 2D array with roi coordinate containing ROI indices.',
+        title='ROI spectra (current)',
+        description=(
+            'Histogram for each active ROI region '
+            'for the latest update interval only. Resets each update interval.'
+        ),
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
             coords={
                 'roi': sc.array(dims=['roi'], values=[], unit=None),
                 'time': sc.scalar(0, unit='ns'),
             },
-        ),
-    )
-    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
-        title='ROI Spectra (Cumulative)',
-        description='Cumulative time-of-arrival spectra for active ROIs. '
-        'Stacked 2D array with roi coordinate containing ROI indices.',
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
         ),
     )
 
@@ -276,14 +295,15 @@ def make_detector_view_outputs(
 
     class CustomDetectorViewOutputs(base_class):  # type: ignore[valid-type]
         cumulative: sc.DataArray = pydantic.Field(
-            title='Cumulative Counts',
-            description='Time-integrated detector counts accumulated over all time.',
+            title='Image (cumulative)',
+            description='Detector image accumulated since the start of the run.',
             default_factory=make_cumulative_template,
         )
         current: sc.DataArray = pydantic.Field(
-            title='Current Counts',
+            title='Image (current)',
             description=(
-                'Detector counts for the current time window since last update.'
+                'Detector image for the latest update interval only. '
+                'Resets each update interval.'
             ),
             default_factory=make_current_template,
         )

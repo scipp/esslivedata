@@ -392,6 +392,13 @@ def get_plot_cell_display_info(
     if window_info:
         description_parts.append(f'Window: {window_info}')
 
+    # Append output description from the workflow spec if available
+    workflow_spec = workflow_registry.get(config.workflow_id)
+    if workflow_spec is not None and config.output_name:
+        output_desc = workflow_spec.get_output_description(config.output_name)
+        if output_desc:
+            description_parts.append(f'\n{output_desc}')
+
     description = '\n'.join(description_parts)
 
     return title, description
