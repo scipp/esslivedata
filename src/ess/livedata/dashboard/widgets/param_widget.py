@@ -49,7 +49,7 @@ class ParamWidget:
             field_info.default if field_info.default is not PydanticUndefined else None
         )
         description = field_info.description or field_name
-        display_name = snake_to_camel(field_name)
+        display_name = field_info.title or snake_to_camel(field_name)
 
         # Handle Optional types and get the actual type
         origin = getattr(field_type, '__origin__', None)

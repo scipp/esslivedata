@@ -17,7 +17,7 @@ from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
-from ess.livedata.kafka.source import BackgroundMessageSource
+from ess.livedata.kafka.source import KafkaMessageSource
 
 from .transport import DashboardResources, Transport
 
@@ -48,7 +48,6 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = ExitStack()
-        self._background_source = None
 
     def __enter__(self) -> DashboardResources:
         """Set up Kafka connections and return dashboard resources."""
@@ -108,16 +107,10 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         logger.info("dashboard_kafka_transport_cleaned_up")
 
     def start(self) -> None:
-        """Start background message polling."""
-        if self._background_source is not None:
-            self._background_source.start()
-            logger.info("dashboard_message_polling_started")
+        """No background tasks to start."""
 
     def stop(self) -> None:
-        """Stop background message polling."""
-        if self._background_source is not None:
-            self._background_source.stop()
-            logger.info("dashboard_message_polling_stopped")
+        """No background tasks to stop."""
 
     def _create_message_source(
         self,
@@ -145,10 +138,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             )
         )
 
-        # Create background source and store for lifecycle management
-        self._background_source = self._exit_stack.enter_context(
-            BackgroundMessageSource(consumer=consumer)
-        )
+        source = KafkaMessageSource(consumer=consumer)
 
         # Create adapter for message routing
         stream_mapping = get_stream_mapping(instrument=self._instrument, dev=self._dev)
@@ -160,4 +150,4 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             .build()
         )
 
-        return AdaptingMessageSource(source=self._background_source, adapter=adapter)
+        return AdaptingMessageSource(source=source, adapter=adapter)

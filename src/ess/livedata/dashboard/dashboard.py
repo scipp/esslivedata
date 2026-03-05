@@ -141,7 +141,7 @@ class DashboardBase(ServiceBase, ABC):
         )
 
     def _start_periodic_callback(
-        self, session_updater: SessionUpdater, period: int = 500
+        self, session_updater: SessionUpdater, period: int = 1000
     ) -> None:
         """
         Start the periodic callback for a session.

@@ -10,6 +10,7 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 
 import holoviews as hv
 import panel as pn
@@ -46,6 +47,27 @@ from .plot_widgets import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class _BatchedTabs(pn.Tabs):
+    """Tabs subclass that batches Bokeh model updates on tab switch.
+
+    With ``dynamic=True``, switching tabs triggers a synchronous cascade
+    (``_update_active`` → ``param.trigger('objects')`` → nested
+    ``_apply_update`` calls) that independently serializes PATCH-DOC
+    messages and recomputes the Bokeh model graph for each step.
+
+    Wrapping the cascade in ``pn.io.hold()`` + ``doc.models.freeze()``
+    collapses N dispatches/recomputes into 1 each.
+
+    See https://github.com/holoviz/panel/issues/8461.
+    """
+
+    def _update_active(self, *events) -> None:
+        doc = pn.state.curdoc
+        freeze = doc.models.freeze() if doc is not None else nullcontext()
+        with pn.io.hold(), freeze:
+            super()._update_active(*events)
 
 
 def _get_sizing_mode(config: PlotConfig) -> str:
@@ -139,8 +161,9 @@ class PlotGridTabs:
         # any tab content changes (e.g., updating grid preview). We even observe causes
         # of near-total UI freezes when there are many active plots. With dynamic=True,
         # only the visible tab is rendered; hidden tabs are rendered on-demand when
-        # selected. Downside: slight delay when switching to a tab.
-        self._tabs = pn.Tabs(
+        # selected. _BatchedTabs wraps each tab switch in hold+freeze so the
+        # resulting model-graph updates are dispatched in a single batch.
+        self._tabs = _BatchedTabs(
             sizing_mode='stretch_both',
             dynamic=True,
             stylesheets=[
@@ -878,6 +901,7 @@ class PlotGridTabs:
             Composed plot from session DMaps/elements, or None if none available.
         """
         plots = []
+        has_layout = False
         for layer in cell.layers:
             layer_id = layer.layer_id
             session_layer = self._session_layers.get(layer_id)
@@ -888,6 +912,10 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
+                if state.plotter is not None and isinstance(
+                    state.plotter.get_cached_state(), hv.Layout
+                ):
+                    has_layout = True
 
             if session_layer.dmap is not None:
                 plots.append(session_layer.dmap)
@@ -901,12 +929,15 @@ class PlotGridTabs:
         else:
             result = hv.Overlay(plots)
 
-        filename = build_save_filename_from_cell(
-            cell, self._workflow_registry, self._orchestrator.get_source_title
-        )
-        if filename is not None:
-            hook = make_save_filename_hook(filename)
-            result = result.opts(hooks=[hook])
+        # Skip hooks for Layouts — each sub-figure has its own SaveTool,
+        # so a single cell-level filename is not meaningful.
+        if not has_layout:
+            filename = build_save_filename_from_cell(
+                cell, self._workflow_registry, self._orchestrator.get_source_title
+            )
+            if filename is not None:
+                hook = make_save_filename_hook(filename)
+                result = result.opts(hooks=[hook])
 
         return result
 

@@ -28,7 +28,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, PresenterBase
+from .plots import ImagePlotter, LinePlotter, PresenterBase, TitleResolver
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -190,13 +190,20 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def compute(self, data: dict[str, Any]) -> None:
+    def compute(
+        self,
+        data: dict[str, Any],
+        *,
+        title_resolver: TitleResolver | None = None,
+    ) -> None:
         """Compute histograms for all data sources and render.
 
         Parameters
         ----------
         data
             Structured data from DataSubscriber with "primary" role and axis roles.
+        title_resolver
+            Resolves source/output names to display titles.
         """
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
@@ -239,7 +246,7 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        self._renderer.compute(histograms)
+        self._renderer.compute(histograms, title_resolver=title_resolver)
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""

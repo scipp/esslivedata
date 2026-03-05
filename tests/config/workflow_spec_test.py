@@ -241,6 +241,55 @@ class TestWorkflowSpecOutputs:
         assert template1 is not template2
 
 
+class TestGetOutputTitle:
+    """Tests for WorkflowSpec.get_output_title()."""
+
+    def test_returns_title_when_defined(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(title='I(d)')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_title('result') == 'I(d)'
+
+    def test_falls_back_to_field_name_when_no_title(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(description='No title set')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_title('result') == 'result'
+
+    def test_falls_back_to_output_name_for_missing_field(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(title='Result')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_title('nonexistent') == 'nonexistent'
+
+
 class TestWorkflowConfigAuxSourceNames:
     """Tests for WorkflowConfig.aux_source_names field."""
 
