@@ -101,6 +101,46 @@ def render_to_bokeh(hv_element):
     return bokeh_plot
 
 
+class TestTitleResolver:
+    def test_get_legend_label_includes_output_by_default(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver()
+        assert resolver.get_legend_label('src', 'out') == 'src/out'
+
+    def test_get_legend_label_applies_title_functions(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1', output=lambda _: 'Total counts'
+        )
+        assert (
+            resolver.get_legend_label('raw_src', 'raw_out') == 'Monitor 1/Total counts'
+        )
+
+    def test_get_legend_label_strips_output_when_not_included(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1',
+            output=lambda _: 'Total counts',
+            include_output_in_label=False,
+        )
+        assert resolver.get_legend_label('raw_src', 'raw_out') == 'Monitor 1'
+
+    def test_get_axis_label(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(output=lambda _: 'I(d)')
+        assert resolver.get_axis_label('raw_output') == 'I(d)'
+
+    def test_get_axis_label_identity(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver()
+        assert resolver.get_axis_label('total_counts') == 'total_counts'
+
+
 class TestImagePlotter:
     def test_plot_with_all_zeros_does_not_raise(
         self, image_plotter, zero_data, data_key
@@ -238,6 +278,20 @@ class TestImagePlotter:
         labeled = plot_element.relabel('test_label')
         assert labeled is not None
 
+    def test_plot_uses_output_display_name_as_vdim_label(self, zero_data, data_key):
+        """Test that output_display_name is used as the vdim label."""
+        params = PlotParams2d()
+        plotter = plots.ImagePlotter.from_params(params)
+        result = plotter.plot(zero_data, data_key, output_display_name='Total counts')
+        assert result.vdims[0].label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(self, zero_data, data_key):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        params = PlotParams2d()
+        plotter = plots.ImagePlotter.from_params(params)
+        result = plotter.plot(zero_data, data_key)
+        assert result.vdims[0].label == 'values'
+
 
 class TestLinePlotter:
     @pytest.fixture
@@ -296,7 +350,9 @@ class TestLinePlotter:
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        resolver = TitleResolver(source=lambda _: 'Friendly Name')
+        resolver = TitleResolver(
+            source=lambda _: 'Friendly Name', include_output_in_label=True
+        )
         line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Friendly Name/test_result'
@@ -309,10 +365,33 @@ class TestLinePlotter:
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        resolver = TitleResolver(source=lambda _: 'Source', output=lambda _: 'I(d)')
+        resolver = TitleResolver(
+            source=lambda _: 'Source',
+            output=lambda _: 'I(d)',
+            include_output_in_label=True,
+        )
         line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Source/I(d)'
+
+    def test_compute_strips_output_from_label_when_not_included(
+        self, line_plotter, data_key
+    ):
+        """Test that include_output_in_label=False produces source-only labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
+        )
+        resolver = TitleResolver(
+            source=lambda _: 'Monitor 1',
+            output=lambda _: 'Total counts',
+            include_output_in_label=False,
+        )
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
+        result = line_plotter.get_cached_state()
+        assert result.label == 'Monitor 1'
 
     def test_compute_falls_back_to_source_name_without_title(
         self, line_plotter, data_key
@@ -502,6 +581,24 @@ class TestLinePlotter:
         for child in result:
             opts = child.opts.get().kwargs
             assert opts.get('responsive') is True
+
+    def test_plot_uses_output_display_name_as_vdim_label(self, line_plotter, data_key):
+        """Test that output_display_name is used as the vdim label."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = line_plotter.plot(data, data_key, output_display_name='Total counts')
+        assert result.vdims[0].label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(self, line_plotter, data_key):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert result.vdims[0].label == 'values'
 
 
 class TestSlicerPlotter:
@@ -1399,6 +1496,26 @@ class TestOverlay1DPlotter:
             opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
             assert opts.get('responsive') is True
             assert 'aspect' not in opts or opts.get('aspect') is None
+
+    def test_plot_uses_output_display_name_as_vdim_label(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that output_display_name is used as the vdim label."""
+        result = overlay_plotter.plot(
+            data_2d_with_roi_coord, data_key, output_display_name='Total counts'
+        )
+        for curve in result:
+            vdim = curve.vdims[0]
+            assert vdim.label == 'Total counts'
+
+    def test_plot_vdim_label_falls_back_to_values(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that vdim label falls back to 'values' without output_display_name."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        for curve in result:
+            vdim = curve.vdims[0]
+            assert vdim.label == 'values'
 
 
 class TestLagIndicator:

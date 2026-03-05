@@ -290,6 +290,55 @@ class TestGetOutputTitle:
         assert spec.get_output_title('nonexistent') == 'nonexistent'
 
 
+class TestGetOutputDescription:
+    """Tests for WorkflowSpec.get_output_description()."""
+
+    def test_returns_description_when_defined(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(description='A detailed description.')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_description('result') == 'A detailed description.'
+
+    def test_returns_none_when_no_description(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(title='Result')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_description('result') is None
+
+    def test_returns_none_for_missing_field(self) -> None:
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(description='Exists')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.get_output_description('nonexistent') is None
+
+
 class TestWorkflowConfigAuxSourceNames:
     """Tests for WorkflowConfig.aux_source_names field."""
 

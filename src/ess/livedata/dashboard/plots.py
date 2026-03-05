@@ -58,10 +58,34 @@ def _identity(x: str) -> str:
 
 @dataclass(frozen=True)
 class TitleResolver:
-    """Resolves raw source and output names to human-readable display titles."""
+    """Resolves raw source and output names to human-readable display titles.
+
+    Parameters
+    ----------
+    source:
+        Maps raw source names to display titles.
+    output:
+        Maps raw output names to display titles.
+    include_output_in_label:
+        Whether to include the output name in legend labels. When all layers
+        in a cell share the same output, the output is already on the Y-axis
+        and repeating it in the legend is redundant.
+    """
 
     source: Callable[[str], str] = _identity
     output: Callable[[str], str] = _identity
+    include_output_in_label: bool = True
+
+    def get_legend_label(self, source_name: str, output_name: str) -> str:
+        """Build the legend label for a data layer."""
+        source = self.source(source_name)
+        if self.include_output_in_label:
+            return f'{source}/{self.output(output_name)}'
+        return source
+
+    def get_axis_label(self, output_name: str) -> str:
+        """Resolve an output name to a display title for axis labels."""
+        return self.output(output_name)
 
 
 class PresenterBase:
@@ -419,15 +443,17 @@ class Plotter:
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                source = resolver.source(data_key.job_id.source_name)
-                output = resolver.output(data_key.output_name)
-                label = f'{source}/{output}'
+                label = resolver.get_legend_label(
+                    data_key.job_id.source_name, data_key.output_name
+                )
+                output_display_name = resolver.get_axis_label(data_key.output_name)
+                source_display_name = resolver.source(data_key.job_id.source_name)
                 plot_element = self.plot(
                     da,
                     data_key,
                     label=label,
-                    source_display_name=source,
-                    output_display_name=output,
+                    source_display_name=source_display_name,
+                    output_display_name=output_display_name,
                     **kwargs,
                 )
                 plots.append(plot_element)
@@ -610,17 +636,23 @@ class LinePlotter(Plotter):
     _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        label: str = '',
+        output_display_name: str = '',
+        **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
-        converter = HvConverter1d(data)
+        converter = HvConverter1d(data, value_label=output_display_name)
         if self._mode == 'histogram' and converter.has_edges:
             mode = 'histogram'
             da = data
         else:
             mode = self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK
             da = self._convert_bin_edges_to_midpoints(data)
-            converter = HvConverter1d(da)
+            converter = HvConverter1d(da, value_label=output_display_name)
 
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
@@ -631,7 +663,10 @@ class LinePlotter(Plotter):
         if da.variances is not None and self._errors != 'none':
             if mode == 'histogram':
                 # Error elements need midpoint coords (N values, not N+1 edges)
-                converter = HvConverter1d(self._convert_bin_edges_to_midpoints(da))
+                converter = HvConverter1d(
+                    self._convert_bin_edges_to_midpoints(da),
+                    value_label=output_display_name,
+                )
             error_method = getattr(converter, self._ERROR_METHOD[self._errors])
             error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
             # Apply sizing opts to child elements individually. Bokeh needs
@@ -681,12 +716,20 @@ class ImagePlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        label: str = '',
+        output_display_name: str = '',
+        **kwargs,
     ) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
         # Prepare data with appropriate dtype and log scale masking
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         plot_data = self._prepare_2d_image_data(data, use_log_scale)
+        if output_display_name:
+            plot_data.name = output_display_name
 
         framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         # We are using the masked data here since Holoviews (at least with the Bokeh
@@ -822,7 +865,13 @@ class Overlay1DPlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        label: str = '',
+        output_display_name: str = '',
+        **kwargs,
     ) -> hv.Overlay | hv.Element:
         """
         Create overlaid curves from a 2D DataArray.
@@ -854,6 +903,8 @@ class Overlay1DPlotter(Plotter):
         curves: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
+            if output_display_name:
+                slice_data.name = output_display_name
             coord_val = coord_values[i]
 
             # Assign color by coordinate value for stable identity

@@ -161,13 +161,16 @@ class MonitorDataParams(pydantic.BaseModel):
 class MonitorHistogramOutputs(WorkflowOutputsBase):
     """Outputs for the monitor histogram workflow."""
 
+    # Field names are legacy identifiers kept for compatibility with existing
+    # workflow templates and serialized configs. Titles are user-facing names.
+
     cumulative: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
             coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
         ),
-        title='Cumulative Counts',
-        description='Time-integrated monitor counts accumulated over all time.',
+        title='Histogram (cumulative)',
+        description='Monitor histogram accumulated since the start of the run.',
     )
     current: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -177,24 +180,33 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'time': sc.scalar(0, unit='ns'),
             },
         ),
-        title='Current Counts',
-        description='Monitor counts for the current time window since last update.',
+        title='Histogram (current)',
+        description=(
+            'Monitor histogram for the latest update interval only. '
+            'Resets each update interval.'
+        ),
     )
     counts_total: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Total counts',
-        description='Total monitor counts in the current time window.',
+        title='Total (current)',
+        description=(
+            'Total number of monitor events for the latest update interval only. '
+            'Resets each update interval.'
+        ),
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Counts in TOA Range',
-        description='Number of monitor events within the configured TOA range filter.',
+        title='Total in interval (current)',
+        description=(
+            'Number of monitor events within the configured range filter '
+            'for the latest update interval only. Resets each update interval.'
+        ),
     )
 
 
