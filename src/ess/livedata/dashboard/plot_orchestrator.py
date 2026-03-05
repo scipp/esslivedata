@@ -26,7 +26,6 @@ import structlog
 from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     JobNumber,
-    ResultKey,
     WorkflowId,
     WorkflowSpec,
 )
@@ -331,18 +330,6 @@ class PlotOrchestrator:
         if self._instrument_config is not None:
             return self._instrument_config.get_source_title(source_name)
         return source_name
-
-    def get_output_title(self, workflow_id: WorkflowId, output_name: str) -> str:
-        """Get display title for an output field name.
-
-        Falls back to the raw output_name if the workflow is not found
-        or no title is defined for the output.
-        """
-        registry = self._job_orchestrator.get_workflow_registry()
-        spec = registry.get(workflow_id)
-        if spec is not None:
-            return spec.get_output_title(output_name)
-        return output_name
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -663,33 +650,14 @@ class PlotOrchestrator:
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
 
-    def _make_output_title_resolver(self, data: dict) -> Callable[[str], str] | None:
-        """Create an output title resolver from the data's workflow_id.
-
-        Returns None if no workflow_id can be found. Handles both flat data dicts
-        (``{ResultKey: DataArray}``) and role-grouped dicts used by correlation
-        plotters (``{role_str: {ResultKey: DataArray}}``).
-        """
-        workflow_id = self._find_workflow_id(data)
-        if workflow_id is None:
-            return None
-        return lambda output_name: self.get_output_title(workflow_id, output_name)
-
-    @staticmethod
-    def _find_workflow_id(data: dict) -> WorkflowId | None:
-        """Extract a WorkflowId from a data dict."""
-        for key in data:
-            if isinstance(key, ResultKey):
-                return key.workflow_id
-        # Correlation plotters: data is {role: {ResultKey: DataArray}}
-        for value in data.values():
-            if isinstance(value, dict):
-                for key in value:
-                    if isinstance(key, ResultKey):
-                        return key.workflow_id
-        return None
-
-    def _run_compute(self, layer_id: LayerId, plotter: Any, data: dict) -> None:
+    def _run_compute(
+        self,
+        layer_id: LayerId,
+        plotter: Any,
+        data: dict,
+        *,
+        title_resolver: Any = None,
+    ) -> None:
         """
         Compute plot state and transition layer to READY.
 
@@ -704,17 +672,14 @@ class PlotOrchestrator:
             The plotter instance to compute with.
         data
             Data dict to pass to plotter.compute(). Empty dict for static plotters.
+        title_resolver
+            Resolves source/output names to display titles.
         """
         if layer_id not in self._layer_to_cell:
             return
 
         try:
-            output_title = self._make_output_title_resolver(data)
-            plotter.compute(
-                data,
-                source_title=self.get_source_title,
-                output_title=output_title,
-            )
+            plotter.compute(data, title_resolver=title_resolver)
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
@@ -823,13 +788,25 @@ class PlotOrchestrator:
         if plotter is None:
             return
 
+        # Build title resolver once from static config
+        from .plots import TitleResolver, _identity
+
+        registry = self._job_orchestrator.get_workflow_registry()
+        spec = registry.get(config.workflow_id)
+        title_resolver = TitleResolver(
+            source=self.get_source_title,
+            output=spec.get_output_title if spec is not None else _identity,
+        )
+
         # Set up data pipeline - _run_compute will be called when data arrives
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(layer_id, plotter, data),
+                on_data=lambda data: self._run_compute(
+                    layer_id, plotter, data, title_resolver=title_resolver
+                ),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:

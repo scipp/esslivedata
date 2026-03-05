@@ -290,25 +290,27 @@ class TestLinePlotter:
 
     def test_compute_uses_source_title_in_overlay_label(self, line_plotter, data_key):
         """Test that compute uses source_title for overlay labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        line_plotter.compute({data_key: data}, source_title=lambda _: 'Friendly Name')
+        resolver = TitleResolver(source=lambda _: 'Friendly Name')
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Friendly Name/test_result'
 
     def test_compute_uses_output_title_in_overlay_label(self, line_plotter, data_key):
         """Test that compute uses output_title for overlay labels."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
-        line_plotter.compute(
-            {data_key: data},
-            source_title=lambda _: 'Source',
-            output_title=lambda _: 'I(d)',
-        )
+        resolver = TitleResolver(source=lambda _: 'Source', output=lambda _: 'I(d)')
+        line_plotter.compute({data_key: data}, title_resolver=resolver)
         result = line_plotter.get_cached_state()
         assert result.label == 'Source/I(d)'
 

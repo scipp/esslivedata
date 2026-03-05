@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 import weakref
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
 import holoviews as hv
@@ -53,6 +54,14 @@ def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
 
 def _identity(x: str) -> str:
     return x
+
+
+@dataclass(frozen=True)
+class TitleResolver:
+    """Resolves raw source and output names to human-readable display titles."""
+
+    source: Callable[[str], str] = _identity
+    output: Callable[[str], str] = _identity
 
 
 class PresenterBase:
@@ -383,8 +392,7 @@ class Plotter:
         self,
         data: dict[ResultKey, sc.DataArray],
         *,
-        source_title: Callable[[str], str] | None = None,
-        output_title: Callable[[str], str] | None = None,
+        title_resolver: TitleResolver | None = None,
         **kwargs,
     ) -> None:
         """
@@ -398,25 +406,21 @@ class Plotter:
         ----------
         data:
             Dictionary mapping ResultKeys to DataArrays.
-        source_title:
-            Callable that maps a source name to a display title. If None, the
-            raw source name is used.
-        output_title:
-            Callable that maps an output name to a display title. If None, the
-            raw output name is used.
+        title_resolver:
+            Resolves source/output names to display titles. If None, raw names
+            are used.
         **kwargs:
             Additional keyword arguments passed to plot().
         """
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
-        resolve_source = source_title or _identity
-        resolve_output = output_title or _identity
+        resolver = title_resolver or TitleResolver()
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                source = resolve_source(data_key.job_id.source_name)
-                output = resolve_output(data_key.output_name)
+                source = resolver.source(data_key.job_id.source_name)
+                output = resolver.output(data_key.output_name)
                 label = f'{source}/{output}'
                 plot_element = self.plot(
                     da,

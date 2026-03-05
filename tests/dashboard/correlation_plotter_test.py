@@ -221,8 +221,10 @@ class TestCorrelationHistogramPlotter:
         result = plotter.get_cached_state()
         assert result is not None
 
-    def test_forwards_output_title_to_renderer(self):
-        """output_title should be forwarded to the inner renderer."""
+    def test_forwards_title_resolver_to_renderer(self):
+        """title_resolver should be forwarded to the inner renderer."""
+        from ess.livedata.dashboard.plots import TitleResolver
+
         axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
         source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
 
@@ -236,11 +238,8 @@ class TestCorrelationHistogramPlotter:
             X_AXIS: {_make_result_key('position'): axis_data},
         }
 
-        plotter.compute(
-            data,
-            source_title=lambda _: 'Detector',
-            output_title=lambda _: 'I(d)',
-        )
+        resolver = TitleResolver(source=lambda _: 'Detector', output=lambda _: 'I(d)')
+        plotter.compute(data, title_resolver=resolver)
         result = plotter.get_cached_state()
         assert result is not None
         assert result.label == 'Detector/I(d)'

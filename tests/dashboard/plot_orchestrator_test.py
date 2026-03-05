@@ -5,7 +5,6 @@ import uuid
 import pydantic
 import pytest
 
-from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
@@ -360,65 +359,6 @@ def commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec):
     # With params in workflow_spec, the workflow is already initialized
     # with staged configs. Just commit it.
     return job_orchestrator.commit_workflow(workflow_id)
-
-
-class TestGetOutputTitle:
-    """Tests for PlotOrchestrator.get_output_title()."""
-
-    def test_returns_title_from_workflow_spec(self, plot_orchestrator, workflow_id):
-        """Test that get_output_title returns the field title from the spec."""
-        # SimpleTestOutputs has result field with title='Result'
-        assert plot_orchestrator.get_output_title(workflow_id, 'result') == 'Result'
-
-    def test_falls_back_to_output_name_for_unknown_workflow(self, plot_orchestrator):
-        """Test fallback to raw output_name when workflow is not in registry."""
-        unknown_id = WorkflowId(
-            instrument='unknown',
-            namespace='unknown',
-            name='unknown',
-            version=1,
-        )
-        assert plot_orchestrator.get_output_title(unknown_id, 'foo') == 'foo'
-
-    def test_falls_back_to_output_name_for_unknown_field(
-        self, plot_orchestrator, workflow_id
-    ):
-        """Test fallback to raw output_name when field is not in outputs."""
-        assert (
-            plot_orchestrator.get_output_title(workflow_id, 'nonexistent')
-            == 'nonexistent'
-        )
-
-
-class TestFindWorkflowId:
-    """Tests for PlotOrchestrator._find_workflow_id()."""
-
-    def test_finds_workflow_id_in_flat_dict(self):
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        wf_id = WorkflowId(instrument='test', namespace='test', name='test', version=1)
-        key = ResultKey(
-            workflow_id=wf_id,
-            job_id=JobId(source_name='src', job_number=1),
-            output_name='out',
-        )
-        assert PlotOrchestrator._find_workflow_id({key: 'data'}) == wf_id
-
-    def test_finds_workflow_id_in_role_grouped_dict(self):
-        """Correlation plotters use {role: {ResultKey: DataArray}} structure."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        wf_id = WorkflowId(instrument='test', namespace='test', name='test', version=1)
-        key = ResultKey(
-            workflow_id=wf_id,
-            job_id=JobId(source_name='src', job_number=1),
-            output_name='out',
-        )
-        data = {'primary': {key: 'data'}, 'x_axis': {}}
-        assert PlotOrchestrator._find_workflow_id(data) == wf_id
-
-    def test_returns_none_for_empty_dict(self):
-        assert PlotOrchestrator._find_workflow_id({}) is None
 
 
 class TestGridManagement:
