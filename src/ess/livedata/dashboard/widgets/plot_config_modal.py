@@ -65,6 +65,7 @@ _NO_TRANSITION_CSS = """
 def _resolve_axis_source_titles(
     axis_sources: dict[str, DataSourceConfig],
     instrument_config: Instrument,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
 ) -> dict[str, str]:
     """Build a mapping from bins field name to display title for axis sources.
 
@@ -74,6 +75,10 @@ def _resolve_axis_source_titles(
         Axis role -> DataSourceConfig mapping.
     instrument_config:
         Instrument config to resolve source names to titles.
+    workflow_registry:
+        Optional registry used to look up output titles. When provided and the
+        workflow has multiple outputs, the output title is appended to the source
+        title to disambiguate (e.g. "Cave Monitor (wavelength)").
 
     Returns
     -------
@@ -84,8 +89,19 @@ def _resolve_axis_source_titles(
     result: dict[str, str] = {}
     for role, field_name in role_to_field.items():
         if role in axis_sources and axis_sources[role].source_names:
-            source_name = axis_sources[role].source_names[0]
-            result[field_name] = instrument_config.get_source_title(source_name)
+            ds = axis_sources[role]
+            source_name = ds.source_names[0]
+            title = instrument_config.get_source_title(source_name)
+            if workflow_registry is not None:
+                spec = workflow_registry.get(ds.workflow_id)
+                if (
+                    spec is not None
+                    and spec.outputs is not None
+                    and len(spec.outputs.model_fields) > 1
+                ):
+                    output_title = spec.get_output_title(ds.output_name)
+                    title = f"{title} ({output_title})"
+            result[field_name] = title
     return result
 
 
@@ -93,6 +109,7 @@ def _inject_axis_source_titles(
     params: pydantic.BaseModel | dict,
     axis_sources: dict[str, DataSourceConfig],
     instrument_config: Instrument,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
 ) -> pydantic.BaseModel | dict:
     """Inject axis source titles into correlation histogram params.
 
@@ -100,7 +117,9 @@ def _inject_axis_source_titles(
     human-readable titles resolved from axis_sources.
     Accepts either a pydantic model or a plain dict of params.
     """
-    titles = _resolve_axis_source_titles(axis_sources, instrument_config)
+    titles = _resolve_axis_source_titles(
+        axis_sources, instrument_config, workflow_registry
+    )
     if not titles:
         return params
 
@@ -1092,7 +1111,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             )
             if axis_sources:
                 _inject_axis_source_titles(
-                    params_dict, axis_sources, self._instrument_config
+                    params_dict,
+                    axis_sources,
+                    self._instrument_config,
+                    self._workflow_registry,
                 )
             config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
@@ -1103,7 +1125,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             # For new correlation histograms, pre-populate axis source titles
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 
-            titles = _resolve_axis_source_titles(axis_sources, self._instrument_config)
+            titles = _resolve_axis_source_titles(
+                axis_sources, self._instrument_config, self._workflow_registry
+            )
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
@@ -1149,7 +1173,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
                 params = _inject_axis_source_titles(
-                    params, axis_sources, self._instrument_config
+                    params,
+                    axis_sources,
+                    self._instrument_config,
+                    self._workflow_registry,
                 )
 
         self._last_config_result = PlotConfig(
