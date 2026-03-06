@@ -140,9 +140,11 @@ class GridRow:
 
         # Rename text input (hidden initially)
         # Commits on Enter (which updates 'value') or pencil toggle.
+        # Use height=0 when hidden to avoid reserving vertical space.
         self._rename_input = pn.widgets.TextInput(
             value=grid_config.title,
             width=200,
+            height=0,
             visible=False,
             margin=0,
         )
@@ -225,6 +227,7 @@ class GridRow:
         self._editing = True
         with pn.io.hold():
             self._rename_input.value = self._grid_config.title
+            self._rename_input.height = None
             self._rename_input.visible = True
             self._label.visible = False
 
@@ -233,6 +236,7 @@ class GridRow:
         self._editing = False
         with pn.io.hold():
             self._rename_input.visible = False
+            self._rename_input.height = 0
             self._label.visible = True
 
     def _on_rename_committed(self, event) -> None:
@@ -719,8 +723,8 @@ class PlotGridManager:
 
     def _update_grid_list(self) -> None:
         """Update the grid list display."""
-        self._grid_list.clear()
         grids = list(self._orchestrator.get_all_grids().items())
+        rows = []
         for i, (grid_id, grid_config) in enumerate(grids):
             row = GridRow(
                 grid_id=grid_id,
@@ -735,7 +739,9 @@ class PlotGridManager:
                 is_first=(i == 0),
                 is_last=(i == len(grids) - 1),
             )
-            self._grid_list.append(row.panel)
+            rows.append(row.panel)
+        with pn.io.hold():
+            self._grid_list.objects = rows
 
     def _make_remove_handler(self, grid_id: GridId) -> Callable[[], None]:
         """Create a closure that removes the given grid."""
