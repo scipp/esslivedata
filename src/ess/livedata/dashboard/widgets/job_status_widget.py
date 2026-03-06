@@ -457,6 +457,7 @@ class JobStatusListWidget:
 
     def refresh(self) -> None:
         """Refresh job status display from current job statuses."""
+        self._job_service.remove_stale_jobs()
         # Snapshot to avoid race conditions with background threads
         current_statuses = list(self._job_service.job_statuses.values())
         current_job_keys = {

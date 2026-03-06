@@ -72,3 +72,15 @@ class JobService:
         age_ns = current_time - last_update
 
         return age_ns > self._heartbeat_timeout_ns
+
+    def remove_stale_jobs(self) -> None:
+        """Remove jobs whose heartbeats have timed out.
+
+        Called periodically to clean up jobs that are no longer broadcasting,
+        e.g., after a stop command was processed by the backend.
+        """
+        stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
+        for jid in stale:
+            logger.debug("Removing stale job %s", jid)
+            self._job_statuses.pop(jid, None)
+            self._job_status_timestamps.pop(jid, None)
