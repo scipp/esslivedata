@@ -84,7 +84,7 @@ class GridRow:
         'border': '1px solid #dee2e6',
         'border-radius': '6px',
         'background': '#f8f9fa',
-        'padding': '6px 12px',
+        'padding': '2px 8px',
     }
 
     _DISABLED_CARD_STYLES: ClassVar[dict[str, str]] = {
@@ -135,6 +135,7 @@ class GridRow:
         label_text = f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})'
         self._label = pn.pane.Str(
             label_text,
+            margin=(0, 10),
             styles={'flex-grow': '1', 'line-height': '28px'},
         )
 
@@ -208,7 +209,7 @@ class GridRow:
             remove_button,
             sizing_mode='stretch_width',
             styles=card_styles,
-            margin=(0, 0, 8, 0),
+            margin=(0, 0, 4, 0),
         )
 
     def _toggle_rename(self) -> None:
