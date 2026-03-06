@@ -233,9 +233,10 @@ class PlotGridTabs:
         # Store static tabs count for use as offset in grid tab index calculations
         self._static_tabs_count = len(self._tabs)
 
-        # Initialize from existing grids
+        # Initialize from existing grids (skip disabled ones)
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
-            self._add_grid_tab(grid_id, grid_config)
+            if grid_config.enabled:
+                self._add_grid_tab(grid_id, grid_config)
 
         # Register handler for periodic polling
         session_updater.register_custom_handler(self._poll_for_plot_updates)
@@ -303,6 +304,8 @@ class PlotGridTabs:
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
+        if not grid_config.enabled:
+            return
         self._add_grid_tab(grid_id, grid_config)
 
         if grid_id in self._grid_widgets:
