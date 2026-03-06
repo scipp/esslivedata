@@ -36,6 +36,8 @@ _MODE_TEMPLATE = "Template"
 _MODE_UPLOAD = "Upload"
 
 # Colors for template preview cells (cycle through these)
+_HORIZONTAL_MARGIN = 0
+
 _CELL_COLORS = [
     '#e3f2fd',  # light blue
     '#f3e5f5',  # light purple
@@ -270,6 +272,7 @@ class PlotGridManager:
             options=[_MODE_TEMPLATE, _MODE_UPLOAD],
             value=_MODE_TEMPLATE,
             button_type='default',
+            margin=(5, 0),
         )
         self._mode_selector.param.watch(self._on_mode_changed, 'value')
 
@@ -280,31 +283,41 @@ class PlotGridManager:
             options=template_options,
             value=_NO_TEMPLATE,
             sizing_mode='stretch_width',
+            margin=(5, 0),
         )
         self._template_selector.param.watch(self._on_template_selected, 'value')
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
-            name='Grid Title', value='New Grid', placeholder='Enter grid title'
+            name='Grid Title',
+            value='New Grid',
+            placeholder='Enter grid title',
+            margin=(5, 0),
         )
-        self._nrows_input = pn.widgets.IntInput(name='Rows', value=3, start=2, end=6)
-        self._ncols_input = pn.widgets.IntInput(name='Columns', value=3, start=2, end=6)
+        self._nrows_input = pn.widgets.IntInput(
+            name='Rows', value=3, start=2, end=6, margin=(5, 0)
+        )
+        self._ncols_input = pn.widgets.IntInput(
+            name='Columns', value=3, start=2, end=6, margin=(5, 0)
+        )
 
         # Watch for rows/cols changes to update preview
         self._nrows_input.param.watch(self._on_grid_size_changed, 'value')
         self._ncols_input.param.watch(self._on_grid_size_changed, 'value')
 
         # Add grid button (visible in normal mode)
-        self._add_button = pn.widgets.Button(name='Add Grid', button_type='primary')
+        self._add_button = pn.widgets.Button(
+            name='Add Grid', button_type='primary', margin=(5, 0)
+        )
         self._add_button.on_click(self._on_add_grid)
 
         # Edit mode buttons (visible in edit mode)
         self._save_button = pn.widgets.Button(
-            name='Save Changes', button_type='primary', visible=False
+            name='Save Changes', button_type='primary', visible=False, margin=(5, 0)
         )
         self._save_button.on_click(self._on_save_changes)
         self._copy_button = pn.widgets.Button(
-            name='Save as Copy', button_type='default', visible=False
+            name='Save as Copy', button_type='default', visible=False, margin=(5, 0)
         )
         self._copy_button.on_click(self._on_save_as_copy)
 
@@ -317,6 +330,7 @@ class PlotGridManager:
             accept='.yaml,.yml',
             sizing_mode='stretch_width',
             visible=False,
+            margin=(5, 0),
         )
         self._file_input.param.watch(self._on_file_uploaded, 'value')
         # Pending upload state: parsed cells and grid config from uploaded file
@@ -334,14 +348,15 @@ class PlotGridManager:
             sizing_mode='fixed',
             width=424,  # preview_width (400) + padding (24)
             height=264,  # preview_height (240) + padding (24)
-            margin=(0, 0, 0, 20),
         )
 
         # Grid list container
         # IMPORTANT: Use stretch_both (not stretch_width) to ensure consistent
         # sizing behavior with PlotGrid tabs. Panel's Tabs widget handles dynamic
         # tab addition better when all tabs have the same sizing mode.
-        self._grid_list = pn.Column(sizing_mode='stretch_both')
+        self._grid_list = pn.Column(
+            sizing_mode='stretch_both', margin=(0, _HORIZONTAL_MARGIN)
+        )
 
         # Subscribe to orchestrator updates
         self._subscription_id: SubscriptionId | None = (
@@ -356,6 +371,7 @@ class PlotGridManager:
         self._source_indicator = pn.pane.HTML(
             self._get_source_indicator_html(),
             sizing_mode='stretch_width',
+            margin=(5, 0),
         )
 
         # Initialize grid list and preview
@@ -368,6 +384,7 @@ class PlotGridManager:
             self._template_selector,
             self._file_input,
             sizing_mode='stretch_width',
+            margin=(0, _HORIZONTAL_MARGIN),
         )
 
         # Form column (left side) - fixed width
@@ -388,6 +405,7 @@ class PlotGridManager:
             self._grid_preview,
             sizing_mode='fixed',
             width=424,
+            margin=0,
         )
 
         # Row containing form and preview side by side
@@ -398,6 +416,7 @@ class PlotGridManager:
             preview_column,
             sizing_mode='stretch_width',
             align='start',
+            margin=(0, _HORIZONTAL_MARGIN),
         )
 
         # Main widget layout
@@ -408,7 +427,6 @@ class PlotGridManager:
             pn.layout.Divider(),
             form_row,
             pn.layout.Divider(),
-            pn.pane.Markdown('## Existing Grids'),
             self._grid_list,
             sizing_mode='stretch_both',
         )
