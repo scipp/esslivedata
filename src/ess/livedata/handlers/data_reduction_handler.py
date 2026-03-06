@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative
+from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import ToNXlog
 
@@ -22,8 +23,11 @@ class ReductionHandlerFactory(JobBasedPreprocessorFactoryBase):
                 if attrs is None:
                     return None
                 return ToNXlog(attrs=attrs)
-            case StreamKind.MONITOR_EVENTS | StreamKind.DETECTOR_EVENTS:
+            case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
+            case StreamKind.DETECTOR_EVENTS:
+                detector_number = self._instrument.get_detector_number(key.name)
+                return GroupByPixel(ToNXevent_data(), detector_number)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case _:
