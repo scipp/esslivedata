@@ -227,7 +227,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _powder_dynamic_keys(source_name: str):
         return {
-            source_name: RawDetector[SampleRun],
+            source_name: NeXusData[NXdetector, SampleRun],
             'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         }
 

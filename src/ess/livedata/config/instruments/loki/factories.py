@@ -19,7 +19,6 @@ def setup_factories(instrument: Instrument) -> None:
         EmptyBeamRun,
         NeXusData,
         NeXusDetectorName,
-        RawDetector,
         SampleRun,
         TransmissionRun,
     )
@@ -39,6 +38,7 @@ def setup_factories(instrument: Instrument) -> None:
         Transmission,
         UncertaintyBroadcastMode,
     )
+    from scippnexus import NXdetector
 
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
     from ess.livedata.handlers.detector_view import (
@@ -129,7 +129,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
         return {
-            source_name: RawDetector[SampleRun],
+            source_name: NeXusData[NXdetector, SampleRun],
             'incident_monitor': NeXusData[Incident, SampleRun],
             'transmission_monitor': NeXusData[Transmission, SampleRun],
         }

@@ -5,6 +5,10 @@ from __future__ import annotations
 import scipp as sc
 from ess.reduce.nexus import group_event_data
 
+# Apply monkey-patch to make group_event_data idempotent for pre-grouped data.
+# See module docstring for rationale.
+import ess.livedata.handlers._patch_group_event_data  # noqa: F401
+
 from ..core.handler import Accumulator
 from .to_nxevent_data import Events, ToNXevent_data
 

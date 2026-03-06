@@ -47,7 +47,7 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from ess.reduce.nexus.types import (
         Filename,
-        RawDetector,
+        NeXusData,
         SampleRun,
     )
     from ess.reduce.streaming import EternalAccumulator
@@ -58,6 +58,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleAngle,
         TimeOfFlightLookupTableFilename,
     )
+    from scippnexus import NXdetector
 
     from ess.livedata.handlers.accumulators import LatestValue
     from ess.livedata.handlers.detector_view import (
@@ -123,7 +124,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[SpectrumViewPixelsPerTube] = view_params.pixels_per_tube
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
+            dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
             target_keys={'spectrum_view': SpectrumView},
             accumulators={SpectrumView: EternalAccumulator},
         )
@@ -136,7 +137,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[DetectorRatemeterRegionParams] = params.region
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
+            dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
             target_keys={'detector_region_counts': DetectorRegionCounts},
             accumulators={DetectorRegionCounts: LatestValue},
         )
@@ -164,7 +165,7 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         return StreamProcessorWorkflow(
             workflow,
-            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
+            dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
             context_keys={
                 'detector_rotation': InstrumentAngle[SampleRun],
                 'sample_rotation': SampleAngle[SampleRun],

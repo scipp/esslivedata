@@ -19,8 +19,9 @@ SpectrumViewTOAEdges = NewType('SpectrumViewTOAEdges', sc.Variable)
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ESTIA-specific factories and workflows."""
     from ess.estia import EstiaWorkflow
-    from ess.reduce.nexus.types import RawDetector, SampleRun
+    from ess.reduce.nexus.types import NeXusData, RawDetector, SampleRun
     from ess.reduce.streaming import EternalAccumulator
+    from scippnexus import NXdetector
 
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
@@ -55,7 +56,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[SpectrumViewTOAEdges] = edges
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'multiblade_detector': RawDetector[SampleRun]},
+            dynamic_keys={'multiblade_detector': NeXusData[NXdetector, SampleRun]},
             target_keys={'spectrum_view': SpectrumView},
             accumulators={SpectrumView: EternalAccumulator},
         )
