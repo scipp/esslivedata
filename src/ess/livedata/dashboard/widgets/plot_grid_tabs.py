@@ -1009,7 +1009,7 @@ class PlotGridTabs:
 
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.peek_grid(grid_id)
-            if grid_config is None:
+            if grid_config is None or not grid_config.enabled:
                 continue
 
             is_active = grid_id == active_grid_id

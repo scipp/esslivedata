@@ -643,6 +643,28 @@ class TestDisabledGridTabs:
 
         assert len(plot_grid_tabs.tabs) == tabs_after_disable + 1
 
+    def test_poll_skips_disabled_grids(self, plot_orchestrator, plot_grid_tabs):
+        """Polling skips disabled grids and cleans up their session layers."""
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        grid_id = plot_orchestrator.add_grid(title='Will Disable', nrows=2, ncols=2)
+
+        # Simulate a session layer that was created while the grid was active
+        fake_layer_id = LayerId(uuid4())
+        plot_grid_tabs._session_layers[fake_layer_id] = SessionLayer(
+            layer_id=fake_layer_id, last_seen_version=0
+        )
+
+        # Disable the grid — poll should not visit it, so session layer
+        # becomes orphaned and gets cleaned up
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert fake_layer_id not in plot_grid_tabs._session_layers
+
     def test_rename_updates_tab_title(self, plot_orchestrator, plot_grid_tabs):
         """Renaming a grid updates the corresponding tab title."""
         grid_id = plot_orchestrator.add_grid(title='Old Name', nrows=2, ncols=2)
