@@ -2089,3 +2089,145 @@ class TestSetGridEnabled:
 
         data = plot_orchestrator.serialize_grid(grid_id)
         assert 'enabled' not in data
+
+
+class TestPersistenceRoundTrip:
+    """Tests that grid state survives persist-then-load cycles via ConfigStore."""
+
+    @pytest.fixture
+    def config_store(self):
+        from ess.livedata.dashboard.config_store import InMemoryConfigStore
+
+        return InMemoryConfigStore()
+
+    def _make_orchestrator(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        return PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+            config_store=config_store,
+        )
+
+    def test_disabled_grid_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """A disabled grid is still disabled after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Hidden', nrows=2, ncols=2)
+        orch1.set_grid_enabled(grid_id, enabled=False)
+
+        # Create a second orchestrator that loads from the same store
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grids = orch2.get_all_grids()
+        assert len(grids) == 1
+        loaded_grid = next(iter(grids.values()))
+        assert loaded_grid.title == 'Hidden'
+        assert loaded_grid.enabled is False
+
+    def test_renamed_grid_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """A renamed grid keeps its new title after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Original', nrows=2, ncols=2)
+        orch1.rename_grid(grid_id, 'Renamed')
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grids = orch2.get_all_grids()
+        assert next(iter(grids.values())).title == 'Renamed'
+
+    def test_reordered_grids_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """Grid order is preserved after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        orch1.add_grid(title='First', nrows=2, ncols=2)
+        id_b = orch1.add_grid(title='Second', nrows=2, ncols=2)
+        orch1.add_grid(title='Third', nrows=2, ncols=2)
+        # Move 'Second' to front
+        orch1.move_grid(id_b, -1)
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        titles = [g.title for g in orch2.get_all_grids().values()]
+        assert titles == ['Second', 'First', 'Third']
+
+    def test_enabled_grid_has_no_enabled_key_in_store(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """Enabled grids don't pollute the store with an explicit enabled key."""
+        orch = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        orch.add_grid(title='Visible', nrows=2, ncols=2)
+
+        raw = config_store.get('plot_grids')
+        assert 'enabled' not in raw['grids'][0]
