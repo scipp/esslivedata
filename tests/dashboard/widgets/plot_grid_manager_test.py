@@ -981,3 +981,33 @@ class TestEditMode:
         assert grid_manager._save_button.visible is False
         assert grid_manager._copy_button.visible is False
         assert grid_manager._editing_grid_id is None
+
+    def test_edit_button_toggles_off(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Clicking edit on the grid being edited exits edit mode."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        handler = grid_manager._make_edit_handler(grid_id)
+        handler()  # enter
+        assert grid_manager._editing_grid_id == grid_id
+
+        handler()  # toggle off
+        assert grid_manager._editing_grid_id is None
+        assert grid_manager._add_button.visible is True
+
+    def test_edit_button_switches_grid(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Clicking edit on a different grid switches to editing that grid."""
+        grid_a = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+        grid_b = plot_orchestrator.add_grid(title='Other', nrows=2, ncols=2)
+
+        grid_manager._enter_edit_mode(grid_a)
+        assert grid_manager._editing_grid_id == grid_a
+
+        handler_b = grid_manager._make_edit_handler(grid_b)
+        handler_b()
+
+        assert grid_manager._editing_grid_id == grid_b
+        assert grid_manager._title_input.value == 'Other'

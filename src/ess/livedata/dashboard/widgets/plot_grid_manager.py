@@ -732,10 +732,18 @@ class PlotGridManager:
         return handler
 
     def _make_edit_handler(self, grid_id: GridId) -> Callable[[], None]:
-        """Create a closure that enters edit mode for the given grid."""
+        """Create a closure that toggles edit mode for the given grid.
+
+        Clicking the edit button on the grid currently being edited exits
+        edit mode. Clicking it on a different grid switches to editing
+        that grid instead.
+        """
 
         def handler() -> None:
-            self._enter_edit_mode(grid_id)
+            if self._editing_grid_id == grid_id:
+                self._exit_edit_mode()
+            else:
+                self._enter_edit_mode(grid_id)
 
         return handler
 
