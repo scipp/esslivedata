@@ -303,10 +303,12 @@ class PlotGridTabs:
         return None
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Handle grid creation from orchestrator."""
-        if not grid_config.enabled:
-            return
-        self._add_grid_tab(grid_id, grid_config)
+        """Handle grid creation from orchestrator.
+
+        Uses full reconciliation to insert the tab at the correct position
+        (e.g., when ``replace_grid`` inserts a new grid at a middle position).
+        """
+        self._reconcile_grid_tabs()
 
         if grid_id in self._grid_widgets:
             tab_index = list(self._grid_widgets.keys()).index(grid_id)
