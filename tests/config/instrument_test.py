@@ -107,7 +107,7 @@ class TestInstrument:
         instrument = Instrument(name="test_instrument", detector_names=["detector1"])
         detector_number = sc.array(dims=['detector'], values=[1, 2, 3])
 
-        instrument.configure_detector("detector1", detector_number=detector_number)
+        instrument.configure_detector("detector1", detector_number)
 
         assert "detector1" in instrument.detector_names
         assert sc.identical(
@@ -120,8 +120,7 @@ class TestInstrument:
 
         with pytest.raises(ValueError, match="not in declared detector_names"):
             instrument.configure_detector(
-                "detector1",
-                detector_number=sc.array(dims=['detector'], values=[1, 2, 3]),
+                "detector1", sc.array(dims=['detector'], values=[1, 2, 3])
             )
 
     def test_get_detector_number_for_nonexistent_detector(self):
@@ -150,8 +149,8 @@ class TestInstrument:
         detector1_number = sc.array(dims=['detector'], values=[1, 2])
         detector2_number = sc.array(dims=['detector'], values=[3, 4, 5])
 
-        instrument.configure_detector("detector1", detector_number=detector1_number)
-        instrument.configure_detector("detector2", detector_number=detector2_number)
+        instrument.configure_detector("detector1", detector1_number)
+        instrument.configure_detector("detector2", detector2_number)
 
         assert len(instrument.detector_names) == 2
         assert "detector1" in instrument.detector_names

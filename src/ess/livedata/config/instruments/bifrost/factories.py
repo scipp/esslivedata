@@ -47,6 +47,7 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from ess.reduce.nexus.types import (
         Filename,
+        RawDetector,
         SampleRun,
     )
     from ess.reduce.streaming import EternalAccumulator
@@ -65,7 +66,11 @@ def setup_factories(instrument: Instrument) -> None:
         LogicalViewConfig,
     )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
-    from ess.livedata.handlers.workflow_input_types import PreprocessedDetectorEvents
+
+    from .streams import detector_number
+
+    # Configure detector
+    instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     # Create detector view using Sciline-based factory with transform
     _detector_view_factory = DetectorViewFactory(
@@ -102,15 +107,6 @@ def setup_factories(instrument: Instrument) -> None:
         make_spectrum_view,
     ) = _create_base_reduction_workflow()
 
-    from ess.reduce.nexus.types import EmptyDetector
-
-    # Pre-compute combined EmptyDetector and register with instrument.
-    _empty_detector = reduction_workflow.compute(EmptyDetector[SampleRun])
-    instrument.configure_detector('unified_detector', empty_detector=_empty_detector)
-
-    # Inject pre-computed EmptyDetector to skip NeXus file loading on each copy
-    reduction_workflow[EmptyDetector[SampleRun]] = _empty_detector
-
     # Configure workflow with default parameters
     reduction_workflow[SpectrumViewTimeBins] = 500
     reduction_workflow[SpectrumViewPixelsPerTube] = 10
@@ -127,7 +123,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[SpectrumViewPixelsPerTube] = view_params.pixels_per_tube
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'unified_detector': PreprocessedDetectorEvents},
+            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
             target_keys={'spectrum_view': SpectrumView},
             accumulators={SpectrumView: EternalAccumulator},
         )
@@ -140,7 +136,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[DetectorRatemeterRegionParams] = params.region
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'unified_detector': PreprocessedDetectorEvents},
+            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
             target_keys={'detector_region_counts': DetectorRegionCounts},
             accumulators={DetectorRegionCounts: LatestValue},
         )
@@ -168,7 +164,7 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         return StreamProcessorWorkflow(
             workflow,
-            dynamic_keys={'unified_detector': PreprocessedDetectorEvents},
+            dynamic_keys={'unified_detector': RawDetector[SampleRun]},
             context_keys={
                 'detector_rotation': InstrumentAngle[SampleRun],
                 'sample_rotation': SampleAngle[SampleRun],
