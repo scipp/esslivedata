@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from __future__ import annotations
+
+import scipp as sc
+from ess.reduce.nexus import group_event_data
+
+from ..core.handler import Accumulator
+from .to_nxevent_data import Events, ToNXevent_data
+
+
+class GroupByPixel(Accumulator[Events, sc.DataArray]):
+    """Accumulator that groups events by detector pixel.
+
+    Wraps a ``ToNXevent_data`` accumulator and applies ``group_event_data``
+    in ``get()``, producing events binned by ``detector_number``.
+
+    This allows pixel grouping to happen once in the preprocessor rather than
+    independently in every downstream workflow that consumes the same source.
+
+    Parameters
+    ----------
+    inner:
+        The underlying event accumulator.
+    detector_number:
+        Detector pixel numbers used for grouping.
+    """
+
+    def __init__(self, inner: ToNXevent_data, detector_number: sc.Variable) -> None:
+        self._inner = inner
+        self._detector_number = detector_number
+
+    def add(self, timestamp: int, data: Events) -> None:
+        self._inner.add(timestamp, data)
+
+    def get(self) -> sc.DataArray:
+        ungrouped = self._inner.get()
+        return group_event_data(
+            event_data=ungrouped,
+            detector_number=self._detector_number,
+        )
+
+    def clear(self) -> None:
+        self._inner.clear()

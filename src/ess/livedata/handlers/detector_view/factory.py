@@ -10,9 +10,8 @@ workflows with configurable projection types and parameters.
 from __future__ import annotations
 
 import scipp as sc
-from ess.reduce.nexus.types import NeXusData, SampleRun
+from ess.reduce.nexus.types import RawDetector, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
-from scippnexus import NXdetector
 
 from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
 
@@ -223,9 +222,9 @@ class DetectorViewFactory:
 
         return StreamProcessorWorkflow(
             workflow,
-            # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
-            # providers will group events by pixel to produce RawDetector.
-            dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            # Preprocessor already groups events by pixel, so inject directly
+            # as RawDetector, bypassing the NeXusData → RawDetector providers.
+            dynamic_keys={source_name: RawDetector[SampleRun]},
             context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=window_outputs,

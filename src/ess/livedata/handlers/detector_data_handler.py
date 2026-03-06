@@ -11,6 +11,7 @@ from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
+from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
 
 
@@ -38,7 +39,8 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
-                return ToNXevent_data()
+                detector_number = self._instrument.get_detector_number(key.name)
+                return GroupByPixel(ToNXevent_data(), detector_number)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:

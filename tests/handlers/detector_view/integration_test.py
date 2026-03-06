@@ -4,12 +4,11 @@
 
 import numpy as np
 import pytest
-from ess.reduce.nexus.types import NeXusData, SampleRun
-from scippnexus import NXdetector
+from ess.reduce.nexus.types import RawDetector, SampleRun
 
 from ess.livedata.config.models import ROI, Interval, RectangleROI
 
-from .utils import make_fake_ungrouped_nexus_data, make_test_factory, make_test_params
+from .utils import make_fake_nexus_detector_data, make_test_factory, make_test_params
 
 
 class TestIntegrationWithStreamProcessor:
@@ -25,7 +24,7 @@ class TestIntegrationWithStreamProcessor:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
@@ -37,7 +36,7 @@ class TestIntegrationWithStreamProcessor:
 
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=1000,
@@ -76,14 +75,12 @@ class TestIntegrationWithStreamProcessor:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
-        # Accumulate (provide as NeXusData, which factory expects)
         workflow.accumulate(
-            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            {'detector': RawDetector[SampleRun](events)},
             start_time=1000,
             end_time=2000,
         )
@@ -108,12 +105,12 @@ class TestIntegrationWithStreamProcessor:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        # First batch - use ungrouped format
-        events1 = make_fake_ungrouped_nexus_data(
+        # First batch
+        events1 = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
         workflow.accumulate(
-            {'detector': NeXusData[NXdetector, SampleRun](events1)},
+            {'detector': RawDetector[SampleRun](events1)},
             start_time=1000,
             end_time=2000,
         )
@@ -128,12 +125,12 @@ class TestIntegrationWithStreamProcessor:
         assert cumulative1 == current1
         assert counts_total_cum1 == counts_total_cur1
 
-        # Second batch - use ungrouped format
-        events2 = make_fake_ungrouped_nexus_data(
+        # Second batch
+        events2 = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
         workflow.accumulate(
-            {'detector': NeXusData[NXdetector, SampleRun](events2)},
+            {'detector': RawDetector[SampleRun](events2)},
             start_time=2000,
             end_time=3000,
         )
@@ -162,14 +159,14 @@ class TestROISpectraIntegration:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
-        events = make_fake_ungrouped_nexus_data(
+        # Create fake pre-grouped events (format produced by GroupByPixel preprocessor)
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
         # First, accumulate events without ROI
         workflow.accumulate(
-            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            {'detector': RawDetector[SampleRun](events)},
             start_time=1000,
             end_time=2000,
         )
@@ -187,7 +184,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=2000,
@@ -213,9 +210,9 @@ class TestROISpectraIntegration:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        # Create ungrouped events with some reproducibility
+        # Create events with some reproducibility
         np.random.seed(42)
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=100
         )
 
@@ -227,7 +224,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request_small,
             },
             start_time=1000,
@@ -246,7 +243,7 @@ class TestROISpectraIntegration:
         # (workflow requires dynamic data for accumulation)
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request_large,
             },
             start_time=2000,
@@ -272,7 +269,7 @@ class TestROISpectraIntegration:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
@@ -285,7 +282,7 @@ class TestROISpectraIntegration:
         # First accumulate with ROI
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=1000,
@@ -306,7 +303,7 @@ class TestROISpectraIntegration:
         # Second accumulate with SAME ROI (unchanged)
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=2000,
@@ -326,7 +323,7 @@ class TestROISpectraIntegration:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
@@ -341,7 +338,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=1000,
@@ -383,12 +380,12 @@ class TestUnitHandling:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=params)
 
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
         workflow.accumulate(
-            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            {'detector': RawDetector[SampleRun](events)},
             start_time=1000,
             end_time=2000,
         )
@@ -410,7 +407,7 @@ class TestUnitHandling:
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
 
-        events = make_fake_ungrouped_nexus_data(
+        events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
@@ -421,7 +418,7 @@ class TestUnitHandling:
 
         workflow.accumulate(
             {
-                'detector': NeXusData[NXdetector, SampleRun](events),
+                'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=1000,
