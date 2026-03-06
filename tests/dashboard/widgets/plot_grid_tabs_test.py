@@ -589,3 +589,98 @@ class TestPollForPlotUpdates:
 
         # Components should be preserved
         assert session_layer.components is original_components
+
+
+class TestDisabledGridTabs:
+    """Tests for disabled grid handling in PlotGridTabs."""
+
+    def test_disabled_grid_not_shown_on_init(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        job_status_widget,
+        workflow_status_widget,
+        plot_data_service,
+        session_updater,
+    ):
+        """Disabled grids are not added as tabs during initialization."""
+        plot_orchestrator.add_grid(title='Visible', nrows=2, ncols=2)
+        grid_id = plot_orchestrator.add_grid(title='Hidden', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        widget = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            job_status_widget=job_status_widget,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
+        )
+
+        # 3 static tabs + 1 visible grid = 4
+        assert len(widget.tabs) == 4
+        assert 'Visible' in widget.tabs._names
+        assert 'Hidden' not in widget.tabs._names
+
+    def test_disabling_grid_removes_tab(self, plot_orchestrator, plot_grid_tabs):
+        """Disabling a grid removes its tab."""
+        grid_id = plot_orchestrator.add_grid(title='Will Hide', nrows=2, ncols=2)
+        tabs_before = len(plot_grid_tabs.tabs)
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        assert len(plot_grid_tabs.tabs) == tabs_before - 1
+
+    def test_re_enabling_grid_adds_tab_back(self, plot_orchestrator, plot_grid_tabs):
+        """Re-enabling a disabled grid adds its tab back."""
+        grid_id = plot_orchestrator.add_grid(title='Toggle', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        tabs_after_disable = len(plot_grid_tabs.tabs)
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+
+        assert len(plot_grid_tabs.tabs) == tabs_after_disable + 1
+
+    def test_poll_skips_disabled_grids(self, plot_orchestrator, plot_grid_tabs):
+        """Polling skips disabled grids and cleans up their session layers."""
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        grid_id = plot_orchestrator.add_grid(title='Will Disable', nrows=2, ncols=2)
+
+        # Simulate a session layer that was created while the grid was active
+        fake_layer_id = LayerId(uuid4())
+        plot_grid_tabs._session_layers[fake_layer_id] = SessionLayer(
+            layer_id=fake_layer_id, last_seen_version=0
+        )
+
+        # Disable the grid — poll should not visit it, so session layer
+        # becomes orphaned and gets cleaned up
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert fake_layer_id not in plot_grid_tabs._session_layers
+
+    def test_rename_updates_tab_title(self, plot_orchestrator, plot_grid_tabs):
+        """Renaming a grid updates the corresponding tab title."""
+        grid_id = plot_orchestrator.add_grid(title='Old Name', nrows=2, ncols=2)
+
+        plot_orchestrator.rename_grid(grid_id, 'New Name')
+
+        assert 'New Name' in plot_grid_tabs.tabs._names
+        assert 'Old Name' not in plot_grid_tabs.tabs._names
+
+    def test_reorder_updates_tab_order(self, plot_orchestrator, plot_grid_tabs):
+        """Moving a grid updates tab order."""
+        plot_orchestrator.add_grid(title='Alpha', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='Beta', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_b, -1)
+
+        static = plot_grid_tabs._static_tabs_count
+        grid_titles = plot_grid_tabs.tabs._names[static:]
+        assert grid_titles == ['Beta', 'Alpha']

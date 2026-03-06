@@ -1967,3 +1967,324 @@ class TestTitleResolver:
             resolver = plotter.compute_calls[0].get('title_resolver')
             assert resolver is not None
             assert resolver.include_output_in_label is True
+
+
+class TestRenameGrid:
+    """Tests for grid rename functionality."""
+
+    def test_rename_grid_updates_title(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Old Title', nrows=3, ncols=3)
+        plot_orchestrator.rename_grid(grid_id, 'New Title')
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].title == 'New Title'
+
+    def test_rename_grid_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Old', nrows=3, ncols=3)
+        plot_orchestrator.rename_grid(grid_id, 'New')
+
+        callback.assert_called_once()
+        assert callback.call_args[0][0] == grid_id
+        assert callback.call_args[0][1].title == 'New'
+
+    def test_rename_grid_persists(self, plot_orchestrator):
+        """Rename triggers persistence (no error from _persist_to_store)."""
+        grid_id = plot_orchestrator.add_grid(title='Before', nrows=2, ncols=2)
+        plot_orchestrator.rename_grid(grid_id, 'After')
+        assert plot_orchestrator.get_all_grids()[grid_id].title == 'After'
+
+
+class TestMoveGrid:
+    """Tests for grid reorder functionality."""
+
+    def test_move_grid_down(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, 1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_move_grid_up(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_b, -1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_move_grid_at_top_boundary_is_noop(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, -1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, id_b]
+
+    def test_move_grid_at_bottom_boundary_is_noop(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_b, 1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, id_b]
+
+    def test_move_grid_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, 1)
+
+        callback.assert_called_once()
+
+
+class TestSetGridEnabled:
+    """Tests for grid enable/disable functionality."""
+
+    def test_set_grid_disabled(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is False
+
+    def test_set_grid_re_enabled(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is True
+
+    def test_set_grid_enabled_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        callback.assert_called_once()
+        assert callback.call_args[0][1].enabled is False
+
+    def test_disabled_grid_serialized(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert data['enabled'] is False
+
+    def test_enabled_grid_omits_enabled_from_serialization(self, plot_orchestrator):
+        """Enabled grids omit the 'enabled' key for clean YAML output."""
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert 'enabled' not in data
+
+
+class TestReplaceGrid:
+    """Tests for grid replacement functionality."""
+
+    def test_replace_preserves_position(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=3, ncols=3)
+        id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
+
+        new_id = plot_orchestrator.replace_grid(id_b, 'B2', nrows=4, ncols=4)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, new_id, id_c]
+        assert plot_orchestrator.get_grid(new_id).title == 'B2'
+        assert plot_orchestrator.get_grid(new_id).nrows == 4
+
+    def test_replace_fires_removed_then_created(self, plot_orchestrator):
+        removed = CallbackCapture()
+        created = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(
+            on_grid_removed=removed, on_grid_created=created
+        )
+
+        grid_id = plot_orchestrator.add_grid(title='X', nrows=2, ncols=2)
+        # Reset counters after add_grid fires on_grid_created
+        created._calls.clear()
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Y', nrows=3, ncols=3)
+
+        removed.assert_called_once()
+        assert removed.call_args[0][0] == grid_id
+        created.assert_called_once()
+        assert created.call_args[0][0] == new_id
+
+    def test_replace_cleans_up_old_cells(self, plot_orchestrator, plot_cell):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=3, ncols=3)
+        add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Test2', nrows=2, ncols=2)
+
+        new_grid = plot_orchestrator.get_grid(new_id)
+        assert len(new_grid.cells) == 0
+
+    def test_replace_preserves_enabled_state(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Test2', nrows=2, ncols=2)
+
+        assert plot_orchestrator.get_grid(new_id).enabled is False
+
+    def test_replace_unknown_grid_raises_key_error(self, plot_orchestrator):
+        fake_id = GridId(uuid.uuid4())
+
+        with pytest.raises(KeyError):
+            plot_orchestrator.replace_grid(fake_id, 'X', nrows=2, ncols=2)
+
+
+class TestPersistenceRoundTrip:
+    """Tests that grid state survives persist-then-load cycles via ConfigStore."""
+
+    @pytest.fixture
+    def config_store(self):
+        from ess.livedata.dashboard.config_store import InMemoryConfigStore
+
+        return InMemoryConfigStore()
+
+    def _make_orchestrator(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        return PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+            config_store=config_store,
+        )
+
+    def test_disabled_grid_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """A disabled grid is still disabled after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Hidden', nrows=2, ncols=2)
+        orch1.set_grid_enabled(grid_id, enabled=False)
+
+        # Create a second orchestrator that loads from the same store
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grids = orch2.get_all_grids()
+        assert len(grids) == 1
+        loaded_grid = next(iter(grids.values()))
+        assert loaded_grid.title == 'Hidden'
+        assert loaded_grid.enabled is False
+
+    def test_renamed_grid_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """A renamed grid keeps its new title after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Original', nrows=2, ncols=2)
+        orch1.rename_grid(grid_id, 'Renamed')
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grids = orch2.get_all_grids()
+        assert next(iter(grids.values())).title == 'Renamed'
+
+    def test_reordered_grids_restored_on_load(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """Grid order is preserved after a store round-trip."""
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        orch1.add_grid(title='First', nrows=2, ncols=2)
+        id_b = orch1.add_grid(title='Second', nrows=2, ncols=2)
+        orch1.add_grid(title='Third', nrows=2, ncols=2)
+        # Move 'Second' to front
+        orch1.move_grid(id_b, -1)
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        titles = [g.title for g in orch2.get_all_grids().values()]
+        assert titles == ['Second', 'First', 'Third']
+
+    def test_enabled_grid_has_no_enabled_key_in_store(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        """Enabled grids don't pollute the store with an explicit enabled key."""
+        orch = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        orch.add_grid(title='Visible', nrows=2, ncols=2)
+
+        raw = config_store.get('plot_grids')
+        assert 'enabled' not in raw['grids'][0]

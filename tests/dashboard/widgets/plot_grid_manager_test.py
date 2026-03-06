@@ -196,8 +196,9 @@ class TestGridRow:
             get_yaml_content=lambda: StringIO(''),
         )
 
-        # The download button is the second element in the row (index 1)
-        download_button = row.panel[1]
+        # The download button is at index 5 (after move_up, move_down, label,
+        # edit_btn, toggle_btn)
+        download_button = row.panel[5]
         assert download_button.filename == 'esslivedata_bifrost_my_test_grid.yaml'
 
     def test_displays_grid_info(self, plot_orchestrator, workflow_registry):
@@ -216,10 +217,9 @@ class TestGridRow:
             get_yaml_content=lambda: StringIO(''),
         )
 
-        # Find the label pane
-        label_pane = row.panel[0]
-        assert 'My Test Grid' in label_pane.object
-        assert '2x5' in label_pane.object
+        # Label is at index 2 (after move_up, move_down)
+        label_pane = row.panel[2]
+        assert label_pane.object == 'My Test Grid'
 
 
 class TestGridDownload:
@@ -592,3 +592,421 @@ class TestModeSwitch:
         assert grid_manager._mode_selector.value == _MODE_TEMPLATE
         assert grid_manager._pending_upload_cells is None
         assert grid_manager._title_input.value == 'New Grid'
+
+
+class TestGridRowCardStyling:
+    """Tests for GridRow card-style widget."""
+
+    def test_grid_row_has_card_styling(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test Grid', nrows=3, ncols=4)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        styles = row.panel.styles
+        assert styles.get('border') == '1px solid #dee2e6'
+        assert styles.get('border-radius') == '6px'
+
+    def test_disabled_grid_row_has_dimmed_styling(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Disabled', nrows=2, ncols=2, enabled=False)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        styles = row.panel.styles
+        assert styles.get('opacity') == '0.7'
+
+
+class TestGridRowEdit:
+    """Tests for GridRow edit button."""
+
+    def test_edit_button_calls_on_edit(self, plot_orchestrator):
+        """Clicking the edit button invokes the on_edit callback."""
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test', nrows=2, ncols=2)
+        edit_calls = []
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_edit=lambda: edit_calls.append(True),
+        )
+
+        # Edit button is at index 3 (after move_up, move_down, label)
+        edit_button = row.panel[3]
+        edit_button.clicks += 1
+
+        assert edit_calls == [True]
+
+    def test_edit_button_disabled_when_no_callback(self, plot_orchestrator):
+        """Edit button is disabled when on_edit is None."""
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test', nrows=2, ncols=2)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        edit_button = row.panel[3]
+        assert edit_button.disabled is True
+
+
+class TestGridRowMoveButtons:
+    """Tests for GridRow move button disabled states."""
+
+    def test_move_up_disabled_when_first(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='First', nrows=2, ncols=2)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_move_up=lambda: None,
+            on_move_down=lambda: None,
+            is_first=True,
+            is_last=False,
+        )
+
+        # Move up is the first widget in the row
+        move_up_button = row.panel[0]
+        move_down_button = row.panel[1]
+        assert move_up_button.disabled is True
+        assert move_down_button.disabled is False
+
+    def test_move_down_disabled_when_last(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Last', nrows=2, ncols=2)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_move_up=lambda: None,
+            on_move_down=lambda: None,
+            is_first=False,
+            is_last=True,
+        )
+
+        move_up_button = row.panel[0]
+        move_down_button = row.panel[1]
+        assert move_up_button.disabled is False
+        assert move_down_button.disabled is True
+
+
+class TestGridRowToggleEnabled:
+    """Tests for GridRow enable/disable toggle."""
+
+    def test_toggle_enabled_callback_invoked(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test', nrows=2, ncols=2, enabled=True)
+        toggle_calls = []
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_toggle_enabled=lambda enabled: toggle_calls.append(enabled),
+        )
+
+        # The toggle button is at index 4 (after move_up, move_down,
+        # label, edit_btn)
+        toggle_button = row.panel[4]
+        # Simulate click via the on_click handler
+        toggle_button.clicks += 1
+
+        assert toggle_calls == [False]
+
+
+class TestGridManagerHandlerIntegration:
+    """Tests for handler integration with PlotGridManager."""
+
+    def test_move_handler_calls_orchestrator(
+        self, grid_manager, plot_orchestrator, workflow_registry
+    ):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        handler = grid_manager._make_move_handler(id_a, 1)
+        handler()
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_toggle_handler_calls_orchestrator(
+        self, grid_manager, plot_orchestrator, workflow_registry
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+
+        handler = grid_manager._make_toggle_handler(grid_id)
+        handler(False)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is False
+
+
+class TestEditMode:
+    """Tests for grid edit mode (edit-via-form)."""
+
+    def _add_grid_with_cell(self, orchestrator, workflow_id):
+        """Add a grid with one cell+layer for editing tests."""
+        import pydantic
+
+        from ess.livedata.dashboard.plot_orchestrator import (
+            CellGeometry,
+            DataSourceConfig,
+            PlotConfig,
+        )
+
+        class FakeParams(pydantic.BaseModel):
+            model_config = pydantic.ConfigDict(extra='allow')
+
+        grid_id = orchestrator.add_grid(title='Original', nrows=3, ncols=4)
+        cell_id = orchestrator.add_cell(
+            grid_id, CellGeometry(row=0, col=0, row_span=1, col_span=2)
+        )
+        config = PlotConfig(
+            data_sources={
+                'primary': DataSourceConfig(
+                    workflow_id=workflow_id,
+                    source_names=['source1'],
+                    output_name='result',
+                )
+            },
+            plot_name='lines',
+            params=FakeParams(),
+        )
+        orchestrator.add_layer(cell_id, config)
+        return grid_id
+
+    def test_enter_edit_mode_loads_form_fields(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Entering edit mode populates form fields from the grid."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+
+        assert grid_manager._title_input.value == 'Original'
+        assert grid_manager._nrows_input.value == 3
+        assert grid_manager._ncols_input.value == 4
+        assert grid_manager._editing_grid_id == grid_id
+        assert grid_manager._editing_cells is not None
+        assert len(grid_manager._editing_cells) == 1
+
+    def test_enter_edit_mode_hides_mode_selector(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Edit mode hides the mode selector and shows save/copy buttons."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+
+        assert grid_manager._mode_selector.visible is False
+        assert grid_manager._add_button.visible is False
+        assert grid_manager._save_button.visible is True
+        assert grid_manager._copy_button.visible is True
+
+    def test_source_indicator_shows_editing(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Source indicator shows 'Editing: <title>' in edit mode."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+
+        assert 'Editing: Original' in grid_manager._source_indicator.object
+
+    def test_save_changes_calls_replace_grid(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Save Changes replaces the grid and populates cells."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        grid_manager._title_input.value = 'Edited'
+        grid_manager._nrows_input.value = 5
+        grid_manager._on_save_changes(None)
+
+        # Old grid should be gone
+        assert plot_orchestrator.get_grid(grid_id) is None
+        # New grid should exist with updated title and dimensions
+        grids = plot_orchestrator.get_all_grids()
+        assert len(grids) == 1
+        new_grid = next(iter(grids.values()))
+        assert new_grid.title == 'Edited'
+        assert new_grid.nrows == 5
+        assert new_grid.ncols == 4
+        # Cell should be populated
+        assert len(new_grid.cells) == 1
+
+    def test_save_changes_preserves_position(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Save Changes preserves the grid's position in the list."""
+        plot_orchestrator.add_grid(title='Before', nrows=2, ncols=2)
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+        plot_orchestrator.add_grid(title='After', nrows=2, ncols=2)
+
+        grid_manager._enter_edit_mode(grid_id)
+        grid_manager._on_save_changes(None)
+
+        titles = [g.title for g in plot_orchestrator.get_all_grids().values()]
+        assert titles == ['Before', 'Original', 'After']
+
+    def test_save_as_copy_adds_new_grid(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Save as Copy creates a new grid without removing the original."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        grid_manager._title_input.value = 'Copy'
+        grid_manager._on_save_as_copy(None)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert len(grids) == 2
+        titles = [g.title for g in grids.values()]
+        assert 'Original' in titles
+        assert 'Copy' in titles
+
+    def test_selecting_template_exits_edit_mode(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Selecting a template while in edit mode exits edit mode."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        assert grid_manager._editing_grid_id is not None
+
+        # Trigger template selection change
+        class FakeEvent:
+            new = '-- No template --'
+
+        grid_manager._on_template_selected(FakeEvent())
+
+        assert grid_manager._editing_grid_id is None
+        assert grid_manager._editing_cells is None
+
+    def test_switching_mode_exits_edit_mode(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Switching mode while in edit mode exits edit mode."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        assert grid_manager._editing_grid_id is not None
+
+        class FakeEvent:
+            new = _MODE_UPLOAD
+
+        grid_manager._on_mode_changed(FakeEvent())
+
+        assert grid_manager._editing_grid_id is None
+
+    def test_removing_edited_grid_exits_edit_mode(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Removing the grid being edited exits edit mode."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        assert grid_manager._editing_grid_id is not None
+
+        plot_orchestrator.remove_grid(grid_id)
+
+        assert grid_manager._editing_grid_id is None
+        assert grid_manager._editing_cells is None
+
+    def test_exit_edit_mode_restores_ui(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Exiting edit mode restores mode selector and add button."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        grid_manager._enter_edit_mode(grid_id)
+        grid_manager._exit_edit_mode()
+
+        assert grid_manager._mode_selector.visible is True
+        assert grid_manager._add_button.visible is True
+        assert grid_manager._save_button.visible is False
+        assert grid_manager._copy_button.visible is False
+        assert grid_manager._editing_grid_id is None
+
+    def test_edit_button_toggles_off(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Clicking edit on the grid being edited exits edit mode."""
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+
+        handler = grid_manager._make_edit_handler(grid_id)
+        handler()  # enter
+        assert grid_manager._editing_grid_id == grid_id
+
+        handler()  # toggle off
+        assert grid_manager._editing_grid_id is None
+        assert grid_manager._add_button.visible is True
+
+    def test_edit_button_switches_grid(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Clicking edit on a different grid switches to editing that grid."""
+        grid_a = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+        grid_b = plot_orchestrator.add_grid(title='Other', nrows=2, ncols=2)
+
+        grid_manager._enter_edit_mode(grid_a)
+        assert grid_manager._editing_grid_id == grid_a
+
+        handler_b = grid_manager._make_edit_handler(grid_b)
+        handler_b()
+
+        assert grid_manager._editing_grid_id == grid_b
+        assert grid_manager._title_input.value == 'Other'

@@ -31,6 +31,7 @@ class GridSpec:
     nrows: int
     ncols: int
     cells: tuple[PlotCell, ...]
+    enabled: bool = True
 
     @property
     def min_rows(self) -> int:

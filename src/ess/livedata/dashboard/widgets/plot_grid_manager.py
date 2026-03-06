@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from io import StringIO
+from typing import ClassVar
 
 import panel as pn
 import yaml
@@ -35,6 +36,8 @@ _MODE_TEMPLATE = "Template"
 _MODE_UPLOAD = "Upload"
 
 # Colors for template preview cells (cycle through these)
+_HORIZONTAL_MARGIN = 0
+
 _CELL_COLORS = [
     '#e3f2fd',  # light blue
     '#f3e5f5',  # light purple
@@ -47,9 +50,10 @@ _CELL_COLORS = [
 
 class GridRow:
     """
-    Widget row for a single grid in the grid list.
+    Card-style widget row for a single grid in the grid list.
 
-    Displays grid info and action buttons (download, remove).
+    Displays grid info and action buttons: move up/down, edit, enable/disable,
+    download, and remove.
 
     Parameters
     ----------
@@ -63,7 +67,35 @@ class GridRow:
         Callback to invoke when the remove button is clicked.
     get_yaml_content
         Callback that returns the YAML content for download.
+    on_edit
+        Callback to invoke when the edit button is clicked.
+    is_editing
+        Whether this grid is currently being edited (highlights the edit button).
+    on_move_up
+        Callback to invoke when the move-up button is clicked.
+    on_move_down
+        Callback to invoke when the move-down button is clicked.
+    on_toggle_enabled
+        Callback to invoke when the enable/disable button is clicked.
+        Receives the new enabled state.
+    is_first
+        Whether this is the first grid in the list (disables move-up).
+    is_last
+        Whether this is the last grid in the list (disables move-down).
     """
+
+    _CARD_STYLES: ClassVar[dict[str, str]] = {
+        'border': '1px solid #dee2e6',
+        'border-radius': '6px',
+        'background': '#f8f9fa',
+        'padding': '2px 8px',
+    }
+
+    _DISABLED_CARD_STYLES: ClassVar[dict[str, str]] = {
+        **_CARD_STYLES,
+        'background': '#e9ecef',
+        'opacity': '0.7',
+    }
 
     def __init__(
         self,
@@ -73,17 +105,83 @@ class GridRow:
         instrument: str,
         on_remove: Callable[[], None],
         get_yaml_content: Callable[[], StringIO],
+        on_edit: Callable[[], None] | None = None,
+        is_editing: bool = False,
+        on_move_up: Callable[[], None] | None = None,
+        on_move_down: Callable[[], None] | None = None,
+        on_toggle_enabled: Callable[[bool], None] | None = None,
+        is_first: bool = False,
+        is_last: bool = False,
     ) -> None:
         self._grid_id = grid_id
         self._grid_config = grid_config
 
+        # Move up button
+        move_up_button = create_tool_button(
+            icon_name='chevron-up',
+            button_color='#6c757d',
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=on_move_up or (lambda: None),
+        )
+        move_up_button.disabled = is_first or on_move_up is None
+
+        # Move down button
+        move_down_button = create_tool_button(
+            icon_name='chevron-down',
+            button_color='#6c757d',
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=on_move_down or (lambda: None),
+        )
+        move_down_button.disabled = is_last or on_move_down is None
+
         # Grid info label
-        label = pn.pane.Str(
-            f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})',
-            styles={'flex-grow': '1'},
+        label_text = grid_config.title
+        self._label = pn.pane.Str(
+            label_text,
+            margin=(0, 10),
+            styles={'flex-grow': '1', 'line-height': '28px'},
         )
 
-        # Download button - generates YAML when clicked
+        # Edit button (highlighted when this grid is being edited)
+        if is_editing:
+            edit_button = create_tool_button(
+                icon_name='pencil',
+                button_color='#ffffff',
+                hover_color='rgba(0, 123, 255, 0.8)',
+                on_click_callback=on_edit or (lambda: None),
+            )
+            edit_button.stylesheets = [
+                *edit_button.stylesheets,
+                'button { background-color: #007bff !important; '
+                'border-radius: 4px !important; }',
+            ]
+        else:
+            edit_button = create_tool_button(
+                icon_name='pencil',
+                button_color=ButtonStyles.PRIMARY_BLUE,
+                hover_color='rgba(0, 123, 255, 0.1)',
+                on_click_callback=on_edit or (lambda: None),
+            )
+        if on_edit is None:
+            edit_button.disabled = True
+
+        # Enable/disable button
+        eye_icon = 'eye' if grid_config.enabled else 'eye-off'
+        eye_color = '#6c757d' if grid_config.enabled else '#dc3545'
+        self._toggle_button = create_tool_button(
+            icon_name=eye_icon,
+            button_color=eye_color,
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=lambda: (
+                on_toggle_enabled(not grid_config.enabled)
+                if on_toggle_enabled
+                else None
+            ),
+        )
+        if on_toggle_enabled is None:
+            self._toggle_button.disabled = True
+
+        # Download button
         filename = (
             f'esslivedata_{instrument}_{_sanitize_filename(grid_config.title)}.yaml'
         )
@@ -100,11 +198,21 @@ class GridRow:
             on_click_callback=on_remove,
         )
 
+        card_styles = (
+            self._CARD_STYLES if grid_config.enabled else self._DISABLED_CARD_STYLES
+        )
+
         self._widget = pn.Row(
-            label,
+            move_up_button,
+            move_down_button,
+            self._label,
+            edit_button,
+            self._toggle_button,
             download_button,
             remove_button,
             sizing_mode='stretch_width',
+            styles=card_styles,
+            margin=(0, 0, 4, 0),
         )
 
     @property
@@ -164,6 +272,7 @@ class PlotGridManager:
             options=[_MODE_TEMPLATE, _MODE_UPLOAD],
             value=_MODE_TEMPLATE,
             button_type='default',
+            margin=(5, 0),
         )
         self._mode_selector.param.watch(self._on_mode_changed, 'value')
 
@@ -174,29 +283,54 @@ class PlotGridManager:
             options=template_options,
             value=_NO_TEMPLATE,
             sizing_mode='stretch_width',
+            margin=(5, 0),
         )
         self._template_selector.param.watch(self._on_template_selected, 'value')
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
-            name='Grid Title', value='New Grid', placeholder='Enter grid title'
+            name='Grid Title',
+            value='New Grid',
+            placeholder='Enter grid title',
+            margin=(5, 0),
         )
-        self._nrows_input = pn.widgets.IntInput(name='Rows', value=3, start=2, end=6)
-        self._ncols_input = pn.widgets.IntInput(name='Columns', value=3, start=2, end=6)
+        self._nrows_input = pn.widgets.IntInput(
+            name='Rows', value=3, start=2, end=6, margin=(5, 0)
+        )
+        self._ncols_input = pn.widgets.IntInput(
+            name='Columns', value=3, start=2, end=6, margin=(5, 0)
+        )
 
         # Watch for rows/cols changes to update preview
         self._nrows_input.param.watch(self._on_grid_size_changed, 'value')
         self._ncols_input.param.watch(self._on_grid_size_changed, 'value')
 
-        # Add grid button
-        self._add_button = pn.widgets.Button(name='Add Grid', button_type='primary')
+        # Add grid button (visible in normal mode)
+        self._add_button = pn.widgets.Button(
+            name='Add Grid', button_type='primary', margin=(5, 0)
+        )
         self._add_button.on_click(self._on_add_grid)
+
+        # Edit mode buttons (visible in edit mode)
+        self._save_button = pn.widgets.Button(
+            name='Save Changes', button_type='primary', visible=False, margin=(5, 0)
+        )
+        self._save_button.on_click(self._on_save_changes)
+        self._copy_button = pn.widgets.Button(
+            name='Save as Copy', button_type='default', visible=False, margin=(5, 0)
+        )
+        self._copy_button.on_click(self._on_save_as_copy)
+
+        # Edit mode state
+        self._editing_grid_id: GridId | None = None
+        self._editing_cells: Sequence[PlotCell] | None = None
 
         # Upload configuration section (visible in Upload mode)
         self._file_input = pn.widgets.FileInput(
             accept='.yaml,.yml',
             sizing_mode='stretch_width',
             visible=False,
+            margin=(5, 0),
         )
         self._file_input.param.watch(self._on_file_uploaded, 'value')
         # Pending upload state: parsed cells and grid config from uploaded file
@@ -214,20 +348,22 @@ class PlotGridManager:
             sizing_mode='fixed',
             width=424,  # preview_width (400) + padding (24)
             height=264,  # preview_height (240) + padding (24)
-            margin=(0, 0, 0, 20),
         )
 
         # Grid list container
         # IMPORTANT: Use stretch_both (not stretch_width) to ensure consistent
         # sizing behavior with PlotGrid tabs. Panel's Tabs widget handles dynamic
         # tab addition better when all tabs have the same sizing mode.
-        self._grid_list = pn.Column(sizing_mode='stretch_both')
+        self._grid_list = pn.Column(
+            sizing_mode='stretch_both', margin=(0, _HORIZONTAL_MARGIN)
+        )
 
         # Subscribe to orchestrator updates
         self._subscription_id: SubscriptionId | None = (
             self._orchestrator.subscribe_to_lifecycle(
                 on_grid_created=self._on_grid_created,
                 on_grid_removed=self._on_grid_removed,
+                on_grid_updated=self._on_grid_updated,
             )
         )
 
@@ -235,6 +371,7 @@ class PlotGridManager:
         self._source_indicator = pn.pane.HTML(
             self._get_source_indicator_html(),
             sizing_mode='stretch_width',
+            margin=(5, 0),
         )
 
         # Initialize grid list and preview
@@ -247,6 +384,7 @@ class PlotGridManager:
             self._template_selector,
             self._file_input,
             sizing_mode='stretch_width',
+            margin=(0, _HORIZONTAL_MARGIN),
         )
 
         # Form column (left side) - fixed width
@@ -255,6 +393,8 @@ class PlotGridManager:
             self._nrows_input,
             self._ncols_input,
             self._add_button,
+            self._save_button,
+            self._copy_button,
             width=200,
             sizing_mode='fixed',
         )
@@ -265,6 +405,7 @@ class PlotGridManager:
             self._grid_preview,
             sizing_mode='fixed',
             width=424,
+            margin=0,
         )
 
         # Row containing form and preview side by side
@@ -275,6 +416,7 @@ class PlotGridManager:
             preview_column,
             sizing_mode='stretch_width',
             align='start',
+            margin=(0, _HORIZONTAL_MARGIN),
         )
 
         # Main widget layout
@@ -285,7 +427,6 @@ class PlotGridManager:
             pn.layout.Divider(),
             form_row,
             pn.layout.Divider(),
-            pn.pane.Markdown('## Existing Grids'),
             self._grid_list,
             sizing_mode='stretch_both',
         )
@@ -307,8 +448,10 @@ class PlotGridManager:
 
     def _get_source_indicator_html(self) -> str:
         """Generate HTML for the source indicator based on current state."""
-        mode = self._mode_selector.value
-        if mode == _MODE_TEMPLATE:
+        if self._editing_grid_id is not None:
+            source = f'Editing: {self._title_input.value}'
+            color = '#f57c00'  # Amber
+        elif self._mode_selector.value == _MODE_TEMPLATE:
             if self._selected_template is not None:
                 source = f'Template: {self._selected_template.name}'
                 color = '#1976d2'  # Blue
@@ -338,10 +481,17 @@ class PlotGridManager:
         self._update_source_indicator()
 
         # Determine cells to show based on current mode
-        mode = self._mode_selector.value
-        if mode == _MODE_TEMPLATE and self._selected_template is not None:
+        if self._editing_cells is not None:
+            cells = self._editing_cells
+        elif (
+            self._mode_selector.value == _MODE_TEMPLATE
+            and self._selected_template is not None
+        ):
             cells = self._selected_template.cells
-        elif mode == _MODE_UPLOAD and self._pending_upload_cells is not None:
+        elif (
+            self._mode_selector.value == _MODE_UPLOAD
+            and self._pending_upload_cells is not None
+        ):
             cells = self._pending_upload_cells
         else:
             cells = ()
@@ -487,6 +637,8 @@ class PlotGridManager:
 
     def _on_mode_changed(self, event) -> None:
         """Handle mode switch between Template and Upload."""
+        if self._editing_grid_id is not None:
+            self._exit_edit_mode()
         mode = event.new
         with pn.io.hold():
             self._template_selector.visible = mode == _MODE_TEMPLATE
@@ -511,6 +663,8 @@ class PlotGridManager:
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
+        if self._editing_grid_id is not None:
+            self._exit_edit_mode()
         template_name = event.new
         with pn.io.hold():
             if template_name == _NO_TEMPLATE:
@@ -573,26 +727,74 @@ class PlotGridManager:
 
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""
+        if self._editing_grid_id == grid_id:
+            self._exit_edit_mode()
+        self._update_grid_list()
+
+    def _on_grid_updated(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
+        """Handle grid update (rename, reorder, enable/disable) from orchestrator."""
         self._update_grid_list()
 
     def _update_grid_list(self) -> None:
         """Update the grid list display."""
-        self._grid_list.clear()
-        for grid_id, grid_config in self._orchestrator.get_all_grids().items():
+        grids = list(self._orchestrator.get_all_grids().items())
+        rows = []
+        for i, (grid_id, grid_config) in enumerate(grids):
             row = GridRow(
                 grid_id=grid_id,
                 grid_config=grid_config,
                 instrument=self._orchestrator.instrument,
                 on_remove=self._make_remove_handler(grid_id),
                 get_yaml_content=self._make_yaml_callback(grid_id),
+                on_edit=self._make_edit_handler(grid_id),
+                is_editing=(grid_id == self._editing_grid_id),
+                on_move_up=self._make_move_handler(grid_id, -1),
+                on_move_down=self._make_move_handler(grid_id, 1),
+                on_toggle_enabled=self._make_toggle_handler(grid_id),
+                is_first=(i == 0),
+                is_last=(i == len(grids) - 1),
             )
-            self._grid_list.append(row.panel)
+            rows.append(row.panel)
+        with pn.io.hold():
+            self._grid_list.objects = rows
 
     def _make_remove_handler(self, grid_id: GridId) -> Callable[[], None]:
         """Create a closure that removes the given grid."""
 
         def handler() -> None:
             self._orchestrator.remove_grid(grid_id)
+
+        return handler
+
+    def _make_edit_handler(self, grid_id: GridId) -> Callable[[], None]:
+        """Create a closure that toggles edit mode for the given grid.
+
+        Clicking the edit button on the grid currently being edited exits
+        edit mode. Clicking it on a different grid switches to editing
+        that grid instead.
+        """
+
+        def handler() -> None:
+            if self._editing_grid_id == grid_id:
+                self._exit_edit_mode()
+            else:
+                self._enter_edit_mode(grid_id)
+
+        return handler
+
+    def _make_move_handler(self, grid_id: GridId, delta: int) -> Callable[[], None]:
+        """Create a closure that moves the given grid by delta positions."""
+
+        def handler() -> None:
+            self._orchestrator.move_grid(grid_id, delta)
+
+        return handler
+
+    def _make_toggle_handler(self, grid_id: GridId) -> Callable[[bool], None]:
+        """Create a closure that toggles the given grid's enabled state."""
+
+        def handler(enabled: bool) -> None:
+            self._orchestrator.set_grid_enabled(grid_id, enabled=enabled)
 
         return handler
 
@@ -612,6 +814,9 @@ class PlotGridManager:
         """Handle file upload - populates form and preview for user confirmation."""
         if event.new is None:
             return
+
+        if self._editing_grid_id is not None:
+            self._exit_edit_mode()
 
         # Capture filename before clearing the widget
         filename = self._file_input.filename
@@ -661,6 +866,96 @@ class PlotGridManager:
         finally:
             # Clear file input so the same file can be re-uploaded
             self._file_input.clear()
+
+    def _enter_edit_mode(self, grid_id: GridId) -> None:
+        """Load an existing grid into the form for editing."""
+        grid_data = self._orchestrator.serialize_grid(grid_id)
+        grid_config = self._orchestrator.get_grid(grid_id)
+
+        # Parse cells from serialized data
+        parsed_cells: list[PlotCell] = []
+        for raw_cell in grid_data.get('cells', []):
+            cell = self._orchestrator.parse_raw_cell(raw_cell)
+            if cell is not None:
+                parsed_cells.append(cell)
+
+        # Set editing state before updating form fields so _update_preview
+        # picks up the right cells
+        self._editing_grid_id = grid_id
+        self._editing_cells = parsed_cells
+
+        # Compute minimum grid size from cell geometries
+        min_rows = max(
+            (c.geometry.row + c.geometry.row_span for c in parsed_cells), default=2
+        )
+        min_cols = max(
+            (c.geometry.col + c.geometry.col_span for c in parsed_cells), default=2
+        )
+
+        with pn.io.hold():
+            self._title_input.value = grid_config.title
+            self._nrows_input.start = min_rows
+            self._ncols_input.start = min_cols
+            self._nrows_input.value = grid_data['nrows']
+            self._ncols_input.value = grid_data['ncols']
+            self._mode_selector.visible = False
+            self._template_selector.visible = False
+            self._file_input.visible = False
+            self._add_button.visible = False
+            self._save_button.visible = True
+            self._copy_button.visible = True
+            self._update_grid_list()
+            self._update_preview()
+
+    def _exit_edit_mode(self) -> None:
+        """Exit edit mode and reset the form to defaults."""
+        self._editing_grid_id = None
+        self._editing_cells = None
+        with pn.io.hold():
+            self._mode_selector.visible = True
+            self._template_selector.visible = (
+                self._mode_selector.value == _MODE_TEMPLATE
+            )
+            self._file_input.visible = self._mode_selector.value == _MODE_UPLOAD
+            self._add_button.visible = True
+            self._save_button.visible = False
+            self._copy_button.visible = False
+            self._reset_to_defaults()
+            self._update_grid_list()
+            self._update_preview()
+
+    def _on_save_changes(self, event) -> None:
+        """Handle Save Changes button click in edit mode."""
+        grid_id = self._editing_grid_id
+        cells_to_add = self._editing_cells or ()
+        title = self._title_input.value
+        nrows = self._nrows_input.value
+        ncols = self._ncols_input.value
+        self._exit_edit_mode()
+
+        new_grid_id = self._orchestrator.replace_grid(
+            grid_id, title=title, nrows=nrows, ncols=ncols
+        )
+
+        for cell in cells_to_add:
+            cell_id = self._orchestrator.add_cell(new_grid_id, cell.geometry)
+            for layer in cell.layers:
+                self._orchestrator.add_layer(cell_id, layer.config)
+
+    def _on_save_as_copy(self, event) -> None:
+        """Handle Save as Copy button click in edit mode."""
+        cells_to_add = self._editing_cells or ()
+        title = self._title_input.value
+        nrows = self._nrows_input.value
+        ncols = self._ncols_input.value
+        self._exit_edit_mode()
+
+        grid_id = self._orchestrator.add_grid(title=title, nrows=nrows, ncols=ncols)
+
+        for cell in cells_to_add:
+            cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
+            for layer in cell.layers:
+                self._orchestrator.add_layer(cell_id, layer.config)
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""

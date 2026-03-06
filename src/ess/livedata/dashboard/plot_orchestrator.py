@@ -206,10 +206,12 @@ class PlotGridConfig:
     nrows: int = 3
     ncols: int = 3
     cells: dict[CellId, PlotCell] = field(default_factory=dict)
+    enabled: bool = True
 
 
 GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
+GridUpdatedCallback = Callable[[GridId, PlotGridConfig], None]
 CellRemovedCallback = Callable[[GridId, CellGeometry], None]
 
 
@@ -247,6 +249,7 @@ class LifecycleSubscription:
 
     on_grid_created: GridCreatedCallback | None = None
     on_grid_removed: GridRemovedCallback | None = None
+    on_grid_updated: GridUpdatedCallback | None = None
     on_cell_updated: CellUpdatedCallback | None = None
     on_cell_removed: CellRemovedCallback | None = None
 
@@ -381,6 +384,138 @@ class PlotOrchestrator:
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
             self._notify_grid_removed(grid_id)
+
+    def rename_grid(self, grid_id: GridId, new_title: str) -> None:
+        """
+        Rename a plot grid.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to rename.
+        new_title
+            New display title for the grid.
+        """
+        grid = self._grids[grid_id]
+        grid.title = new_title
+        self._persist_to_store()
+        self._logger.info('Renamed grid %s to %s', grid_id, new_title)
+        self._notify_grid_updated(grid_id)
+
+    def move_grid(self, grid_id: GridId, delta: int) -> None:
+        """
+        Reorder a grid by moving it ``delta`` positions in the grid list.
+
+        Negative delta moves up, positive moves down. No-op if the move
+        would place the grid outside the list boundaries.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to move.
+        delta
+            Number of positions to move (negative=up, positive=down).
+        """
+        keys = list(self._grids.keys())
+        current_index = keys.index(grid_id)
+        new_index = current_index + delta
+        if new_index < 0 or new_index >= len(keys):
+            return
+
+        # Rebuild dict in new order
+        keys.insert(new_index, keys.pop(current_index))
+        self._grids = {k: self._grids[k] for k in keys}
+        self._persist_to_store()
+        self._logger.info('Moved grid %s by %d positions', grid_id, delta)
+        self._notify_grid_updated(grid_id)
+
+    def set_grid_enabled(self, grid_id: GridId, *, enabled: bool) -> None:
+        """
+        Enable or disable a grid.
+
+        Disabled grids remain in the configuration but are hidden from
+        the tab bar.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to toggle.
+        enabled
+            Whether the grid should be visible.
+        """
+        grid = self._grids[grid_id]
+        grid.enabled = enabled
+        self._persist_to_store()
+        self._logger.info('Set grid %s enabled=%s', grid_id, enabled)
+        self._notify_grid_updated(grid_id)
+
+    def replace_grid(
+        self, grid_id: GridId, title: str, nrows: int, ncols: int
+    ) -> GridId:
+        """
+        Replace a grid with a new empty grid at the same position.
+
+        Tears down all cells/layers of the old grid, fires ``on_grid_removed``,
+        then creates a new grid at the same position with the given dimensions
+        and fires ``on_grid_created``. The new grid inherits the old grid's
+        ``enabled`` state.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to replace. Must exist.
+        title
+            Display title for the new grid.
+        nrows
+            Number of rows in the new grid.
+        ncols
+            Number of columns in the new grid.
+
+        Returns
+        -------
+        :
+            ID of the newly created grid.
+
+        Raises
+        ------
+        KeyError
+            If ``grid_id`` does not exist.
+        """
+        old_grid = self._grids[grid_id]
+        enabled = old_grid.enabled
+
+        # Find position in ordered dict
+        keys = list(self._grids.keys())
+        position = keys.index(grid_id)
+
+        # Clean up all cells/layers
+        for cell_id, cell in list(old_grid.cells.items()):
+            self._remove_cell_and_cleanup(grid_id, cell_id, cell)
+
+        del self._grids[grid_id]
+        self._notify_grid_removed(grid_id)
+
+        # Create new grid and insert at the same position
+        new_grid_id = GridId(uuid4())
+        new_grid = PlotGridConfig(
+            title=title, nrows=nrows, ncols=ncols, enabled=enabled
+        )
+
+        # Rebuild dict with new grid at the original position
+        items = list(self._grids.items())
+        items.insert(position, (new_grid_id, new_grid))
+        self._grids = dict(items)
+
+        self._persist_to_store()
+        self._logger.info(
+            'Replaced grid %s with %s (%s) at position %d',
+            grid_id,
+            new_grid_id,
+            title,
+            position,
+        )
+        self._notify_grid_created(new_grid_id)
+        return new_grid_id
 
     def add_cell(self, grid_id: GridId, geometry: CellGeometry) -> CellId:
         """
@@ -1126,6 +1261,7 @@ class PlotOrchestrator:
                 nrows=raw.get('nrows', 3),
                 ncols=raw.get('ncols', 3),
                 cells=tuple(cells),
+                enabled=raw.get('enabled', True),
             )
 
         except Exception:
@@ -1158,7 +1294,7 @@ class PlotOrchestrator:
             If grid_id is not found.
         """
         grid = self._grids[grid_id]
-        return {
+        result: dict[str, Any] = {
             'title': grid.title,
             'nrows': grid.nrows,
             'ncols': grid.ncols,
@@ -1175,6 +1311,9 @@ class PlotOrchestrator:
                 for cell in grid.cells.values()
             ],
         }
+        if not grid.enabled:
+            result['enabled'] = False
+        return result
 
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
@@ -1226,6 +1365,8 @@ class PlotOrchestrator:
                     cell_id = self.add_cell(grid_id, cell.geometry)
                     for layer in cell.layers:
                         self.add_layer(cell_id, layer.config)
+                if not spec.enabled:
+                    self.set_grid_enabled(grid_id, enabled=False)
 
             self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
@@ -1297,6 +1438,7 @@ class PlotOrchestrator:
         *,
         on_grid_created: GridCreatedCallback | None = None,
         on_grid_removed: GridRemovedCallback | None = None,
+        on_grid_updated: GridUpdatedCallback | None = None,
         on_cell_updated: CellUpdatedCallback | None = None,
         on_cell_removed: CellRemovedCallback | None = None,
     ) -> SubscriptionId:
@@ -1317,6 +1459,8 @@ class PlotOrchestrator:
             Called when a new grid is created with (grid_id, grid_config).
         on_grid_removed
             Called when a grid is removed.
+        on_grid_updated
+            Called when a grid is renamed, reordered, or enabled/disabled.
         on_cell_updated
             Called when a cell is added or updated.
         on_cell_removed
@@ -1331,6 +1475,7 @@ class PlotOrchestrator:
         self._lifecycle_subscribers[subscription_id] = LifecycleSubscription(
             on_grid_created=on_grid_created,
             on_grid_removed=on_grid_removed,
+            on_grid_updated=on_grid_updated,
             on_cell_updated=on_cell_updated,
             on_cell_removed=on_cell_removed,
         )
@@ -1369,6 +1514,18 @@ class PlotOrchestrator:
                 except Exception:
                     self._logger.exception(
                         'Error in grid removed callback for grid %s', grid_id
+                    )
+
+    def _notify_grid_updated(self, grid_id: GridId) -> None:
+        """Notify subscribers that a grid was renamed, reordered, or toggled."""
+        grid = self._grids[grid_id]
+        for subscription in self._lifecycle_subscribers.values():
+            if subscription.on_grid_updated:
+                try:
+                    subscription.on_grid_updated(grid_id, grid)
+                except Exception:
+                    self._logger.exception(
+                        'Error in grid updated callback for grid %s', grid_id
                     )
 
     def _notify_cell_updated(

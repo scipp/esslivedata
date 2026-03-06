@@ -82,10 +82,31 @@ _ICONS: dict[str, str] = {
         '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/>'
         '<path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/>'
     ),
+    # Chevron up
+    'chevron-up': _svg('<path d="M6 15l6 -6l6 6"/>'),
     # Chevron down (expand)
     'chevron-down': _svg('<path d="M6 9l6 6l6 -6"/>'),
     # Chevron right (collapse)
     'chevron-right': _svg('<path d="M9 6l6 6l-6 6"/>'),
+    # Pencil (edit/rename)
+    'pencil': _svg(
+        '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/>'
+        '<path d="M13.5 6.5l4 4"/>'
+    ),
+    # Eye (visible/enabled)
+    'eye': _svg(
+        '<path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 '
+        '-6c3.6 0 6.6 2 9 6"/>'
+    ),
+    # Eye off (hidden/disabled)
+    'eye-off': _svg(
+        '<path d="M10.585 10.587a2 2 0 0 0 2.829 2.828"/>'
+        '<path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 '
+        '-6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.354 9.354 0 0 1 1.82 '
+        '-.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87"/>'
+        '<path d="M3 3l18 18"/>'
+    ),
     # Trash/delete
     'trash': _svg(
         '<path d="M4 7l16 0"/>'
@@ -105,8 +126,8 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons: backspace, chevron-down, chevron-right,
-        download, player-pause, player-play, player-stop, plus, refresh,
-        settings, trash, x.
+        chevron-up, download, eye, eye-off, pencil, player-pause, player-play,
+        player-stop, plus, refresh, settings, trash, x.
 
     Returns
     -------
