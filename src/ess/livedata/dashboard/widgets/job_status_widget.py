@@ -29,7 +29,6 @@ class UIConstants:
         JobState.active: "#28a745",  # Green
         JobState.paused: "#ffc107",  # Yellow
         JobState.finishing: "#17a2b8",  # Blue
-        JobState.stopped: "#343a40",  # Dark gray
         JobState.error: "#dc3545",  # Red
         JobState.warning: "#fd7e14",  # Orange
     }
@@ -68,7 +67,6 @@ class UIConstants:
     PAUSE_ICON = 'player-pause'
     PLAY_ICON = 'player-play'
     STOP_ICON = 'player-stop'
-    REMOVE_ICON = 'trash'
 
 
 class JobStatusWidget:
@@ -169,20 +167,11 @@ class JobStatusWidget:
         """Get button widgets based on current job state."""
         buttons = []
 
-        # Stop/Remove button - dual purpose
-        if self._job_status.state == JobState.stopped:
-            remove_btn = self._create_button(
-                UIConstants.REMOVE_ICON,
-                lambda event: self._send_action(JobAction.remove),
-            )
-            buttons.append(remove_btn)
-        elif self._job_status.state not in [JobState.stopped]:
-            stop_btn = self._create_button(
-                UIConstants.STOP_ICON, lambda event: self._send_action(JobAction.stop)
-            )
-            buttons.append(stop_btn)
+        stop_btn = self._create_button(
+            UIConstants.STOP_ICON, lambda event: self._send_action(JobAction.stop)
+        )
+        buttons.append(stop_btn)
 
-        # Reset button - always available for non-removed jobs
         reset_btn = self._create_button(
             UIConstants.RESET_ICON, lambda event: self._send_action(JobAction.reset)
         )

@@ -62,11 +62,11 @@ def plot_orchestrator(
 
 
 @pytest.fixture
-def job_controller(command_service, job_service):
+def job_controller(command_service):
     """Create a JobController for testing."""
     from ess.livedata.dashboard.job_controller import JobController
 
-    return JobController(command_service=command_service, job_service=job_service)
+    return JobController(command_service=command_service)
 
 
 @pytest.fixture
