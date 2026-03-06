@@ -162,7 +162,9 @@ class DashboardServices:
         self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
-        self.job_controller = JobController(command_service=self.command_service)
+        self.job_controller = JobController(
+            command_service=self.command_service, job_service=self.job_service
+        )
 
         # Create ROI publisher for publishing ROI updates to Kafka
         roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
