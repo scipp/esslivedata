@@ -781,6 +781,33 @@ class TestServiceStatusMessage:
         assert converted.active_job_count == original.active_job_count
         assert converted.messages_processed == original.messages_processed
 
+    def test_round_trip_with_shedding_fields(self):
+        """Test that shedding fields survive model round-trip."""
+        original = make_service_status(
+            is_shedding=True,
+            shedding_level=2,
+            messages_dropped=42,
+            messages_eligible=100,
+        )
+        msg = ServiceStatusMessage.from_service_status(original)
+        converted = msg.to_service_status()
+
+        assert converted.is_shedding is True
+        assert converted.shedding_level == 2
+        assert converted.messages_dropped == 42
+        assert converted.messages_eligible == 100
+
+    def test_round_trip_defaults_shedding_fields(self):
+        """Test that shedding fields default gracefully."""
+        original = make_service_status()
+        msg = ServiceStatusMessage.from_service_status(original)
+        converted = msg.to_service_status()
+
+        assert converted.is_shedding is False
+        assert converted.shedding_level == 0
+        assert converted.messages_dropped == 0
+        assert converted.messages_eligible == 0
+
 
 class TestServiceStatusX5F2Integration:
     """Test service status x5f2 serialization/deserialization."""
@@ -807,6 +834,22 @@ class TestServiceStatusX5F2Integration:
         assert converted.active_job_count == original.active_job_count
         assert converted.messages_processed == original.messages_processed
         assert converted.error == original.error
+
+    def test_service_status_x5f2_round_trip_with_shedding(self):
+        """Test x5f2 round-trip includes load shedding fields."""
+        original = make_service_status(
+            is_shedding=True,
+            shedding_level=3,
+            messages_dropped=1234,
+            messages_eligible=3000,
+        )
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.is_shedding is True
+        assert converted.shedding_level == 3
+        assert converted.messages_dropped == 1234
+        assert converted.messages_eligible == 3000
 
     def test_service_status_x5f2_with_error(self):
         """Test x5f2 round-trip with error message."""

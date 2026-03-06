@@ -82,7 +82,9 @@ class LivedataApp:
         consumer = FakeConsumer()
         if use_naive_message_batcher:
             builder._processor_cls = partial(
-                OrchestratingProcessor, message_batcher=NaiveMessageBatcher()
+                OrchestratingProcessor,
+                message_batcher=NaiveMessageBatcher(),
+                enable_load_shedding=False,
             )
         service = builder.from_consumer(
             consumer=consumer,

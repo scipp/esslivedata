@@ -197,6 +197,18 @@ class ServiceStatusPayload(pydantic.BaseModel):
         description="Total messages processed since startup"
     )
     error: str | None = pydantic.Field(default=None, description="Error message if any")
+    is_shedding: bool = pydantic.Field(
+        default=False, description="Whether load shedding is active"
+    )
+    shedding_level: int = pydantic.Field(
+        default=0, description="Current shedding level (0=off, N=keep 1/2^N)"
+    )
+    messages_dropped: int = pydantic.Field(
+        default=0, description="Messages dropped in the rolling window"
+    )
+    messages_eligible: int = pydantic.Field(
+        default=0, description="Droppable messages seen in the rolling window"
+    )
 
 
 class ServiceStatusJSON(pydantic.BaseModel):
@@ -282,6 +294,10 @@ class ServiceStatusMessage(pydantic.BaseModel):
                     active_job_count=status.active_job_count,
                     messages_processed=status.messages_processed,
                     error=status.error,
+                    is_shedding=status.is_shedding,
+                    shedding_level=status.shedding_level,
+                    messages_dropped=status.messages_dropped,
+                    messages_eligible=status.messages_eligible,
                 ),
             ),
         )
@@ -298,6 +314,10 @@ class ServiceStatusMessage(pydantic.BaseModel):
             active_job_count=message.active_job_count,
             messages_processed=message.messages_processed,
             error=message.error,
+            is_shedding=message.is_shedding,
+            shedding_level=message.shedding_level,
+            messages_dropped=message.messages_dropped,
+            messages_eligible=message.messages_eligible,
         )
 
 

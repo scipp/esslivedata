@@ -14,6 +14,7 @@ from .handler import Accumulator, PreprocessorFactory
 from .job import JobResult, JobStatus, ServiceState, ServiceStatus
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
+from .load_shedder import LoadShedder
 from .message import (
     COMMANDS_STREAM_ID,
     STATUS_STREAM_ID,
@@ -89,6 +90,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
+        enable_load_shedding: bool = True,
     ) -> None:
         self._source = source
         self._sink = sink
@@ -100,6 +102,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
+        self._load_shedder = LoadShedder() if enable_load_shedding else None
         self._last_status_update: int | None = None
         self._status_update_interval = 2_000_000_000  # 2 seconds
 
@@ -143,7 +146,14 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         self._report_status()
 
+        if self._load_shedder is not None:
+            data_messages = self._load_shedder.shed(data_messages)
         message_batch = self._message_batcher.batch(data_messages)
+        if self._load_shedder is not None:
+            # Empty batches (from batcher timestamp catch-up) are not an
+            # overload signal — only count batches that carry data.
+            count = len(message_batch.messages) if message_batch is not None else 0
+            self._load_shedder.report_batch_result(count)
         if message_batch is None:
             self._empty_batches += 1
             self._maybe_log_metrics()
@@ -222,6 +232,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
+        shedder_state = self._load_shedder.state if self._load_shedder else None
         return ServiceStatus(
             instrument=self._instrument,
             namespace=self._namespace,
@@ -231,6 +242,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
             error=self._service_error,
+            is_shedding=shedder_state.is_shedding if shedder_state else False,
+            shedding_level=shedder_state.shedding_level if shedder_state else 0,
+            messages_dropped=shedder_state.messages_dropped if shedder_state else 0,
+            messages_eligible=shedder_state.messages_eligible if shedder_state else 0,
         )
 
     def _maybe_log_metrics(self) -> None:
@@ -242,6 +257,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         if timestamp - self._last_metrics_time >= self._metrics_interval:
             active_jobs = len(self._job_manager.active_jobs)
+            shedder_state = self._load_shedder.state if self._load_shedder else None
             logger.info(
                 'processor_metrics',
                 messages=self._messages_processed,
@@ -249,6 +265,14 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 empty_batches=self._empty_batches,
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
+                shedding=shedder_state.is_shedding if shedder_state else False,
+                shedding_level=(shedder_state.shedding_level if shedder_state else 0),
+                messages_dropped=(
+                    shedder_state.messages_dropped if shedder_state else 0
+                ),
+                messages_eligible=(
+                    shedder_state.messages_eligible if shedder_state else 0
+                ),
                 interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
             )
             # Reset counters (except messages_processed which is cumulative for service)

@@ -26,6 +26,7 @@ class WorkerUIConstants:
     }
     DEFAULT_COLOR = "#6c757d"
     STALE_COLOR = "#dc3545"  # Red for unexpectedly disappeared workers
+    SHEDDING_COLOR = "#ff8c00"  # Amber for load shedding
 
     # Sizes
     NAMESPACE_WIDTH = 200
@@ -71,6 +72,14 @@ def _format_messages(count: int) -> str:
         return f"{count / 1000:.1f}k"
     else:
         return f"{count / 1_000_000:.1f}M"
+
+
+def _format_drop_rate(dropped: int, eligible: int) -> str:
+    """Format drop rate as percentage over the rolling window."""
+    if eligible == 0:
+        return "Dropping: <1%"
+    pct = 100 * dropped / eligible
+    return f"Dropping: {pct:.0f}%"
 
 
 class WorkerStatusRow:
@@ -126,12 +135,14 @@ class WorkerStatusRow:
         self.update(status, is_stale, last_seen_seconds_ago)
 
     def _get_status_color(self, status: ServiceStatus, is_stale: bool) -> str:
-        """Get color for worker state, considering staleness."""
+        """Get color for worker state, considering staleness and load shedding."""
         if is_stale:
             # Graceful shutdown (inferred from timed-out stopping): show gray
             if status.state == ServiceState.stopping:
                 return WorkerUIConstants.COLORS[ServiceState.stopped]
             return WorkerUIConstants.STALE_COLOR
+        if status.is_shedding:
+            return WorkerUIConstants.SHEDDING_COLOR
         return WorkerUIConstants.COLORS.get(
             status.state, WorkerUIConstants.DEFAULT_COLOR
         )
@@ -165,6 +176,8 @@ class WorkerStatusRow:
             # Distinguish graceful shutdown from unexpected disappearance
             is_graceful = status.state == ServiceState.stopping
             status_text = "STOPPED" if is_graceful else "STALE"
+        elif status.is_shedding:
+            status_text = "SHEDDING"
         else:
             status_text = status.state.value.upper()
         status_style = self._create_status_style(status_color)
@@ -187,7 +200,16 @@ class WorkerStatusRow:
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
         msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
-        self._stats_pane.object = f"<span>{jobs_text} | {msgs_text}</span>"
+        stats_parts = [jobs_text, msgs_text]
+        if status.messages_dropped > 0:
+            drop_text = _format_drop_rate(
+                status.messages_dropped, status.messages_eligible
+            )
+            stats_parts.append(
+                f'<span style="color: {WorkerUIConstants.SHEDDING_COLOR}">'
+                f"{drop_text}</span>"
+            )
+        self._stats_pane.object = f"<span>{' | '.join(stats_parts)}</span>"
 
     def _calculate_uptime(self, started_at_ns: int) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
@@ -278,6 +300,7 @@ class BackendStatusWidget:
         stopped_count = 0
         stale_count = 0
         error_count = 0
+        shedding_count = 0
 
         for worker_key, status in self._service_registry.worker_statuses.items():
             is_stale = self._service_registry.is_status_stale(worker_key)
@@ -288,6 +311,8 @@ class BackendStatusWidget:
                     stopped_count += 1
                 else:
                     stale_count += 1
+            elif status.is_shedding:
+                shedding_count += 1
             elif status.state == ServiceState.starting:
                 starting_count += 1
             elif status.state == ServiceState.running:
@@ -310,6 +335,10 @@ class BackendStatusWidget:
             )
         if running_count:
             parts.append(_span(colors[ServiceState.running], running_count, "running"))
+        if shedding_count:
+            parts.append(
+                _span(WorkerUIConstants.SHEDDING_COLOR, shedding_count, "shedding")
+            )
         if stopping_count:
             parts.append(
                 _span(colors[ServiceState.stopping], stopping_count, "stopping")
