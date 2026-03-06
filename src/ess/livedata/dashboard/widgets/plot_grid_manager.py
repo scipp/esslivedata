@@ -67,6 +67,8 @@ class GridRow:
         Callback that returns the YAML content for download.
     on_edit
         Callback to invoke when the edit button is clicked.
+    is_editing
+        Whether this grid is currently being edited (highlights the edit button).
     on_move_up
         Callback to invoke when the move-up button is clicked.
     on_move_down
@@ -102,6 +104,7 @@ class GridRow:
         on_remove: Callable[[], None],
         get_yaml_content: Callable[[], StringIO],
         on_edit: Callable[[], None] | None = None,
+        is_editing: bool = False,
         on_move_up: Callable[[], None] | None = None,
         on_move_down: Callable[[], None] | None = None,
         on_toggle_enabled: Callable[[bool], None] | None = None,
@@ -137,13 +140,26 @@ class GridRow:
             styles={'flex-grow': '1', 'line-height': '28px'},
         )
 
-        # Edit button
-        edit_button = create_tool_button(
-            icon_name='pencil',
-            button_color=ButtonStyles.PRIMARY_BLUE,
-            hover_color='rgba(0, 123, 255, 0.1)',
-            on_click_callback=on_edit or (lambda: None),
-        )
+        # Edit button (highlighted when this grid is being edited)
+        if is_editing:
+            edit_button = create_tool_button(
+                icon_name='pencil',
+                button_color='#ffffff',
+                hover_color='rgba(0, 123, 255, 0.8)',
+                on_click_callback=on_edit or (lambda: None),
+            )
+            edit_button.stylesheets = [
+                *edit_button.stylesheets,
+                'button { background-color: #007bff !important; '
+                'border-radius: 4px !important; }',
+            ]
+        else:
+            edit_button = create_tool_button(
+                icon_name='pencil',
+                button_color=ButtonStyles.PRIMARY_BLUE,
+                hover_color='rgba(0, 123, 255, 0.1)',
+                on_click_callback=on_edit or (lambda: None),
+            )
         if on_edit is None:
             edit_button.disabled = True
 
@@ -713,6 +729,7 @@ class PlotGridManager:
                 on_remove=self._make_remove_handler(grid_id),
                 get_yaml_content=self._make_yaml_callback(grid_id),
                 on_edit=self._make_edit_handler(grid_id),
+                is_editing=(grid_id == self._editing_grid_id),
                 on_move_up=self._make_move_handler(grid_id, -1),
                 on_move_down=self._make_move_handler(grid_id, 1),
                 on_toggle_enabled=self._make_toggle_handler(grid_id),
@@ -869,6 +886,7 @@ class PlotGridManager:
             self._add_button.visible = False
             self._save_button.visible = True
             self._copy_button.visible = True
+            self._update_grid_list()
             self._update_preview()
 
     def _exit_edit_mode(self) -> None:
@@ -885,6 +903,7 @@ class PlotGridManager:
             self._save_button.visible = False
             self._copy_button.visible = False
             self._reset_to_defaults()
+            self._update_grid_list()
             self._update_preview()
 
     def _on_save_changes(self, event) -> None:
