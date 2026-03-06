@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from io import StringIO
+from typing import ClassVar
 
 import panel as pn
 import yaml
@@ -47,9 +48,10 @@ _CELL_COLORS = [
 
 class GridRow:
     """
-    Widget row for a single grid in the grid list.
+    Card-style widget row for a single grid in the grid list.
 
-    Displays grid info and action buttons (download, remove).
+    Displays grid info and action buttons: move up/down, rename, enable/disable,
+    download, and remove.
 
     Parameters
     ----------
@@ -63,7 +65,33 @@ class GridRow:
         Callback to invoke when the remove button is clicked.
     get_yaml_content
         Callback that returns the YAML content for download.
+    on_rename
+        Callback to invoke when the grid is renamed. Receives the new title.
+    on_move_up
+        Callback to invoke when the move-up button is clicked.
+    on_move_down
+        Callback to invoke when the move-down button is clicked.
+    on_toggle_enabled
+        Callback to invoke when the enable/disable button is clicked.
+        Receives the new enabled state.
+    is_first
+        Whether this is the first grid in the list (disables move-up).
+    is_last
+        Whether this is the last grid in the list (disables move-down).
     """
+
+    _CARD_STYLES: ClassVar[dict[str, str]] = {
+        'border': '1px solid #dee2e6',
+        'border-radius': '6px',
+        'background': '#f8f9fa',
+        'padding': '6px 12px',
+    }
+
+    _DISABLED_CARD_STYLES: ClassVar[dict[str, str]] = {
+        **_CARD_STYLES,
+        'background': '#e9ecef',
+        'opacity': '0.7',
+    }
 
     def __init__(
         self,
@@ -73,17 +101,80 @@ class GridRow:
         instrument: str,
         on_remove: Callable[[], None],
         get_yaml_content: Callable[[], StringIO],
+        on_rename: Callable[[str], None] | None = None,
+        on_move_up: Callable[[], None] | None = None,
+        on_move_down: Callable[[], None] | None = None,
+        on_toggle_enabled: Callable[[bool], None] | None = None,
+        is_first: bool = False,
+        is_last: bool = False,
     ) -> None:
         self._grid_id = grid_id
         self._grid_config = grid_config
+        self._on_rename = on_rename
+        self._editing = False
+
+        # Move up button
+        move_up_button = create_tool_button(
+            icon_name='chevron-up',
+            button_color='#6c757d',
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=on_move_up or (lambda: None),
+        )
+        move_up_button.disabled = is_first or on_move_up is None
+
+        # Move down button
+        move_down_button = create_tool_button(
+            icon_name='chevron-down',
+            button_color='#6c757d',
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=on_move_down or (lambda: None),
+        )
+        move_down_button.disabled = is_last or on_move_down is None
 
         # Grid info label
-        label = pn.pane.Str(
-            f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})',
-            styles={'flex-grow': '1'},
+        label_text = f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})'
+        self._label = pn.pane.Str(
+            label_text,
+            styles={'flex-grow': '1', 'line-height': '28px'},
         )
 
-        # Download button - generates YAML when clicked
+        # Rename text input (hidden initially)
+        # Commits on Enter (which updates 'value') or pencil toggle.
+        self._rename_input = pn.widgets.TextInput(
+            value=grid_config.title,
+            width=200,
+            visible=False,
+            margin=0,
+        )
+        self._rename_input.param.watch(self._on_rename_committed, 'value')
+
+        # Rename button
+        self._rename_button = create_tool_button(
+            icon_name='pencil',
+            button_color=ButtonStyles.PRIMARY_BLUE,
+            hover_color='rgba(0, 123, 255, 0.1)',
+            on_click_callback=self._toggle_rename,
+        )
+        if on_rename is None:
+            self._rename_button.disabled = True
+
+        # Enable/disable button
+        eye_icon = 'eye' if grid_config.enabled else 'eye-off'
+        eye_color = '#6c757d' if grid_config.enabled else '#dc3545'
+        self._toggle_button = create_tool_button(
+            icon_name=eye_icon,
+            button_color=eye_color,
+            hover_color='rgba(108, 117, 125, 0.1)',
+            on_click_callback=lambda: (
+                on_toggle_enabled(not grid_config.enabled)
+                if on_toggle_enabled
+                else None
+            ),
+        )
+        if on_toggle_enabled is None:
+            self._toggle_button.disabled = True
+
+        # Download button
         filename = (
             f'esslivedata_{instrument}_{_sanitize_filename(grid_config.title)}.yaml'
         )
@@ -100,12 +191,58 @@ class GridRow:
             on_click_callback=on_remove,
         )
 
+        card_styles = (
+            self._CARD_STYLES if grid_config.enabled else self._DISABLED_CARD_STYLES
+        )
+
         self._widget = pn.Row(
-            label,
+            move_up_button,
+            move_down_button,
+            self._label,
+            self._rename_input,
+            self._rename_button,
+            self._toggle_button,
             download_button,
             remove_button,
             sizing_mode='stretch_width',
+            styles=card_styles,
+            margin=(0, 0, 8, 0),
         )
+
+    def _toggle_rename(self) -> None:
+        """Toggle between label display and rename input."""
+        if self._editing:
+            # Clicking pencil again commits the live input value
+            new_title = self._rename_input.value_input.strip()
+            if new_title and new_title != self._grid_config.title and self._on_rename:
+                self._on_rename(new_title)
+            self._cancel_rename()
+        else:
+            self._start_rename()
+
+    def _start_rename(self) -> None:
+        """Switch to rename mode."""
+        self._editing = True
+        with pn.io.hold():
+            self._rename_input.value = self._grid_config.title
+            self._rename_input.visible = True
+            self._label.visible = False
+
+    def _cancel_rename(self) -> None:
+        """Cancel rename and restore label."""
+        self._editing = False
+        with pn.io.hold():
+            self._rename_input.visible = False
+            self._label.visible = True
+
+    def _on_rename_committed(self, event) -> None:
+        """Handle Enter/blur in rename input (commits the 'value' param)."""
+        if not self._editing:
+            return
+        new_title = event.new.strip()
+        if new_title and new_title != self._grid_config.title and self._on_rename:
+            self._on_rename(new_title)
+        self._cancel_rename()
 
     @property
     def panel(self) -> pn.Row:
@@ -228,6 +365,7 @@ class PlotGridManager:
             self._orchestrator.subscribe_to_lifecycle(
                 on_grid_created=self._on_grid_created,
                 on_grid_removed=self._on_grid_removed,
+                on_grid_updated=self._on_grid_updated,
             )
         )
 
@@ -575,16 +713,27 @@ class PlotGridManager:
         """Handle grid removal from orchestrator."""
         self._update_grid_list()
 
+    def _on_grid_updated(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
+        """Handle grid update (rename, reorder, enable/disable) from orchestrator."""
+        self._update_grid_list()
+
     def _update_grid_list(self) -> None:
         """Update the grid list display."""
         self._grid_list.clear()
-        for grid_id, grid_config in self._orchestrator.get_all_grids().items():
+        grids = list(self._orchestrator.get_all_grids().items())
+        for i, (grid_id, grid_config) in enumerate(grids):
             row = GridRow(
                 grid_id=grid_id,
                 grid_config=grid_config,
                 instrument=self._orchestrator.instrument,
                 on_remove=self._make_remove_handler(grid_id),
                 get_yaml_content=self._make_yaml_callback(grid_id),
+                on_rename=self._make_rename_handler(grid_id),
+                on_move_up=self._make_move_handler(grid_id, -1),
+                on_move_down=self._make_move_handler(grid_id, 1),
+                on_toggle_enabled=self._make_toggle_handler(grid_id),
+                is_first=(i == 0),
+                is_last=(i == len(grids) - 1),
             )
             self._grid_list.append(row.panel)
 
@@ -593,6 +742,30 @@ class PlotGridManager:
 
         def handler() -> None:
             self._orchestrator.remove_grid(grid_id)
+
+        return handler
+
+    def _make_rename_handler(self, grid_id: GridId) -> Callable[[str], None]:
+        """Create a closure that renames the given grid."""
+
+        def handler(new_title: str) -> None:
+            self._orchestrator.rename_grid(grid_id, new_title)
+
+        return handler
+
+    def _make_move_handler(self, grid_id: GridId, delta: int) -> Callable[[], None]:
+        """Create a closure that moves the given grid by delta positions."""
+
+        def handler() -> None:
+            self._orchestrator.move_grid(grid_id, delta)
+
+        return handler
+
+    def _make_toggle_handler(self, grid_id: GridId) -> Callable[[bool], None]:
+        """Create a closure that toggles the given grid's enabled state."""
+
+        def handler(enabled: bool) -> None:
+            self._orchestrator.set_grid_enabled(grid_id, enabled=enabled)
 
         return handler
 

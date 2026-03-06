@@ -196,8 +196,9 @@ class TestGridRow:
             get_yaml_content=lambda: StringIO(''),
         )
 
-        # The download button is the second element in the row (index 1)
-        download_button = row.panel[1]
+        # The download button is at index 6 (after move_up, move_down, label,
+        # rename_input, rename_btn, toggle_btn)
+        download_button = row.panel[6]
         assert download_button.filename == 'esslivedata_bifrost_my_test_grid.yaml'
 
     def test_displays_grid_info(self, plot_orchestrator, workflow_registry):
@@ -216,8 +217,8 @@ class TestGridRow:
             get_yaml_content=lambda: StringIO(''),
         )
 
-        # Find the label pane
-        label_pane = row.panel[0]
+        # Label is at index 2 (after move_up, move_down)
+        label_pane = row.panel[2]
         assert 'My Test Grid' in label_pane.object
         assert '2x5' in label_pane.object
 
@@ -592,3 +593,221 @@ class TestModeSwitch:
         assert grid_manager._mode_selector.value == _MODE_TEMPLATE
         assert grid_manager._pending_upload_cells is None
         assert grid_manager._title_input.value == 'New Grid'
+
+
+class TestGridRowCardStyling:
+    """Tests for GridRow card-style widget."""
+
+    def test_grid_row_has_card_styling(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test Grid', nrows=3, ncols=4)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        styles = row.panel.styles
+        assert styles.get('border') == '1px solid #dee2e6'
+        assert styles.get('border-radius') == '6px'
+
+    def test_disabled_grid_row_has_dimmed_styling(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Disabled', nrows=2, ncols=2, enabled=False)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        styles = row.panel.styles
+        assert styles.get('opacity') == '0.7'
+
+
+class TestGridRowRename:
+    """Tests for GridRow rename functionality."""
+
+    def test_rename_via_enter_commits(self, plot_orchestrator):
+        """Setting value (simulating Enter) commits the rename."""
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Old Title', nrows=2, ncols=2)
+        rename_calls = []
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_rename=lambda title: rename_calls.append(title),
+        )
+
+        row._start_rename()
+        assert row._rename_input.visible is True
+
+        # Setting .value simulates pressing Enter
+        row._rename_input.value = 'New Title'
+
+        assert rename_calls == ['New Title']
+        assert row._rename_input.visible is False
+
+    def test_rename_via_pencil_toggle_commits(self, plot_orchestrator):
+        """Clicking pencil while editing commits the live input value."""
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Old Title', nrows=2, ncols=2)
+        rename_calls = []
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_rename=lambda title: rename_calls.append(title),
+        )
+
+        row._start_rename()
+        # value_input simulates typing without pressing Enter
+        row._rename_input.value_input = 'New Title'
+        row._toggle_rename()
+
+        assert rename_calls == ['New Title']
+        assert row._rename_input.visible is False
+
+
+class TestGridRowMoveButtons:
+    """Tests for GridRow move button disabled states."""
+
+    def test_move_up_disabled_when_first(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='First', nrows=2, ncols=2)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_move_up=lambda: None,
+            on_move_down=lambda: None,
+            is_first=True,
+            is_last=False,
+        )
+
+        # Move up is the first widget in the row
+        move_up_button = row.panel[0]
+        move_down_button = row.panel[1]
+        assert move_up_button.disabled is True
+        assert move_down_button.disabled is False
+
+    def test_move_down_disabled_when_last(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Last', nrows=2, ncols=2)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_move_up=lambda: None,
+            on_move_down=lambda: None,
+            is_first=False,
+            is_last=True,
+        )
+
+        move_up_button = row.panel[0]
+        move_down_button = row.panel[1]
+        assert move_up_button.disabled is False
+        assert move_down_button.disabled is True
+
+
+class TestGridRowToggleEnabled:
+    """Tests for GridRow enable/disable toggle."""
+
+    def test_toggle_enabled_callback_invoked(self, plot_orchestrator):
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='Test', nrows=2, ncols=2, enabled=True)
+        toggle_calls = []
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+            on_toggle_enabled=lambda enabled: toggle_calls.append(enabled),
+        )
+
+        # The toggle button is at index 5 (after move_up, move_down,
+        # label, rename_input, rename_btn)
+        toggle_button = row.panel[5]
+        # Simulate click via the on_click handler
+        toggle_button.clicks += 1
+
+        assert toggle_calls == [False]
+
+
+class TestGridManagerRenameIntegration:
+    """Tests for rename flow through PlotGridManager."""
+
+    def test_rename_handler_calls_orchestrator(
+        self, grid_manager, plot_orchestrator, workflow_registry
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Original', nrows=2, ncols=2)
+
+        handler = grid_manager._make_rename_handler(grid_id)
+        handler('Renamed')
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].title == 'Renamed'
+
+    def test_move_handler_calls_orchestrator(
+        self, grid_manager, plot_orchestrator, workflow_registry
+    ):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        handler = grid_manager._make_move_handler(id_a, 1)
+        handler()
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_toggle_handler_calls_orchestrator(
+        self, grid_manager, plot_orchestrator, workflow_registry
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+
+        handler = grid_manager._make_toggle_handler(grid_id)
+        handler(False)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is False

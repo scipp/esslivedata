@@ -1967,3 +1967,125 @@ class TestTitleResolver:
             resolver = plotter.compute_calls[0].get('title_resolver')
             assert resolver is not None
             assert resolver.include_output_in_label is True
+
+
+class TestRenameGrid:
+    """Tests for grid rename functionality."""
+
+    def test_rename_grid_updates_title(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Old Title', nrows=3, ncols=3)
+        plot_orchestrator.rename_grid(grid_id, 'New Title')
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].title == 'New Title'
+
+    def test_rename_grid_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Old', nrows=3, ncols=3)
+        plot_orchestrator.rename_grid(grid_id, 'New')
+
+        callback.assert_called_once()
+        assert callback.call_args[0][0] == grid_id
+        assert callback.call_args[0][1].title == 'New'
+
+    def test_rename_grid_persists(self, plot_orchestrator):
+        """Rename triggers persistence (no error from _persist_to_store)."""
+        grid_id = plot_orchestrator.add_grid(title='Before', nrows=2, ncols=2)
+        plot_orchestrator.rename_grid(grid_id, 'After')
+        assert plot_orchestrator.get_all_grids()[grid_id].title == 'After'
+
+
+class TestMoveGrid:
+    """Tests for grid reorder functionality."""
+
+    def test_move_grid_down(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, 1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_move_grid_up(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_b, -1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_b, id_a]
+
+    def test_move_grid_at_top_boundary_is_noop(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, -1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, id_b]
+
+    def test_move_grid_at_bottom_boundary_is_noop(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_b, 1)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, id_b]
+
+    def test_move_grid_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+
+        plot_orchestrator.move_grid(id_a, 1)
+
+        callback.assert_called_once()
+
+
+class TestSetGridEnabled:
+    """Tests for grid enable/disable functionality."""
+
+    def test_set_grid_disabled(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is False
+
+    def test_set_grid_re_enabled(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+
+        grids = plot_orchestrator.get_all_grids()
+        assert grids[grid_id].enabled is True
+
+    def test_set_grid_enabled_notifies_subscribers(self, plot_orchestrator):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        callback.assert_called_once()
+        assert callback.call_args[0][1].enabled is False
+
+    def test_disabled_grid_serialized(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert data['enabled'] is False
+
+    def test_enabled_grid_omits_enabled_from_serialization(self, plot_orchestrator):
+        """Enabled grids omit the 'enabled' key for clean YAML output."""
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert 'enabled' not in data

@@ -207,6 +207,7 @@ class PlotGridTabs:
             self._orchestrator.subscribe_to_lifecycle(
                 on_grid_created=self._on_grid_created,
                 on_grid_removed=self._on_grid_removed,
+                on_grid_updated=self._on_grid_updated,
                 on_cell_updated=self._on_cell_updated,
                 on_cell_removed=self._on_cell_removed,
             )
@@ -311,6 +312,42 @@ class PlotGridTabs:
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""
         self._remove_grid_tab(grid_id)
+
+    def _on_grid_updated(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
+        """Handle grid rename, reorder, or enable/disable from orchestrator.
+
+        Reconciles the current tab state against the orchestrator's grid list.
+        """
+        self._reconcile_grid_tabs()
+
+    def _reconcile_grid_tabs(self) -> None:
+        """Rebuild grid tabs to match orchestrator state (order, titles, enabled)."""
+        all_grids = self._orchestrator.get_all_grids()
+
+        # Remove all existing grid tabs
+        while len(self._tabs) > self._static_tabs_count:
+            self._tabs.pop(self._static_tabs_count)
+
+        # Rebuild _grid_widgets in orchestrator order, preserving existing widgets
+        old_widgets = self._grid_widgets
+        self._grid_widgets = {}
+
+        for grid_id, grid_config in all_grids.items():
+            if not grid_config.enabled:
+                # Disabled grids are hidden from tabs but we keep the widget
+                # reference so re-enabling doesn't lose state
+                if grid_id in old_widgets:
+                    self._grid_widgets[grid_id] = old_widgets[grid_id]
+                continue
+
+            if grid_id in old_widgets:
+                # Reuse existing widget, update tab title
+                plot_grid = old_widgets[grid_id]
+                self._grid_widgets[grid_id] = plot_grid
+                self._tabs.append((grid_config.title, plot_grid.panel))
+            else:
+                # Grid was re-enabled or is new — create fresh tab
+                self._add_grid_tab(grid_id, grid_config)
 
     def _on_plot_requested(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
