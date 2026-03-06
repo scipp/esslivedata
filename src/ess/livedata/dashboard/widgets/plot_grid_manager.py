@@ -133,7 +133,7 @@ class GridRow:
         move_down_button.disabled = is_last or on_move_down is None
 
         # Grid info label
-        label_text = f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})'
+        label_text = grid_config.title
         self._label = pn.pane.Str(
             label_text,
             margin=(0, 10),

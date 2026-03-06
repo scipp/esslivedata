@@ -219,8 +219,7 @@ class TestGridRow:
 
         # Label is at index 2 (after move_up, move_down)
         label_pane = row.panel[2]
-        assert 'My Test Grid' in label_pane.object
-        assert '2x5' in label_pane.object
+        assert label_pane.object == 'My Test Grid'
 
 
 class TestGridDownload:
