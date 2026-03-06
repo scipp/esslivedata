@@ -10,7 +10,6 @@ workflows with configurable projection types and parameters.
 from __future__ import annotations
 
 import scipp as sc
-from ess.reduce.nexus.types import RawDetector, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
 
 from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
@@ -19,6 +18,7 @@ from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ..detector_view_specs import DetectorViewParams
 from ..stream_processor_workflow import StreamProcessorWorkflow
+from ..workflow_input_types import PreprocessedDetectorEvents
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .types import (
     AccumulatedHistogram,
@@ -222,9 +222,7 @@ class DetectorViewFactory:
 
         return StreamProcessorWorkflow(
             workflow,
-            # Preprocessor already groups events by pixel, so inject directly
-            # as RawDetector, bypassing the NeXusData → RawDetector providers.
-            dynamic_keys={source_name: RawDetector[SampleRun]},
+            dynamic_keys={source_name: PreprocessedDetectorEvents},
             context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=window_outputs,

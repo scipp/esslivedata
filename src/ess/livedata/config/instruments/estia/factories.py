@@ -23,6 +23,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.streaming import EternalAccumulator
 
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.handlers.workflow_input_types import PreprocessedDetectorEvents
 
     def _make_spectrum_view(
         data: RawDetector[SampleRun],
@@ -55,7 +56,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[SpectrumViewTOAEdges] = edges
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys={'multiblade_detector': RawDetector[SampleRun]},
+            dynamic_keys={'multiblade_detector': PreprocessedDetectorEvents},
             target_keys={'spectrum_view': SpectrumView},
             accumulators={SpectrumView: EternalAccumulator},
         )

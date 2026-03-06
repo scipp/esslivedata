@@ -19,7 +19,6 @@ def setup_factories(instrument: Instrument) -> None:
         EmptyBeamRun,
         NeXusData,
         NeXusDetectorName,
-        RawDetector,
         SampleRun,
         TransmissionRun,
     )
@@ -49,6 +48,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
+    from ess.livedata.handlers.workflow_input_types import PreprocessedDetectorEvents
 
     _base_workflow = LokiWorkflow()
     _base_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('loki')
@@ -129,7 +129,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
         return {
-            source_name: RawDetector[SampleRun],
+            source_name: PreprocessedDetectorEvents,
             'incident_monitor': NeXusData[Incident, SampleRun],
             'transmission_monitor': NeXusData[Transmission, SampleRun],
         }

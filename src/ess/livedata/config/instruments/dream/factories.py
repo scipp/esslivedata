@@ -38,6 +38,7 @@ def setup_factories(instrument: Instrument) -> None:
         NeXusDetectorSource,
     )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.handlers.workflow_input_types import PreprocessedDetectorEvents
 
     from .specs import DreamDetectorViewParams
 
@@ -227,7 +228,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _powder_dynamic_keys(source_name: str):
         return {
-            source_name: RawDetector[SampleRun],
+            source_name: PreprocessedDetectorEvents,
             'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         }
 
