@@ -2091,6 +2091,63 @@ class TestSetGridEnabled:
         assert 'enabled' not in data
 
 
+class TestReplaceGrid:
+    """Tests for grid replacement functionality."""
+
+    def test_replace_preserves_position(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=3, ncols=3)
+        id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
+
+        new_id = plot_orchestrator.replace_grid(id_b, 'B2', nrows=4, ncols=4)
+
+        keys = list(plot_orchestrator.get_all_grids().keys())
+        assert keys == [id_a, new_id, id_c]
+        assert plot_orchestrator.get_grid(new_id).title == 'B2'
+        assert plot_orchestrator.get_grid(new_id).nrows == 4
+
+    def test_replace_fires_removed_then_created(self, plot_orchestrator):
+        removed = CallbackCapture()
+        created = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(
+            on_grid_removed=removed, on_grid_created=created
+        )
+
+        grid_id = plot_orchestrator.add_grid(title='X', nrows=2, ncols=2)
+        # Reset counters after add_grid fires on_grid_created
+        created._calls.clear()
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Y', nrows=3, ncols=3)
+
+        removed.assert_called_once()
+        assert removed.call_args[0][0] == grid_id
+        created.assert_called_once()
+        assert created.call_args[0][0] == new_id
+
+    def test_replace_cleans_up_old_cells(self, plot_orchestrator, plot_cell):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=3, ncols=3)
+        add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Test2', nrows=2, ncols=2)
+
+        new_grid = plot_orchestrator.get_grid(new_id)
+        assert len(new_grid.cells) == 0
+
+    def test_replace_preserves_enabled_state(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+
+        new_id = plot_orchestrator.replace_grid(grid_id, 'Test2', nrows=2, ncols=2)
+
+        assert plot_orchestrator.get_grid(new_id).enabled is False
+
+    def test_replace_unknown_grid_raises_key_error(self, plot_orchestrator):
+        fake_id = GridId(uuid.uuid4())
+
+        with pytest.raises(KeyError):
+            plot_orchestrator.replace_grid(fake_id, 'X', nrows=2, ncols=2)
+
+
 class TestPersistenceRoundTrip:
     """Tests that grid state survives persist-then-load cycles via ConfigStore."""
 

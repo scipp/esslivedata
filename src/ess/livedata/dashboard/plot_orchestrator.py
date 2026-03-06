@@ -449,6 +449,74 @@ class PlotOrchestrator:
         self._logger.info('Set grid %s enabled=%s', grid_id, enabled)
         self._notify_grid_updated(grid_id)
 
+    def replace_grid(
+        self, grid_id: GridId, title: str, nrows: int, ncols: int
+    ) -> GridId:
+        """
+        Replace a grid with a new empty grid at the same position.
+
+        Tears down all cells/layers of the old grid, fires ``on_grid_removed``,
+        then creates a new grid at the same position with the given dimensions
+        and fires ``on_grid_created``. The new grid inherits the old grid's
+        ``enabled`` state.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to replace. Must exist.
+        title
+            Display title for the new grid.
+        nrows
+            Number of rows in the new grid.
+        ncols
+            Number of columns in the new grid.
+
+        Returns
+        -------
+        :
+            ID of the newly created grid.
+
+        Raises
+        ------
+        KeyError
+            If ``grid_id`` does not exist.
+        """
+        old_grid = self._grids[grid_id]
+        enabled = old_grid.enabled
+
+        # Find position in ordered dict
+        keys = list(self._grids.keys())
+        position = keys.index(grid_id)
+
+        # Clean up all cells/layers
+        for cell_id, cell in list(old_grid.cells.items()):
+            self._remove_cell_and_cleanup(grid_id, cell_id, cell)
+
+        del self._grids[grid_id]
+        self._notify_grid_removed(grid_id)
+
+        # Create new grid and insert at the same position
+        new_grid_id = GridId(uuid4())
+        new_grid = PlotGridConfig(
+            title=title, nrows=nrows, ncols=ncols, enabled=enabled
+        )
+
+        # Rebuild dict with new grid at the original position
+        items = list(self._grids.items())
+        items.insert(position, (new_grid_id, new_grid))
+        self._grids = dict(items)
+
+        self._persist_to_store()
+        self._logger.info(
+            'Replaced grid %s with %s (%s) at position %d',
+            grid_id,
+            new_grid_id,
+            title,
+            position,
+        )
+        self._notify_grid_created(new_grid_id)
+        return new_grid_id
+
     def add_cell(self, grid_id: GridId, geometry: CellGeometry) -> CellId:
         """
         Add an empty cell to a grid.
