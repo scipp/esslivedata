@@ -32,7 +32,10 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
 
     def __init__(self, inner: ToNXevent_data, detector_number: sc.Variable) -> None:
         self._inner = inner
-        self._detector_number = detector_number
+        # Always use flat 1D detector_number for grouping. The downstream
+        # workflow's assemble_detector_data will fold to the correct
+        # multi-dimensional shape using EmptyDetector's detector_number.
+        self._detector_number = detector_number.flatten(to='detector_number')
 
     def add(self, timestamp: int, data: Events) -> None:
         self._inner.add(timestamp, data)
