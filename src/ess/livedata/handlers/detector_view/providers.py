@@ -38,6 +38,11 @@ def _project_detector(
     # place (optionally)? This is wasteful here, if variances are needed they can be
     # added after histogramming.
     detector = sc.values(detector)
+    # GeometricProjector operates on a flat pixel list — flatten multi-dim
+    # shapes (e.g., DREAM's wire/module/segment/strip/counter) to 1D.
+    # LogicalProjector expects the multi-dim shape for its transform.
+    if isinstance(projector, GeometricProjector) and detector.ndim > 1:
+        detector = detector.flatten(to='detector_number')
     return ScreenBinnedEvents(projector.project_events(detector))
 
 

@@ -37,13 +37,23 @@ def setup_factories(instrument: Instrument) -> None:
             .assign_coords(event_time_offset=toa_edges)
         )
 
-    from ess.reduce.nexus.types import Filename
+    from ess.reduce.nexus.types import EmptyDetector, Filename
 
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
     reduction_workflow = EstiaWorkflow()
     reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('estia')
     reduction_workflow.insert(_make_spectrum_view)
+
+    # Pre-compute EmptyDetector and register with instrument
+    from ess.reduce.nexus.types import NeXusName
+    from scippnexus import NXdetector
+
+    _wf = reduction_workflow.copy()
+    _wf[NeXusName[NXdetector]] = 'multiblade_detector'
+    _empty_detector = _wf.compute(EmptyDetector[SampleRun])
+    instrument.configure_detector('multiblade_detector', empty_detector=_empty_detector)
+    reduction_workflow[EmptyDetector[SampleRun]] = _empty_detector
 
     @specs.spectrum_view_handle.attach_factory()
     def _spectrum_view_workflow(

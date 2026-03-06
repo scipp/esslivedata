@@ -87,7 +87,7 @@ class Instrument:
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
-    _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
+    _empty_detectors: dict[str, sc.DataArray] = field(default_factory=dict)
     _nexus_file: str | None = None
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
@@ -137,6 +137,7 @@ class Instrument:
         name: str,
         detector_number: sc.Variable | None = None,
         *,
+        empty_detector: sc.DataArray | None = None,
         detector_group_name: str | None = None,
     ) -> None:
         """
@@ -147,7 +148,11 @@ class Instrument:
         name
             Name of the detector (must be in self.detector_names).
         detector_number
-            Optional explicit detector_number array (e.g., computed arrays for NMX).
+            Optional explicit detector_number array. Wraps into a minimal
+            EmptyDetector with just detector_number coord (no position).
+        empty_detector
+            Optional pre-computed EmptyDetector with full geometry (positions,
+            masks). Mutually exclusive with ``detector_number``.
         detector_group_name
             Optional detector group name for nexus file loading.
         """
@@ -156,15 +161,26 @@ class Instrument:
                 f"Detector {name} not in declared detector_names. "
                 f"Available detectors: {self.detector_names}"
             )
+        if detector_number is not None and empty_detector is not None:
+            raise ValueError(
+                "Provide either 'detector_number' or 'empty_detector', not both."
+            )
+        if empty_detector is not None:
+            self._empty_detectors[name] = empty_detector
+            return
         if detector_number is not None:
-            self._detector_numbers[name] = detector_number
+            from ess.livedata.handlers.detector_view.data_source import (
+                create_empty_detector,
+            )
+
+            self._empty_detectors[name] = create_empty_detector(detector_number)
             return
         if detector_group_name is not None:
             group_name = f'{detector_group_name}/{name}'
             self._detector_group_names[name] = group_name
 
     def _load_detector_from_nexus(self, name: str) -> None:
-        """Load detector_number from nexus file."""
+        """Load detector_number from nexus file and wrap as minimal EmptyDetector."""
         candidate = snx.load(
             self.nexus_file,
             root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
@@ -174,10 +190,18 @@ class Instrument:
                 f"Detector {name} not found in {self.nexus_file}. "
                 "Please provide a detector_number explicitly via configure_detector()."
             )
-        self._detector_numbers[name] = candidate
+        from ess.livedata.handlers.detector_view.data_source import (
+            create_empty_detector,
+        )
+
+        self._empty_detectors[name] = create_empty_detector(candidate)
+
+    def get_empty_detector(self, name: str) -> sc.DataArray:
+        """Get the pre-computed EmptyDetector for a detector source."""
+        return self._empty_detectors[name]
 
     def get_detector_number(self, name: str) -> sc.Variable:
-        return self._detector_numbers[name]
+        return self._empty_detectors[name].coords['detector_number']
 
     def get_source_title(self, source_name: str) -> str:
         """Get display title for a source, falling back to source_name.
@@ -416,7 +440,7 @@ class Instrument:
             module.setup_factories(self)
 
         for name in self.detector_names:
-            if name not in self._detector_numbers:
+            if name not in self._empty_detectors:
                 try:
                     self._load_detector_from_nexus(name)
                 except ValueError:

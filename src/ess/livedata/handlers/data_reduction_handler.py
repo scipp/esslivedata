@@ -26,8 +26,8 @@ class ReductionHandlerFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
             case StreamKind.DETECTOR_EVENTS:
-                detector_number = self._instrument.get_detector_number(key.name)
-                return GroupByPixel(ToNXevent_data(), detector_number)
+                empty_detector = self._instrument.get_empty_detector(key.name)
+                return GroupByPixel(ToNXevent_data(), empty_detector)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case _:

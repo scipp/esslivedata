@@ -39,8 +39,8 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
-                detector_number = self._instrument.get_detector_number(key.name)
-                return GroupByPixel(ToNXevent_data(), detector_number)
+                empty_detector = self._instrument.get_empty_detector(key.name)
+                return GroupByPixel(ToNXevent_data(), empty_detector)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:

@@ -212,10 +212,24 @@ def setup_factories(instrument: Instrument) -> None:
         'dream-no-shape'
     )
 
+    from ess.reduce.nexus.types import EmptyDetector
+
+    # Pre-compute EmptyDetector for each detector bank to avoid NeXus file
+    # loading on every workflow startup.
+    _empty_detectors: dict[str, sc.DataArray] = {}
+    for _det_name in instrument.detector_names:
+        _wf = _reduction_workflow.copy()
+        _wf[NeXusName[NXdetector]] = _det_name
+        _empty_detectors[_det_name] = _wf.compute(EmptyDetector[SampleRun])
+        instrument.configure_detector(
+            _det_name, empty_detector=_empty_detectors[_det_name]
+        )
+
     def _configure_powder_workflow(source_name: str, params: PowderWorkflowParams):
         """Configure common powder workflow settings."""
         wf = _reduction_workflow.copy()
         wf[NeXusName[NXdetector]] = source_name
+        wf[EmptyDetector[SampleRun]] = _empty_detectors[source_name]
         wf[dream.InstrumentConfiguration] = getattr(
             dream.InstrumentConfiguration, params.instrument_configuration.value
         )

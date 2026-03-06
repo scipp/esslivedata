@@ -120,21 +120,22 @@ class DetectorNumberSource:
 
 class InstrumentDetectorSource:
     """
-    Create EmptyDetector from an Instrument's configured detector_number.
+    Provide EmptyDetector from an Instrument's pre-computed detector data.
 
-    Use this for logical views where the detector_number is configured in the
+    Use this for logical views where the EmptyDetector is pre-computed in the
     Instrument and may differ for each source_name. This enables fast startup
     without file I/O while supporting multiple detector sources.
 
     Parameters
     ----------
     instrument:
-        The instrument configuration containing detector_number arrays.
+        The instrument configuration containing pre-computed EmptyDetectors.
     """
 
     def __init__(self, instrument: Instrument) -> None:
         self._instrument = instrument
 
     def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
-        detector_number = self._instrument.get_detector_number(source_name)
-        workflow[EmptyDetector[SampleRun]] = create_empty_detector(detector_number)
+        workflow[EmptyDetector[SampleRun]] = self._instrument.get_empty_detector(
+            source_name
+        )

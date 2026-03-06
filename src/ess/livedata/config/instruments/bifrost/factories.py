@@ -67,11 +67,6 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.livedata.handlers.workflow_input_types import PreprocessedDetectorEvents
 
-    from .streams import detector_number
-
-    # Configure detector
-    instrument.configure_detector('unified_detector', detector_number=detector_number)
-
     # Create detector view using Sciline-based factory with transform
     _detector_view_factory = DetectorViewFactory(
         data_source=InstrumentDetectorSource(instrument),
@@ -106,6 +101,15 @@ def setup_factories(instrument: Instrument) -> None:
         SpectrumViewPixelsPerTube,
         make_spectrum_view,
     ) = _create_base_reduction_workflow()
+
+    from ess.reduce.nexus.types import EmptyDetector
+
+    # Pre-compute combined EmptyDetector and register with instrument.
+    _empty_detector = reduction_workflow.compute(EmptyDetector[SampleRun])
+    instrument.configure_detector('unified_detector', empty_detector=_empty_detector)
+
+    # Inject pre-computed EmptyDetector to skip NeXus file loading on each copy
+    reduction_workflow[EmptyDetector[SampleRun]] = _empty_detector
 
     # Configure workflow with default parameters
     reduction_workflow[SpectrumViewTimeBins] = 500

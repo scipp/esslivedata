@@ -11,26 +11,21 @@ import scipp as sc
 
 
 def get_tube_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Transform to fold detector data for tube view.
+    """Identity transform — data arrives with correct layer/tube/straw/pixel shape.
 
-    Folds raw detector data into (layer, straw, tube, pixel) dimensions using
-    bank-specific sizes from DETECTOR_BANK_SIZES. The subsequent summing over
-    'straw' and 'pixel' dimensions is handled by the reduction_dim parameter
-    in add_logical_view to enable proper ROI support.
+    The subsequent summing over 'straw' and 'pixel' dimensions is handled by the
+    reduction_dim parameter in add_logical_view to enable proper ROI support.
 
     Parameters
     ----------
     da:
-        Raw detector data with a single dimension.
+        Detector data with dimensions (layer, tube, straw, pixel).
     source_name:
         Name of the detector bank (e.g., 'loki_detector_0').
 
     Returns
     -------
     :
-        Folded data with dimensions (layer, straw, tube, pixel).
+        Unchanged data.
     """
-    from ess.loki.workflow import DETECTOR_BANK_SIZES
-
-    sizes = DETECTOR_BANK_SIZES[source_name]
-    return da.fold(dim=da.dim, sizes=sizes)
+    return da

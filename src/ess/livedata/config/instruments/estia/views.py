@@ -11,7 +11,5 @@ import scipp as sc
 
 
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Transform to fold detector data into strip, blade, and wire dimensions."""
-    from ess.estia.beamline import DETECTOR_BANK_SIZES
-
-    return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
+    """Identity transform — data arrives with correct strip/blade/wire shape."""
+    return da

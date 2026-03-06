@@ -17,6 +17,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.loki.workflow import LokiWorkflow
     from ess.reduce.nexus.types import (
         EmptyBeamRun,
+        EmptyDetector,
         NeXusData,
         NeXusDetectorName,
         SampleRun,
@@ -60,6 +61,20 @@ def setup_factories(instrument: Instrument) -> None:
     _base_workflow[ReturnEvents] = ReturnEvents(False)
     _base_workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.upper_bound
     _base_workflow[DetectorMasks] = DetectorMasks({})
+
+    # Pre-compute EmptyDetector for each detector bank to avoid NeXus file
+    # loading on every workflow startup. BeamCenter is required by the
+    # dependency chain but only affects DetectorPositionOffset — zero offset
+    # gives unshifted positions. The actual BeamCenter is set per-workflow.
+    _empty_detectors: dict[str, sc.DataArray] = {}
+    for _det_name in instrument.detector_names:
+        _wf = _base_workflow.copy()
+        _wf[NeXusDetectorName] = _det_name
+        _wf[BeamCenter] = sc.vector([0, 0, 0], unit='m')
+        _empty_detectors[_det_name] = _wf.compute(EmptyDetector[SampleRun])
+        instrument.configure_detector(
+            _det_name, empty_detector=_empty_detectors[_det_name]
+        )
 
     # Sciline-based detector view with XY projection for all detector banks.
     # Resolution values = base resolution * scale (12), matching the legacy setup.
@@ -146,6 +161,7 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         wf = _base_workflow.copy()
         wf[NeXusDetectorName] = source_name
+        wf[EmptyDetector[SampleRun]] = _empty_detectors[source_name]
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()
