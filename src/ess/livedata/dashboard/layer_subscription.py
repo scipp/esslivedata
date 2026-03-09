@@ -47,8 +47,8 @@ class LayerSubscription:
     - Propagating stop notifications (fires on ANY workflow stop)
 
     Subscribes once per role in data_sources. If multiple roles share the same
-    workflow_id, this results in redundant subscriptions, which is harmless
-    and simpler than de-duplicating.
+    workflow_id, this results in redundant subscriptions. Stop notifications
+    are deduplicated by job_number so downstream handlers are only called once.
 
     Use start() to begin subscriptions after construction. This avoids callbacks
     firing during __init__ before the caller has stored the subscription.
@@ -87,6 +87,8 @@ class LayerSubscription:
         # Track job_numbers per role name
         self._job_numbers: dict[str, JobNumber] = {}
         self._subscription_ids: list[SubscriptionId] = []
+        # Deduplicate stop notifications when multiple roles share a workflow_id
+        self._propagated_stop_job_numbers: set[JobNumber] = set()
 
     def start(self) -> None:
         """
@@ -120,11 +122,18 @@ class LayerSubscription:
 
         Clears the job_number for the stopped source so the length check in
         _on_workflow_started will wait for restart before firing on_ready.
+
+        Guards against duplicate propagation when multiple roles share the same
+        workflow_id (each role fires its own callback for the same stop event).
         """
         if role in self._job_numbers:
             del self._job_numbers[role]
 
-        if self._on_stopped is not None:
+        if (
+            self._on_stopped is not None
+            and job_number not in self._propagated_stop_job_numbers
+        ):
+            self._propagated_stop_job_numbers.add(job_number)
             self._on_stopped(job_number)
 
     def _build_keys_by_role(self) -> dict[str, list[ResultKey]]:
