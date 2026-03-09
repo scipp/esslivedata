@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import threading
 import uuid
 
 import pytest
@@ -368,6 +369,7 @@ class FakeJobOrchestrator:
     def __init__(self, active_job_numbers: set[uuid.UUID] | None = None):
         self.acknowledgements: list[tuple[str, str, str | None]] = []
         self._active_job_numbers: set[uuid.UUID] = active_job_numbers or set()
+        self.data_flow_lock = threading.Lock()
 
     def is_active_job_number(self, job_number: uuid.UUID) -> bool:
         return job_number in self._active_job_numbers

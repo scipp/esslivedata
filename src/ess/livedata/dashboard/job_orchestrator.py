@@ -11,6 +11,7 @@ Coordinates workflow execution across multiple sources, handling:
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -162,6 +163,13 @@ class JobOrchestrator:
 
         # Active job numbers, maintained for O(1) lookup by Orchestrator
         self._active_job_numbers: set[JobNumber] = set()
+
+        # Serializes active-set mutations and DataService cleanup against
+        # Orchestrator.update() on the background thread. Orchestrator
+        # acquires this lock during message processing; commit_workflow and
+        # stop_workflow acquire it when changing the active set or deleting
+        # buffers. This prevents dict-iteration crashes and orphaned buffers.
+        self._data_flow_lock = threading.Lock()
 
         # Transaction state for batching staging operations
         self._transaction_workflow: WorkflowId | None = None
@@ -401,8 +409,14 @@ class JobOrchestrator:
             # the stop command will be discarded by the ingest filter in
             # Orchestrator.forward(). This is acceptable: the user has requested
             # new parameters, so results from the old configuration are stale.
-            self._active_job_numbers.discard(state.current.job_number)
-            self._cleanup_previous_job_data(state)
+            #
+            # The lock serializes this against Orchestrator.update() on the
+            # background thread: it prevents the check-then-act race where
+            # forward() passes the is_active_job_number check for the old
+            # number and then writes to a buffer that cleanup just deleted.
+            with self._data_flow_lock:
+                self._active_job_numbers.discard(state.current.job_number)
+                self._cleanup_previous_job_data(state)
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -442,18 +456,18 @@ class JobOrchestrator:
 
         # Set as current JobSet
         state.current = job_set
-        self._active_job_numbers.add(job_set.job_number)
+
+        # Activate the new job number and notify subscribers under the lock.
+        # This ensures that when Orchestrator.update() next runs, both the
+        # active-set membership and the DataService subscribers are consistent:
+        # forward() won't accept data for the new job until the subscriber
+        # (with the right extractors) is registered.
+        with self._data_flow_lock:
+            self._active_job_numbers.add(job_set.job_number)
+            self._notify_workflow_available(workflow_id, job_set.job_number)
 
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
-
-        # Notify PlotOrchestrator subscribers that job is active
-        logger.info(
-            'Workflow %s committed with job_number=%s, notifying subscribers',
-            workflow_id,
-            job_set.job_number,
-        )
-        self._notify_workflow_available(workflow_id, job_set.job_number)
 
         # Notify widget lifecycle subscribers that workflow was committed
         self._notify_workflow_committed(workflow_id)
@@ -468,6 +482,11 @@ class JobOrchestrator:
         stopped jobs or jobs not started by this dashboard. O(1) lookup.
         """
         return job_number in self._active_job_numbers
+
+    @property
+    def data_flow_lock(self) -> threading.Lock:
+        """Lock shared with Orchestrator for thread-safe data flow."""
+        return self._data_flow_lock
 
     def _cleanup_previous_job_data(self, state: WorkflowState) -> None:
         """Clean up buffered data and status tracking from a previous job set.
@@ -791,7 +810,8 @@ class JobOrchestrator:
         # filter in Orchestrator.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
         if job_number is not None:
-            self._active_job_numbers.discard(job_number)
+            with self._data_flow_lock:
+                self._active_job_numbers.discard(job_number)
         state.previous = state.current
         state.current = None
 

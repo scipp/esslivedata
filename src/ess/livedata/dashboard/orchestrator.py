@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -46,6 +47,9 @@ class Orchestrator:
         self._job_service = job_service
         self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
+        self._data_flow_lock = (
+            getattr(job_orchestrator, 'data_flow_lock', None) or nullcontext()
+        )
         self._logger = structlog.get_logger()
 
     def update(self) -> None:
@@ -58,13 +62,17 @@ class Orchestrator:
         if not messages:
             return
 
-        # Batch all updates in a transaction to avoid repeated UI updates. Reason:
-        # - Some listeners depend on multiple streams.
-        # - There may be multiple messages for the same stream, only the last one
-        #   should trigger an update.
-        with self._data_service.transaction():
-            for message in messages:
-                self.forward(stream_id=message.stream, value=message.value)
+        # The data-flow lock serializes message processing against active-set
+        # mutations and DataService cleanup in JobOrchestrator.commit_workflow
+        # (which runs on the UI thread). Without this, the background thread
+        # could iterate or write to DataService while the UI thread deletes
+        # buffers, causing dict-iteration crashes or orphaned buffers.
+        #
+        # Batch all updates in a transaction to avoid repeated UI updates.
+        with self._data_flow_lock:
+            with self._data_service.transaction():
+                for message in messages:
+                    self.forward(stream_id=message.stream, value=message.value)
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """

@@ -15,7 +15,6 @@ thread (JobOrchestrator.commit_workflow).
 
 import sys
 import threading
-import uuid
 
 import pytest
 import scipp as sc
@@ -223,117 +222,110 @@ class TestRestartCleanup:
         assert len(data_service) == len(workflow_spec.source_names)
 
 
-class TestRaceOrphanedBuffer:
+class TestConcurrentForwardAndCommit:
     """
-    Proves that a message which passes the active-job filter before
-    commit_workflow discards the old job number can re-create a buffer
-    that cleanup already deleted. The orphaned buffer is never cleaned
-    up by subsequent restarts, leaking memory indefinitely.
+    Thread-safety tests for concurrent Orchestrator.forward() (background
+    thread) and JobOrchestrator.commit_workflow() (UI thread).
 
-    The test simulates the race deterministically: after commit_workflow
-    cleans up, we write directly to DataService (representing a message
-    that already passed the filter on the background thread).
+    These tests exercise the data-flow lock that serializes active-set
+    mutations and DataService cleanup against message processing.
     """
 
-    @pytest.mark.xfail(
-        reason="Orphaned buffer from race window is never cleaned up",
-        strict=True,
-    )
-    def test_late_write_after_cleanup_does_not_persist(self, workflow_spec):
-        """An in-flight write after cleanup must not survive the next restart."""
-        _, job_orchestrator, data_service, _ = _make_system(workflow_spec)
-        workflow_id = workflow_spec.get_id()
-
-        # Commit 1: workflow running, data arrives
-        job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
-        old_number = job_ids_1[0].job_number
-        old_key = _make_result_key(
-            workflow_id, workflow_spec.source_names[0], old_number
-        )
-        data_service[old_key] = sc.scalar(1.0)
-
-        # Commit 2: cleanup deletes old data
-        job_orchestrator.commit_workflow(workflow_id)
-        assert old_key not in data_service
-
-        # Simulate the race: background thread was in-flight (already past
-        # the is_active_job_number check) and writes after cleanup ran.
-        data_service[old_key] = sc.scalar(42.0)
-
-        # Commit 3: this restart cleans up commit 2's job_number,
-        # NOT the orphaned key from commit 1.
-        job_orchestrator.commit_workflow(workflow_id)
-
-        # The orphaned buffer should not persist.
-        assert old_key not in data_service
-
-
-class TestRaceDictIteration:
-    """
-    Proves that concurrent iteration over DataService (as done by
-    _cleanup_previous_job_data's list comprehension) and insertion
-    (as done by Orchestrator.forward) can crash with RuntimeError.
-
-    The list comprehension ``[k for k in data_service if cond]`` iterates
-    the internal dict via Python bytecode. The GIL can switch between
-    iterations, allowing another thread to insert a key and trigger
-    ``RuntimeError: dictionary changed size during iteration``.
-    """
-
-    @pytest.mark.xfail(
-        reason="DataService dict iteration is not thread-safe",
-        strict=True,
-    )
     @pytest.mark.slow
-    def test_concurrent_iteration_and_insertion_does_not_crash(self, workflow_spec):
-        """Iterating DataService while another thread inserts must not crash."""
-        data_service = DataService()
+    def test_concurrent_forward_and_commit_does_not_crash(self, workflow_spec):
+        """Concurrent data forwarding and workflow restart must not crash."""
+        orchestrator, job_orchestrator, _data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
-        job_number = uuid.uuid4()
 
-        # Populate with enough keys to make iteration span multiple GIL switches
-        for i in range(200):
-            key = _make_result_key(workflow_id, f'source_{i}', job_number)
-            data_service[key] = sc.scalar(float(i))
+        # Initial commit
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
 
-        old_interval = sys.getswitchinterval()
-        sys.setswitchinterval(1e-6)  # Maximize GIL switching
-        try:
-            errors: list[Exception] = []
-            stop = threading.Event()
+        errors: list[Exception] = []
+        stop = threading.Event()
 
-            def iterate_like_cleanup():
-                """Iterate with a filter, same as _cleanup_previous_job_data."""
-                while not stop.is_set():
+        def forward_loop():
+            """Continuously forward data, as the background update thread does."""
+            i = 0
+            while not stop.is_set():
+                # Forward for the current active job (may change mid-loop)
+                for sn in workflow_spec.source_names:
+                    key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
                     try:
-                        _ = [
-                            k for k in data_service if k.job_id.job_number == job_number
-                        ]
-                    except RuntimeError as exc:
+                        with job_orchestrator.data_flow_lock:
+                            orchestrator.forward(
+                                _data_stream_id(key), sc.scalar(float(i))
+                            )
+                    except Exception as exc:
                         errors.append(exc)
                         return
+                i += 1
 
-            def insert_new_keys():
-                """Insert keys with a different job_number, simulating
-                Orchestrator.forward for another workflow."""
-                other_number = uuid.uuid4()
-                i = 0
-                while not stop.is_set():
-                    key = _make_result_key(workflow_id, f'other_{i}', other_number)
-                    data_service[key] = sc.scalar(1.0)
-                    i += 1
-
-            t_iter = threading.Thread(target=iterate_like_cleanup)
-            t_insert = threading.Thread(target=insert_new_keys)
-            t_iter.start()
-            t_insert.start()
-
-            # 1 second is enough to trigger the race reliably
-            stop.wait(timeout=1.0)
+        thread = threading.Thread(target=forward_loop)
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            thread.start()
+            # Restart the workflow many times while forward_loop runs
+            for _ in range(20):
+                job_ids = job_orchestrator.commit_workflow(workflow_id)
             stop.set()
-            t_iter.join(timeout=5.0)
-            t_insert.join(timeout=5.0)
-
-            assert not errors, f"Dict iteration crashed: {errors[0]}"
+            thread.join(timeout=5.0)
         finally:
             sys.setswitchinterval(old_interval)
+
+        assert not errors, f"Forward loop crashed: {errors[0]}"
+
+    @pytest.mark.slow
+    def test_concurrent_forward_and_commit_does_not_leak(self, workflow_spec):
+        """Repeated concurrent restarts must not leave orphaned data."""
+        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+
+        errors: list[Exception] = []
+        stop = threading.Event()
+        # Shared mutable ref so forward_loop always uses the latest job_ids
+        current_job_ids = [None]
+
+        def forward_loop():
+            """Continuously forward data for the current job."""
+            i = 0
+            while not stop.is_set():
+                jids = current_job_ids[0]
+                if jids is None:
+                    continue
+                for sn in workflow_spec.source_names:
+                    key = _make_result_key(workflow_id, sn, jids[0].job_number)
+                    try:
+                        with job_orchestrator.data_flow_lock:
+                            orchestrator.forward(
+                                _data_stream_id(key), sc.scalar(float(i))
+                            )
+                    except Exception as exc:
+                        errors.append(exc)
+                        return
+                i += 1
+
+        thread = threading.Thread(target=forward_loop)
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            # Restart many times
+            for _ in range(20):
+                current_job_ids[0] = job_orchestrator.commit_workflow(workflow_id)
+
+            thread.start()
+            # Let the forward loop run for a bit with the last job
+            stop.wait(timeout=0.2)
+            stop.set()
+            thread.join(timeout=5.0)
+        finally:
+            sys.setswitchinterval(old_interval)
+
+        assert not errors, f"Forward loop crashed: {errors[0]}"
+
+        # Only the last job's data should be present
+        last_number = current_job_ids[0][0].job_number
+        for key in data_service:
+            assert key.job_id.job_number == last_number, (
+                f"Orphaned key from old job: {key}"
+            )
