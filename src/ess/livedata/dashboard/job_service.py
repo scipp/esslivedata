@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from uuid import UUID
 
 import structlog
 
@@ -23,7 +24,6 @@ class JobService:
     ) -> None:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._job_status_timestamps: dict[JobId, int] = {}
-        self._removed_jobs: set[JobId] = set()
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
 
     @property
@@ -33,23 +33,9 @@ class JobService:
 
     def status_updated(self, job_status: JobStatus) -> None:
         """Update the stored job status and record timestamp."""
-        # Ignore in-flight heartbeats for jobs that have been eagerly removed.
-        if job_status.job_id in self._removed_jobs:
-            return
-
         logger.debug("Job status updated: %s", job_status)
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
-
-    def remove_job(self, job_id: JobId) -> None:
-        """Eagerly remove a job from tracking.
-
-        Marks the job so that in-flight heartbeats arriving after removal
-        do not re-add it.
-        """
-        self._removed_jobs.add(job_id)
-        self._job_statuses.pop(job_id, None)
-        self._job_status_timestamps.pop(job_id, None)
 
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).
@@ -82,5 +68,17 @@ class JobService:
         stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
         for jid in stale:
             logger.debug("Removing stale job %s", jid)
+            self._job_statuses.pop(jid, None)
+            self._job_status_timestamps.pop(jid, None)
+
+    def remove_jobs_by_number(self, job_number: UUID) -> None:
+        """Remove all jobs matching a given job number.
+
+        Used to clean up local tracking when a workflow is restarted
+        and the previous job set is no longer needed.
+        """
+        to_remove = [jid for jid in self._job_statuses if jid.job_number == job_number]
+        for jid in to_remove:
+            logger.debug("Removing job %s (job_number=%s)", jid, job_number)
             self._job_statuses.pop(jid, None)
             self._job_status_timestamps.pop(jid, None)

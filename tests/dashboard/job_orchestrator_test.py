@@ -21,7 +21,9 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
+from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
 
@@ -214,6 +216,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -235,6 +239,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -259,6 +265,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -277,6 +285,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -307,6 +317,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -341,6 +353,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -373,6 +387,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -392,6 +408,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -410,6 +428,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -432,6 +452,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -455,6 +477,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -480,6 +504,8 @@ class TestJobOrchestratorInitialization:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -519,6 +545,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -552,6 +580,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -584,6 +614,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -615,6 +647,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -661,6 +695,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -685,6 +721,8 @@ class TestJobOrchestratorMutationSafety:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -730,6 +768,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -767,6 +807,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -789,6 +831,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -841,6 +885,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -909,6 +955,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -942,6 +990,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,  # No config store
         )
 
@@ -977,6 +1027,8 @@ class TestJobOrchestratorCommit:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -1029,6 +1081,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1077,6 +1131,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1109,6 +1165,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1129,6 +1187,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1164,6 +1224,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=config_store,
         )
 
@@ -1202,6 +1264,8 @@ class TestJobOrchestratorStop:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1240,6 +1304,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1256,6 +1322,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1275,6 +1343,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1302,6 +1372,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1324,6 +1396,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1344,6 +1418,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1368,6 +1444,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1389,6 +1467,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1435,6 +1515,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1477,6 +1559,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1534,6 +1618,8 @@ class TestJobOrchestratorWorkflowStateVersion:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1558,6 +1644,8 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1602,6 +1690,8 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1645,6 +1735,8 @@ class TestWorkflowSubscriptions:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1672,6 +1764,8 @@ class TestWorkflowSubscriptions:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1704,6 +1798,8 @@ class TestWorkflowSubscriptions:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1731,6 +1827,8 @@ class TestWorkflowSubscriptions:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1759,6 +1857,8 @@ class TestWorkflowSubscriptions:
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
+            data_service=DataService(),
+            job_service=JobService(),
             config_store=None,
         )
 
@@ -1775,3 +1875,135 @@ class TestWorkflowSubscriptions:
         assert was_invoked is True
         assert len(started_job_numbers) == 1
         assert started_job_numbers[0] == job_ids[0].job_number
+
+
+class TestCommitCleansUpPreviousJobData:
+    """Tests that commit_workflow cleans up DataService and JobService entries
+    from the previous job set."""
+
+    def test_commit_removes_previous_data_service_entries(
+        self,
+        workflow_with_params: WorkflowSpec,
+    ):
+        """Recommitting a workflow removes DataService entries from the old job."""
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+        data_service = DataService()
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_registry=registry,
+            data_service=data_service,
+            job_service=JobService(),
+        )
+
+        # First commit
+        job_ids = orchestrator.commit_workflow(workflow_id)
+        old_job_number = job_ids[0].job_number
+
+        # Simulate backend publishing results for the old job
+        for source_name in workflow_with_params.source_names:
+            key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=old_job_number),
+            )
+            data_service[key] = sc.scalar(1.0)
+
+        assert len(data_service) == len(workflow_with_params.source_names)
+
+        # Re-commit — should clean up old entries
+        orchestrator.commit_workflow(workflow_id)
+
+        assert len(data_service) == 0
+
+    def test_commit_removes_previous_job_service_entries(
+        self,
+        workflow_with_params: WorkflowSpec,
+    ):
+        """Recommitting removes JobService status entries from previous job."""
+        from ess.livedata.core.job import JobState, JobStatus
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+        job_service = JobService()
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_registry=registry,
+            data_service=DataService(),
+            job_service=job_service,
+        )
+
+        # First commit
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Simulate backend broadcasting status for old jobs
+        for job_id in job_ids:
+            job_service.status_updated(
+                JobStatus(
+                    job_id=job_id,
+                    workflow_id=workflow_id,
+                    state=JobState.active,
+                )
+            )
+
+        assert len(job_service.job_statuses) == len(job_ids)
+
+        # Re-commit — should clean up old status entries
+        orchestrator.commit_workflow(workflow_id)
+
+        assert len(job_service.job_statuses) == 0
+
+    def test_commit_does_not_remove_data_from_other_workflows(
+        self,
+        workflow_with_params: WorkflowSpec,
+    ):
+        """Cleanup only affects the recommitted workflow, not other workflows."""
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+        data_service = DataService()
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_registry=registry,
+            data_service=data_service,
+            job_service=JobService(),
+        )
+
+        # First commit
+        job_ids = orchestrator.commit_workflow(workflow_id)
+        old_job_number = job_ids[0].job_number
+
+        # Add data for old job
+        key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(
+                source_name=workflow_with_params.source_names[0],
+                job_number=old_job_number,
+            ),
+        )
+        data_service[key] = sc.scalar(1.0)
+
+        # Add data with a different (unrelated) job_number
+        import uuid
+
+        unrelated_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(
+                source_name="other_source",
+                job_number=uuid.uuid4(),
+            ),
+        )
+        data_service[unrelated_key] = sc.scalar(2.0)
+
+        assert len(data_service) == 2
+
+        # Re-commit — only the old job_number's data should be removed
+        orchestrator.commit_workflow(workflow_id)
+
+        assert len(data_service) == 1
+        assert unrelated_key in data_service

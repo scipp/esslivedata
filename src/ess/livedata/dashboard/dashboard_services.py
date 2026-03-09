@@ -17,7 +17,6 @@ from ess.livedata.config.workflow_spec import ResultKey
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
-from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .notification_queue import NotificationQueue
@@ -162,9 +161,6 @@ class DashboardServices:
         self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
-        self.job_controller = JobController(
-            command_service=self.command_service, job_service=self.job_service
-        )
 
         # Create ROI publisher for publishing ROI updates to Kafka
         roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
@@ -205,6 +201,8 @@ class DashboardServices:
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
+            data_service=self.data_service,
+            job_service=self.job_service,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
