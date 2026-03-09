@@ -197,6 +197,26 @@ def get_batch_calls(sink: FakeMessageSink) -> list[int]:
     return [len(messages) for messages in sink.published_messages]
 
 
+def make_orchestrator(
+    *specs: WorkflowSpec,
+    config_store=None,
+    fake_sink: FakeMessageSink | None = None,
+    data_service: DataService | None = None,
+    job_service: JobService | None = None,
+) -> JobOrchestrator:
+    """Build a JobOrchestrator from one or more WorkflowSpecs for testing."""
+    registry = {spec.get_id(): spec for spec in specs}
+    return JobOrchestrator(
+        command_service=CommandService(
+            sink=fake_sink if fake_sink is not None else FakeMessageSink()
+        ),
+        workflow_registry=registry,
+        data_service=data_service if data_service is not None else DataService(),
+        job_service=job_service if job_service is not None else JobService(),
+        config_store=config_store,
+    )
+
+
 class TestJobOrchestratorInitialization:
     """Test JobOrchestrator initialization behavior."""
 
@@ -208,18 +228,7 @@ class TestJobOrchestratorInitialization:
         """All workflows in registry should be initialized even without config store."""
         workflow_id_1 = workflow_with_params.get_id()
         workflow_id_2 = workflow_no_params.get_id()
-        registry = {
-            workflow_id_1: workflow_with_params,
-            workflow_id_2: workflow_no_params,
-        }
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, workflow_no_params)
 
         # Both workflows should exist in _workflows
         staged_1 = orchestrator.get_staged_config(workflow_id_1)
@@ -234,15 +243,7 @@ class TestJobOrchestratorInitialization:
     ):
         """Workflow with params model should get default params for all sources."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
@@ -260,15 +261,7 @@ class TestJobOrchestratorInitialization:
     ):
         """Workflow without params should exist but have empty staged_jobs."""
         workflow_id = workflow_no_params.get_id()
-        registry = {workflow_id: workflow_no_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_no_params)
 
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
@@ -280,15 +273,7 @@ class TestJobOrchestratorInitialization:
     ):
         """Workflow with empty source_names should have empty staged_jobs."""
         workflow_id = workflow_empty_sources.get_id()
-        registry = {workflow_id: workflow_empty_sources}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_empty_sources)
 
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
@@ -300,7 +285,6 @@ class TestJobOrchestratorInitialization:
     ):
         """Should load and use config from store when available."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
 
         # Setup config store with persisted config (raw dict format)
         config_store = {
@@ -313,13 +297,8 @@ class TestJobOrchestratorInitialization:
                 }
             }
         }
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_params, config_store=config_store
         )
 
         staged = orchestrator.get_staged_config(workflow_id)
@@ -336,7 +315,6 @@ class TestJobOrchestratorInitialization:
     ):
         """Invalid configs are loaded as-is (validation happens later in UI)."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
 
         # Setup config store with invalid param types
         config_store = {
@@ -349,13 +327,8 @@ class TestJobOrchestratorInitialization:
                 }
             }
         }
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_params, config_store=config_store
         )
 
         staged = orchestrator.get_staged_config(workflow_id)
@@ -371,7 +344,6 @@ class TestJobOrchestratorInitialization:
     ):
         """Should load aux_source_names from config store."""
         workflow_id = workflow_with_params_and_aux.get_id()
-        registry = {workflow_id: workflow_with_params_and_aux}
 
         config_store = {
             str(workflow_id): {
@@ -383,13 +355,8 @@ class TestJobOrchestratorInitialization:
                 }
             }
         }
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_params_and_aux, config_store=config_store
         )
 
         staged = orchestrator.get_staged_config(workflow_id)
@@ -403,15 +370,7 @@ class TestJobOrchestratorInitialization:
     ):
         """get_staged_config should never raise KeyError for valid workflow_id."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Should not raise
         result = orchestrator.get_staged_config(workflow_id)
@@ -422,16 +381,7 @@ class TestJobOrchestratorInitialization:
         workflow_with_params: WorkflowSpec,
     ):
         """get_staged_config should raise KeyError for unknown workflow_id."""
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         unknown_id = WorkflowId(
             instrument="unknown", namespace="unknown", name="unknown", version=99
@@ -447,15 +397,7 @@ class TestJobOrchestratorInitialization:
     ):
         """get_staged_config returns dict mapping source names to configs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Should return dict with all sources
         configs = orchestrator.get_staged_config(workflow_id)
@@ -472,15 +414,7 @@ class TestJobOrchestratorInitialization:
     ):
         """Workflow with params that can't be instantiated gets empty WorkflowState."""
         workflow_id = workflow_params_without_defaults.get_id()
-        registry = {workflow_id: workflow_params_without_defaults}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_params_without_defaults)
 
         # Should exist in _workflows but have empty staged_jobs
         staged = orchestrator.get_staged_config(workflow_id)
@@ -494,19 +428,12 @@ class TestJobOrchestratorInitialization:
     ):
         """Enum values in params should be serialized as strings, not enum objects."""
         workflow_id = workflow_with_enum_params.get_id()
-        registry = {workflow_id: workflow_with_enum_params}
 
         # Create a temporary file for config store
         config_file = tmp_path / "test_config.yaml"
-
         config_store = FileBackedConfigStore(file_path=config_file)
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_enum_params, config_store=config_store
         )
 
         # Commit workflow to trigger persistence
@@ -540,15 +467,7 @@ class TestJobOrchestratorMutationSafety:
     ):
         """Modifying params dict after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage config with mutable params dict
         params = {"threshold": 50.0, "mode": "custom"}
@@ -575,15 +494,7 @@ class TestJobOrchestratorMutationSafety:
     ):
         """Modifying aux_source_names after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage config with mutable aux_source_names dict
         params = {"threshold": 50.0}
@@ -609,15 +520,7 @@ class TestJobOrchestratorMutationSafety:
     ):
         """Modifying returned config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         orchestrator.stage_config(
             workflow_id,
@@ -642,15 +545,7 @@ class TestJobOrchestratorMutationSafety:
     ):
         """Modifying returned active config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         orchestrator.stage_config(
             workflow_id,
@@ -674,7 +569,6 @@ class TestJobOrchestratorMutationSafety:
     ):
         """Each JobConfig should have independent params/aux_source_names dicts."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
 
         # Config store with multiple sources (each with their own params)
         config_store = {
@@ -692,12 +586,8 @@ class TestJobOrchestratorMutationSafety:
             }
         }
 
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_params, config_store=config_store
         )
 
         # Modify params for one source
@@ -716,15 +606,7 @@ class TestJobOrchestratorMutationSafety:
     ):
         """After commit, modifying staged config should not affect active config."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage and commit initial config
         orchestrator.stage_config(
@@ -763,15 +645,7 @@ class TestJobOrchestratorCommit:
     ):
         """Verify commit_workflow returns correct JobIds for all staged sources."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage configs for 2 sources
         orchestrator.stage_config(
@@ -802,15 +676,7 @@ class TestJobOrchestratorCommit:
     ):
         """Verify commit_workflow raises ValueError if no configs staged."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Clear staged jobs (workflow initialized with defaults from spec)
         orchestrator.clear_staged_configs(workflow_id)
@@ -825,16 +691,8 @@ class TestJobOrchestratorCommit:
     ):
         """Verify correct WorkflowConfig messages sent for each source."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
         fake_sink = FakeMessageSink()
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=fake_sink),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
 
         # Stage configs
         orchestrator.stage_config(
@@ -879,16 +737,8 @@ class TestJobOrchestratorCommit:
     ):
         """Verify second commit sends stop commands for previous jobs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
         fake_sink = FakeMessageSink()
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=fake_sink),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
 
         # Commit first workflow
         orchestrator.stage_config(
@@ -950,15 +800,7 @@ class TestJobOrchestratorCommit:
     ):
         """Verify clear + commit interaction raises appropriate error."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage some configs
         orchestrator.stage_config(
@@ -985,15 +827,7 @@ class TestJobOrchestratorCommit:
     ):
         """Config persistence should silently no-op when config_store is None."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,  # No config store
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Clear defaults and stage only one source
         orchestrator.clear_staged_configs(workflow_id)
@@ -1016,20 +850,11 @@ class TestJobOrchestratorCommit:
         """Config persistence should silently no-op when staged_jobs is empty."""
         workflow_id_no_params = workflow_no_params.get_id()
         workflow_id_with_params = workflow_with_params.get_id()
-        registry = {
-            workflow_id_no_params: workflow_no_params,
-            workflow_id_with_params: workflow_with_params,
-        }
 
         # Use a dict config store to verify it's not modified
         config_store: dict[str, dict] = {}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_no_params, workflow_with_params, config_store=config_store
         )
 
         # Stage and commit workflow_with_params (should persist)
@@ -1075,16 +900,8 @@ class TestJobOrchestratorStop:
     ):
         """Verify stop_workflow sends stop commands for all active jobs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
         fake_sink = FakeMessageSink()
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=fake_sink),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
 
         # Start a workflow
         orchestrator.stage_config(
@@ -1126,15 +943,7 @@ class TestJobOrchestratorStop:
     ):
         """Verify stop_workflow clears current job state."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Start a workflow
         orchestrator.stage_config(
@@ -1160,15 +969,7 @@ class TestJobOrchestratorStop:
     ):
         """Verify stop_workflow returns False when no active jobs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Don't start any workflow - just try to stop
         result = orchestrator.stop_workflow(workflow_id)
@@ -1182,15 +983,7 @@ class TestJobOrchestratorStop:
     ):
         """Verify stop_workflow preserves staged configuration for restart."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Clear defaults and stage only det_1
         orchestrator.clear_staged_configs(workflow_id)
@@ -1218,15 +1011,10 @@ class TestJobOrchestratorStop:
     ):
         """Verify stop_workflow persists stopped state to config store."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
 
         config_store: dict[str, dict] = {}
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=config_store,
+        orchestrator = make_orchestrator(
+            workflow_with_params, config_store=config_store
         )
 
         # Start a workflow
@@ -1259,15 +1047,7 @@ class TestJobOrchestratorStop:
     ):
         """Verify workflow can be restarted immediately after stopping."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Clear defaults and stage only det_1
         orchestrator.clear_staged_configs(workflow_id)
@@ -1299,15 +1079,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """Workflow state version starts at zero after initialization."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         assert orchestrator.get_workflow_state_version(workflow_id) == 0
 
@@ -1316,16 +1088,7 @@ class TestJobOrchestratorWorkflowStateVersion:
         workflow_with_params: WorkflowSpec,
     ):
         """get_workflow_state_version returns 0 for unknown workflow IDs."""
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         unknown_id = WorkflowId(
             instrument="unknown", namespace="unknown", name="unknown", version=99
@@ -1338,15 +1101,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """stage_config increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1367,15 +1122,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """clear_staged_configs increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1391,15 +1138,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """commit_workflow increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1413,15 +1152,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """stop_workflow increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # First commit to have something to stop
         orchestrator.commit_workflow(workflow_id)
@@ -1439,15 +1170,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """stop_workflow does not increment version when there are no active jobs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1462,15 +1185,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """staging_transaction allows replacing all configs in one operation."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage some initial configs
         orchestrator.stage_config(
@@ -1510,15 +1225,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """staging_transaction increments version by 1 for batched operations."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1554,15 +1261,7 @@ class TestJobOrchestratorWorkflowStateVersion:
     ):
         """Nested staging transactions increment version by exactly 1."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         version_before = orchestrator.get_workflow_state_version(workflow_id)
 
@@ -1613,15 +1312,7 @@ class TestJobOrchestratorWorkflowStateVersion:
         )
         workflow_id_2 = workflow_2.get_id()
 
-        registry = {workflow_id_1: workflow_with_params, workflow_id_2: workflow_2}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, workflow_2)
 
         # Should raise error when trying to nest different workflows
         with orchestrator.staging_transaction(workflow_id_1):
@@ -1639,15 +1330,7 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
     ):
         """Configuring one source should not affect other sources' configs."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage initial config for det_1 with specific params
         orchestrator.stage_config(
@@ -1685,15 +1368,7 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
     ):
         """Updating an already-configured source should update its config."""
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Stage initial config for det_1
         orchestrator.stage_config(
@@ -1730,15 +1405,7 @@ class TestWorkflowSubscriptions:
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         started_job_numbers = []
         callbacks = WorkflowCallbacks(
@@ -1759,15 +1426,7 @@ class TestWorkflowSubscriptions:
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         started_job_numbers = []
         stopped_job_numbers = []
@@ -1793,15 +1452,7 @@ class TestWorkflowSubscriptions:
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         started_job_numbers = []
         callbacks = WorkflowCallbacks(
@@ -1822,15 +1473,7 @@ class TestWorkflowSubscriptions:
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         stopped_job_numbers = []
         callbacks = WorkflowCallbacks(
@@ -1852,15 +1495,7 @@ class TestWorkflowSubscriptions:
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=JobService(),
-            config_store=None,
-        )
+        orchestrator = make_orchestrator(workflow_with_params)
 
         # Commit workflow first
         job_ids = orchestrator.commit_workflow(workflow_id)
@@ -1889,14 +1524,9 @@ class TestCommitCleansUpPreviousJobData:
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
         data_service = DataService()
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=data_service,
-            job_service=JobService(),
+        orchestrator = make_orchestrator(
+            workflow_with_params, data_service=data_service
         )
 
         # First commit
@@ -1926,15 +1556,8 @@ class TestCommitCleansUpPreviousJobData:
         from ess.livedata.core.job import JobState, JobStatus
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
         job_service = JobService()
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=DataService(),
-            job_service=job_service,
-        )
+        orchestrator = make_orchestrator(workflow_with_params, job_service=job_service)
 
         # First commit
         job_ids = orchestrator.commit_workflow(workflow_id)
@@ -1964,14 +1587,9 @@ class TestCommitCleansUpPreviousJobData:
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
         workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
         data_service = DataService()
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            data_service=data_service,
-            job_service=JobService(),
+        orchestrator = make_orchestrator(
+            workflow_with_params, data_service=data_service
         )
 
         # First commit
