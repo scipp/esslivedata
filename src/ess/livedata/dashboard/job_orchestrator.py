@@ -392,6 +392,9 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
+            # Move current to previous for cleanup once stop commands succeed.
+            # Related to #445: Future improvements may wait for stop command
+            # success responses before removing old job data.
             self._cleanup_previous_job_data(state)
             state.previous = state.current
 
