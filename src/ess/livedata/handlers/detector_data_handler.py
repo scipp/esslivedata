@@ -30,8 +30,9 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
         The instrument configuration.
     """
 
-    def __init__(self, *, instrument: Instrument) -> None:
+    def __init__(self, *, instrument: Instrument, group_by_pixel: bool = True) -> None:
         super().__init__(instrument=instrument)
+        self._group_by_pixel = group_by_pixel
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:
@@ -39,8 +40,10 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
-                detector_number = self._instrument.get_detector_number(key.name)
-                return GroupByPixel(ToNXevent_data(), detector_number)
+                if self._group_by_pixel:
+                    detector_number = self._instrument.get_detector_number(key.name)
+                    return GroupByPixel(ToNXevent_data(), detector_number)
+                return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
