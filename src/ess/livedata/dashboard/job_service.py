@@ -59,26 +59,15 @@ class JobService:
 
         return age_ns > self._heartbeat_timeout_ns
 
-    def remove_stale_jobs(self) -> None:
-        """Remove jobs whose heartbeats have timed out.
 
-        Called periodically to clean up jobs that are no longer broadcasting,
-        e.g., after a stop command was processed by the backend.
-        """
-        stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
-        for jid in stale:
-            logger.debug("Removing stale job %s", jid)
-            self._job_statuses.pop(jid, None)
-            self._job_status_timestamps.pop(jid, None)
+def remove_jobs_by_number(self, job_number: UUID) -> None:
+    """Remove all jobs matching a given job number.
 
-    def remove_jobs_by_number(self, job_number: UUID) -> None:
-        """Remove all jobs matching a given job number.
-
-        Used to clean up local tracking when a workflow is restarted
-        and the previous job set is no longer needed.
-        """
-        to_remove = [jid for jid in self._job_statuses if jid.job_number == job_number]
-        for jid in to_remove:
-            logger.debug("Removing job %s (job_number=%s)", jid, job_number)
-            self._job_statuses.pop(jid, None)
-            self._job_status_timestamps.pop(jid, None)
+    Used to clean up local tracking when a workflow is restarted
+    and the previous job set is no longer needed.
+    """
+    to_remove = [jid for jid in self._job_statuses if jid.job_number == job_number]
+    for jid in to_remove:
+        logger.debug("Removing job %s (job_number=%s)", jid, job_number)
+        self._job_statuses.pop(jid, None)
+        self._job_status_timestamps.pop(jid, None)
