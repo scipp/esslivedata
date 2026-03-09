@@ -84,6 +84,7 @@ class GeometricViewConfig:
     projection_type: Literal['xy_plane', 'cylinder_mantle_z']
     resolution: dict[str, int]
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
+    flip_x: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +143,9 @@ ProjectionType = NewType(
     str | None,  # Literal['xy_plane', 'cylinder_mantle_z'] | None
 )
 """Type of geometric projection to use, or None for logical view."""
+
+FlipX = NewType('FlipX', bool)
+"""Whether to mirror the x-axis for 'view from sample' orientation."""
 
 # Intermediate types for event projection
 ScreenBinnedEvents = NewType('ScreenBinnedEvents', sc.DataArray)
