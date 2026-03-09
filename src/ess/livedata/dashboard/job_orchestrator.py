@@ -392,9 +392,8 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            # Move current to previous for cleanup once stop commands succeed.
-            # Related to #445: Future improvements may wait for stop command
-            # success responses before removing old job data.
+            # Clean up buffered data from the outgoing job. Safe from re-addition
+            # because Orchestrator.forward() filters by active job_number.
             self._cleanup_previous_job_data(state)
             state.previous = state.current
 
@@ -452,6 +451,17 @@ class JobOrchestrator:
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
+
+    def is_active_job_number(self, job_number: JobNumber) -> bool:
+        """Check if a job_number belongs to a currently active job set.
+
+        Used by Orchestrator to filter incoming data, rejecting messages from
+        stopped jobs or jobs not started by this dashboard.
+        """
+        return any(
+            state.current is not None and state.current.job_number == job_number
+            for state in self._workflows.values()
+        )
 
     def _cleanup_previous_job_data(self, state: WorkflowState) -> None:
         """Clean up buffered data and status tracking from a previous job set.

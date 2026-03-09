@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
-from ..config.workflow_spec import ResultKey
+from ..config.workflow_spec import JobNumber, ResultKey
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -70,11 +70,14 @@ class Orchestrator:
         """
         Forward data to the appropriate data service based on the stream name.
 
+        Data and job status messages are filtered by active job number when a
+        JobOrchestrator is available. Messages from unknown or stopped jobs are
+        silently discarded.
+
         Parameters
         ----------
-        stream_name:
-            The name of the stream in the format 'source_name/service_name/suffix'. The
-            suffix may contain additional '/' characters which will be ignored.
+        stream_id:
+            The stream identifier.
         value:
             The data to be forwarded.
         """
@@ -82,14 +85,25 @@ class Orchestrator:
             if isinstance(value, ServiceStatus):
                 self._service_registry.status_updated(value)
             elif isinstance(value, JobStatus):
-                self._job_service.status_updated(value)
+                if self._is_active_job(value.job_id.job_number):
+                    self._job_service.status_updated(value)
             else:
                 self._logger.warning("Unknown status type: %s", type(value))
         elif stream_id == RESPONSES_STREAM_ID:
             self._process_response(value)
         else:
             result_key = ResultKey.model_validate_json(stream_id.name)
-            self._data_service[result_key] = value
+            if self._is_active_job(result_key.job_id.job_number):
+                self._data_service[result_key] = value
+
+    def _is_active_job(self, job_number: JobNumber) -> bool:
+        """Check if a job_number belongs to an active job.
+
+        Returns True if no JobOrchestrator is configured (permissive mode).
+        """
+        if self._job_orchestrator is None:
+            return True
+        return self._job_orchestrator.is_active_job_number(job_number)
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
         """Process a command acknowledgement from the backend."""

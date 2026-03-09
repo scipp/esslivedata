@@ -365,8 +365,12 @@ class TestOrchestrator:
 class FakeJobOrchestrator:
     """Fake job orchestrator that records processed acknowledgements."""
 
-    def __init__(self):
+    def __init__(self, active_job_numbers: set[uuid.UUID] | None = None):
         self.acknowledgements: list[tuple[str, str, str | None]] = []
+        self._active_job_numbers: set[uuid.UUID] = active_job_numbers or set()
+
+    def is_active_job_number(self, job_number: uuid.UUID) -> bool:
+        return job_number in self._active_job_numbers
 
     def process_acknowledgement(
         self, message_id: str, response: str, error_message: str | None = None
@@ -538,6 +542,119 @@ class TestOrchestratorServiceStatusRouting:
         # Verify job service received the status (not service registry)
         assert len(service_registry.worker_statuses) == 0
         assert len(job_service.job_statuses) == 1
+
+
+class TestOrchestratorJobFiltering:
+    """Test that data from inactive or unknown jobs is filtered out."""
+
+    def _make_orchestrator(self, active_job_numbers):
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        job_orchestrator = FakeJobOrchestrator(
+            active_job_numbers=set(active_job_numbers)
+        )
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
+            job_orchestrator=job_orchestrator,
+        )
+        return orchestrator, data_service, job_service
+
+    def test_accepts_data_for_active_job(self) -> None:
+        job_number = make_job_number()
+        orchestrator, data_service, _ = self._make_orchestrator([job_number])
+
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+        job_id = JobId(source_name="det1", job_number=job_number)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name="result"
+        )
+        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
+        orchestrator.forward(_data_stream_id(result_key), data)
+
+        assert result_key in data_service
+
+    def test_discards_data_for_inactive_job(self) -> None:
+        active_number = make_job_number()
+        inactive_number = make_job_number()
+        orchestrator, data_service, _ = self._make_orchestrator([active_number])
+
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+        job_id = JobId(source_name="det1", job_number=inactive_number)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name="result"
+        )
+        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
+        orchestrator.forward(_data_stream_id(result_key), data)
+
+        assert result_key not in data_service
+
+    def test_accepts_job_status_for_active_job(self) -> None:
+        from ess.livedata.core.job import JobState, JobStatus
+
+        job_number = make_job_number()
+        orchestrator, _, job_service = self._make_orchestrator([job_number])
+
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+        job_id = JobId(source_name="det1", job_number=job_number)
+        status = JobStatus(
+            job_id=job_id, workflow_id=workflow_id, state=JobState.active
+        )
+        orchestrator.forward(STATUS_STREAM_ID, status)
+
+        assert len(job_service.job_statuses) == 1
+
+    def test_discards_job_status_for_inactive_job(self) -> None:
+        from ess.livedata.core.job import JobState, JobStatus
+
+        active_number = make_job_number()
+        inactive_number = make_job_number()
+        orchestrator, _, job_service = self._make_orchestrator([active_number])
+
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+        job_id = JobId(source_name="det1", job_number=inactive_number)
+        status = JobStatus(
+            job_id=job_id, workflow_id=workflow_id, state=JobState.active
+        )
+        orchestrator.forward(STATUS_STREAM_ID, status)
+
+        assert len(job_service.job_statuses) == 0
+
+    def test_no_orchestrator_accepts_all_data(self) -> None:
+        """Without a JobOrchestrator, all data is accepted (permissive mode)."""
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
+            job_orchestrator=None,
+        )
+
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+        job_id = JobId(source_name="det1", job_number=make_job_number())
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name="result"
+        )
+        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
+        orchestrator.forward(_data_stream_id(result_key), data)
+
+        assert result_key in data_service
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:
