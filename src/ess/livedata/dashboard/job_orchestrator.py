@@ -396,8 +396,11 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            # Clean up buffered data from the outgoing job. Safe from re-addition
-            # because Orchestrator.forward() filters by active job_number.
+            # Remove outgoing job from the active set and clean up its buffered
+            # data. Any final results the backend publishes before processing
+            # the stop command will be discarded by the ingest filter in
+            # Orchestrator.forward(). This is acceptable: the user has requested
+            # new parameters, so results from the old configuration are stale.
             self._active_job_numbers.discard(state.current.job_number)
             self._cleanup_previous_job_data(state)
             state.previous = state.current
@@ -782,7 +785,11 @@ class JobOrchestrator:
         if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
 
-        # Clear local state immediately (don't wait for backend confirmation)
+        # Remove from active set immediately, before the backend has processed
+        # the stop command. This means any final results the backend publishes
+        # between now and actually stopping will be discarded by the ingest
+        # filter in Orchestrator.forward(). This is intentional: the user has
+        # requested a stop, so late-arriving data would be confusing.
         if job_number is not None:
             self._active_job_numbers.discard(job_number)
         state.previous = state.current
