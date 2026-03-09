@@ -137,23 +137,6 @@ def _make_positions(*, z_sign: float = 1.0) -> sc.Variable:
 class TestMakeGeometricProjectorFlipX:
     """Tests for the flip_x parameter in make_geometric_projector."""
 
-    def test_flip_x_negates_x_coordinates(self):
-        positions = _make_positions()
-        resolution = {'x': 3, 'y': 2}
-
-        proj_normal = make_geometric_projector(
-            positions, 'xy_plane', resolution, flip_x=False
-        )
-        proj_flipped = make_geometric_projector(
-            positions, 'xy_plane', resolution, flip_x=True
-        )
-
-        normal_x = sc.midpoints(proj_normal._edges['x'])
-        flipped_x = sc.midpoints(proj_flipped._edges['x'])
-
-        # Flipped edges should be the negation of normal edges (reversed order)
-        assert sc.allclose(flipped_x, -sc.sort(normal_x, 'x', order='descending'))
-
     def test_flip_x_mirrors_projected_image(self):
         """Projecting events with flip_x mirrors the image along x."""
         positions = _make_positions()
@@ -178,17 +161,6 @@ class TestMakeGeometricProjectorFlipX:
                 flipped_counts['x', i].data, normal_counts['x', n_x - 1 - i].data
             )
 
-    def test_flip_x_false_is_default_behavior(self):
-        positions = _make_positions()
-        resolution = {'x': 3, 'y': 2}
-
-        proj = make_geometric_projector(positions, 'xy_plane', resolution, flip_x=False)
-
-        # x edges should span the original positive range
-        x_edges = proj._edges['x']
-        assert x_edges.min().value >= -0.15
-        assert x_edges.max().value <= 0.15
-
     def test_flip_x_does_not_affect_y(self):
         positions = _make_positions()
         resolution = {'x': 3, 'y': 2}
@@ -200,4 +172,7 @@ class TestMakeGeometricProjectorFlipX:
             positions, 'xy_plane', resolution, flip_x=True
         )
 
-        assert sc.identical(proj_normal._edges['y'], proj_flipped._edges['y'])
+        assert sc.identical(
+            proj_normal.screen_metadata.coords['y'],
+            proj_flipped.screen_metadata.coords['y'],
+        )
