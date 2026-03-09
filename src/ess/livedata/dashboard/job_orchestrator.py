@@ -160,6 +160,9 @@ class JobOrchestrator:
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
 
+        # Active job numbers, maintained for O(1) lookup by Orchestrator
+        self._active_job_numbers: set[JobNumber] = set()
+
         # Transaction state for batching staging operations
         self._transaction_workflow: WorkflowId | None = None
         self._transaction_depth: int = 0
@@ -232,6 +235,7 @@ class JobOrchestrator:
                 if current_data := config_data.get('current_job'):
                     try:
                         state.current = JobSet.model_validate(current_data)
+                        self._active_job_numbers.add(state.current.job_number)
                     except (KeyError, ValueError, TypeError) as e:
                         logger.warning(
                             'Failed to restore active job for workflow %s: %s',
@@ -394,6 +398,7 @@ class JobOrchestrator:
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
             # Clean up buffered data from the outgoing job. Safe from re-addition
             # because Orchestrator.forward() filters by active job_number.
+            self._active_job_numbers.discard(state.current.job_number)
             self._cleanup_previous_job_data(state)
             state.previous = state.current
 
@@ -434,6 +439,7 @@ class JobOrchestrator:
 
         # Set as current JobSet
         state.current = job_set
+        self._active_job_numbers.add(job_set.job_number)
 
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
@@ -456,12 +462,9 @@ class JobOrchestrator:
         """Check if a job_number belongs to a currently active job set.
 
         Used by Orchestrator to filter incoming data, rejecting messages from
-        stopped jobs or jobs not started by this dashboard.
+        stopped jobs or jobs not started by this dashboard. O(1) lookup.
         """
-        return any(
-            state.current is not None and state.current.job_number == job_number
-            for state in self._workflows.values()
-        )
+        return job_number in self._active_job_numbers
 
     def _cleanup_previous_job_data(self, state: WorkflowState) -> None:
         """Clean up buffered data and status tracking from a previous job set.
@@ -780,6 +783,8 @@ class JobOrchestrator:
             return False
 
         # Clear local state immediately (don't wait for backend confirmation)
+        if job_number is not None:
+            self._active_job_numbers.discard(job_number)
         state.previous = state.current
         state.current = None
 
