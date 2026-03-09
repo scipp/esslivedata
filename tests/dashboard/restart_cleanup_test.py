@@ -277,22 +277,20 @@ class TestConcurrentForwardAndCommit:
 
     @pytest.mark.slow
     def test_concurrent_forward_and_commit_does_not_leak(self, workflow_spec):
-        """Repeated concurrent restarts must not leave orphaned data."""
+        """Concurrent forwarding and restarts must not leave orphaned data."""
         orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         errors: list[Exception] = []
         stop = threading.Event()
         # Shared mutable ref so forward_loop always uses the latest job_ids
-        current_job_ids = [None]
+        current_job_ids = [job_orchestrator.commit_workflow(workflow_id)]
 
         def forward_loop():
             """Continuously forward data for the current job."""
             i = 0
             while not stop.is_set():
                 jids = current_job_ids[0]
-                if jids is None:
-                    continue
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, jids[0].job_number)
                     try:
@@ -309,13 +307,10 @@ class TestConcurrentForwardAndCommit:
         old_interval = sys.getswitchinterval()
         sys.setswitchinterval(1e-6)
         try:
-            # Restart many times
+            thread.start()
+            # Restart many times while forward_loop runs concurrently
             for _ in range(20):
                 current_job_ids[0] = job_orchestrator.commit_workflow(workflow_id)
-
-            thread.start()
-            # Let the forward loop run for a bit with the last job
-            stop.wait(timeout=0.2)
             stop.set()
             thread.join(timeout=5.0)
         finally:
