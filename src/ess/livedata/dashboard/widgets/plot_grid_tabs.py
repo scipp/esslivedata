@@ -20,6 +20,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..data_roles import PRIMARY
 from ..format_utils import extract_error_summary
+from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -88,6 +89,10 @@ def _get_sizing_mode(config: PlotConfig) -> str:
         aspect = params.plot_aspect
         if aspect.aspect_type == PlotAspectType.free:
             return 'stretch_both'
+        # The frame-aspect JS hook forces stretch_width on the Bokeh figure,
+        # so the Panel pane must match.
+        if aspect.aspect_type in (PlotAspectType.equal, PlotAspectType.data_aspect):
+            return 'stretch_width'
         if aspect.stretch_mode == StretchMode.width:
             return 'stretch_width'
         return 'stretch_height'
@@ -975,12 +980,20 @@ class PlotGridTabs:
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.
         if not has_layout:
+            hooks: list = []
             filename = build_save_filename_from_cell(
                 cell, self._workflow_registry, self._orchestrator.get_source_title
             )
             if filename is not None:
-                hook = make_save_filename_hook(filename)
-                result = result.opts(hooks=[hook])
+                hooks.append(make_save_filename_hook(filename))
+            if cell.layers:
+                params = cell.layers[0].config.params
+                if hasattr(params, 'plot_aspect'):
+                    aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
+                    if aspect_hook is not None:
+                        hooks.append(aspect_hook)
+            if hooks:
+                result = result.opts(hooks=hooks)
 
         return result
 

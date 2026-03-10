@@ -256,14 +256,17 @@ class Plotter:
         match aspect_params.aspect_type:
             case PlotAspectType.free:
                 self._sizing_opts = {}
-            case PlotAspectType.equal:
-                self._sizing_opts = {'aspect': 'equal'}
+            case PlotAspectType.equal | PlotAspectType.data_aspect:
+                # Data-aspect enforcement is handled by a JS hook
+                # (see frame_aspect.py) that reads x/y ranges and adjusts
+                # the frame height.  HoloViews' own data_aspect/match_aspect
+                # must NOT be set here — it would pad ranges to fit the
+                # (wrong) frame shape, defeating the hook.
+                self._sizing_opts = {}
             case PlotAspectType.square:
                 self._sizing_opts = {'aspect': 'square'}
             case PlotAspectType.aspect:
                 self._sizing_opts = {'aspect': aspect_params.ratio}
-            case PlotAspectType.data_aspect:
-                self._sizing_opts = {'data_aspect': aspect_params.ratio}
         self._sizing_opts['responsive'] = True
 
     @staticmethod
