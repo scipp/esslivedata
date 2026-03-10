@@ -38,6 +38,18 @@ B = NewType('B', int)
 Result = NewType('Result', int)
 
 
+def test_job_threads_flag_is_registered():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--job-threads', '5', '--instrument', 'dummy'])
+    assert args.job_threads == 5
+
+
+def test_job_threads_flag_defaults_to_one():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--instrument', 'dummy'])
+    assert args.job_threads == 1
+
+
 def test_sciline_with_sync_pool_runs_on_calling_thread():
     """Setting dask pool to SynchronousExecutor makes sciline run on the calling thread.
 
