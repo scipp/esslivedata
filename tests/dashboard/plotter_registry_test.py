@@ -17,6 +17,15 @@ def _data_plotter_names() -> list[str]:
     ]
 
 
+def _static_plotter_names() -> list[str]:
+    """Get names of all STATIC-category plotters from the registry."""
+    return [
+        name
+        for name, entry in plotter_registry.items()
+        if entry.spec.category == PlotterCategory.STATIC
+    ]
+
+
 class TestPlotterComputeSignature:
     """Verify all registered plotters accept the kwargs passed by PlotOrchestrator."""
 
@@ -41,3 +50,21 @@ class TestPlotterComputeSignature:
                 )
         except Exception:  # noqa: S110
             pass  # Other errors (empty data, missing keys, etc.) are expected
+
+    @pytest.mark.parametrize("plotter_name", _static_plotter_names())
+    def test_static_compute_accepts_title_resolver_kwarg(self, plotter_name):
+        """PlotOrchestrator passes title_resolver= to all plotters, including static."""
+        entry = plotter_registry[plotter_name]
+        default_params = entry.spec.params()
+        plotter = entry.factory(default_params)
+
+        try:
+            plotter.compute({}, title_resolver=TitleResolver())
+        except TypeError as e:
+            if "title_resolver" in str(e):
+                pytest.fail(
+                    f"Static plotter '{plotter_name}' does not accept "
+                    f"'title_resolver' kwarg. Add **kwargs to its compute() signature."
+                )
+        except Exception:  # noqa: S110
+            pass  # Other errors (e.g., validation) are expected
