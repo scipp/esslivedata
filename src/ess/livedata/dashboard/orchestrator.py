@@ -68,7 +68,10 @@ class Orchestrator:
         # could iterate or write to DataService while the UI thread deletes
         # buffers, causing dict-iteration crashes or orphaned buffers.
         #
-        # Batch all updates in a transaction to avoid repeated UI updates.
+        # Batch all updates in a transaction to avoid repeated UI updates. Reason:
+        # - Some listeners depend on multiple streams.
+        # - There may be multiple messages for the same stream, only the last one
+        #   should trigger an update.
         with self._data_flow_lock:
             with self._data_service.transaction():
                 for message in messages:
