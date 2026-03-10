@@ -254,13 +254,7 @@ class JobManager:
         if was_active is None and was_scheduled is None:
             raise KeyError(f"Job {job_id} not found in active or scheduled jobs.")
 
-        # Clean up all tracking
-        self._job_schedules.pop(job_id, None)
-        self._job_states.pop(job_id, None)
-        self._job_error_messages.pop(job_id, None)
-        self._job_warning_messages.pop(job_id, None)
-        self._jobs_with_primary_data.discard(job_id)
-
+        self._remove_job_tracking(job_id)
         if job_id in self._finishing_jobs:
             self._finishing_jobs.remove(job_id)
         logger.info("job_stopped", job_id=str(job_id))
@@ -444,14 +438,18 @@ class JobManager:
             return list(self._executor.map(fn, items))
         return [fn(item) for item in items]
 
+    def _remove_job_tracking(self, job_id: JobId) -> None:
+        """Remove all tracking state for a job."""
+        self._job_schedules.pop(job_id, None)
+        self._job_states.pop(job_id, None)
+        self._job_error_messages.pop(job_id, None)
+        self._job_warning_messages.pop(job_id, None)
+        self._jobs_with_primary_data.discard(job_id)
+
     def _finish_jobs(self):
         for job_id in self._finishing_jobs:
             self._active_jobs.pop(job_id, None)
-            self._job_schedules.pop(job_id, None)
-            self._job_states.pop(job_id, None)
-            self._job_error_messages.pop(job_id, None)
-            self._job_warning_messages.pop(job_id, None)
-            self._jobs_with_primary_data.discard(job_id)
+            self._remove_job_tracking(job_id)
         self._finishing_jobs.clear()
 
     def get_job_status(self, job_id: JobId) -> JobStatus | None:
