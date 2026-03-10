@@ -1,0 +1,168 @@
+name: livedata-dream
+services:
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-broker
+    ports:
+      - "9092:9092"
+    volumes:
+      - ./scripts:/scripts
+    environment:
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: false
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_NUM_RECOVERY_THREADS_PER_DATA_DIR: 1
+      KAFKA_NUM_NETWORK_THREADS: 2
+      KAFKA_NUM_IO_THREADS: 4
+      KAFKA_CONTROLLER_SOCKET_TIMEOUT_MS: 30000
+      KAFKA_CONTROLLER_REQUEST_TIMEOUT_MS: 30000
+      KAFKA_METADATA_MAX_IDLE_INTERVAL_MS: 500
+      KAFKA_SOCKET_SEND_BUFFER_BYTES: 104857600
+      KAFKA_SOCKET_RECEIVE_BUFFER_BYTES: 204857600
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 104857600
+      KAFKA_MAX_CONNECTIONS_PER_IP: 100
+      KAFKA_HEAP_OPTS: "-Xmx3G -Xms3G"
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_HOURS: 1
+      KAFKA_LOG_SEGMENT_BYTES: 67108864
+      KAFKA_LOG_CLEANUP_POLICY: delete
+      KAFKA_LOG_CLEANER_MIN_CLEANABLE_RATIO: 0.1
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 30000
+      KAFKA_LOG_CLEANER_ENABLE: true
+      KAFKA_LOG_CLEANER_THREADS: 2
+      KAFKA_OFFSETS_RETENTION_MINUTES: 60
+      KAFKA_OFFSETS_RETENTION_CHECK_INTERVAL_MS: 60000
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 10
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_SEGMENT_BYTES: 104857600
+      KAFKA_OFFSETS_LOAD_BUFFER_SIZE: 5242880
+      KAFKA_OFFSETS_COMMIT_TIMEOUT_MS: 5000
+      KAFKA_OFFSETS_COMMIT_REQUIRED_ACKS: 1
+      KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: 6000
+      KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS: 1800000
+      KAFKA_GROUP_MAX_SIZE: 100
+      KAFKA_CONNECTIONS_MAX_IDLE_MS: 600000
+      KAFKA_REQUEST_TIMEOUT_MS: 30000
+      KAFKA_MESSAGE_MAX_BYTES: 104857600
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 104857600
+      KAFKA_REPLICA_SOCKET_RECEIVE_BUFFER_BYTES: 104857600
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 104857600
+      KAFKA_MAX_REQUEST_SIZE: 104857600
+      KAFKA_MAX_PARTITION_FETCH_BYTES: 104857600
+    mem_limit: 5G
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-topics",
+          "--bootstrap-server",
+          "localhost:9092",
+          "--list",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  init-kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/scripts
+    command: ["sh", "/scripts/setup-kafka-topics.sh", "dream"]
+
+  # fake-monitors:
+  #   image: python:3.12
+  #   container_name: fake-monitors
+  #   depends_on:
+  #     init-kafka:
+  #       condition: service_completed_successfully
+  #   volumes:
+  #     - .:/app
+  #   working_dir: /app
+  #   command: sh -c "pip install -e . && python -m ess.livedata.services.fake_monitors --mode da00 --instrument dream"
+
+  fake-detectors:
+    image: python:3.12
+    container_name: fake-detectors
+    depends_on:
+      init-kafka:
+        condition: service_completed_successfully
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment: &env-common
+      LIVEDATA_ENV: docker
+      LIVEDATA_INSTRUMENT: dream
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+      KAFKA_SASL_MECHANISM: SCRAM-SHA-256
+      KAFKA_SASL_USERNAME: DUMMY
+      KAFKA_SASL_PASSWORD: DUMMY
+    command: sh -c "pip install -e . && python -m ess.livedata.services.fake_detectors --instrument dream --nexus-file /app/${NEXUS_FILE}"
+
+  # monitor-data:
+  #   image: python:3.12
+  #   container_name: monitor-data
+  #   depends_on:
+  #     fake-monitors:
+  #       condition: service_started
+  #   volumes:
+  #     - .:/app
+  #   working_dir: /app
+  #   environment: &env-downstream
+  #     <<: *env-common
+  #     KAFKA2_BOOTSTRAP_SERVERS: kafka:29092
+  #     KAFKA2_SECURITY_PROTOCOL: PLAINTEXT
+  #     KAFKA2_SASL_MECHANISM: SCRAM-SHA-256
+  #     KAFKA2_SASL_USERNAME: DUMMY
+  #     KAFKA2_SASL_PASSWORD: DUMMY
+  #   command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.monitor_data --instrument dream --dev"
+
+  detector-data:
+    image: python:3.12
+    container_name: detector-data
+    depends_on:
+      fake-detectors:
+        condition: service_started
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment: &env-downstream
+      <<: *env-common
+      KAFKA2_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA2_SECURITY_PROTOCOL: PLAINTEXT
+      KAFKA2_SASL_MECHANISM: SCRAM-SHA-256
+      KAFKA2_SASL_USERNAME: DUMMY
+      KAFKA2_SASL_PASSWORD: DUMMY
+    command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.detector_data --instrument dream --dev"
+
+  reduction-dashboard:
+    image: python:3.12
+    container_name: reduction-dashboard
+    depends_on:
+      init-kafka:
+        condition: service_completed_successfully
+    ports:
+      - "5009:5009"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      <<: *env-downstream
+      BOKEH_ALLOW_WS_ORIGIN: "*"
+    command: sh -c "pip install -e '.[dream,dashboard]' && python -m ess.livedata.dashboard.reduction --instrument dream"
