@@ -47,6 +47,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
+        job_threads: int = 1,
     ) -> None:
         """
         Parameters
@@ -66,6 +67,9 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         processor_cls:
             The processor class to use for processing messages. Defaults to
             `OrchestratingProcessor`.
+        job_threads:
+            Number of threads for parallel job execution. When > 1, job
+            accumulation and finalization are run in a thread pool.
         """
         self._name = f'{instrument}_{name}'
         self._log_level = log_level
@@ -75,6 +79,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._preprocessor_factory = preprocessor_factory
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
+        self._job_threads = job_threads
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -83,6 +88,14 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
     def instrument(self) -> str:
         """Returns the instrument name."""
         return self._instrument
+
+    @property
+    def job_threads(self) -> int:
+        return self._job_threads
+
+    @job_threads.setter
+    def job_threads(self, value: int) -> None:
+        self._job_threads = value
 
     def from_consumer_config(
         self,
@@ -166,6 +179,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             ),
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
+            job_threads=self._job_threads,
         )
         sink.publish_messages(self._startup_messages)
         return Service(
@@ -191,6 +205,12 @@ class DataServiceRunner:
             default=False,
             help='Use synchronous dask scheduler instead of threaded'
             ' (reduces GIL contention)',
+        )
+        self._parser.add_argument(
+            '--job-threads',
+            type=int,
+            default=1,
+            help='Number of threads for parallel job execution (1=sequential)',
         )
         self._parser.add_argument(
             '--sink-type',
@@ -236,7 +256,11 @@ class DataServiceRunner:
         kafka_config = load_config(namespace=config_names.kafka)
 
         sink_type = args.pop('sink_type')
+        job_threads = args.pop('job_threads')
         builder = self._make_builder(**args)
+        builder.job_threads = job_threads
+        if job_threads > 1:
+            logger.info("job_threads", threads=job_threads)
 
         if sink_type == 'kafka':
             kafka_sink = KafkaSink(
