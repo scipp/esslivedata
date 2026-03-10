@@ -89,10 +89,6 @@ def _get_sizing_mode(config: PlotConfig) -> str:
         aspect = params.plot_aspect
         if aspect.aspect_type == PlotAspectType.free:
             return 'stretch_both'
-        # The frame-aspect JS hook forces stretch_width on the Bokeh figure,
-        # so the Panel pane must match.
-        if aspect.aspect_type in (PlotAspectType.equal, PlotAspectType.data_aspect):
-            return 'stretch_width'
         if aspect.stretch_mode == StretchMode.width:
             return 'stretch_width'
         return 'stretch_height'
