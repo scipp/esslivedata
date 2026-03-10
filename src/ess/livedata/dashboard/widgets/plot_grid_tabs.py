@@ -971,7 +971,12 @@ class PlotGridTabs:
         if len(plots) == 1:
             result = plots[0]
         else:
-            result = hv.Overlay(plots)
+            # Collate so hooks survive for any number of DynamicMap layers.
+            # Without collation, HoloViews drops overlay-level opts (including
+            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
+            # produces a single DynamicMap whose outputs are plain Overlays;
+            # opts applied afterwards land on the OverlayPlot and persist.
+            result = hv.Overlay(plots).collate()
 
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.

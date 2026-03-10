@@ -38,6 +38,7 @@ from .plot_params import PlotAspect, PlotAspectType, StretchMode
 # ---------------------------------------------------------------------------
 
 _FIXED_STRETCH_WIDTH_JS = """
+    if (!fig.document) return;
     const iw = fig.inner_width;
     const ih = fig.inner_height;
     if (fig.outer_width < 50 || iw < 10) return;
@@ -50,6 +51,7 @@ _FIXED_STRETCH_WIDTH_JS = """
 """
 
 _FIXED_STRETCH_HEIGHT_JS = """
+    if (!fig.document) return;
     const iw = fig.inner_width;
     const ih = fig.inner_height;
     if (fig.outer_height < 50 || ih < 10) return;
@@ -66,6 +68,7 @@ _FIXED_STRETCH_HEIGHT_JS = """
 # ---------------------------------------------------------------------------
 
 _DATA_STRETCH_WIDTH_JS = """
+    if (!fig.document) return;
     const iw = fig.inner_width;
     const ih = fig.inner_height;
     if (fig.outer_width < 50 || iw < 10) return;
@@ -83,6 +86,7 @@ _DATA_STRETCH_WIDTH_JS = """
 """
 
 _DATA_STRETCH_HEIGHT_JS = """
+    if (!fig.document) return;
     const iw = fig.inner_width;
     const ih = fig.inner_height;
     if (fig.outer_height < 50 || ih < 10) return;
