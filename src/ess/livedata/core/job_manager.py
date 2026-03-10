@@ -464,6 +464,12 @@ class JobManager:
             # first auxiliary data.
             self._jobs_with_primary_data.remove(job.job_id)
 
+    def shutdown(self) -> None:
+        """Shut down the thread pool executor, if one was created."""
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
+
     def _map(self, fn: Callable, items: list) -> list:
         if self._executor is not None:
             return list(self._executor.map(fn, items))
