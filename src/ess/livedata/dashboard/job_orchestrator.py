@@ -169,6 +169,11 @@ class JobOrchestrator:
         # acquires this lock during message processing; commit_workflow and
         # stop_workflow acquire it when changing the active set or deleting
         # buffers. This prevents dict-iteration crashes and orphaned buffers.
+        #
+        # Scope: protects _active_job_numbers, DataService entries, and
+        # JobService status entries — the only state shared with the
+        # background thread. All other attributes (_workflows, _subscriptions,
+        # staged_jobs, etc.) are UI-thread-only and do not need the lock.
         self._data_flow_lock = threading.Lock()
 
         # Transaction state for batching staging operations
