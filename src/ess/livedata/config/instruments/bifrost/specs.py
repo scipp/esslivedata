@@ -12,13 +12,12 @@ for full instrument details.
 """
 
 from enum import StrEnum
-from typing import Literal
 
 import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
@@ -222,15 +221,12 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
-class BifrostAuxSources(AuxSourcesBase):
-    """Auxiliary source names for Bifrost Q-map workflows."""
-
-    detector_rotation: Literal['detector_rotation'] = pydantic.Field(
-        default='detector_rotation', description='Detector bank rotation angle.'
-    )
-    sample_rotation: Literal['sample_rotation'] = pydantic.Field(
-        default='sample_rotation', description='Sample rotation angle.'
-    )
+bifrost_aux_sources = AuxSources(
+    {
+        'detector_rotation': 'detector_rotation',
+        'sample_rotation': 'sample_rotation',
+    }
+)
 
 
 class QMapOutputs(WorkflowOutputsBase):
@@ -442,7 +438,7 @@ qmap_handle = instrument.register_spec(
     description='Map of scattering intensity as function of Q and energy transfer.',
     source_names=['unified_detector'],
     params=BifrostQMapParams,
-    aux_sources=BifrostAuxSources,
+    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )
 
@@ -453,7 +449,7 @@ elastic_qmap_handle = instrument.register_spec(
     description='Elastic Q map with predefined axes.',
     source_names=['unified_detector'],
     params=BifrostElasticQMapParams,
-    aux_sources=BifrostAuxSources,
+    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )
 
@@ -464,6 +460,6 @@ elastic_qmap_custom_handle = instrument.register_spec(
     description='Elastic Q map with custom axes.',
     source_names=['unified_detector'],
     params=BifrostCustomElasticQMapParams,
-    aux_sources=BifrostAuxSources,
+    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )

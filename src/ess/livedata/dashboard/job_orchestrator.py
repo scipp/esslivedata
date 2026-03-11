@@ -209,7 +209,7 @@ class JobOrchestrator:
 
                 aux_source_names = {}
                 if spec.aux_sources is not None:
-                    aux_source_names = spec.aux_sources().model_dump(mode='json')
+                    aux_source_names = spec.aux_sources.get_defaults()
 
                 if params:
                     for source_name in spec.source_names:
@@ -652,9 +652,7 @@ class JobOrchestrator:
             sources that may have been configured independently.
             """
             params_dict = parameter_values.model_dump(mode='json')
-            aux_dict = (
-                aux_source_names.model_dump(mode='json') if aux_source_names else {}
-            )
+            aux_dict = aux_source_names or {}
 
             # Update only the selected sources, preserving other staged configs
             for source_name in selected_sources:

@@ -83,7 +83,7 @@ class WorkflowController:
         workflow_id: WorkflowId,
         source_names: list[str],
         config: pydantic.BaseModel,
-        aux_source_names: pydantic.BaseModel | None = None,
+        aux_source_names: dict[str, str] | None = None,
     ) -> list[JobId]:
         """Start a workflow with given configuration.
 
@@ -96,7 +96,7 @@ class WorkflowController:
         config:
             Workflow configuration parameters
         aux_source_names:
-            Optional auxiliary source names
+            Optional auxiliary source names as a dict
 
         Returns
         -------
@@ -127,9 +127,9 @@ class WorkflowController:
         if not source_names:
             return []
 
-        # Convert Pydantic models to dicts for orchestrator
+        # Convert Pydantic model to dict for orchestrator
         params_dict = config.model_dump(mode='json')
-        aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
+        aux_dict = aux_source_names or {}
 
         # Replace all staged configs in a transaction (single notification)
         with self._orchestrator.staging_transaction(workflow_id):
@@ -163,7 +163,7 @@ class WorkflowController:
         def start_callback(
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
-            aux_source_names: pydantic.BaseModel | None = None,
+            aux_source_names: dict[str, str] | None = None,
         ) -> None:
             """Bound callback to start this specific workflow."""
             self.start_workflow(

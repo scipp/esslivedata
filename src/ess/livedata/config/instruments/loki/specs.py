@@ -5,14 +5,13 @@ LOKI instrument spec registration.
 """
 
 from enum import StrEnum
-from typing import Literal
 
 import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
@@ -71,17 +70,20 @@ class BeamCenterXY(pydantic.BaseModel):
         return sc.vector([self.x, self.y, 0.0], unit=self.unit.value)
 
 
-class LokiAuxSources(AuxSourcesBase):
-    """Auxiliary source names for LOKI SANS workflows."""
-
-    incident_monitor: Literal['beam_monitor_m1'] = pydantic.Field(
-        default='beam_monitor_m1',
-        description='Incident beam monitor for normalization.',
-    )
-    transmission_monitor: Literal['beam_monitor_m3'] = pydantic.Field(
-        default='beam_monitor_m3',
-        description='Transmission monitor for sample transmission calculation.',
-    )
+loki_aux_sources = AuxSources(
+    {
+        'incident_monitor': AuxInput(
+            choices=('beam_monitor_m1',),
+            default='beam_monitor_m1',
+            description='Incident beam monitor for normalization.',
+        ),
+        'transmission_monitor': AuxInput(
+            choices=('beam_monitor_m3',),
+            default='beam_monitor_m3',
+            description='Transmission monitor for sample transmission calculation.',
+        ),
+    }
+)
 
 
 def _make_1d_q_template() -> sc.DataArray:
@@ -232,7 +234,7 @@ i_of_q_handle = instrument.register_spec(
         'currently the transmission does not take into a account and empty run.'
     ),
     source_names=detector_names,
-    aux_sources=LokiAuxSources,
+    aux_sources=loki_aux_sources,
     outputs=IofQOutputs,
     params=SansWorkflowParams,
 )

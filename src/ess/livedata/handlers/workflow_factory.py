@@ -131,7 +131,13 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         return decorator
 
-    def create(self, *, source_name: str, config: WorkflowConfig) -> Workflow:
+    def create(
+        self,
+        *,
+        source_name: str,
+        config: WorkflowConfig,
+        aux_source_names: dict[str, str] | None = None,
+    ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
 
@@ -141,6 +147,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Name of the data source.
         config:
             Configuration for the workflow, including the identifier and parameters.
+        aux_source_names:
+            Rendered auxiliary source names (already resolved by JobFactory).
         """
         workflow_id = config.identifier
         if workflow_id not in self._workflow_specs:
@@ -157,22 +165,13 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         else:
             workflow_params = model_cls.model_validate(config.params)
 
-        # Validate aux_sources configuration but do not pass rendered names to
-        # the factory. This is a known gap: factories that need to configure
-        # sciline pipeline keys from aux source names (e.g.,
-        # wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor'])
-        # currently work around this by relying on hardcoded defaults in the
-        # underlying science workflow. The fix — passing rendered aux_source_names
-        # into the factory via signature introspection — is tracked in #694.
-        if (aux_model_cls := workflow_spec.aux_sources) is None:
+        # Validate aux_sources configuration
+        if workflow_spec.aux_sources is None:
             if config.aux_source_names:
                 raise ValueError(
                     f"Workflow '{workflow_id}' does not require auxiliary sources, "
                     f"but received: {config.aux_source_names}"
                 )
-        else:
-            # Validate that aux_source_names conform to the model
-            aux_model_cls.model_validate(config.aux_source_names)
 
         if workflow_spec.source_names and source_name not in workflow_spec.source_names:
             allowed_sources = ", ".join(workflow_spec.source_names)
@@ -191,6 +190,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['source_name'] = source_name
         if workflow_params and 'params' in sig.parameters:
             kwargs['params'] = workflow_params
+        if 'aux_source_names' in sig.parameters:
+            kwargs['aux_source_names'] = aux_source_names or {}
 
         # Call factory with appropriate arguments
         if kwargs:

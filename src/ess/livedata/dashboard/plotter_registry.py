@@ -95,13 +95,14 @@ class SpecRequirements:
 
     requires_aux_sources: list[type] = field(default_factory=list)
 
-    def validate_spec(self, aux_sources_type: type | None) -> bool:
+    def validate_spec(self, aux_sources: type | object | None) -> bool:
         """Check if spec meets these requirements.
 
         Parameters
         ----------
-        aux_sources_type:
-            The aux_sources type from the workflow spec, or None if not defined.
+        aux_sources:
+            The aux_sources from the workflow spec (an AuxSources instance or
+            type), or None if not defined.
 
         Returns
         -------
@@ -110,12 +111,12 @@ class SpecRequirements:
         """
         if not self.requires_aux_sources:
             return True
-        if aux_sources_type is None:
+        if aux_sources is None:
             return False
-        # Check if aux_sources_type is one of the required types or a subclass
+        # Support both type and instance checks
+        aux_type = aux_sources if isinstance(aux_sources, type) else type(aux_sources)
         return any(
-            issubclass(aux_sources_type, required)
-            for required in self.requires_aux_sources
+            issubclass(aux_type, required) for required in self.requires_aux_sources
         )
 
 

@@ -277,7 +277,7 @@ class Instrument:
             title=title,
             description=description,
             source_names=list(source_names),
-            aux_sources=DetectorROIAuxSources if roi_support else None,
+            aux_sources=DetectorROIAuxSources() if roi_support else None,
             params=DetectorViewParams,
             outputs=outputs,
         )
