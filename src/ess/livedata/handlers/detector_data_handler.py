@@ -13,6 +13,10 @@ from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
 from .to_nxevent_data import ToNXevent_data
 
+_GEOMETRY_RELEASE_URL = (
+    'https://github.com/scipp/esslivedata/releases/download/geometry-v0/'
+)
+
 
 class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
     """
@@ -20,8 +24,7 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
 
     Handlers are created based on the instrument name in the message key which should
     identify the detector name. Depending on the configured detector views a NeXus file
-    with geometry information may be required to setup the view. Currently the NeXus
-    files are always obtained via Pooch.
+    with geometry information may be required to setup the view.
 
     Parameters
     ----------
@@ -54,7 +57,6 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
 # Files should thus not be replaced by making use of the pooch versioning mechanism.
 _registry = {
     'geometry-dream-2025-01-01.nxs': 'md5:91aceb884943c76c0c21400ee74ad9b6',
-    'geometry-dream-2025-05-01.nxs': 'md5:773fc7e84d0736a0121818cbacc0697f',
     'geometry-dream-no-shape-2025-05-01.nxs': 'md5:4471e2490a3dd7f6e3ed4aa0a1e0b47d',
     'geometry-loki-2025-01-01.nxs': 'md5:8d0e103276934a20ba26bb525e53924a',
     'geometry-loki-2025-03-26.nxs': 'md5:279dc8cf7dae1fac030d724bc45a2572',
@@ -67,17 +69,28 @@ _registry = {
 }
 
 
-def _make_pooch():
+def _get_data_dir() -> pathlib.Path | None:
+    """Return the geometry data directory if LIVEDATA_DATA_DIR is set."""
+    import os
+
+    data_dir = os.environ.get('LIVEDATA_DATA_DIR')
+    if data_dir is not None:
+        return pathlib.Path(data_dir)
+    return None
+
+
+def _fetch_with_pooch(filename: str) -> pathlib.Path:
+    """Fetch a geometry file using pooch, downloading if necessary."""
     import pooch
 
-    return pooch.create(
+    p = pooch.create(
         path=pooch.os_cache('beamlime'),
-        env='LIVEDATA_DATA_DIR',
         retry_if_failed=3,
-        base_url='https://public.esss.dk/groups/scipp/beamlime/geometry/',
+        base_url=_GEOMETRY_RELEASE_URL,
         version='0',
         registry=_registry,
     )
+    return pathlib.Path(p.fetch(filename))
 
 
 def _parse_filename_lut(instrument: str) -> sc.DataArray:
@@ -101,14 +114,22 @@ def get_nexus_geometry_filename(
     instrument: str, date: sc.Variable | None = None
 ) -> pathlib.Path:
     """
-    Get filename for NeXus file based on instrument and date.
+    Get the path to a NeXus geometry file based on instrument and date.
 
-    The file is fetched and cached with Pooch.
+    If LIVEDATA_DATA_DIR is set, the file is read directly from that directory.
+    Otherwise, the file is fetched (and cached) using pooch.
     """
-    _pooch = _make_pooch()
     dt = (date if date is not None else sc.datetime('now')).to(unit='s')
     try:
         filename = _parse_filename_lut(instrument)['datetime', dt].value
     except IndexError:
         raise ValueError(f'No geometry file found for given date {date}') from None
-    return pathlib.Path(_pooch.fetch(filename))
+    data_dir = _get_data_dir()
+    if data_dir is not None:
+        path = data_dir / filename
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Geometry file '{filename}' not found in LIVEDATA_DATA_DIR={data_dir}"
+            )
+        return path
+    return _fetch_with_pooch(filename)
