@@ -2,19 +2,19 @@ name: livedata-dream
 services:
   kafka:
     image: confluentinc/cp-kafka:latest
-    container_name: kafka-broker
+    container_name: demo-kafka-broker
     ports:
-      - "9092:9092"
+      - "9095:9095"
     volumes:
       - ./scripts:/scripts
     environment:
       KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: false
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9096
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9095,PLAINTEXT_INTERNAL://0.0.0.0:29095,CONTROLLER://0.0.0.0:9096
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9095,PLAINTEXT_INTERNAL://kafka:29095
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -69,7 +69,7 @@ services:
           "CMD",
           "kafka-topics",
           "--bootstrap-server",
-          "localhost:9092",
+          "localhost:9095",
           "--list",
         ]
       interval: 30s
@@ -78,7 +78,7 @@ services:
 
   init-kafka:
     image: confluentinc/cp-kafka:latest
-    container_name: kafka-init
+    container_name: demo-kafka-init
     depends_on:
       kafka:
         condition: service_healthy
@@ -99,7 +99,7 @@ services:
 
   fake-detectors:
     image: python:3.12
-    container_name: fake-detectors
+    container_name: demo-fake-detectors
     depends_on:
       init-kafka:
         condition: service_completed_successfully
@@ -109,7 +109,7 @@ services:
     environment: &env-common
       LIVEDATA_ENV: docker
       LIVEDATA_INSTRUMENT: dream
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29095
       KAFKA_SECURITY_PROTOCOL: PLAINTEXT
       KAFKA_SASL_MECHANISM: SCRAM-SHA-256
       KAFKA_SASL_USERNAME: DUMMY
@@ -131,7 +131,7 @@ services:
 
   detector-data:
     image: python:3.12
-    container_name: detector-data
+    container_name: demo-detector-data
     depends_on:
       fake-detectors:
         condition: service_started
@@ -144,12 +144,12 @@ services:
 
   reduction-dashboard:
     image: python:3.12
-    container_name: reduction-dashboard
+    container_name: demo-reduction-dashboard
     depends_on:
       init-kafka:
         condition: service_completed_successfully
     ports:
-      - "5009:5009"
+      - "5011:5011"
     volumes:
       - .:/app
     working_dir: /app
