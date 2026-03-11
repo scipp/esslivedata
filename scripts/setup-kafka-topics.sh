@@ -55,7 +55,7 @@ kafka-topics --create --if-not-exists --bootstrap-server kafka:29095 \
   --config segment.bytes=104857600 \
   --config segment.ms=60000
 
-kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 \
+kafka-topics --create --if-not-exists --bootstrap-server kafka:29095 \
   --topic ${LIVEDATA_INSTRUMENT}_motion \
   --config cleanup.policy=delete \
   --config delete.retention.ms=60000 \
