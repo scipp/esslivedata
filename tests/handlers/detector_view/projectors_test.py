@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for GeometricProjector class."""
+"""Tests for GeometricProjector and make_geometric_projector."""
 
 import numpy as np
 import scipp as sc
 
-from ess.livedata.handlers.detector_view.projectors import GeometricProjector
+from ess.livedata.handlers.detector_view.projectors import (
+    GeometricProjector,
+    make_geometric_projector,
+)
 
 from .utils import make_fake_nexus_detector_data
 
@@ -116,3 +119,60 @@ class TestGeometricProjector:
 
         # Results should differ (different replicas with different noise)
         assert not sc.identical(result1.bins.size(), result2.bins.size())
+
+
+def _make_positions(*, z_sign: float = 1.0) -> sc.Variable:
+    """Create a 2x3 grid of detector positions at z_sign * 2.0 m."""
+    x = np.array([-0.1, 0.0, 0.1, -0.1, 0.0, 0.1])
+    y = np.array([-0.05, -0.05, -0.05, 0.05, 0.05, 0.05])
+    z = np.full(6, z_sign * 2.0)
+    positions = sc.vectors(
+        dims=['replica', 'detector_number'],
+        values=np.stack([x, y, z], axis=-1).reshape(1, 6, 3),
+        unit='m',
+    )
+    return positions
+
+
+class TestMakeGeometricProjectorFlipX:
+    """Tests for the flip_x parameter in make_geometric_projector."""
+
+    def test_flip_x_mirrors_projected_image(self):
+        """Projecting events with flip_x mirrors the image along x."""
+        positions = _make_positions()
+        resolution = {'x': 3, 'y': 2}
+
+        proj_normal = make_geometric_projector(
+            positions, 'xy_plane', resolution, flip_x=False
+        )
+        proj_flipped = make_geometric_projector(
+            positions, 'xy_plane', resolution, flip_x=True
+        )
+
+        data = make_fake_nexus_detector_data(y_size=2, x_size=3, n_events_per_pixel=50)
+
+        normal_counts = proj_normal.project_events(data).bins.size()
+        flipped_counts = proj_flipped.project_events(data).bins.size()
+
+        # Flipped image should be mirrored along x
+        n_x = normal_counts.sizes['x']
+        for i in range(n_x):
+            assert sc.identical(
+                flipped_counts['x', i].data, normal_counts['x', n_x - 1 - i].data
+            )
+
+    def test_flip_x_does_not_affect_y(self):
+        positions = _make_positions()
+        resolution = {'x': 3, 'y': 2}
+
+        proj_normal = make_geometric_projector(
+            positions, 'xy_plane', resolution, flip_x=False
+        )
+        proj_flipped = make_geometric_projector(
+            positions, 'xy_plane', resolution, flip_x=True
+        )
+
+        assert sc.identical(
+            proj_normal.screen_metadata.coords['y'],
+            proj_flipped.screen_metadata.coords['y'],
+        )

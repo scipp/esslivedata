@@ -161,6 +161,7 @@ class DetectorViewFactory:
                     projection_type=config.projection_type,
                     resolution=config.resolution,
                     pixel_noise=config.pixel_noise,
+                    flip_x=config.flip_x,
                 )
                 roi_support = True  # Geometric views always support ROI
             case LogicalViewConfig():

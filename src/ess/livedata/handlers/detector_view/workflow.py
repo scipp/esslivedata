@@ -50,6 +50,7 @@ from .roi import (
 from .types import (
     CoordinateMode,
     EventCoordName,
+    FlipX,
     HistogramBins,
     HistogramSlice,
     LogicalTransform,
@@ -143,6 +144,7 @@ def add_geometric_projection(
     projection_type: Literal['xy_plane', 'cylinder_mantle_z'],
     resolution: dict[str, int],
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None,
+    flip_x: bool = False,
 ) -> None:
     """
     Configure the workflow for geometric projection.
@@ -161,6 +163,8 @@ def add_geometric_projection(
     pixel_noise:
         Noise to add to pixel positions. Can be 'cylindrical' for cylindrical
         detectors or a scalar variance for Gaussian noise. None disables noise.
+    flip_x:
+        Whether to mirror the x-axis for 'view from sample' orientation.
     """
     # Add geometric projector provider
     workflow.insert(make_geometric_projector)
@@ -168,6 +172,7 @@ def add_geometric_projection(
     # Set projection configuration
     workflow[ProjectionType] = projection_type
     workflow[DetectorViewResolution] = resolution
+    workflow[FlipX] = flip_x
 
     # Configure noise generation
     if pixel_noise is None:
