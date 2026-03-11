@@ -14,6 +14,7 @@ from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
 
+from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
@@ -198,11 +199,15 @@ class DashboardServices:
         self.instrument_config = instrument_registry[self._instrument]
         self.processor_factory = self.instrument_config.workflow_factory
 
+        self.active_job_registry = ActiveJobRegistry(
+            data_service=self.data_service,
+            job_service=self.job_service,
+        )
+
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
-            data_service=self.data_service,
-            job_service=self.job_service,
+            active_job_registry=self.active_job_registry,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
@@ -221,4 +226,5 @@ class DashboardServices:
             job_service=self.job_service,
             service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
+            active_job_registry=self.active_job_registry,
         )

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import threading
 import uuid
 
 import pytest
@@ -14,6 +13,7 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.orchestrator import Orchestrator
@@ -366,13 +366,8 @@ class TestOrchestrator:
 class FakeJobOrchestrator:
     """Fake job orchestrator that records processed acknowledgements."""
 
-    def __init__(self, active_job_numbers: set[uuid.UUID] | None = None):
+    def __init__(self):
         self.acknowledgements: list[tuple[str, str, str | None]] = []
-        self._active_job_numbers: set[uuid.UUID] = active_job_numbers or set()
-        self.data_flow_lock = threading.Lock()
-
-    def is_active_job_number(self, job_number: uuid.UUID) -> bool:
-        return job_number in self._active_job_numbers
 
     def process_acknowledgement(
         self, message_id: str, response: str, error_message: str | None = None
@@ -553,15 +548,15 @@ class TestOrchestratorJobFiltering:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        job_orchestrator = FakeJobOrchestrator(
-            active_job_numbers=set(active_job_numbers)
-        )
+        registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
+        for jn in active_job_numbers:
+            registry.restore(jn)
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
             service_registry=make_service_registry(),
-            job_orchestrator=job_orchestrator,
+            active_job_registry=registry,
         )
         return orchestrator, data_service, job_service
 

@@ -11,7 +11,6 @@ Coordinates workflow execution across multiple sources, handling:
 
 from __future__ import annotations
 
-import threading
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -34,11 +33,10 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
+from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
-from .data_service import DataService
-from .job_service import JobService
 from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
 from .pending_command_tracker import PendingCommandTracker
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
@@ -114,8 +112,7 @@ class JobOrchestrator:
         *,
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        data_service: DataService,
-        job_service: JobService,
+        active_job_registry: ActiveJobRegistry,
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
@@ -129,10 +126,9 @@ class JobOrchestrator:
             Service for sending workflow commands to backend services.
         workflow_registry
             Registry of available workflows and their specifications.
-        data_service
-            Data service for cleaning up buffered results from previous jobs.
-        job_service
-            Job service for cleaning up status tracking from previous jobs.
+        active_job_registry
+            Thread-safe registry for tracking active job numbers and
+            cleaning up data on deactivation.
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
@@ -145,8 +141,7 @@ class JobOrchestrator:
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
-        self._data_service = data_service
-        self._job_service = job_service
+        self._active_job_registry = active_job_registry
         self._config_store = config_store
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
@@ -160,21 +155,6 @@ class JobOrchestrator:
         # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
-
-        # Active job numbers, maintained for O(1) lookup by Orchestrator
-        self._active_job_numbers: set[JobNumber] = set()
-
-        # Serializes active-set mutations and DataService cleanup against
-        # Orchestrator.update() on the background thread. Orchestrator
-        # acquires this lock during message processing; commit_workflow and
-        # stop_workflow acquire it when changing the active set or deleting
-        # buffers. This prevents dict-iteration crashes and orphaned buffers.
-        #
-        # Scope: protects _active_job_numbers, DataService entries, and
-        # JobService status entries — the only state shared with the
-        # background thread. All other attributes (_workflows, _subscriptions,
-        # staged_jobs, etc.) are UI-thread-only and do not need the lock.
-        self._data_flow_lock = threading.Lock()
 
         # Transaction state for batching staging operations
         self._transaction_workflow: WorkflowId | None = None
@@ -248,7 +228,7 @@ class JobOrchestrator:
                 if current_data := config_data.get('current_job'):
                     try:
                         state.current = JobSet.model_validate(current_data)
-                        self._active_job_numbers.add(state.current.job_number)
+                        self._active_job_registry.restore(state.current.job_number)
                     except (KeyError, ValueError, TypeError) as e:
                         logger.warning(
                             'Failed to restore active job for workflow %s: %s',
@@ -414,14 +394,7 @@ class JobOrchestrator:
             # the stop command will be discarded by the ingest filter in
             # Orchestrator.forward(). This is acceptable: the user has requested
             # new parameters, so results from the old configuration are stale.
-            #
-            # The lock serializes this against Orchestrator.update() on the
-            # background thread: it prevents the check-then-act race where
-            # forward() passes the is_active_job_number check for the old
-            # number and then writes to a buffer that cleanup just deleted.
-            with self._data_flow_lock:
-                self._active_job_numbers.discard(state.current.job_number)
-                self._cleanup_previous_job_data(state)
+            self._deactivate_previous_job(state)
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -462,13 +435,13 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
 
-        # Activate the new job number and notify subscribers under the lock.
-        # This ensures that when Orchestrator.update() next runs, both the
-        # active-set membership and the DataService subscribers are consistent:
-        # forward() won't accept data for the new job until the subscriber
-        # (with the right extractors) is registered.
-        with self._data_flow_lock:
-            self._active_job_numbers.add(job_set.job_number)
+        # Activate the new job number under the ingestion guard, then notify
+        # subscribers. This ensures that when Orchestrator.update() next runs,
+        # both the active-set membership and the DataService subscribers are
+        # consistent: forward() won't accept data for the new job until the
+        # subscriber (with the right extractors) is registered.
+        with self._active_job_registry.ingestion_guard():
+            self._active_job_registry.activate(job_set.job_number)
             self._notify_workflow_available(workflow_id, job_set.job_number)
 
         # Persist full state (staged configs + active jobs) to store
@@ -480,43 +453,20 @@ class JobOrchestrator:
         # Return JobIds for all created jobs
         return job_set.job_ids()
 
-    def is_active_job_number(self, job_number: JobNumber) -> bool:
-        """Check if a job_number belongs to a currently active job set.
-
-        Used by Orchestrator to filter incoming data, rejecting messages from
-        stopped jobs or jobs not started by this dashboard. O(1) lookup.
-        """
-        return job_number in self._active_job_numbers
-
     @property
-    def data_flow_lock(self) -> threading.Lock:
-        """Lock shared with Orchestrator for thread-safe data flow."""
-        return self._data_flow_lock
+    def active_job_registry(self) -> ActiveJobRegistry:
+        """Registry shared with Orchestrator for thread-safe data flow."""
+        return self._active_job_registry
 
-    def _cleanup_previous_job_data(self, state: WorkflowState) -> None:
-        """Clean up buffered data and status tracking from a previous job set.
+    def _deactivate_previous_job(self, state: WorkflowState) -> None:
+        """Deactivate the previous job, removing it from the active set and cleaning up.
 
-        Removes DataService entries whose ResultKey matches the current
-        job_number (which is about to be replaced), and removes matching
-        JobService status entries.
-        Called during commit to free resources from the outgoing job set.
+        Delegates to ActiveJobRegistry which handles locking, active-set removal,
+        DataService cleanup, and JobService cleanup atomically.
         """
         if state.current is None:
             return
-        job_number = state.current.job_number
-        # Clean up DataService entries keyed by the old job_number
-        keys_to_remove = [
-            key for key in self._data_service if key.job_id.job_number == job_number
-        ]
-        for key in keys_to_remove:
-            del self._data_service[key]
-        # Clean up JobService status tracking
-        self._job_service.remove_jobs_by_number(job_number)
-        logger.info(
-            "Cleaned up previous job data",
-            job_number=str(job_number),
-            data_keys_removed=len(keys_to_remove),
-        )
+        self._active_job_registry.deactivate(state.current.job_number)
 
     def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
         """Persist full workflow state (config + active jobs) to config store.
@@ -815,8 +765,7 @@ class JobOrchestrator:
         # filter in Orchestrator.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
         if job_number is not None:
-            with self._data_flow_lock:
-                self._active_job_numbers.discard(job_number)
+            self._active_job_registry.deactivate(job_number)
         state.previous = state.current
         state.current = None
 

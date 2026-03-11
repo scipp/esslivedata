@@ -16,6 +16,7 @@ from ..core.message import (
     MessageSource,
     StreamId,
 )
+from .active_job_registry import ActiveJobRegistry
 from .data_service import DataService
 from .job_service import JobService
 from .service_registry import ServiceRegistry
@@ -41,15 +42,14 @@ class Orchestrator:
         job_service: JobService,
         service_registry: ServiceRegistry,
         job_orchestrator: JobOrchestrator | None = None,
+        active_job_registry: ActiveJobRegistry | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
         self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
-        self._data_flow_lock = (
-            getattr(job_orchestrator, 'data_flow_lock', None) or nullcontext()
-        )
+        self._active_job_registry = active_job_registry
         self._logger = structlog.get_logger()
 
     def update(self) -> None:
@@ -62,9 +62,9 @@ class Orchestrator:
         if not messages:
             return
 
-        # The data-flow lock serializes message processing against active-set
-        # mutations and DataService cleanup in JobOrchestrator.commit_workflow
-        # (which runs on the UI thread). Without this, the background thread
+        # The ingestion guard serializes message processing against active-set
+        # mutations and DataService cleanup in ActiveJobRegistry.deactivate()
+        # (called from the UI thread). Without this, the background thread
         # could iterate or write to DataService while the UI thread deletes
         # buffers, causing dict-iteration crashes or orphaned buffers.
         #
@@ -72,7 +72,12 @@ class Orchestrator:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
-        with self._data_flow_lock:
+        guard = (
+            self._active_job_registry.ingestion_guard()
+            if self._active_job_registry is not None
+            else nullcontext()
+        )
+        with guard:
             with self._data_service.transaction():
                 for message in messages:
                     self.forward(stream_id=message.stream, value=message.value)
@@ -81,9 +86,9 @@ class Orchestrator:
         """
         Forward data to the appropriate data service based on the stream name.
 
-        Data and job status messages are filtered by active job number when a
-        JobOrchestrator is available. Messages from unknown or stopped jobs are
-        silently discarded.
+        Data and job status messages are filtered by active job number when an
+        ActiveJobRegistry is available. Messages from unknown or stopped jobs
+        are silently discarded.
 
         Parameters
         ----------
@@ -110,11 +115,11 @@ class Orchestrator:
     def _is_active_job(self, job_number: JobNumber) -> bool:
         """Check if a job_number belongs to an active job.
 
-        Returns True if no JobOrchestrator is configured (permissive mode).
+        Returns True if no ActiveJobRegistry is configured (permissive mode).
         """
-        if self._job_orchestrator is None:
+        if self._active_job_registry is None:
             return True
-        return self._job_orchestrator.is_active_job_number(job_number)
+        return self._active_job_registry.is_active(job_number)
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
         """Process a command acknowledgement from the backend."""

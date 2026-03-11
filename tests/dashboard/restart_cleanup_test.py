@@ -22,6 +22,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.message import STATUS_STREAM_ID, StreamId, StreamKind
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
@@ -49,26 +50,30 @@ def _make_result_key(
 
 
 def _make_system(*workflow_specs):
-    """Wire up real JobOrchestrator, Orchestrator, and DataService."""
+    """Wire up real JobOrchestrator, Orchestrator, DataService, and
+    ActiveJobRegistry."""
     data_service = DataService()
     job_service = JobService()
     fake_sink = FakeMessageSink()
     registry = {spec.get_id(): spec for spec in workflow_specs}
 
+    active_job_registry = ActiveJobRegistry(
+        data_service=data_service, job_service=job_service
+    )
+
     job_orchestrator = JobOrchestrator(
         command_service=CommandService(sink=fake_sink),
         workflow_registry=registry,
-        data_service=data_service,
-        job_service=job_service,
+        active_job_registry=active_job_registry,
     )
 
-    # Orchestrator uses the same JobOrchestrator for active-job filtering
     orchestrator = Orchestrator(
         message_source=fake_sink,  # unused; we call forward() directly
         data_service=data_service,
         job_service=job_service,
         service_registry=ServiceRegistry(),
         job_orchestrator=job_orchestrator,
+        active_job_registry=active_job_registry,
     )
 
     return orchestrator, job_orchestrator, data_service, job_service
@@ -236,6 +241,7 @@ class TestConcurrentForwardAndCommit:
         """Concurrent data forwarding and workflow restart must not crash."""
         orchestrator, job_orchestrator, _data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
+        registry = job_orchestrator.active_job_registry
 
         # Initial commit
         job_ids = job_orchestrator.commit_workflow(workflow_id)
@@ -251,7 +257,7 @@ class TestConcurrentForwardAndCommit:
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
                     try:
-                        with job_orchestrator.data_flow_lock:
+                        with registry.ingestion_guard():
                             orchestrator.forward(
                                 _data_stream_id(key), sc.scalar(float(i))
                             )
@@ -280,6 +286,7 @@ class TestConcurrentForwardAndCommit:
         """Concurrent forwarding and restarts must not leave orphaned data."""
         orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
+        registry = job_orchestrator.active_job_registry
 
         errors: list[Exception] = []
         stop = threading.Event()
@@ -294,7 +301,7 @@ class TestConcurrentForwardAndCommit:
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, jids[0].job_number)
                     try:
-                        with job_orchestrator.data_flow_lock:
+                        with registry.ingestion_guard():
                             orchestrator.forward(
                                 _data_stream_id(key), sc.scalar(float(i))
                             )

@@ -19,6 +19,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
 from ess.livedata.dashboard.data_service import DataService
@@ -206,13 +207,14 @@ def make_orchestrator(
 ) -> JobOrchestrator:
     """Build a JobOrchestrator from one or more WorkflowSpecs for testing."""
     registry = {spec.get_id(): spec for spec in specs}
+    ds = data_service if data_service is not None else DataService()
+    js = job_service if job_service is not None else JobService()
     return JobOrchestrator(
         command_service=CommandService(
             sink=fake_sink if fake_sink is not None else FakeMessageSink()
         ),
         workflow_registry=registry,
-        data_service=data_service if data_service is not None else DataService(),
-        job_service=job_service if job_service is not None else JobService(),
+        active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
         config_store=config_store,
     )
 
