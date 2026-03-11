@@ -47,6 +47,24 @@ def test_get_nexus_filename_raises_if_datetime_out_of_range() -> None:
         get_nexus_geometry_filename('dream', date=sc.datetime('2020-01-01T00:00:00'))
 
 
+def test_get_nexus_filename_reads_from_data_dir(monkeypatch, tmp_path) -> None:
+    geometry_file = tmp_path / 'geometry-loki-2025-01-01.nxs'
+    geometry_file.write_bytes(b'fake')
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    result = get_nexus_geometry_filename(
+        'loki', date=sc.datetime('2025-01-02T00:00:00')
+    )
+    assert result == geometry_file
+
+
+def test_get_nexus_filename_raises_if_file_missing_in_data_dir(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    with pytest.raises(FileNotFoundError, match='LIVEDATA_DATA_DIR'):
+        get_nexus_geometry_filename('loki', date=sc.datetime('2025-01-02T00:00:00'))
+
+
 @pytest.mark.parametrize('instrument_name', available_instruments())
 def test_factory_can_create_preprocessor(instrument_name: str) -> None:
     instrument = get_instrument(instrument_name)
