@@ -5,22 +5,18 @@
 import pytest
 
 from ess.livedata.dashboard.plots import TitleResolver
-from ess.livedata.dashboard.plotter_registry import PlotterCategory, plotter_registry
+from ess.livedata.dashboard.plotter_registry import plotter_registry
 
 
-def _data_plotter_names() -> list[str]:
-    """Get names of all DATA-category plotters from the registry."""
-    return [
-        name
-        for name, entry in plotter_registry.items()
-        if entry.spec.category == PlotterCategory.DATA
-    ]
+def _all_plotter_names() -> list[str]:
+    """Get names of all registered plotters."""
+    return list(plotter_registry.keys())
 
 
 class TestPlotterComputeSignature:
     """Verify all registered plotters accept the kwargs passed by PlotOrchestrator."""
 
-    @pytest.mark.parametrize("plotter_name", _data_plotter_names())
+    @pytest.mark.parametrize("plotter_name", _all_plotter_names())
     def test_compute_accepts_title_resolver_kwarg(self, plotter_name):
         """PlotOrchestrator passes title_resolver= to all plotters.
 

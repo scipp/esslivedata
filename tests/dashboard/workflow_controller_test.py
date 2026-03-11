@@ -131,11 +131,17 @@ def workflow_controller(
 ) -> WorkflowControllerFixture:
     """Workflow controller instance for testing."""
     # Create JobOrchestrator with shared services
+    from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
+    from ess.livedata.dashboard.data_service import DataService
     from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+    from ess.livedata.dashboard.job_service import JobService
 
+    ds = DataService()
+    js = JobService()
     job_orchestrator = JobOrchestrator(
         command_service=command_service,
         workflow_registry=workflow_registry,
+        active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
         config_store=fake_config_store,
     )
 
@@ -276,11 +282,17 @@ class TestWorkflowController:
         registry = {workflow_id_1: workflow_spec_1, workflow_id_2: workflow_spec_2}
 
         # Create JobOrchestrator
+        from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
+        from ess.livedata.dashboard.data_service import DataService
         from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+        from ess.livedata.dashboard.job_service import JobService
 
+        ds = DataService()
+        js = JobService()
         job_orchestrator = JobOrchestrator(
             command_service=command_service,
             workflow_registry=registry,
+            active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
             config_store=config_store,
         )
 

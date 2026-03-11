@@ -267,17 +267,17 @@ class TestJobManager:
             assert job.start_time == 100  # Data start time
             assert job.end_time == 200  # Data end time
 
-    def test_stop_job_scheduled_removes_from_scheduled(
+    def test_stop_job_scheduled_removes_from_system(
         self, fake_job_factory, delayed_start_config
     ):
-        """Test stopping a scheduled job removes it completely."""
+        """Test stopping a scheduled job removes it from the system."""
         manager = JobManager(fake_job_factory)
 
         job_id = manager.schedule_job("test_source", delayed_start_config)
-        # Before data reaches start time, job should be scheduled but not active
-        assert len(manager.active_jobs) == 0
+        assert len(manager.all_jobs) == 1
 
         manager.stop_job(job_id)
+        assert len(manager.all_jobs) == 0
 
         # After stopping, even when data reaches start time, job should not activate
         data = WorkflowData(
@@ -288,10 +288,10 @@ class TestJobManager:
         manager.push_data(data)
         assert len(manager.active_jobs) == 0
 
-    def test_stop_job_stops_active_immediately(
+    def test_stop_job_removes_active_immediately(
         self, fake_job_factory, base_workflow_config
     ):
-        """Test stopping an active job."""
+        """Test stopping an active job removes it from the system."""
         manager = JobManager(fake_job_factory)
 
         job_id = manager.schedule_job("test_source", base_workflow_config)
@@ -306,8 +306,8 @@ class TestJobManager:
         assert len(manager.active_jobs) == 1
 
         manager.stop_job(job_id)
-        # Job stopped, even before compute_results is called
         assert len(manager.active_jobs) == 0
+        assert len(manager.all_jobs) == 0
 
     def test_stop_job_nonexistent_raises_error(self, fake_job_factory):
         """Test stopping a non-existent job raises KeyError."""
@@ -385,7 +385,7 @@ class TestJobManager:
     def test_compute_results_ignores_stopped_jobs(
         self, fake_job_factory, base_workflow_config
     ):
-        """Test that compute_results removes jobs that were stopped."""
+        """Test that compute_results does not return results for stopped jobs."""
         manager = JobManager(fake_job_factory)
 
         job_id = manager.schedule_job("test_source", base_workflow_config)
@@ -399,13 +399,13 @@ class TestJobManager:
         manager.push_data(data)
         assert len(manager.active_jobs) == 1
 
-        # Stop the job
+        # Stop the job — fully removed from system
         manager.stop_job(job_id)
-        assert len(manager.active_jobs) == 0  # Not active
+        assert len(manager.all_jobs) == 0
 
         # Compute results should not give a result for the stopped job
         results = manager.compute_results()
-        assert len(results) == 0  # Should not return result
+        assert len(results) == 0
 
     def test_job_lifecycle_with_schedule_based_activation(
         self, fake_job_factory, scheduled_workflow_config

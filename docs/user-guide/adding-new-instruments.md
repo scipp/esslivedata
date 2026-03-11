@@ -329,11 +329,17 @@ If you configure `detector_number` explicitly via `configure_detector()`, no geo
 
 To provide a geometry file:
 
-1. Create a NeXus geometry file following the naming convention: `geometry-<instrument>-<date>.nxs`
-   - Use `ess-livedata-make-geometry-nexus` to create from a regular NeXus file
-   - The date should be the first date the geometry file is used in production
-2. Add the file's MD5 hash to the `_registry` in [detector_data_handler.py](../../src/ess/livedata/handlers/detector_data_handler.py)
-3. Upload the file to https://public.esss.dk/groups/scipp/beamlime/geometry/
+1. Create a stripped NeXus geometry file from a full NeXus file:
+   ```sh
+   ess-livedata-make-geometry-nexus input.nxs geometry-<instrument>-<YYYY-MM-DD>.nxs
+   ```
+   The date should be the first date the geometry is valid for production use.
+2. Test the output file: load it, verify detector views and workflows produce correct results.
+3. Upload the verified file and get the registry entry:
+   ```sh
+   python -m ess.livedata.handlers.upload_geometry geometry-<instrument>-<YYYY-MM-DD>.nxs
+   ```
+4. Add the printed registry entry to `_registry` in [detector_data_handler.py](../../src/ess/livedata/handlers/detector_data_handler.py) and commit.
 
 Multiple geometry files can exist for an instrument (for different time periods), but only one is active at a time.
 

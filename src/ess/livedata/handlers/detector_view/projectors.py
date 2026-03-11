@@ -27,7 +27,7 @@ from ess.reduce.live.raw import (
     make_xy_plane_coords,
 )
 
-from .types import LogicalTransform, ProjectionType, ReductionDim, ScreenMetadata
+from .types import FlipX, LogicalTransform, ProjectionType, ReductionDim, ScreenMetadata
 
 
 class Projector(Protocol):
@@ -310,6 +310,7 @@ def make_geometric_projector(
     coords: CalibratedPositionWithNoisyReplicas,
     projection_type: ProjectionType,
     resolution: DetectorViewResolution,
+    flip_x: FlipX,
 ) -> Projector:
     """
     Sciline provider: Create a geometric projector.
@@ -322,6 +323,10 @@ def make_geometric_projector(
         Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
     resolution:
         Resolution (number of bins) for each screen dimension.
+    flip_x:
+        Whether to mirror the x-axis for 'view from sample' orientation.
+        When True, negates x-coordinates so that backward-facing detectors
+        appear as seen from the sample position.
 
     Returns
     -------
@@ -335,6 +340,9 @@ def make_geometric_projector(
         projected_coords = make_cylinder_mantle_coords(coords)
     else:
         raise ValueError(f"Unknown projection type: {projection_type}")
+
+    if flip_x:
+        projected_coords['x'] = -projected_coords['x']
 
     # Create bin edges from coordinates and resolution
     edges = sc.DataGroup(

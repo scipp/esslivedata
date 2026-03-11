@@ -161,6 +161,7 @@ class DetectorViewFactory:
                     projection_type=config.projection_type,
                     resolution=config.resolution,
                     pixel_noise=config.pixel_noise,
+                    flip_x=config.flip_x,
                 )
                 roi_support = True  # Geometric views always support ROI
             case LogicalViewConfig():
@@ -223,8 +224,6 @@ class DetectorViewFactory:
 
         return StreamProcessorWorkflow(
             workflow,
-            # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
-            # providers will group events by pixel to produce RawDetector.
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
             context_keys=context_keys,
             target_keys=target_keys,
