@@ -62,6 +62,7 @@ services:
       KAFKA_MAX_REQUEST_SIZE: 104857600
       KAFKA_MAX_PARTITION_FETCH_BYTES: 104857600
     mem_limit: 5G
+    restart: on-failure
     healthcheck:
       test:
         [
@@ -113,6 +114,7 @@ services:
       KAFKA_SASL_MECHANISM: SCRAM-SHA-256
       KAFKA_SASL_USERNAME: DUMMY
       KAFKA_SASL_PASSWORD: DUMMY
+    restart: on-failure
     command: sh -c "pip install -e . && python -m ess.livedata.services.fake_detectors --instrument dream --nexus-file /app/${NEXUS_FILE}"
 
   # monitor-data:
@@ -124,13 +126,7 @@ services:
   #   volumes:
   #     - .:/app
   #   working_dir: /app
-  #   environment: &env-downstream
-  #     <<: *env-common
-  #     KAFKA2_BOOTSTRAP_SERVERS: kafka:29092
-  #     KAFKA2_SECURITY_PROTOCOL: PLAINTEXT
-  #     KAFKA2_SASL_MECHANISM: SCRAM-SHA-256
-  #     KAFKA2_SASL_USERNAME: DUMMY
-  #     KAFKA2_SASL_PASSWORD: DUMMY
+  #   environment: *env-common
   #   command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.monitor_data --instrument dream --dev"
 
   detector-data:
@@ -142,13 +138,8 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    environment: &env-downstream
-      <<: *env-common
-      KAFKA2_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA2_SECURITY_PROTOCOL: PLAINTEXT
-      KAFKA2_SASL_MECHANISM: SCRAM-SHA-256
-      KAFKA2_SASL_USERNAME: DUMMY
-      KAFKA2_SASL_PASSWORD: DUMMY
+    environment: *env-common
+    restart: on-failure
     command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.detector_data --sync-scheduler --instrument dream --dev"
 
   reduction-dashboard:
@@ -163,6 +154,7 @@ services:
       - .:/app
     working_dir: /app
     environment:
-      <<: *env-downstream
+      <<: *env-common
       BOKEH_ALLOW_WS_ORIGIN: "*"
+    restart: on-failure
     command: sh -c "pip install -e '.[dream,dashboard]' && python -m ess.livedata.dashboard.reduction --instrument dream"
