@@ -149,7 +149,7 @@ services:
       KAFKA2_SASL_MECHANISM: SCRAM-SHA-256
       KAFKA2_SASL_USERNAME: DUMMY
       KAFKA2_SASL_PASSWORD: DUMMY
-    command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.detector_data --instrument dream --dev"
+    command: sh -c "pip install -e '.[dream]' && python -m ess.livedata.services.detector_data --sync-scheduler --instrument dream --dev"
 
   reduction-dashboard:
     image: python:3.12
