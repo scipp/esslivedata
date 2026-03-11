@@ -114,7 +114,13 @@ class StaticPlotter(ABC):
         """Check if state has been computed."""
         return self._cached_state is not None
 
-    def compute(self, data: dict) -> None:
+    def mark_presenters_dirty(self) -> None:
+        """Mark all registered presenters as having pending updates."""
+        # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
+        for presenter in list(self._presenters):
+            presenter._mark_dirty()
+
+    def compute(self, data: dict, **kwargs) -> None:
         """Compute the static plot and cache the result.
 
         Parameters

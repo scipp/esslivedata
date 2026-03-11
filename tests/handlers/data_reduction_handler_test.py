@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pytest
+import scipp as sc
 
 from ess.livedata import StreamId, StreamKind
 from ess.livedata.config.instrument import Instrument
@@ -13,6 +14,10 @@ class TestReductionHandlerFactory:
     def instrument_with_logs(self):
         """Create an instrument with log attribute configuration."""
         instrument = Instrument(name='test_instrument', detector_names=['det1'])
+        instrument.configure_detector(
+            'det1',
+            detector_number=sc.arange('detector_number', 0, 10, unit=None),
+        )
         instrument.f144_attribute_registry = {
             'temp_sensor': {
                 'value': {'shape': [], 'dtype': 'float'},
@@ -71,13 +76,13 @@ class TestReductionHandlerFactory:
         assert isinstance(preprocessor, ToNXevent_data)
 
     def test_make_preprocessor_detector_events(self, factory):
-        """Test that DETECTOR_EVENTS returns ToNXevent_data."""
-        stream_id = StreamId(kind=StreamKind.DETECTOR_EVENTS, name='test')
+        """Test that DETECTOR_EVENTS returns GroupByPixel."""
+        stream_id = StreamId(kind=StreamKind.DETECTOR_EVENTS, name='det1')
         preprocessor = factory.make_preprocessor(stream_id)
 
-        from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
+        from ess.livedata.handlers.group_by_pixel import GroupByPixel
 
-        assert isinstance(preprocessor, ToNXevent_data)
+        assert isinstance(preprocessor, GroupByPixel)
 
     def test_make_preprocessor_area_detector(self, factory):
         """Test that AREA_DETECTOR returns Cumulative accumulator."""

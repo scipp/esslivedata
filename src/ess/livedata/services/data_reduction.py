@@ -13,7 +13,11 @@ from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
 def make_reduction_service_builder(
-    *, instrument: str, dev: bool = True, log_level: int = logging.INFO
+    *,
+    instrument: str,
+    dev: bool = True,
+    log_level: int = logging.INFO,
+    group_by_pixel: bool = True,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     adapter = (
@@ -28,7 +32,9 @@ def make_reduction_service_builder(
     instrument_config = instrument_registry[instrument]
     instrument_config.load_factories()
     service_name = 'data_reduction'
-    preprocessor_factory = ReductionHandlerFactory(instrument=instrument_config)
+    preprocessor_factory = ReductionHandlerFactory(
+        instrument=instrument_config, group_by_pixel=group_by_pixel
+    )
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -41,6 +47,13 @@ def make_reduction_service_builder(
 def main() -> NoReturn:
     runner = DataServiceRunner(
         pretty_name='Data Reduction', make_builder=make_reduction_service_builder
+    )
+    runner.parser.add_argument(
+        '--no-group-by-pixel',
+        dest='group_by_pixel',
+        action='store_false',
+        default=True,
+        help='Disable pixel grouping in the preprocessor',
     )
     runner.run()
 

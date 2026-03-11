@@ -224,8 +224,6 @@ class DetectorViewFactory:
 
         return StreamProcessorWorkflow(
             workflow,
-            # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
-            # providers will group events by pixel to produce RawDetector.
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
             context_keys=context_keys,
             target_keys=target_keys,

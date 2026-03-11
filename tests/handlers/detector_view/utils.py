@@ -60,49 +60,6 @@ def make_fake_nexus_detector_data(
     return binned
 
 
-def make_fake_ungrouped_nexus_data(
-    *, y_size: int = 4, x_size: int = 4, n_events_per_pixel: int = 10
-) -> sc.DataArray:
-    """Create fake ungrouped NeXusData for testing with GenericNeXusWorkflow.
-
-    GenericNeXusWorkflow expects ungrouped event data with event_id coordinate
-    (detector pixel ID per event). This format is what the preprocessor outputs
-    before events are grouped by detector pixel.
-
-    This is different from make_fake_nexus_detector_data which produces already-
-    grouped data in RawDetector format.
-    """
-    rng = np.random.default_rng(42)
-
-    total_pixels = y_size * x_size
-    total_events = total_pixels * n_events_per_pixel
-
-    # Create event_time_offset values in nanoseconds (0-71ms range)
-    eto_values = rng.uniform(0, 71_000_000, total_events)
-
-    # Create event_id (detector pixel ID) for each event
-    # Events are distributed evenly across pixels
-    event_ids = np.repeat(np.arange(1, total_pixels + 1), n_events_per_pixel)
-
-    # Create ungrouped event table with event_id coordinate
-    # This is the format expected by assemble_detector_data / group_event_data
-    events = sc.DataArray(
-        data=sc.ones(dims=['event'], shape=[total_events]),
-        coords={
-            'event_time_offset': sc.array(dims=['event'], values=eto_values, unit='ns'),
-            'event_id': sc.array(dims=['event'], values=event_ids, unit=None),
-        },
-    )
-
-    # Wrap in bins with a pulse dimension (format expected by group_event_data)
-    # group_event_data expects begin/end to be 1D arrays, not scalars
-    begin = sc.array(dims=['pulse'], values=[0], dtype='int64', unit=None)
-    end = sc.array(dims=['pulse'], values=[total_events], dtype='int64', unit=None)
-    binned = sc.DataArray(data=sc.bins(begin=begin, end=end, dim='event', data=events))
-
-    return binned
-
-
 def make_logical_transform(y_size: int, x_size: int):
     """Create a logical transform that folds detector_number to (y, x)."""
 

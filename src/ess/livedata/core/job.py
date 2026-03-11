@@ -260,6 +260,28 @@ class Job:
             message = f"Job failed to process latest data.\n\n{tb}"
             return JobReply(job_id=self._job_id, error_message=message)
 
+    def process(
+        self, data: JobData, *, finalize: bool = False
+    ) -> tuple[JobReply, JobResult | None]:
+        """Accumulate data and optionally finalize.
+
+        Parameters
+        ----------
+        data:
+            The data to accumulate. If empty, accumulation is skipped.
+        finalize:
+            If True, finalize even if this push did not deliver primary data
+            (e.g., to retry after a previous finalization failure).
+        """
+        if data.is_empty():
+            reply = JobReply(job_id=self._job_id)
+        else:
+            reply = self.add(data)
+            if not reply.has_error and data.is_active():
+                finalize = True
+        result = self.get() if finalize else None
+        return reply, result
+
     def get(self) -> JobResult:
         try:
             raw_result = self._processor.finalize()
