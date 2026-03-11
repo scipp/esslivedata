@@ -1923,3 +1923,16 @@ class TestJobManagerThreading:
 
         status = manager.get_job_status(job_ids[1])
         assert status.state == JobState.warning
+
+    def test_shutdown_terminates_executor(self):
+        """Calling shutdown cleans up the thread pool executor."""
+        manager, _, _ = self._setup_threaded_manager(n_jobs=1, job_threads=2)
+        assert manager._executor is not None
+        manager.shutdown()
+        assert manager._executor is None
+
+    def test_shutdown_without_executor_is_noop(self):
+        """Shutdown is safe when no executor was created (job_threads=1)."""
+        manager, _, _ = self._setup_threaded_manager(n_jobs=1, job_threads=1)
+        assert manager._executor is None
+        manager.shutdown()  # Should not raise

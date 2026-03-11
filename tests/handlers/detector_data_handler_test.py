@@ -13,7 +13,7 @@ from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
     get_nexus_geometry_filename,
 )
-from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
+from ess.livedata.handlers.group_by_pixel import GroupByPixel
 
 
 def get_instrument(instrument_name: str) -> Instrument:
@@ -47,6 +47,24 @@ def test_get_nexus_filename_raises_if_datetime_out_of_range() -> None:
         get_nexus_geometry_filename('dream', date=sc.datetime('2020-01-01T00:00:00'))
 
 
+def test_get_nexus_filename_reads_from_data_dir(monkeypatch, tmp_path) -> None:
+    geometry_file = tmp_path / 'geometry-loki-2025-01-01.nxs'
+    geometry_file.write_bytes(b'fake')
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    result = get_nexus_geometry_filename(
+        'loki', date=sc.datetime('2025-01-02T00:00:00')
+    )
+    assert result == geometry_file
+
+
+def test_get_nexus_filename_raises_if_file_missing_in_data_dir(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    with pytest.raises(FileNotFoundError, match='LIVEDATA_DATA_DIR'):
+        get_nexus_geometry_filename('loki', date=sc.datetime('2025-01-02T00:00:00'))
+
+
 @pytest.mark.parametrize('instrument_name', available_instruments())
 def test_factory_can_create_preprocessor(instrument_name: str) -> None:
     instrument = get_instrument(instrument_name)
@@ -62,8 +80,8 @@ def test_factory_can_create_preprocessor(instrument_name: str) -> None:
         _ = factory.make_preprocessor(StreamId(kind=kind, name=name))
 
 
-def test_factory_creates_to_nxevent_data_for_detector_events() -> None:
-    """Test that DetectorHandlerFactory creates ToNXevent_data for event detectors."""
+def test_factory_creates_group_by_pixel_for_detector_events() -> None:
+    """Test that DetectorHandlerFactory creates GroupByPixel for event detectors."""
     instrument = get_instrument('dummy')
     factory = DetectorHandlerFactory(instrument=instrument)
 
@@ -72,9 +90,9 @@ def test_factory_creates_to_nxevent_data_for_detector_events() -> None:
 
     preprocessor = factory.make_preprocessor(detector_stream_id)
 
-    # Should return ToNXevent_data preprocessor
+    # Should return GroupByPixel preprocessor
     assert preprocessor is not None
-    assert isinstance(preprocessor, ToNXevent_data)
+    assert isinstance(preprocessor, GroupByPixel)
 
 
 def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:

@@ -67,6 +67,7 @@ def setup_factories(instrument: Instrument) -> None:
                 projection_type='xy_plane',
                 resolution={'y': 240, 'x': 160},
                 pixel_noise=_pixel_noise,
+                flip_x=True,
             ),
             'endcap_forward_detector': GeometricViewConfig(
                 projection_type='xy_plane',
@@ -77,6 +78,7 @@ def setup_factories(instrument: Instrument) -> None:
                 projection_type='xy_plane',
                 resolution={'y': 160, 'x': 160},
                 pixel_noise=_pixel_noise,
+                flip_x=True,
             ),
             'sans_detector': GeometricViewConfig(
                 projection_type='xy_plane',
