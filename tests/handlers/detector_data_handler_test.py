@@ -13,7 +13,7 @@ from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
     get_nexus_geometry_filename,
 )
-from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
+from ess.livedata.handlers.group_by_pixel import GroupByPixel
 
 
 def get_instrument(instrument_name: str) -> Instrument:
@@ -80,8 +80,8 @@ def test_factory_can_create_preprocessor(instrument_name: str) -> None:
         _ = factory.make_preprocessor(StreamId(kind=kind, name=name))
 
 
-def test_factory_creates_to_nxevent_data_for_detector_events() -> None:
-    """Test that DetectorHandlerFactory creates ToNXevent_data for event detectors."""
+def test_factory_creates_group_by_pixel_for_detector_events() -> None:
+    """Test that DetectorHandlerFactory creates GroupByPixel for event detectors."""
     instrument = get_instrument('dummy')
     factory = DetectorHandlerFactory(instrument=instrument)
 
@@ -90,9 +90,9 @@ def test_factory_creates_to_nxevent_data_for_detector_events() -> None:
 
     preprocessor = factory.make_preprocessor(detector_stream_id)
 
-    # Should return ToNXevent_data preprocessor
+    # Should return GroupByPixel preprocessor
     assert preprocessor is not None
-    assert isinstance(preprocessor, ToNXevent_data)
+    assert isinstance(preprocessor, GroupByPixel)
 
 
 def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
