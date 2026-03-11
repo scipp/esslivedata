@@ -21,6 +21,9 @@ COPY . .
 
 RUN pip install --no-cache-dir -e ".[${INSTRUMENT}]"
 
+ENV LIVEDATA_DATA_DIR=/app/data/geometry
+RUN python -m ess.livedata.handlers.download_geometry
+
 USER livedata
 
 ENV LIVEDATA_ENV=docker \
@@ -58,6 +61,9 @@ WORKDIR /app
 COPY . .
 
 RUN pip install --no-cache-dir -e ".[${INSTRUMENT},dashboard]"
+
+ENV LIVEDATA_DATA_DIR=/app/data/geometry
+RUN python -m ess.livedata.handlers.download_geometry
 
 USER livedata
 
