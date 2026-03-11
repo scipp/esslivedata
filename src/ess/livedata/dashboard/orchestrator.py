@@ -2,12 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
-from ..config.workflow_spec import ResultKey
+from ..config.workflow_spec import JobNumber, ResultKey
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -15,6 +16,7 @@ from ..core.message import (
     MessageSource,
     StreamId,
 )
+from .active_job_registry import ActiveJobRegistry
 from .data_service import DataService
 from .job_service import JobService
 from .service_registry import ServiceRegistry
@@ -40,12 +42,14 @@ class Orchestrator:
         job_service: JobService,
         service_registry: ServiceRegistry,
         job_orchestrator: JobOrchestrator | None = None,
+        active_job_registry: ActiveJobRegistry | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
         self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
+        self._active_job_registry = active_job_registry
         self._logger = structlog.get_logger()
 
     def update(self) -> None:
@@ -58,23 +62,38 @@ class Orchestrator:
         if not messages:
             return
 
+        # The ingestion guard serializes message processing against active-set
+        # mutations and DataService cleanup in ActiveJobRegistry.deactivate()
+        # (called from the UI thread). Without this, the background thread
+        # could iterate or write to DataService while the UI thread deletes
+        # buffers, causing dict-iteration crashes or orphaned buffers.
+        #
         # Batch all updates in a transaction to avoid repeated UI updates. Reason:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
-        with self._data_service.transaction():
-            for message in messages:
-                self.forward(stream_id=message.stream, value=message.value)
+        guard = (
+            self._active_job_registry.ingestion_guard()
+            if self._active_job_registry is not None
+            else nullcontext()
+        )
+        with guard:
+            with self._data_service.transaction():
+                for message in messages:
+                    self.forward(stream_id=message.stream, value=message.value)
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
         Forward data to the appropriate data service based on the stream name.
 
+        Data and job status messages are filtered by active job number when an
+        ActiveJobRegistry is available. Messages from unknown or stopped jobs
+        are silently discarded.
+
         Parameters
         ----------
-        stream_name:
-            The name of the stream in the format 'source_name/service_name/suffix'. The
-            suffix may contain additional '/' characters which will be ignored.
+        stream_id:
+            The stream identifier.
         value:
             The data to be forwarded.
         """
@@ -82,14 +101,25 @@ class Orchestrator:
             if isinstance(value, ServiceStatus):
                 self._service_registry.status_updated(value)
             elif isinstance(value, JobStatus):
-                self._job_service.status_updated(value)
+                if self._is_active_job(value.job_id.job_number):
+                    self._job_service.status_updated(value)
             else:
                 self._logger.warning("Unknown status type: %s", type(value))
         elif stream_id == RESPONSES_STREAM_ID:
             self._process_response(value)
         else:
             result_key = ResultKey.model_validate_json(stream_id.name)
-            self._data_service[result_key] = value
+            if self._is_active_job(result_key.job_id.job_number):
+                self._data_service[result_key] = value
+
+    def _is_active_job(self, job_number: JobNumber) -> bool:
+        """Check if a job_number belongs to an active job.
+
+        Returns True if no ActiveJobRegistry is configured (permissive mode).
+        """
+        if self._active_job_registry is None:
+            return True
+        return self._active_job_registry.is_active(job_number)
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
         """Process a command acknowledgement from the backend."""

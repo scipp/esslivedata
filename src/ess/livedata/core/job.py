@@ -95,7 +95,6 @@ class JobState(StrEnum):
     active = "active"
     paused = "paused"
     finishing = "finishing"
-    stopped = "stopped"
     error = "error"
     warning = "warning"
 

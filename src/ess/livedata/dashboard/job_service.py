@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import time
+from uuid import UUID
 
 import structlog
 
 from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.job import JobStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +24,6 @@ class JobService:
     ) -> None:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._job_status_timestamps: dict[JobId, int] = {}
-        self._removed_jobs: set[JobId] = set()
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
 
     @property
@@ -33,28 +33,9 @@ class JobService:
 
     def status_updated(self, job_status: JobStatus) -> None:
         """Update the stored job status and record timestamp."""
-        # Avoid re-adding removed jobs by in-flight status messages from backend.
-        if (
-            job_status.state == JobState.stopped
-            and job_status.job_id in self._removed_jobs
-        ):
-            logger.debug("Ignoring status update for removed job %s", job_status.job_id)
-            return
-
         logger.debug("Job status updated: %s", job_status)
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
-
-    def remove_job(self, job_id: JobId) -> None:
-        """Remove a job from tracking."""
-        # Mark this job as removed to filter future status updates
-        self._removed_jobs.add(job_id)
-
-        # Remove from job statuses and timestamps
-        if job_id in self._job_statuses:
-            del self._job_statuses[job_id]
-        if job_id in self._job_status_timestamps:
-            del self._job_status_timestamps[job_id]
 
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).
@@ -77,3 +58,15 @@ class JobService:
         age_ns = current_time - last_update
 
         return age_ns > self._heartbeat_timeout_ns
+
+    def remove_jobs_by_number(self, job_number: UUID) -> None:
+        """Remove all jobs matching a given job number.
+
+        Used to clean up local tracking when a workflow is restarted
+        and the previous job set is no longer needed.
+        """
+        to_remove = [jid for jid in self._job_statuses if jid.job_number == job_number]
+        for jid in to_remove:
+            logger.debug("Removing job %s (job_number=%s)", jid, job_number)
+            self._job_statuses.pop(jid, None)
+            self._job_status_timestamps.pop(jid, None)
