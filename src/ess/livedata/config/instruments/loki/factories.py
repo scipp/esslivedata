@@ -50,6 +50,12 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
+    # WARNING: _base_workflow construction triggers network downloads via pooch
+    # (geometry file and TOF lookup table). Since setup_factories() runs during
+    # test parametrize collection (via load_factories()), this blocks test
+    # collection when external servers are unavailable.
+    # Only _i_of_q_factory uses _base_workflow — consider deferring construction
+    # into that factory to avoid eager downloads. See issue #778.
     _base_workflow = LokiWorkflow()
     _base_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('loki')
     _base_workflow[TofLookupTableFilename] = str(
