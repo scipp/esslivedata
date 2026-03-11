@@ -269,6 +269,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         logger.info('service_shutting_down')
         self._service_state = ServiceState.stopping
         self._send_final_heartbeat()
+        self._job_manager.shutdown()
 
     def report_stopped(self) -> None:
         """Transition to stopped state and send final heartbeat.
