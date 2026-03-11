@@ -199,7 +199,7 @@ class DashboardServices:
         self.instrument_config = instrument_registry[self._instrument]
         self.processor_factory = self.instrument_config.workflow_factory
 
-        self.active_job_registry = ActiveJobRegistry(
+        active_job_registry = ActiveJobRegistry(
             data_service=self.data_service,
             job_service=self.job_service,
         )
@@ -207,7 +207,7 @@ class DashboardServices:
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
-            active_job_registry=self.active_job_registry,
+            active_job_registry=active_job_registry,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
@@ -226,5 +226,5 @@ class DashboardServices:
             job_service=self.job_service,
             service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
-            active_job_registry=self.active_job_registry,
+            active_job_registry=active_job_registry,
         )
