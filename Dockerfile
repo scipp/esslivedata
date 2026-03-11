@@ -62,9 +62,6 @@ COPY . .
 
 RUN pip install --no-cache-dir -e ".[${INSTRUMENT},dashboard]"
 
-ENV LIVEDATA_DATA_DIR=/app/data/geometry
-RUN python -m ess.livedata.handlers.download_geometry
-
 USER livedata
 
 EXPOSE 5009
