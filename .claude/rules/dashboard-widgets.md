@@ -43,6 +43,20 @@ def refresh(self):
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
 
+## Model creation and visibility
+
+`pn.Tabs(dynamic=True)` prevents Bokeh model creation for hidden tabs — only the active
+tab's models exist in the document. This is the preferred mechanism for deferring cost.
+
+`visible=False` on a Panel component only hides it via CSS. All Bokeh models are still
+created and registered in the document. Do not use `visible=False` as a performance
+optimization to defer widget cost — instead, avoid creating the component until it is
+needed (lazy creation) or use `dynamic=True` containers.
+
+Note that `dynamic=True` only gates Bokeh model creation. Python-side periodic callbacks
+(e.g., `SessionUpdater` custom handlers) still run for all registered widgets regardless
+of which tab is visible. Use an `is_visible` predicate to skip refresh work for hidden tabs.
+
 ## Avoiding flicker
 
 Make sure all widget-updates that touch more than a single widget (or a single widget multiple times) use `pn.io.hold()`.
