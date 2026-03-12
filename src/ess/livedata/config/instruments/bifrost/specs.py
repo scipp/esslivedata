@@ -17,7 +17,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.config.workflow_spec import AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
@@ -223,8 +223,18 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
 
 bifrost_aux_sources = AuxSources(
     {
-        'detector_rotation': 'detector_rotation',
-        'sample_rotation': 'sample_rotation',
+        'detector_rotation': AuxInput(
+            choices=('detector_rotation',),
+            default='detector_rotation',
+            title='Detector Rotation',
+            description='Detector bank rotation angle.',
+        ),
+        'sample_rotation': AuxInput(
+            choices=('sample_rotation',),
+            default='sample_rotation',
+            title='Sample Rotation',
+            description='Sample rotation angle.',
+        ),
     }
 )
 

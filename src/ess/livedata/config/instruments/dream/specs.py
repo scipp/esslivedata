@@ -11,7 +11,7 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
@@ -189,7 +189,16 @@ projection_handle = instrument.register_spec(
 )
 
 
-dream_aux_sources = AuxSources({'cave_monitor': 'monitor_cave'})
+dream_aux_sources = AuxSources(
+    {
+        'cave_monitor': AuxInput(
+            choices=('monitor_cave',),
+            default='monitor_cave',
+            title='Cave Monitor',
+            description='Normalization monitor in the instrument cave.',
+        ),
+    }
+)
 
 
 class PowderWorkflowParams(pydantic.BaseModel):

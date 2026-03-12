@@ -79,7 +79,17 @@ class JobId:
 
 @dataclass(frozen=True)
 class AuxInput:
-    """Specification of an auxiliary data source input for a workflow."""
+    """Specification of an auxiliary data source input for a workflow.
+
+    Each aux input defines a *role* that a workflow consumes (e.g.,
+    "incident monitor for normalization") and maps it to one or more
+    physical streams that can fill that role.
+
+    The ``title`` and ``description`` describe the **role** — what the
+    workflow uses this input for. Display names for the individual stream
+    *choices* come from ``SourceMetadata`` on the ``Instrument``, which
+    describes the physical component (e.g., position, hardware details).
+    """
 
     choices: tuple[str, ...]
     default: str

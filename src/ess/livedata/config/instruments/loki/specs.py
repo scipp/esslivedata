@@ -75,11 +75,13 @@ loki_aux_sources = AuxSources(
         'incident_monitor': AuxInput(
             choices=('beam_monitor_m1',),
             default='beam_monitor_m1',
+            title='Incident Monitor',
             description='Incident beam monitor for normalization.',
         ),
         'transmission_monitor': AuxInput(
             choices=('beam_monitor_m3',),
             default='beam_monitor_m3',
+            title='Transmission Monitor',
             description='Transmission monitor for sample transmission calculation.',
         ),
     }
