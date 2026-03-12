@@ -223,21 +223,23 @@ class BackendStatusWidget:
         self._clear_button.disabled = True
         self._clear_button.description = "Clear stopped workers"
 
-        self._header = pn.Row(
-            pn.pane.HTML(
-                '<h3 style="margin: 0;">Backend Workers</h3>',
-                margin=WorkerUIConstants.HEADER_MARGIN,
-            ),
+        self._header = pn.pane.HTML(
+            "<h3>Backend Workers</h3>",
+            margin=WorkerUIConstants.HEADER_MARGIN,
+        )
+
+        # Summary row with clear button
+        self._summary = pn.pane.HTML(
+            self._format_summary(),
+            margin=(5, 10),
+        )
+        self._summary_row = pn.Row(
+            self._summary,
+            pn.Spacer(),
             self._clear_button,
             sizing_mode="stretch_width",
             align="center",
             margin=0,
-        )
-
-        # Summary row
-        self._summary = pn.pane.HTML(
-            self._format_summary(),
-            margin=(5, 10),
         )
 
         # Table header
@@ -397,7 +399,7 @@ class BackendStatusWidget:
         """Get the main panel for this widget."""
         return pn.Column(
             self._header,
-            self._summary,
+            self._summary_row,
             self._table_header,
             self._worker_list,
             sizing_mode="stretch_width",
