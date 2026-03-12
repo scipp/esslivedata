@@ -140,7 +140,6 @@ class ReductionApp(DashboardBase):
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
         )
-        workflow_status_widget.register_periodic_refresh(session_updater)
 
         system_status_widget = SystemStatusWidget(
             session_registry=self._services.session_registry,
@@ -159,6 +158,13 @@ class ReductionApp(DashboardBase):
             system_status_widget=system_status_widget,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
+        )
+
+        # Register refresh with visibility gate: skip updates when the
+        # Workflows tab (index 0) is not the active tab.
+        workflow_status_widget.register_periodic_refresh(
+            session_updater,
+            is_visible=lambda: plot_grid_tabs.active_tab_index == 0,
         )
 
         return plot_grid_tabs.panel
