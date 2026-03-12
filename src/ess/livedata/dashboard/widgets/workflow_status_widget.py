@@ -272,7 +272,7 @@ class WorkflowStatusWidget:
         )
 
         # Status badge and timing info (store references for updates)
-        status, status_color, timing_text = self._get_status_and_timing()
+        status, status_color, timing_text, _ = self._get_status_and_timing()
         self._status_badge = pn.pane.HTML(
             self._make_status_badge_html(status, status_color),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
@@ -280,7 +280,7 @@ class WorkflowStatusWidget:
         )
 
         self._timing_html = pn.pane.HTML(
-            f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>',
+            self._make_timing_html(timing_text),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
@@ -377,7 +377,7 @@ class WorkflowStatusWidget:
         components = []
 
         # Error message (if any)
-        error_html = self._get_error_html()
+        _, _, _, error_html = self._get_status_and_timing()
         if error_html:
             components.append(
                 pn.pane.HTML(
@@ -648,31 +648,38 @@ class WorkflowStatusWidget:
             f'{status}</span>'
         )
 
-    def _get_status_and_timing(self) -> tuple[str, str, str]:
-        """Get workflow status, color, and timing in a single pass.
+    @staticmethod
+    def _make_timing_html(timing_text: str) -> str:
+        """Generate HTML for the timing display."""
+        return f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
 
-        Iterates job statuses once to extract both status and timing info.
+    def _get_status_and_timing(
+        self,
+    ) -> tuple[str, str, str, str | None]:
+        """Get workflow status, color, timing, and error in a single pass.
+
+        Iterates job statuses once to extract status, timing, and error info.
 
         Returns
         -------
         :
-            Tuple of (status_text, status_color, timing_text).
+            Tuple of (status_text, status_color, timing_text, error_html).
         """
+        # Deferred import: datetime is only needed for active workflows with
+        # a start_time, and importing at module level would add unnecessary
+        # startup cost for a rarely-used module.
         from datetime import UTC, datetime
 
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
-            return (
-                'STOPPED',
-                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
-                '',
-            )
+            return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped'], '', None
 
-        # Single pass over job statuses to collect both status and timing
+        # Single pass over job statuses to collect status, timing, and errors
         has_fresh_backend_status = False
         worst_state = JobState.active
         earliest_start = None
+        error_html = None
 
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id != self._workflow_id:
@@ -701,11 +708,17 @@ class WorkflowStatusWidget:
                 if earliest_start is None or start < earliest_start:
                     earliest_start = start
 
+            # Error: capture first error message
+            if error_html is None and job_status.error_message:
+                summary = extract_error_summary(job_status.error_message)
+                error_html = f'Error: {summary}'
+
         if not has_fresh_backend_status:
             return (
                 'PENDING',
                 WorkflowWidgetStyles.STATUS_COLORS['pending'],
                 'Waiting for backend...',
+                None,
             )
 
         status_text = worst_state.value.upper()
@@ -734,23 +747,7 @@ class WorkflowStatusWidget:
 
             timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
 
-        return status_text, status_color, timing_text
-
-    def _get_error_html(self) -> str | None:
-        """Get error message HTML if any job has an error."""
-        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
-
-        if active_job_number is None:
-            return None
-
-        for job_status in self._job_service.job_statuses.values():
-            if job_status.workflow_id == self._workflow_id:
-                if job_status.job_id.job_number == active_job_number:
-                    if job_status.error_message:
-                        summary = extract_error_summary(job_status.error_message)
-                        return f'Error: {summary}'
-
-        return None
+        return status_text, status_color, timing_text, error_html
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""
@@ -868,7 +865,7 @@ class WorkflowStatusWidget:
             self._build_widget()
             return
 
-        status, status_color, timing_text = self._get_status_and_timing()
+        status, status_color, timing_text, _ = self._get_status_and_timing()
 
         if self._status_badge is not None:
             new_badge = self._make_status_badge_html(status, status_color)
@@ -876,9 +873,7 @@ class WorkflowStatusWidget:
                 self._status_badge.object = new_badge
 
         if self._timing_html is not None:
-            new_timing = (
-                f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
-            )
+            new_timing = self._make_timing_html(timing_text)
             if self._timing_html.object != new_timing:
                 self._timing_html.object = new_timing
 

@@ -210,7 +210,7 @@ class TestWorkflowStatusWidget:
 
     def test_initial_status_is_stopped(self, workflow_status_widget):
         """Test that initial status is STOPPED when no active jobs."""
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
 
     def test_gear_click_calls_orchestrator_create_adapter(
@@ -420,7 +420,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
     def test_status_shows_error_when_job_has_error(
@@ -452,7 +452,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ERROR'
 
     def test_status_shows_pending_when_no_backend_status(
@@ -472,7 +472,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Don't add any job status (simulating backend not running)
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
     def test_timing_shows_waiting_for_pending_job(
@@ -492,7 +492,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Don't add any job status (simulating backend not running)
-        _, _, timing = workflow_status_widget._get_status_and_timing()
+        _, _, timing, _ = workflow_status_widget._get_status_and_timing()
         assert timing == 'Waiting for backend...'
 
     def test_status_transitions_from_pending_to_active(
@@ -513,7 +513,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
 
         # Initially no backend status - should be PENDING
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
         # Backend starts and sends status - should become ACTIVE
@@ -526,7 +526,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
     def test_stop_clears_to_stopped_not_pending(
@@ -546,14 +546,14 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Should be PENDING
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
         # Stop the workflow
         workflow_status_widget._on_stop_click()
 
         # Should be STOPPED, not PENDING
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
 
     def test_status_becomes_pending_when_heartbeat_stale(
@@ -589,14 +589,14 @@ class TestWorkflowStatusWidgetWithJobs:
         job_service.status_updated(job_status)
 
         # Should be ACTIVE initially
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
         # Wait for heartbeat to become stale (> 1 second)
         time.sleep(1.1)
 
         # Status should now be PENDING (stale heartbeat)
-        status, _, _ = workflow_status_widget._get_status_and_timing()
+        status, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
@@ -738,6 +738,7 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
+        workflow_id,
     ):
         """Test that refresh is skipped when visibility predicate returns False."""
         list_widget = WorkflowStatusListWidget(
@@ -745,30 +746,35 @@ class TestWorkflowStatusListWidget:
             job_service=job_service,
         )
 
-        refresh_count = 0
-        original_refresh = WorkflowStatusWidget.refresh
+        # Commit a workflow so it has an active job
+        job_orchestrator.commit_workflow(workflow_id)
+        # Deliver a job status so the badge shows ACTIVE
+        job_number = job_orchestrator.get_active_job_number(workflow_id)
+        job_id = JobId(source_name='source1', job_number=job_number)
+        job_service.status_updated(
+            JobStatus(
+                workflow_id=workflow_id,
+                job_id=job_id,
+                state=JobState.active,
+                start_time=1000000000000,
+            )
+        )
 
-        def counting_refresh(self):
-            nonlocal refresh_count
-            refresh_count += 1
-            original_refresh(self)
+        widget = list_widget._widgets[workflow_id]
+        # Force initial refresh so badge reflects ACTIVE
+        list_widget._is_visible = None
+        list_widget._refresh_all()
+        badge_after_active = widget._status_badge.object
 
-        WorkflowStatusWidget.refresh = counting_refresh
-        try:
-            # Without visibility predicate, refresh runs
-            list_widget._is_visible = None
-            list_widget._refresh_all()
-            assert refresh_count > 0
+        # Stop the workflow to change the status
+        job_orchestrator.stop_workflow(workflow_id)
 
-            # With visibility returning False, refresh is skipped
-            refresh_count = 0
-            list_widget._is_visible = lambda: False
-            list_widget._refresh_all()
-            assert refresh_count == 0
+        # With visibility returning False, refresh is skipped — badge unchanged
+        list_widget._is_visible = lambda: False
+        list_widget._refresh_all()
+        assert widget._status_badge.object == badge_after_active
 
-            # With visibility returning True, refresh runs
-            list_widget._is_visible = lambda: True
-            list_widget._refresh_all()
-            assert refresh_count > 0
-        finally:
-            WorkflowStatusWidget.refresh = original_refresh
+        # With visibility returning True, refresh runs — badge updates
+        list_widget._is_visible = lambda: True
+        list_widget._refresh_all()
+        assert widget._status_badge.object != badge_after_active
