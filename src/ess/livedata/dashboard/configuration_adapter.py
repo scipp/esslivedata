@@ -80,17 +80,18 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """Initially selected auxiliary source names.
 
         Returns a mapping from input name to the selected stream name. Filters
-        persisted aux sources to only include valid input names.
+        persisted aux sources to only include valid input names and valid
+        choices for each input.
         """
         if not self.aux_sources:
             return {}
         if self._config_state is None:
             return {}
-        valid_fields = set(self.aux_sources.inputs.keys())
+        inputs = self.aux_sources.inputs
         return {
             k: v
             for k, v in self._config_state.aux_source_names.items()
-            if k in valid_fields
+            if k in inputs and v in inputs[k].choices
         }
 
     def set_aux_sources(

@@ -457,7 +457,6 @@ class AuxSourcesWidget:
                 name=inp.title or name,
                 options=options,
                 value=initial,
-                disabled=len(inp.choices) <= 1,
                 sizing_mode='stretch_width',
             )
 
