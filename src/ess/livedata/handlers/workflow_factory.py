@@ -184,7 +184,11 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         factory = self._factories[workflow_id]
         sig = inspect.signature(factory)
 
-        # Prepare arguments based on the factory signature
+        # Prepare arguments based on the factory signature. Factories opt in to
+        # each argument by declaring it in their signature. For example, factories
+        # that need to configure NeXus name keys from aux source selections declare
+        # `aux_source_names: dict[str, str]`; factories whose aux sources are
+        # routed as raw values (e.g., via context_keys) can omit it.
         kwargs = {}
         if 'source_name' in sig.parameters:
             kwargs['source_name'] = source_name
