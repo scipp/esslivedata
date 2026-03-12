@@ -41,8 +41,18 @@ class StreamProcessorWorkflow(Workflow):
             The sciline Pipeline to wrap.
         dynamic_keys:
             Mapping from stream names to sciline keys for dynamic inputs.
+            Dynamic inputs are accumulated across calls via
+            ``StreamProcessor.accumulate()``.
         context_keys:
             Mapping from stream names to sciline keys for context inputs.
+            Context inputs update pipeline parameters via
+            ``StreamProcessor.set_context()``. Unlike dynamic inputs, context
+            values are **stateful**: a value set in one ``accumulate()`` call
+            persists into all subsequent calls until explicitly overwritten.
+            If data for a context key is absent from a given batch, the key
+            retains its previous value. If ``set_context`` was never called
+            for a key and the underlying sciline pipeline has no default for
+            it, ``finalize()`` will raise an ``UnsatisfiedGraphError``.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -73,6 +83,14 @@ class StreamProcessorWorkflow(Workflow):
             self._current_start_time = start_time
         self._current_end_time = end_time
 
+        # Context data (e.g., positions from f144 streams) is injected via
+        # set_context, which updates the sciline pipeline parameters. Only keys
+        # present in this batch are updated; absent keys retain the value from
+        # the most recent set_context call, or the pipeline's init-time value.
+        # If a key has no init-time value and has never been set, finalize()
+        # will fail. See aux_sources / render() in workflow_spec.py for how
+        # the routing layer ensures only jobs that subscribed to a stream
+        # receive its data.
         context = {
             sciline_key: data[key]
             for key, sciline_key in self._context_keys.items()
