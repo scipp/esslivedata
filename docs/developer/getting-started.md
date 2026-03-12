@@ -31,7 +31,7 @@ This can be done conveniently using [pre-commit](https://pre-commit.com/):
 pre-commit install
 ```
 
-Alternatively, if you want a different workflow, take a look at ``tox.ini`` or ``.pre-commit.yaml`` to see what tools are run and how.
+Alternatively, if you want a different workflow, take a look at ``tox.ini`` or ``.pre-commit-config.yaml`` to see what tools are run and how.
 
 ## Running tests
 
