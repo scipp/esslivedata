@@ -13,7 +13,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .workflow_spec import WorkflowSpec
+from .workflow_spec import AuxSources, WorkflowSpec
 
 
 class SourceMetadata(pydantic.BaseModel):
@@ -306,7 +306,7 @@ class Instrument:
         description: str = '',
         source_names: Sequence[str] | None = None,
         params: type[Any] | None = None,
-        aux_sources: type[Any] | None = None,
+        aux_sources: AuxSources | None = None,
         outputs: type[Any],
     ) -> SpecHandle:
         """
@@ -336,7 +336,7 @@ class Instrument:
             Optional Pydantic model class defining workflow parameters. Must be
             explicit (not inferred from factory).
         aux_sources:
-            Optional Pydantic model class defining auxiliary data sources. If provided,
+            Optional declarative auxiliary source definitions. If provided,
             this will be used for validation and UI generation. The auxiliary source
             configuration is handled by the Job layer and is not passed to the workflow
             factory function.
