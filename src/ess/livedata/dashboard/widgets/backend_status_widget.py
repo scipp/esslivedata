@@ -12,6 +12,8 @@ import panel as pn
 from ess.livedata.core.job import ServiceState, ServiceStatus
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
+from .buttons import ButtonStyles, create_tool_button
+
 
 class WorkerUIConstants:
     """Constants for worker status UI styling and sizing."""
@@ -212,9 +214,25 @@ class BackendStatusWidget:
 
     def _setup_layout(self) -> None:
         """Set up the main layout."""
-        self._header = pn.pane.HTML(
-            "<h3>Backend Workers</h3>",
-            margin=WorkerUIConstants.HEADER_MARGIN,
+        self._clear_button = create_tool_button(
+            icon_name='trash',
+            button_color=ButtonStyles.DANGER_RED,
+            hover_color='rgba(220, 53, 69, 0.1)',
+            on_click_callback=self._on_clear_stopped,
+        )
+        self._clear_button.disabled = True
+        self._clear_button.description = "Clear stopped workers"
+
+        self._header = pn.Row(
+            pn.pane.HTML(
+                "<h3>Backend Workers</h3>",
+                margin=WorkerUIConstants.HEADER_MARGIN,
+            ),
+            pn.Spacer(),
+            self._clear_button,
+            sizing_mode="stretch_width",
+            align="center",
+            margin=(0, 10, 0, 0),
         )
 
         # Summary row
@@ -323,11 +341,17 @@ class BackendStatusWidget:
 
         return " | ".join(parts)
 
+    def _on_clear_stopped(self) -> None:
+        """Handle clear stopped workers button click."""
+        self._service_registry.remove_inactive_workers()
+
     def refresh(self) -> None:
         """Refresh the display with current worker states."""
         with pn.io.hold():
             self._summary.object = self._format_summary()
             self._update_worker_list()
+            has_inactive = bool(self._service_registry.get_inactive_worker_keys())
+            self._clear_button.disabled = not has_inactive
 
     def _update_worker_list(self) -> None:
         """Update the worker list, reusing existing rows where possible."""
