@@ -157,7 +157,13 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         else:
             workflow_params = model_cls.model_validate(config.params)
 
-        # Validate aux_sources configuration (but don't pass to workflow)
+        # Validate aux_sources configuration but do not pass rendered names to
+        # the factory. This is a known gap: factories that need to configure
+        # sciline pipeline keys from aux source names (e.g.,
+        # wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor'])
+        # currently work around this by relying on hardcoded defaults in the
+        # underlying science workflow. The fix — passing rendered aux_source_names
+        # into the factory via signature introspection — is tracked in #694.
         if (aux_model_cls := workflow_spec.aux_sources) is None:
             if config.aux_source_names:
                 raise ValueError(
