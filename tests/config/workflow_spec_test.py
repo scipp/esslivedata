@@ -418,11 +418,61 @@ class TestWorkflowConfigFromParams:
         assert config.params == {"nested_value": 10, "string_list": ["x", "y", "z"]}
 
 
-class TestAuxSources:
+class TestAuxSourcesConstruction:
+    """Tests for AuxSources construction and get_defaults()."""
+
+    def test_string_shorthand_creates_single_fixed_choice(self) -> None:
+        aux = AuxSources({'rotation': 'det_rotation'})
+        inp = aux.inputs['rotation']
+        assert inp.choices == ('det_rotation',)
+        assert inp.default == 'det_rotation'
+
+    def test_string_shorthand_leaves_title_empty(self) -> None:
+        aux = AuxSources({'rotation': 'det_rotation'})
+        assert aux.inputs['rotation'].title == ''
+
+    def test_aux_input_preserves_metadata(self) -> None:
+        aux = AuxSources(
+            {
+                'monitor': AuxInput(
+                    choices=('mon1', 'mon2'),
+                    default='mon1',
+                    title='Monitor',
+                    description='Select monitor',
+                ),
+            }
+        )
+        inp = aux.inputs['monitor']
+        assert inp.choices == ('mon1', 'mon2')
+        assert inp.default == 'mon1'
+        assert inp.title == 'Monitor'
+        assert inp.description == 'Select monitor'
+
+    def test_get_defaults_single_input(self) -> None:
+        aux = AuxSources({'monitor': 'mon1'})
+        assert aux.get_defaults() == {'monitor': 'mon1'}
+
+    def test_get_defaults_multiple_inputs(self) -> None:
+        aux = AuxSources(
+            {
+                'incident': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
+                'transmission': AuxInput(choices=('mon3', 'mon4'), default='mon4'),
+            }
+        )
+        assert aux.get_defaults() == {'incident': 'mon1', 'transmission': 'mon4'}
+
+    def test_inputs_returns_copy(self) -> None:
+        aux = AuxSources({'a': 'x'})
+        inputs1 = aux.inputs
+        inputs2 = aux.inputs
+        assert inputs1 is not inputs2
+        assert inputs1 == inputs2
+
+
+class TestAuxSourcesRender:
     """Tests for AuxSources render() method."""
 
     def test_default_render_returns_fixed_values(self) -> None:
-        """Test that default render() returns the fixed stream name values."""
         aux_sources = AuxSources({'monitor': 'monitor1'})
         job_id = JobId(source_name='detector1', job_number='test-uuid-123')
 
@@ -430,9 +480,50 @@ class TestAuxSources:
 
         assert rendered == {'monitor': 'monitor1'}
 
-    def test_custom_render_transforms_stream_names(self) -> None:
-        """Test that custom render() can transform stream names."""
+    def test_render_with_selections_overrides_defaults(self) -> None:
+        aux_sources = AuxSources(
+            {
+                'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
+            }
+        )
+        job_id = JobId(source_name='det1', job_number='id-1')
 
+        rendered = aux_sources.render(job_id, selections={'monitor': 'mon2'})
+
+        assert rendered == {'monitor': 'mon2'}
+
+    def test_render_with_partial_selections(self) -> None:
+        aux_sources = AuxSources(
+            {
+                'a': AuxInput(choices=('x', 'y'), default='x'),
+                'b': AuxInput(choices=('p', 'q'), default='p'),
+            }
+        )
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(job_id, selections={'a': 'y'})
+
+        assert rendered == {'a': 'y', 'b': 'p'}
+
+    def test_render_ignores_unknown_selection_keys(self) -> None:
+        aux_sources = AuxSources({'monitor': 'mon1'})
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(
+            job_id, selections={'monitor': 'mon1', 'unknown': 'ignored'}
+        )
+
+        assert rendered == {'monitor': 'mon1'}
+
+    def test_render_with_none_selections_uses_defaults(self) -> None:
+        aux_sources = AuxSources({'monitor': 'mon1'})
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(job_id, selections=None)
+
+        assert rendered == {'monitor': 'mon1'}
+
+    def test_custom_render_transforms_stream_names(self) -> None:
         class RoiAuxSources(AuxSources):
             def render(
                 self, job_id: JobId, selections: dict[str, str] | None = None
@@ -457,8 +548,6 @@ class TestAuxSources:
         assert rendered == {'roi': 'abc-123/roi_polygon'}
 
     def test_custom_render_with_source_name_prefix(self) -> None:
-        """Test custom render() that uses source_name for prefixing."""
-
         class SourcePrefixedAuxSources(AuxSources):
             def render(
                 self, job_id: JobId, selections: dict[str, str] | None = None
@@ -479,7 +568,6 @@ class TestAuxSources:
         assert rendered == {'monitor': 'detector1/monitor2'}
 
     def test_render_with_multiple_fields(self) -> None:
-        """Test render() with multiple aux source fields."""
         aux_sources = AuxSources(
             {
                 'incident_monitor': 'monitor1',

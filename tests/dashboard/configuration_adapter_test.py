@@ -216,6 +216,22 @@ class TestAuxSourceNames:
             'detector': 'det1',
         }
 
+    def test_stale_values_filtered_to_valid_choices(self) -> None:
+        """Persisted values not in current choices are filtered out."""
+        state = ConfigurationState(
+            params={},
+            aux_source_names={
+                'monitor': 'old_monitor_name',  # Not in choices ('mon1', 'mon2')
+                'detector': 'det1',  # Valid choice
+            },
+        )
+        adapter = self.AdapterWithAuxSources(
+            available_sources=['source1'],
+            config_state=state,
+        )
+        # 'monitor' should be filtered out, 'detector' is valid
+        assert adapter.initial_aux_source_names == {'detector': 'det1'}
+
     def test_no_config_state_returns_empty(self) -> None:
         """Without config_state, returns empty dict."""
         adapter = self.AdapterWithAuxSources(available_sources=['source1'])
