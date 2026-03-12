@@ -225,14 +225,13 @@ class BackendStatusWidget:
 
         self._header = pn.Row(
             pn.pane.HTML(
-                "<h3>Backend Workers</h3>",
+                '<h3 style="margin: 0;">Backend Workers</h3>',
                 margin=WorkerUIConstants.HEADER_MARGIN,
             ),
-            pn.Spacer(),
             self._clear_button,
             sizing_mode="stretch_width",
             align="center",
-            margin=(0, 10, 0, 0),
+            margin=0,
         )
 
         # Summary row
