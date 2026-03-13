@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import WorkflowSpec
+from ess.livedata.config.workflow_spec import AuxSources, WorkflowSpec
 
 from .configuration_adapter import ConfigurationAdapter, ConfigurationState
 
@@ -23,7 +23,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         spec: WorkflowSpec,
         config_state: ConfigurationState | None,
         start_callback: Callable[
-            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
+            [list[str], pydantic.BaseModel, dict[str, str] | None], None
         ],
         initial_source_names: list[str] | None = None,
         instrument_config: Instrument | None = None,
@@ -34,7 +34,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         )
         self._spec = spec
         self._start_callback = start_callback
-        self._cached_aux_sources: pydantic.BaseModel | None = None
+        self._cached_aux_sources: dict[str, str] | None = None
         self._instrument_config = instrument_config
 
     @property
@@ -48,8 +48,8 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         return self._spec.description
 
     @property
-    def aux_sources(self) -> type[pydantic.BaseModel] | None:
-        """Get auxiliary sources Pydantic model."""
+    def aux_sources(self) -> AuxSources | None:
+        """Get auxiliary sources specification."""
         return self._spec.aux_sources
 
     def model_class(self) -> type[pydantic.BaseModel] | None:

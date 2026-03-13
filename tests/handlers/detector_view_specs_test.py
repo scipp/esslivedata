@@ -110,7 +110,7 @@ class TestRegisterDetectorViewSpecs:
         )
 
         spec = instrument.workflow_factory[handle.workflow_id]
-        assert spec.aux_sources is DetectorROIAuxSources
+        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
 
     def test_single_projection_requires_source_names(self):
         """Test that source_names is required when projection is a string."""
@@ -171,7 +171,7 @@ class TestRegisterDetectorViewSpecs:
 
         # Check params and aux_sources are set correctly
         assert spec.params is DetectorViewParams
-        assert spec.aux_sources is DetectorROIAuxSources
+        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
 
     def test_no_heavy_imports(self):
         """Test that importing detector_view_specs doesn't import heavy dependencies."""

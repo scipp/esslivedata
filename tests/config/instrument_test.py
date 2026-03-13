@@ -235,21 +235,22 @@ class TestInstrument:
 
     def test_register_spec_with_aux_sources_explicit(self):
         """Test that aux_sources can be set explicitly."""
-        from typing import Literal
-
-        import pydantic
+        from ess.livedata.config.workflow_spec import AuxSources
 
         instrument = Instrument(name="test_instrument")
 
-        class AuxSourcesModel(pydantic.BaseModel):
-            monitor1: Literal['monitor1'] = 'monitor1'
-            aux_stream: Literal['aux_stream'] = 'aux_stream'
+        aux_sources = AuxSources(
+            {
+                'monitor1': 'monitor1',
+                'aux_stream': 'aux_stream',
+            }
+        )
 
         instrument.register_spec(
             name="workflow_with_aux",
             version=1,
             title="Workflow with Aux Sources",
-            aux_sources=AuxSourcesModel,
+            aux_sources=aux_sources,
             outputs=SimpleTestOutputs,
         )
 
@@ -257,17 +258,13 @@ class TestInstrument:
         assert len(specs) == 1
         spec = next(iter(specs.values()))
 
-        # aux_sources should be set explicitly
-        assert spec.aux_sources is AuxSourcesModel
-
-        # Verify it's a Pydantic model with the expected fields
-        model_instance = spec.aux_sources()
-        assert hasattr(model_instance, 'monitor1')
-        assert hasattr(model_instance, 'aux_stream')
-
-        # The default values should match the source names
-        assert model_instance.monitor1 == 'monitor1'
-        assert model_instance.aux_stream == 'aux_stream'
+        assert spec.aux_sources is aux_sources
+        assert 'monitor1' in spec.aux_sources.inputs
+        assert 'aux_stream' in spec.aux_sources.inputs
+        assert spec.aux_sources.get_defaults() == {
+            'monitor1': 'monitor1',
+            'aux_stream': 'aux_stream',
+        }
 
     def test_multiple_spec_registrations(self):
         """Test registering multiple specs."""
@@ -310,13 +307,13 @@ class TestInstrumentRegisterSpec:
         """Test register_spec() with all parameters."""
         import pydantic
 
+        from ess.livedata.config.workflow_spec import AuxSources
         from ess.livedata.handlers.workflow_factory import SpecHandle
 
         class MyParams(pydantic.BaseModel):
             value: int
 
-        class MyAuxSources(pydantic.BaseModel):
-            monitor: str
+        my_aux_sources = AuxSources({'monitor': 'monitor1'})
 
         class MyOutputs(pydantic.BaseModel):
             result: int
@@ -331,7 +328,7 @@ class TestInstrumentRegisterSpec:
             description="Test description",
             source_names=["source1", "source2"],
             params=MyParams,
-            aux_sources=MyAuxSources,
+            aux_sources=my_aux_sources,
             outputs=MyOutputs,
         )
 
@@ -348,7 +345,7 @@ class TestInstrumentRegisterSpec:
         assert spec.description == "Test description"
         assert spec.source_names == ["source1", "source2"]
         assert spec.params is MyParams
-        assert spec.aux_sources is MyAuxSources
+        assert spec.aux_sources is my_aux_sources
         assert spec.outputs is MyOutputs
 
     def test_register_spec_with_defaults(self):

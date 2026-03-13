@@ -77,40 +77,86 @@ class JobId:
         return f"{self.source_name}/{self.job_number}"
 
 
-class AuxSourcesBase(BaseModel):
+@dataclass(frozen=True)
+class AuxInput:
+    """Specification of an auxiliary data source input for a workflow.
+
+    Each aux input defines a *role* that a workflow consumes (e.g.,
+    "incident monitor for normalization") and maps it to one or more
+    physical streams that can fill that role.
+
+    The ``title`` and ``description`` describe the **role** — what the
+    workflow uses this input for. Display names for the individual stream
+    *choices* come from ``SourceMetadata`` on the ``Instrument``, which
+    describes the physical component (e.g., position, hardware details).
     """
-    Base class for auxiliary source models.
 
-    Auxiliary source models define the available auxiliary data streams that a workflow
-    can consume. Subclasses should define fields with Literal or Enum types to specify
-    the available stream choices.
+    choices: tuple[str, ...]
+    default: str
+    title: str = ''
+    description: str = ''
 
-    The `render()` method can be overridden to transform field values into job-specific
-    or source-specific stream names for routing purposes.
+
+class AuxSources:
+    """Specification of auxiliary data source inputs for a workflow.
+
+    Each input maps a logical name to one or more stream choices. A string
+    shorthand creates a single fixed choice.
+
+    Parameters
+    ----------
+    inputs:
+        Mapping from logical input names to either a stream name string
+        (single fixed choice) or an :class:`AuxInput` specification.
     """
 
-    def render(self, job_id: JobId) -> dict[str, str]:
-        """
-        Render auxiliary source stream names for a specific job.
+    def __init__(self, inputs: dict[str, str | AuxInput]) -> None:
+        self._inputs: dict[str, AuxInput] = {}
+        for key, value in inputs.items():
+            if isinstance(value, str):
+                self._inputs[key] = AuxInput(choices=(value,), default=value)
+            else:
+                self._inputs[key] = value
 
-        The default implementation returns the model values unchanged, preserving
-        backward compatibility with existing workflows.
+    @property
+    def inputs(self) -> dict[str, AuxInput]:
+        """Return a copy of the inputs dict."""
+        return dict(self._inputs)
+
+    def get_defaults(self) -> dict[str, str]:
+        """Return default selections for all inputs."""
+        return {name: inp.default for name, inp in self._inputs.items()}
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Render auxiliary source stream names for a specific job.
+
+        The default implementation returns the selected (or default) stream
+        names unchanged. Subclasses can override to transform names, e.g.,
+        to add job-specific prefixes.
 
         Parameters
         ----------
         job_id:
             The job identifier, containing both source_name and job_number.
-            Subclasses can use this to create job-specific or source-specific
-            stream names (e.g., "{job_id.job_number}/roi_rectangle").
+        selections:
+            User selections overriding defaults. Keys not present in the
+            inputs specification are ignored.
 
         Returns
         -------
         :
-            Mapping from field names to stream names for routing. The keys are the
-            field names defined in the model, and the values are the stream names
-            that the job should subscribe to.
+            Mapping from input names to stream names for routing.
         """
-        return self.model_dump(mode='json')
+        result = self.get_defaults()
+        if selections:
+            for key in result:
+                if key in selections:
+                    result[key] = selections[key]
+        return result
 
 
 class ResultKey(BaseModel, frozen=True):
@@ -131,6 +177,8 @@ class WorkflowSpec(BaseModel):
     dashboard uses these to create user interfaces for configuring workflows.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     instrument: str = Field(
         description="Name of the instrument this workflow is associated with."
     )
@@ -146,13 +194,12 @@ class WorkflowSpec(BaseModel):
         default_factory=list,
         description="List of detector/other streams the workflow can be applied to.",
     )
-    aux_sources: type[BaseModel] | None = Field(
+    aux_sources: AuxSources | None = Field(
         default=None,
         description=(
-            "Pydantic model defining auxiliary data sources with their configuration. "
-            "Field names define the aux source identifiers, and field types (typically "
-            "Literal or Enum) define the available stream choices. Field metadata "
-            "(title, description) provides UI information."
+            "Auxiliary data source specification. Defines the available auxiliary "
+            "data streams that a workflow can consume, with their choices, defaults, "
+            "and UI metadata."
         ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")

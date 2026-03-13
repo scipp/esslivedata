@@ -213,10 +213,15 @@ def setup_factories(instrument: Instrument) -> None:
         'dream-no-shape'
     )
 
-    def _configure_powder_workflow(source_name: str, params: PowderWorkflowParams):
+    def _configure_powder_workflow(
+        source_name: str,
+        params: PowderWorkflowParams,
+        aux_source_names: dict[str, str],
+    ):
         """Configure common powder workflow settings."""
         wf = _reduction_workflow.copy()
         wf[NeXusName[NXdetector]] = source_name
+        wf[NeXusName[powder.types.CaveMonitor]] = aux_source_names['cave_monitor']
         wf[dream.InstrumentConfiguration] = getattr(
             dream.InstrumentConfiguration, params.instrument_configuration.value
         )
@@ -247,10 +252,14 @@ def setup_factories(instrument: Instrument) -> None:
     }
 
     @specs.powder_reduction_handle.attach_factory()
-    def _powder_workflow_factory(source_name: str, params: PowderWorkflowParams):
+    def _powder_workflow_factory(
+        source_name: str,
+        params: PowderWorkflowParams,
+        aux_source_names: dict[str, str],
+    ):
         """Factory for DREAM powder reduction workflow."""
         return StreamProcessorWorkflow(
-            _configure_powder_workflow(source_name, params),
+            _configure_powder_workflow(source_name, params, aux_source_names),
             dynamic_keys=_powder_dynamic_keys(source_name),
             target_keys=_focussed_target_keys,
             accumulators=_powder_accumulators,
@@ -258,10 +267,12 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.powder_reduction_with_vanadium_handle.attach_factory()
     def _powder_workflow_with_vanadium_factory(
-        source_name: str, params: PowderWorkflowParams
+        source_name: str,
+        params: PowderWorkflowParams,
+        aux_source_names: dict[str, str],
     ):
         """Factory for DREAM powder reduction workflow with vanadium normalization."""
-        wf = _configure_powder_workflow(source_name, params)
+        wf = _configure_powder_workflow(source_name, params, aux_source_names)
         wf[Filename[VanadiumRun]] = (
             '268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf'
         )

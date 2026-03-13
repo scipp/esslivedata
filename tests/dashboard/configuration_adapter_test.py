@@ -4,6 +4,7 @@
 
 import pydantic
 
+from ess.livedata.config.workflow_spec import AuxInput, AuxSources
 from ess.livedata.dashboard.configuration_adapter import (
     ConfigurationAdapter,
     ConfigurationState,
@@ -166,13 +167,14 @@ class TestAuxSourceNames:
     class AdapterWithAuxSources(ConcreteAdapter):
         """Adapter with auxiliary sources defined."""
 
-        class AuxSourcesModel(pydantic.BaseModel):
-            monitor: str
-            detector: str
-
         @property
-        def aux_sources(self) -> type[pydantic.BaseModel]:
-            return self.AuxSourcesModel
+        def aux_sources(self) -> AuxSources:
+            return AuxSources(
+                {
+                    'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
+                    'detector': AuxInput(choices=('det1', 'det2'), default='det1'),
+                }
+            )
 
     def test_no_aux_sources_returns_empty(self) -> None:
         """Adapter without aux_sources returns empty dict."""
@@ -195,7 +197,7 @@ class TestAuxSourceNames:
         }
 
     def test_aux_source_names_filtered_to_valid_fields(self) -> None:
-        """Aux source names are filtered to valid model fields."""
+        """Aux source names are filtered to valid aux source inputs."""
         state = ConfigurationState(
             params={},
             aux_source_names={
@@ -213,6 +215,22 @@ class TestAuxSourceNames:
             'monitor': 'mon1',
             'detector': 'det1',
         }
+
+    def test_stale_values_filtered_to_valid_choices(self) -> None:
+        """Persisted values not in current choices are filtered out."""
+        state = ConfigurationState(
+            params={},
+            aux_source_names={
+                'monitor': 'old_monitor_name',  # Not in choices ('mon1', 'mon2')
+                'detector': 'det1',  # Valid choice
+            },
+        )
+        adapter = self.AdapterWithAuxSources(
+            available_sources=['source1'],
+            config_state=state,
+        )
+        # 'monitor' should be filtered out, 'detector' is valid
+        assert adapter.initial_aux_source_names == {'detector': 'det1'}
 
     def test_no_config_state_returns_empty(self) -> None:
         """Without config_state, returns empty dict."""

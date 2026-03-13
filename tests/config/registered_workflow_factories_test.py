@@ -119,15 +119,14 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
         start_callback=lambda *args, **kwargs: True,  # Dummy callback for testing
     )
 
-    # Get aux sources model first (like ConfigurationWidget does)
-    aux_sources_model = None
+    # Get aux sources defaults first (like ConfigurationWidget does)
+    aux_dict = None
     if adapter.aux_sources is not None:
-        # Instantiate with defaults
-        aux_sources_model = adapter.aux_sources()
+        aux_dict = adapter.aux_sources.get_defaults()
 
     # Set aux sources and get parameter model class (like ConfigurationWidget does)
     params_model = None
-    params_class = adapter.set_aux_sources(aux_sources_model)
+    params_class = adapter.set_aux_sources(aux_dict)
     if params_class is not None:
         # Instantiate with defaults (ConfigurationWidget uses initial_parameter_values
         # if available, otherwise creates with defaults)
@@ -138,9 +137,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
         params=params_model.model_dump() if params_model is not None else None,
-        aux_source_names=aux_sources_model.model_dump()
-        if aux_sources_model is not None
-        else None,
+        aux_source_names=aux_dict,
     )
 
     # Step 4: Instantiate workflow via backend path (JobFactory → WorkflowFactory)
