@@ -10,6 +10,7 @@ from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.widgets.icons import get_icon
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
+    SourceStatus,
     WorkflowStatusListWidget,
     WorkflowStatusWidget,
     _get_unconfigured_sources,
@@ -210,7 +211,7 @@ class TestWorkflowStatusWidget:
 
     def test_initial_status_is_stopped(self, workflow_status_widget):
         """Test that initial status is STOPPED when no active jobs."""
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
 
     def test_gear_click_calls_orchestrator_create_adapter(
@@ -255,14 +256,24 @@ class TestWorkflowStatusWidget:
 
     def test_expand_collapse_toggle(self, workflow_status_widget):
         """Test that header click toggles expansion."""
-        assert workflow_status_widget._expanded is True
+        assert workflow_status_widget._expanded is False
 
         # Simulate header click
         workflow_status_widget._on_header_click(None)
-        assert workflow_status_widget._expanded is False
+        assert workflow_status_widget._expanded is True
 
         workflow_status_widget._on_header_click(None)
-        assert workflow_status_widget._expanded is True
+        assert workflow_status_widget._expanded is False
+
+    def test_body_is_lazy_created_on_expand(self, workflow_status_widget):
+        """Test that the body is not created until the widget is expanded."""
+        assert workflow_status_widget._body is None
+
+        workflow_status_widget.set_expanded(True)
+        assert workflow_status_widget._body is not None
+
+        workflow_status_widget.set_expanded(False)
+        assert workflow_status_widget._body is None
 
     def test_refresh_rebuilds_widget_on_version_change(
         self, workflow_status_widget, job_orchestrator, workflow_id
@@ -410,7 +421,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
     def test_status_shows_error_when_job_has_error(
@@ -442,7 +453,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ERROR'
 
     def test_status_shows_pending_when_no_backend_status(
@@ -462,7 +473,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Don't add any job status (simulating backend not running)
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
     def test_timing_shows_waiting_for_pending_job(
@@ -482,7 +493,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Don't add any job status (simulating backend not running)
-        timing = workflow_status_widget._get_timing_text()
+        _, _, timing, _, _ = workflow_status_widget._get_status_and_timing()
         assert timing == 'Waiting for backend...'
 
     def test_status_transitions_from_pending_to_active(
@@ -503,7 +514,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
 
         # Initially no backend status - should be PENDING
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
         # Backend starts and sends status - should become ACTIVE
@@ -516,7 +527,7 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_service.status_updated(job_status)
 
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
     def test_stop_clears_to_stopped_not_pending(
@@ -536,14 +547,14 @@ class TestWorkflowStatusWidgetWithJobs:
         job_orchestrator.commit_workflow(workflow_id)
 
         # Should be PENDING
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
         # Stop the workflow
         workflow_status_widget._on_stop_click()
 
         # Should be STOPPED, not PENDING
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
 
     def test_status_becomes_pending_when_heartbeat_stale(
@@ -579,14 +590,14 @@ class TestWorkflowStatusWidgetWithJobs:
         job_service.status_updated(job_status)
 
         # Should be ACTIVE initially
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'ACTIVE'
 
         # Wait for heartbeat to become stale (> 1 second)
         time.sleep(1.1)
 
         # Status should now be PENDING (stale heartbeat)
-        status, _ = workflow_status_widget._get_workflow_status()
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
@@ -621,6 +632,276 @@ class TestWorkflowStatusWidgetWithJobs:
         """Test that is_status_stale returns True for job with no status."""
         job_id = JobId(source_name='nonexistent', job_number='fake-uuid')
         assert job_service.is_status_stale(job_id)
+
+
+class TestPerSourceStatus:
+    """Tests for per-source status indicators."""
+
+    def test_stopped_workflow_returns_empty_per_source(self, workflow_status_widget):
+        """Stopped workflows have no per-source statuses."""
+        _, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        assert per_source == []
+
+    def test_per_source_statuses_returned_for_active_jobs(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Active jobs return per-source status for each source."""
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source2',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_number = job_ids[0].job_number
+
+        for name in ('source1', 'source2'):
+            job_service.status_updated(
+                JobStatus(
+                    job_id=JobId(source_name=name, job_number=job_number),
+                    workflow_id=workflow_id,
+                    state=JobState.active,
+                    start_time=1000000000000,
+                )
+            )
+
+        _, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        assert len(per_source) == 2
+        assert all(isinstance(s, SourceStatus) for s in per_source)
+        assert per_source[0].source_name == 'source1'
+        assert per_source[1].source_name == 'source2'
+
+    def test_per_source_follows_spec_order(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Per-source statuses are ordered by workflow_spec.source_names."""
+        # Stage both sources and commit
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source2',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_number = job_ids[0].job_number
+
+        # Report source2 first to ensure ordering is by spec, not insertion
+        job_service.status_updated(
+            JobStatus(
+                job_id=JobId(source_name='source2', job_number=job_number),
+                workflow_id=workflow_id,
+                state=JobState.active,
+                start_time=1000000000000,
+            )
+        )
+        job_service.status_updated(
+            JobStatus(
+                job_id=JobId(source_name='source1', job_number=job_number),
+                workflow_id=workflow_id,
+                state=JobState.error,
+                error_message='ZeroDivisionError',
+                start_time=1000000000000,
+            )
+        )
+
+        _, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        # spec order is ['source1', 'source2']
+        assert per_source[0].source_name == 'source1'
+        assert per_source[0].state == JobState.error
+        assert per_source[1].source_name == 'source2'
+        assert per_source[1].state == JobState.active
+
+    def test_per_source_captures_error_summary(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Per-source status includes extracted error summary."""
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_number = job_ids[0].job_number
+
+        job_service.status_updated(
+            JobStatus(
+                job_id=JobId(source_name='source1', job_number=job_number),
+                workflow_id=workflow_id,
+                state=JobState.error,
+                error_message=(
+                    'Traceback:\n  File "x.py"\nZeroDivisionError: division by zero'
+                ),
+                start_time=1000000000000,
+            )
+        )
+
+        _, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        assert per_source[0].error_summary is not None
+        assert 'ZeroDivisionError' in per_source[0].error_summary
+
+    def test_pending_state_shows_expected_sources(
+        self,
+        workflow_status_widget,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """PENDING state shows dots for expected sources from active config."""
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source2',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        status, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        assert status == 'PENDING'
+        assert len(per_source) == 2
+        assert all(s.state == JobState.scheduled for s in per_source)
+
+    def test_dots_html_empty_for_no_sources(self):
+        """No sources produces no dots HTML."""
+        assert WorkflowStatusWidget._make_status_dots_html([]) == ''
+
+    def test_dots_html_renders_single_source(self):
+        """Single-source workflows still show a dot."""
+        sources = [SourceStatus('only_source', 'Only Source', JobState.active, None)]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert html.count('border-radius: 50%') == 1
+
+    def test_dots_html_contains_dot_per_source(self):
+        """Each source gets one dot span."""
+        sources = [
+            SourceStatus('s1', 'S1', JobState.active, None),
+            SourceStatus('s2', 'S2', JobState.error, 'bad'),
+            SourceStatus('s3', 'S3', JobState.active, None),
+        ]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert html.count('border-radius: 50%') == 3
+
+    def test_dots_html_includes_tooltip_with_source_name(self):
+        """Dot tooltips contain source name and state."""
+        sources = [
+            SourceStatus('mantle_detector', 'Mantle Detector', JobState.active, None),
+            SourceStatus(
+                'sans_detector', 'SANS Detector', JobState.error, 'ZeroDivisionError'
+            ),
+        ]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert 'Mantle Detector: active' in html
+        assert 'SANS Detector: error' in html
+        assert 'ZeroDivisionError' in html
+
+    def test_dots_html_uses_correct_colors(self):
+        """Dots use STATUS_COLORS for their respective states."""
+        from ess.livedata.dashboard.widgets.workflow_status_widget import (
+            WorkflowWidgetStyles,
+        )
+
+        sources = [
+            SourceStatus('s1', 'S1', JobState.active, None),
+            SourceStatus('s2', 'S2', JobState.error, None),
+        ]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert WorkflowWidgetStyles.STATUS_COLORS['active'] in html
+        assert WorkflowWidgetStyles.STATUS_COLORS['error'] in html
+
+    def test_scheduled_dots_use_pending_color(self):
+        """Scheduled (pending) dots use blue, not green."""
+        from ess.livedata.dashboard.widgets.workflow_status_widget import (
+            WorkflowWidgetStyles,
+        )
+
+        sources = [
+            SourceStatus('s1', 'S1', JobState.scheduled, None),
+            SourceStatus('s2', 'S2', JobState.scheduled, None),
+        ]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert WorkflowWidgetStyles.STATUS_COLORS['scheduled'] in html
+        assert WorkflowWidgetStyles.STATUS_COLORS['active'] not in html
+
+    def test_status_dots_pane_in_header(
+        self,
+        workflow_status_widget,
+    ):
+        """Header contains a status_dots pane."""
+        assert workflow_status_widget._status_dots is not None
+        assert isinstance(workflow_status_widget._status_dots, pn.pane.HTML)
+
+    def test_refresh_updates_dots(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Refresh updates dots pane when source states change."""
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source2',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_number = job_ids[0].job_number
+
+        # Force version sync so refresh doesn't do full rebuild
+        workflow_status_widget.refresh()
+        dots_before = workflow_status_widget._status_dots.object
+
+        # Report statuses
+        for name in ('source1', 'source2'):
+            job_service.status_updated(
+                JobStatus(
+                    job_id=JobId(source_name=name, job_number=job_number),
+                    workflow_id=workflow_id,
+                    state=JobState.active,
+                    start_time=1000000000000,
+                )
+            )
+
+        workflow_status_widget.refresh()
+        dots_after = workflow_status_widget._status_dots.object
+
+        # Dots should have changed from pending to active
+        assert dots_after != dots_before
 
 
 class TestWorkflowStatusListWidget:
@@ -723,3 +1004,48 @@ class TestWorkflowStatusListWidget:
         ]
         assert 'Expand all' in button_names
         assert 'Collapse all' in button_names
+
+    def test_refresh_skipped_when_not_visible(
+        self,
+        job_orchestrator,
+        job_service,
+        workflow_id,
+    ):
+        """Test that refresh is skipped when visibility predicate returns False."""
+        list_widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+        )
+
+        # Commit a workflow so it has an active job
+        job_orchestrator.commit_workflow(workflow_id)
+        # Deliver a job status so the badge shows ACTIVE
+        job_number = job_orchestrator.get_active_job_number(workflow_id)
+        job_id = JobId(source_name='source1', job_number=job_number)
+        job_service.status_updated(
+            JobStatus(
+                workflow_id=workflow_id,
+                job_id=job_id,
+                state=JobState.active,
+                start_time=1000000000000,
+            )
+        )
+
+        widget = list_widget._widgets[workflow_id]
+        # Force initial refresh so badge reflects ACTIVE
+        list_widget._is_visible = None
+        list_widget._refresh_all()
+        badge_after_active = widget._status_badge.object
+
+        # Stop the workflow to change the status
+        job_orchestrator.stop_workflow(workflow_id)
+
+        # With visibility returning False, refresh is skipped — badge unchanged
+        list_widget._is_visible = lambda: False
+        list_widget._refresh_all()
+        assert widget._status_badge.object == badge_after_active
+
+        # With visibility returning True, refresh runs — badge updates
+        list_widget._is_visible = lambda: True
+        list_widget._refresh_all()
+        assert widget._status_badge.object != badge_after_active

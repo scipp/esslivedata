@@ -455,7 +455,15 @@ def _register_all_plotters() -> None:
         name='rectangles_request',
         title='ROI Rectangles (Interactive)',
         description='Draw and edit ROI rectangles interactively. '
-        'Publishes ROI updates to backend for processing.',
+        'Publishes ROI updates to backend for processing.'
+        '<ul>'
+        '<li><strong>Add ROI:</strong> Click and hold for 300 ms to set one corner, '
+        'then move to the opposite corner and hold for 300 ms. '
+        'Or hold Shift and click-drag.</li>'
+        '<li><strong>Move ROI:</strong> Click and drag an existing rectangle.</li>'
+        '<li><strong>Delete ROI:</strong> Tap a rectangle to select it, '
+        'then press Backspace.</li>'
+        '</ul>',
         data_requirements=DataRequirements(**_rectangle_roi_requirements),
         factory=RectanglesRequestPlotter.from_params,
     )
@@ -473,7 +481,16 @@ def _register_all_plotters() -> None:
         name='polygons_request',
         title='ROI Polygons (Interactive)',
         description='Draw and edit ROI polygons interactively. '
-        'Publishes ROI updates to backend for processing.',
+        'Publishes ROI updates to backend for processing.'
+        '<ul>'
+        '<li><strong>Add polygon:</strong> Click and hold to place the first vertex, '
+        'then tap and hold to add each subsequent vertex. '
+        'Double-tap to insert the final vertex, or press Esc to stop drawing.</li>'
+        '<li><strong>Move polygon:</strong> Tap and drag an existing polygon.</li>'
+        '<li><strong>Move vertex:</strong> Drag an individual vertex.</li>'
+        '<li><strong>Delete polygon:</strong> Tap a polygon to select it, '
+        'then press Backspace.</li>'
+        '</ul>',
         data_requirements=DataRequirements(**_polygon_roi_requirements),
         factory=PolygonsRequestPlotter.from_params,
     )

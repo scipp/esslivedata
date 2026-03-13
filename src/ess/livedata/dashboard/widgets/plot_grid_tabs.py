@@ -98,7 +98,7 @@ class PlotGridTabs:
     """
     Tabbed widget for managing multiple plot grids.
 
-    Displays static tabs for Jobs, Workflows, and Manage Plots,
+    Displays static tabs for Workflows and Manage Plots,
     followed by one tab per plot grid.
     Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
     multiple linked instances.
@@ -112,8 +112,6 @@ class PlotGridTabs:
         Registry of available workflows and their specifications.
     plotting_controller
         Controller for determining available plotters from workflow specs.
-    job_status_widget
-        Widget for displaying job status information.
     workflow_status_widget
         Widget for displaying workflow status and controls.
     system_status_widget
@@ -129,7 +127,6 @@ class PlotGridTabs:
         plot_orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
-        job_status_widget,
         workflow_status_widget,
         system_status_widget=None,
         *,
@@ -148,7 +145,7 @@ class PlotGridTabs:
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
-        static_tab_count = 4 if system_status_widget else 3
+        static_tab_count = 3 if system_status_widget else 2
 
         # Build nth-child selectors for static tabs
         static_tab_selectors = ',\n                '.join(
@@ -213,17 +210,14 @@ class PlotGridTabs:
             )
         )
 
-        # Add Jobs tab (always first)
-        self._tabs.append(('Jobs', job_status_widget.panel()))
-
-        # Add Workflows tab (always second)
+        # Add Workflows tab (always first)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
-        # Add System Status tab (third, if widget provided)
+        # Add System Status tab (second, if widget provided)
         if system_status_widget is not None:
             self._tabs.append(('System Status', system_status_widget.panel()))
 
-        # Add Manage tab (third or fourth depending on system_status_widget)
+        # Add Manage tab
         self._grid_manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
@@ -285,7 +279,7 @@ class PlotGridTabs:
     def _get_active_grid_id(self) -> GridId | None:
         """Return the GridId of the currently visible grid tab, or None.
 
-        The tab widget contains static tabs (Jobs, Workflows, Manage Plots, ...)
+        The tab widget contains static tabs (Workflows, Manage Plots, ...)
         followed by dynamic grid tabs. Subtracting the static tab count from the
         active tab index maps to a grid position. When a static tab is selected
         the result is negative, which the bounds check rejects.
@@ -1077,6 +1071,11 @@ class PlotGridTabs:
     def panel(self) -> pn.Column:
         """Get the Panel viewable object for this widget."""
         return self._widget
+
+    @property
+    def active_tab_index(self) -> int:
+        """Index of the currently active tab."""
+        return self._tabs.active
 
     @property
     def tabs(self) -> pn.Tabs:

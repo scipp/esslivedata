@@ -33,6 +33,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
+from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
@@ -111,6 +112,7 @@ class JobOrchestrator:
         *,
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        active_job_registry: ActiveJobRegistry,
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
@@ -124,6 +126,9 @@ class JobOrchestrator:
             Service for sending workflow commands to backend services.
         workflow_registry
             Registry of available workflows and their specifications.
+        active_job_registry
+            Thread-safe registry for tracking active job numbers and
+            cleaning up data on deactivation.
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
@@ -136,6 +141,7 @@ class JobOrchestrator:
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
+        self._active_job_registry = active_job_registry
         self._config_store = config_store
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
@@ -222,6 +228,7 @@ class JobOrchestrator:
                 if current_data := config_data.get('current_job'):
                     try:
                         state.current = JobSet.model_validate(current_data)
+                        self._active_job_registry.restore(state.current.job_number)
                     except (KeyError, ValueError, TypeError) as e:
                         logger.warning(
                             'Failed to restore active job for workflow %s: %s',
@@ -382,9 +389,12 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            # Move current to previous for cleanup once stop commands succeed.
-            # Related to #445: Future improvements may wait for stop command
-            # success responses before removing old job data.
+            # Remove outgoing job from the active set and clean up its buffered
+            # data. Any final results the backend publishes before processing
+            # the stop command will be discarded by the ingest filter in
+            # Orchestrator.forward(). This is acceptable: the user has requested
+            # new parameters, so results from the old configuration are stale.
+            self._deactivate_previous_job(state)
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -425,22 +435,38 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
 
+        # Activate the new job number under the ingestion guard, then notify
+        # subscribers. This ensures that when Orchestrator.update() next runs,
+        # both the active-set membership and the DataService subscribers are
+        # consistent: forward() won't accept data for the new job until the
+        # subscriber (with the right extractors) is registered.
+        with self._active_job_registry.ingestion_guard():
+            self._active_job_registry.activate(job_set.job_number)
+            self._notify_workflow_available(workflow_id, job_set.job_number)
+
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
-
-        # Notify PlotOrchestrator subscribers that job is active
-        logger.info(
-            'Workflow %s committed with job_number=%s, notifying subscribers',
-            workflow_id,
-            job_set.job_number,
-        )
-        self._notify_workflow_available(workflow_id, job_set.job_number)
 
         # Notify widget lifecycle subscribers that workflow was committed
         self._notify_workflow_committed(workflow_id)
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
+
+    @property
+    def active_job_registry(self) -> ActiveJobRegistry:
+        """Registry shared with Orchestrator for thread-safe data flow."""
+        return self._active_job_registry
+
+    def _deactivate_previous_job(self, state: WorkflowState) -> None:
+        """Deactivate the previous job, removing it from the active set and cleaning up.
+
+        Delegates to ActiveJobRegistry which handles locking, active-set removal,
+        DataService cleanup, and JobService cleanup atomically.
+        """
+        if state.current is None:
+            return
+        self._active_job_registry.deactivate(state.current.job_number)
 
     def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
         """Persist full workflow state (config + active jobs) to config store.
@@ -733,7 +759,13 @@ class JobOrchestrator:
         if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
 
-        # Clear local state immediately (don't wait for backend confirmation)
+        # Remove from active set immediately, before the backend has processed
+        # the stop command. This means any final results the backend publishes
+        # between now and actually stopping will be discarded by the ingest
+        # filter in Orchestrator.forward(). This is intentional: the user has
+        # requested a stop, so late-arriving data would be confusing.
+        if job_number is not None:
+            self._active_job_registry.deactivate(job_number)
         state.previous = state.current
         state.current = None
 

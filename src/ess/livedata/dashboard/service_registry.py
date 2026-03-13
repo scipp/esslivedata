@@ -92,6 +92,36 @@ class ServiceRegistry:
         """Get list of worker keys that have stale status."""
         return [key for key in self._worker_statuses if self.is_status_stale(key)]
 
+    def get_inactive_worker_keys(self) -> list[str]:
+        """Get worker keys for workers that are no longer active.
+
+        Inactive workers are those in ``stopped`` state or stale (heartbeat
+        timed out while not in a terminal state).
+
+        Returns
+        -------
+        :
+            List of worker keys for inactive workers.
+        """
+        inactive = []
+        for key, status in self._worker_statuses.items():
+            if status.state == ServiceState.stopped or self.is_status_stale(key):
+                inactive.append(key)
+        return inactive
+
+    def remove_inactive_workers(self) -> int:
+        """Remove all inactive workers from tracking.
+
+        Returns
+        -------
+        :
+            Number of workers removed.
+        """
+        keys = self.get_inactive_worker_keys()
+        for key in keys:
+            self.remove_worker(key)
+        return len(keys)
+
     def get_worker_uptime_seconds(self, worker_key: str) -> float | None:
         """Get worker uptime in seconds.
 

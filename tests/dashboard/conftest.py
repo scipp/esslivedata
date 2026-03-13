@@ -11,8 +11,11 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.fakes import FakeMessageSink
 
 
@@ -107,10 +110,29 @@ def command_service(fake_message_sink):
 
 
 @pytest.fixture
-def job_orchestrator(command_service, workflow_registry):
+def active_job_registry(data_service, job_service):
+    """Create an ActiveJobRegistry for testing."""
+    return ActiveJobRegistry(data_service=data_service, job_service=job_service)
+
+
+@pytest.fixture
+def job_orchestrator(command_service, workflow_registry, active_job_registry):
     """Create a JobOrchestrator with fakes for testing."""
     return JobOrchestrator(
         command_service=command_service,
         workflow_registry=workflow_registry,
+        active_job_registry=active_job_registry,
         config_store=None,
     )
+
+
+@pytest.fixture
+def data_service():
+    """Create a DataService for testing."""
+    return DataService()
+
+
+@pytest.fixture
+def job_service():
+    """Create a JobService for testing."""
+    return JobService()

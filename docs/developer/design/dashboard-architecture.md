@@ -1,371 +1,273 @@
 # Livedata Dashboard Architecture
 
-## Table of Contents
-
-1. [Overview](#overview)
-2. [System Context: Dashboard and Kafka Integration](#system-context-dashboard-and-kafka-integration)
-3. [High-Level Architecture](#high-level-architecture)
-4. [Configuration Architecture](#configuration-architecture)
-5. [Data Flow Architecture](#data-flow-architecture)
-6. [The ConfigBackedParam Mechanism](#the-configbackedparam-mechanism)
-7. [Background Threading Architecture](#background-threading-architecture)
-8. [Extension Points](#extension-points)
-
 ## Overview
 
-The Livedata dashboard is a real-time data visualization system that follows a layered architecture with clear separation of concerns between presentation, application logic, and infrastructure. The system is designed for live display of raw and processed detector data with configurable processing parameters, using dependency injection patterns for testability and maintainability.
+The Livedata dashboard is a real-time data visualization system built on Panel/HoloViews. It consumes processed detector data from Kafka, displays it as interactive plots, and publishes user commands back to backend services. The architecture supports multiple concurrent browser sessions with shared state and per-session rendering.
 
-A key architectural principle is the separation between **Pydantic models** (used for Kafka message validation and backend communication) and **Param models** (used for GUI widgets and user interaction).
+Data updates arrive at ~1 Hz. User controls (workflow start/stop, plot configuration) result in commands published to Kafka for backend consumption.
 
-The dashboard processes 1-D and 2-D data displayed using Holoviews with update rates on the order of 1Hz. Data updates are received via Kafka streams, and user controls result in configuration updates published to Kafka topics for backend consumption.
-
-## System Context: Dashboard and Kafka Integration
-
-The Livedata dashboard operates within a Kafka-based system, interacting with multiple backend services via Kafka topics for both data and configuration.
+## System Context
 
 ```mermaid
 flowchart TD
-    ConfigTopic(["Livedata Config Topic"])
-    DataTopic(["Livedata Data Topic"])
     ECDCTopic(["ECDC Topics"])
+    DataTopic(["Livedata Data Topic"])
+    StatusTopic(["Livedata Status Topic"])
+    ResponsesTopic(["Livedata Responses Topic"])
+    CommandsTopic(["Livedata Commands Topic"])
 
     subgraph BackendServices["Livedata Backend Services"]
-        MonitorData["monitor_data service"]
-        DetectorData["detector_data service"]
-        DataReduction["data_reduction service"]
+        MonitorData["monitor_data"]
+        DetectorData["detector_data"]
+        DataReduction["data_reduction"]
     end
 
-    DashboardApp["Livedata Dashboard"]
+    DashboardApp["Dashboard"]
 
-    %% Raw data from ECDC topics
     ECDCTopic --> BackendServices
+    MonitorData -- publishes --> DataTopic
+    DetectorData -- publishes --> DataTopic
+    DataReduction -- publishes --> DataTopic
+    DataReduction -- publishes --> StatusTopic
+    DataReduction -- publishes --> ResponsesTopic
 
-    %% Data publishing
-    MonitorData -- Publishes --> DataTopic
-    DetectorData -- Publishes --> DataTopic
-    DataReduction -- Publishes --> DataTopic
-
-    %% Data consumption by dashboard
-    DataTopic -- Feeds --> DashboardApp
-
-    %% Config flows
-    ConfigTopic -- Consumed by --> MonitorData
-    ConfigTopic -- Consumed by --> DetectorData
-    ConfigTopic -- Consumed by --> DataReduction
-    ConfigTopic -- Consumed by --> DashboardApp
-    DashboardApp -- Publishes config --> ConfigTopic
-    DataReduction -- Publishes config (workflow specs) --> ConfigTopic
+    DataTopic --> DashboardApp
+    StatusTopic --> DashboardApp
+    ResponsesTopic --> DashboardApp
+    DashboardApp -- publishes --> CommandsTopic
+    CommandsTopic --> DataReduction
 
     classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
     classDef backend fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
     classDef dashboard fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
-    class ConfigTopic,DataTopic,ECDCTopic kafka;
-    class BackendServices,MonitorData,DetectorData,DataReduction backend;
+    class DataTopic,StatusTopic,ResponsesTopic,CommandsTopic,ECDCTopic kafka;
+    class MonitorData,DetectorData,DataReduction backend;
     class DashboardApp dashboard;
 ```
 
-**Key Points:**
-- Backend Services publish data streams to a single Kafka topic
-- The Dashboard consumes this data topic, feeding into internal `DataService` components
-- The Dashboard both publishes to and consumes from the config topic
-- All backend services consume the config topic for configuration updates
-- The `data_reduction` service can publish configuration messages (workflow specs, status)
+The dashboard publishes job commands (start/stop workflows) to the Commands topic and receives acknowledgements via the Responses topic. Job and service status updates arrive via the Status topic.
 
-## High-Level Architecture
+## Layered Architecture
 
 ```mermaid
 graph TD
-    subgraph "Livedata Backend Services"
-        K1[Kafka Data Streams]
-        K2[Kafka Config Topic]
-    end
-
     subgraph "Infrastructure Layer"
-        KT[KafkaTransport]
-        TMH["ThrottlingMessageHandler<br>(prevents flooding Kafka)"]
-        MB["BackgroundMessageBridge<br>(prevents blocking UI)"]
-        MS[MessageSource]
-        DF[DataForwarder]
+        T["Transport<br>(Kafka / Null)"]
+        MS["MessageSource"]
+        CS["CommandService"]
     end
 
     subgraph "Application Layer"
-        CS[ConfigService]
-        WCS["WorkflowConfigService<br>(adapts ConfigService)"]
-        DS[["DataService(s)"]]
-        DSU[["DataSubscriber(s)"]]
-        PM[["ConfigBackedParam(s)<br>(param.Parameterized)"]]
-        WC[WorkflowController]
-        SM[["StreamManager(s)"]]
+        O["Orchestrator"]
+        DS["DataService"]
+        JO["JobOrchestrator"]
+        AJR["ActiveJobRegistry"]
+        PO["PlotOrchestrator"]
+        PC["PlottingController"]
+        SM["StreamManager"]
+        WC["WorkflowController"]
     end
 
     subgraph "Presentation Layer"
-        W1[["Plot(s)<br>(Holoviews)"]]
-        UI["Workflow Widgets<br>(Panel)"]
-        W2[["Config Widgets<br>(Panel)"]]
+        PGT["PlotGridTabs"]
+        WSW["WorkflowStatusWidget"]
+        CW["ConfigurationWidget"]
+        Plots["Plots<br>(HoloViews)"]
     end
 
-    DSU -- holoviews.streams.Pipe --> W1
-    WCS <--> WC
-    CS <--> WCS
-    DS <-.-> WC
-    WC <--> UI
-    K1 --> MS
-    K2 <--> KT
-    MS --> DF
-    DF --> DS
-    DS --> DSU
-    SM -.->|creates|DSU
-    DSU -.->|subscribes|DS
-    PM -.->|subscribes|CS
-    WCS -.->|subscribes|CS
-    MB <--> CS
-    CS <-- Pydantic --> PM
-    PM <--> W2
-    KT <--> TMH
-    TMH <--> MB
+    T --> MS
+    MS --> O
+    O --> DS
+    O --> AJR
+    CS --> T
+    JO --> CS
+    WC --> JO
+    PO --> PC
+    PC --> SM
+    SM --> DS
+    PO --> JO
+    PGT --> PO
+    WSW --> JO
+    CW --> WC
+    DS -.->|notifies| Plots
 
-    classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
     classDef infra fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
     classDef app fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
-    classDef prese fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
-    class K1,K2 kafka;
-    class KT,KT,TMH,MB,MS,DF infra;
-    class CS,WCS,DS,DSU,PM,WC,SM app;
-    class W1,UI,W2 prese;
+    classDef presentation fill:#e8f5e9,stroke:#388e3c,color:#1b5e20;
+    class T,MS,CS infra;
+    class O,DS,JO,AJR,PO,PC,SM,WC app;
+    class PGT,WSW,CW,Plots presentation;
 ```
 
-### Component Overview
+- **Infrastructure**: Transport abstraction (Kafka or Null for testing), message sources and sinks
+- **Application**: Data management, workflow lifecycle, plot orchestration
+- **Presentation**: Panel widgets and HoloViews plots
 
-The architecture is structured in three main layers:
+## Service Composition
 
-- **Infrastructure Layer**: Manages Kafka integration and external message sources
-- **Application Layer**: Contains business logic, orchestration, and data management
-- **Presentation Layer**: Handles GUI components and user interaction
+`DashboardServices` (see `dashboard/dashboard_services.py`) wires all components together. It is the central composition root, created once per dashboard process, and shared across all browser sessions.
 
-## Configuration Architecture
+```mermaid
+flowchart TD
+    DS[DashboardServices]
+    DS --> Transport
+    DS --> Orchestrator
+    DS --> DataService
+    DS --> JobOrchestrator
+    DS --> PlotOrchestrator
+    DS --> WorkflowController
+    DS --> CommandService
+    DS --> ActiveJobRegistry
+    DS --> SessionRegistry
+    DS --> PlotDataService
+    DS --> NotificationQueue
+```
 
-The dashboard implements a configuration system that maintains a clear separation between frontend widgets (using Param for interactive controls) and backend validation/communication (using Pydantic models throughout). The `ConfigService` operates entirely with Pydantic models, ensuring type safety and validation consistency.
+`DashboardBase` (see `dashboard/dashboard.py`) is the entry point. It creates `DashboardServices`, starts the Panel server, and creates per-session layouts via `create_layout()`.
 
-### Two-Way Configuration Flow
+## Data Flow
 
 ```mermaid
 sequenceDiagram
-    participant PW as Param Widget
-    participant PM as Param Model
-    participant CS as ConfigService
-    participant SV as Schema Validator
-    participant KB as KafkaBridge
-    participant KT as Kafka Topic
-    participant BE as Backend Services
-
-    Note over PW,BE: User Changes Parameter
-    PW->>PM: User input (num_edges=150)
-    PM->>PM: Create Pydantic model from Param state
-    PM->>CS: update_config(key, pydantic_model)
-    CS->>CS: Validate isinstance(value, BaseModel)
-    CS->>SV: validate(key, pydantic_model)
-    CS->>KB: publish(key, model.model_dump(mode='json'))
-    KB->>KT: JSON message
-    KT->>BE: Backend consumes
-
-    Note over PW,BE: Backend/Remote Updates Configuration
-    BE->>KT: Updated config (JSON)
-    KT->>KB: JSON message
-    KB->>CS: incoming JSON message
-    CS->>SV: deserialize(key, json_data) -> Pydantic model
-    CS->>PM: callback(pydantic_model)
-    PM->>PM: Extract dict from Pydantic model
-    PM->>PW: param.update(**model.model_dump())
-    PW->>PW: Widget reflects new state
-```
-
-### ConfigBackedParam Translation Mechanism
-
-The `ConfigBackedParam` serves as a **translation layer** that:
-
-1. **Outbound (Param → Pydantic)**: Creates Pydantic models from Param state using `self.schema.model_validate(kwargs)`
-2. **Inbound (Pydantic → Param)**: Extracts data from Pydantic models using `model.model_dump()`
-3. **Schema Binding**: Connects each Param model to its corresponding Pydantic schema
-4. **Validation**: Ensures all data flowing through ConfigService is properly validated
-
-## Data Flow Architecture
-
-### Real-Time Data Flow
-
-```mermaid
-sequenceDiagram
-    participant K as Kafka Stream
-    participant MS as MessageSource
-    participant O as Orchestrator
-    participant DF as DataForwarder
-    participant DS as DataService
-    participant S as Subscribers
-    participant UI as GUI Components
-
-    K->>MS: Raw detector/monitor data
-    MS->>O: Batch messages
-    O->>DF: Forward with stream name
-    Note over O,DF: Transaction batching
-    DF->>DS: Store by DataKey
-    DS->>S: Notify subscribers
-    S->>UI: Update visualizations
-```
-
-## The ConfigBackedParam Mechanism
-
-### Purpose and Role
-
-`ConfigBackedParam` is a key architectural component for simple configuration widgets. It serves as a dedicated translation layer and per-widget controller, bridging the gap between:
-
-- **Param models** (`param.Parameterized`): Used for GUI widgets and user interaction
-- **Pydantic models**: Used for backend validation, serialization, and communication
-
-This mechanism enables a clean, testable, and maintainable way to synchronize widget state with configuration state, without leaking infrastructure details into the presentation layer.
-
-### How It Works
-
-- Each simple configuration widget is backed by a `ConfigBackedParam` subclass
-- The `ConfigBackedParam`:
-  - Registers the relevant Pydantic schema with `ConfigService`
-  - Subscribes to config updates for its key, updating the widget state when changes arrive
-  - Propagates user changes from the widget to `ConfigService` by translating Param state to a Pydantic model
-
-```mermaid
-sequenceDiagram
-    participant ConfigService
-    participant ConfigBackedParam
-    participant PanelWidget
-
-    ConfigService->>ConfigBackedParam: Notify config update
-    ConfigBackedParam->>PanelWidget: Update widget state
-    PanelWidget->>ConfigBackedParam: User changes widget
-    ConfigBackedParam->>ConfigService: Update config
-```
-
-### Architectural Implications
-
-- **Localized Coupling**: `ConfigBackedParam` knows about both Param and Pydantic models, but this coupling is intentional and limited to the translation layer
-- **No Architectural Problem**: This is not problematic coupling, but a necessary and well-encapsulated translation between two distinct model types
-- **Testability**: The translation logic is isolated and can be tested independently
-- **Extensibility**: More complex workflows can use a centralized controller, while simple controls benefit from this lightweight mechanism
-
-## MVC Pattern Analysis
-
-### Subscription and Notification Flow
-
-```mermaid
-sequenceDiagram
-    participant ConfigService
-    participant DataService
-    participant WorkflowController
-    participant ConfigBackedParam
-    participant PanelWidgets
-
-    ConfigService->>WorkflowController: Notify config update
-    DataService->>WorkflowController: Notify data update
-    WorkflowController->>PanelWidgets: Notify relevant update
-    PanelWidgets->>WorkflowController: User actions (start/stop workflow)
-    WorkflowController->>ConfigService: Update config
-    WorkflowController->>DataService: Update data (e.g., cleanup)
-
-    ConfigService->>ConfigBackedParam: Notify config update (simple controls)
-    ConfigBackedParam->>PanelWidgets: Notify widget update
-    PanelWidgets->>ConfigBackedParam: User changes widget (simple controls)
-    ConfigBackedParam->>ConfigService: Update config (simple controls)
-```
-
-### Analysis
-
-**Strengths:**
-- Clear separation of concerns with well-defined responsibilities
-- Testability through controller and widget isolation using fakes
-- Maintainability with centralized business logic
-- Extensibility for future requirements
-- Efficient handling of simple controls via `ConfigBackedParam`
-
-**Potential Pitfalls:**
-- Controller bloat as it mediates more services
-- State synchronization challenges between controller and services
-- Subscription complexity with multiple layers
-
-**Anti-Patterns Avoided:**
-- No leaky abstractions between views and services
-- No tight coupling between controllers and specific GUI frameworks
-- No direct service access from views
-
-## Background Threading Architecture
-
-### KafkaBridge Threading Model
-
-```mermaid
-sequenceDiagram
-    participant GUI as GUI Thread
-    participant KB as KafkaBridge
-    participant BT as Background Thread
     participant K as Kafka
+    participant O as Orchestrator
+    participant AJR as ActiveJobRegistry
+    participant DS as DataService
+    participant Sub as Plot Subscribers
+    participant UI as HoloViews Plots
 
-    Note over GUI,K: Startup
-    GUI->>KB: start()
-    KB->>BT: spawn thread
-    BT->>K: subscribe to topic
-
-    Note over GUI,K: Publishing (Non-blocking)
-    GUI->>KB: publish(key, value)
-    KB->>KB: queue.put()
-    BT->>KB: queue.get()
-    BT->>K: produce message
-
-    Note over GUI,K: Consuming (Batched)
-    K->>BT: poll messages
-    BT->>KB: incoming_queue.put()
-    GUI->>KB: process_incoming_messages()
-    KB->>GUI: pop_message() × N
+    K->>O: Raw messages (polled in background thread)
+    O->>AJR: ingestion_guard()
+    Note over O,AJR: Serializes against job stop/cleanup
+    O->>O: Filter by active job number
+    O->>DS: transaction { store values }
+    DS->>Sub: Notify subscribers (batched)
+    Sub->>UI: Update plot data (via Pipe)
 ```
 
-### Message Processing Strategy
+The `Orchestrator` (see `dashboard/orchestrator.py`) is the message pump. It consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. Status messages and command acknowledgements are routed to `JobOrchestrator`.
 
-The KafkaBridge implements several optimizations:
+`DataService` (see `dashboard/data_service.py`) is a dict-like store keyed by `ResultKey`. Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.
 
-1. **Batched Processing**: Consumes up to `max_batch_size` messages per poll
-2. **Timed Polling**: Only checks for incoming messages at specified intervals
-3. **Queue-based Communication**: Non-blocking queues between GUI and background threads
-4. **Smart Idle Handling**: Minimal CPU usage when no messages are available
+## Workflow Lifecycle
 
-## Extension Points
+`JobOrchestrator` (see `dashboard/job_orchestrator.py`) manages the full lifecycle of workflow jobs using a two-phase commit pattern:
 
-### Adding New Configuration Parameters
+```mermaid
+stateDiagram-v2
+    [*] --> Staging: stage_config()
+    Staging --> Staging: stage_config() (more sources)
+    Staging --> Committed: commit_workflow()
+    Committed --> [*]: stop_workflow()
+    Committed --> Committed: Receives acknowledgement
 
-1. **Create Pydantic Model** (Backend validation):
-```python
-class NewParam(BaseModel):
-    value: float
-    enabled: bool
+    note right of Staging
+        Per-source configs staged
+        in memory. No Kafka commands
+        sent yet.
+    end note
+
+    note right of Committed
+        Commands sent to backend.
+        PendingCommandTracker awaits
+        acknowledgements.
+    end note
 ```
 
-2. **Create Param Model** (GUI widget):
-```python  
-class NewParamWidget(ConfigBackedParam):
-    value = param.Number(default=1.0)
-    enabled = param.Boolean(default=True)
+Key responsibilities:
+- **Staging**: Collects per-source configurations before committing. Subscribers are notified of staging changes for UI preview.
+- **Commit**: Sends `JobCommand` messages via `CommandService`, assigns job numbers, activates jobs in `ActiveJobRegistry`.
+- **Stop**: Sends stop commands, deactivates jobs (which cleans up `DataService` buffers via `ActiveJobRegistry`).
+- **Acknowledgement processing**: Tracks pending commands and processes backend responses.
 
-    @property
-    def schema(self) -> type[NewParam]:
-        return NewParam
+`WorkflowController` (see `dashboard/workflow_controller.py`) is the interface between widgets and `JobOrchestrator`. It translates Pydantic model parameters into orchestrator calls and creates `WorkflowConfigurationAdapter` instances for the configuration UI.
+
+## Plot Orchestration
+
+`PlotOrchestrator` (see `dashboard/plot_orchestrator.py`) manages the plot grid lifecycle:
+
+- Creates and removes plot grids (tab-level containers)
+- Manages plot cells within grids (add, remove, configure)
+- Subscribes to `JobOrchestrator` workflow events to create plots when jobs start
+- Persists grid configurations via `ConfigStore`
+- Loads grid templates for instrument-specific default layouts
+
+`PlottingController` (see `dashboard/plotting_controller.py`) handles the mechanics of plot creation: finding compatible plotters for a given data shape, setting up data pipelines via `StreamManager`, and creating plotter instances.
+
+`PlotDataService` holds per-plot shared state (Presenters with dirty flags) that is read by per-session `SessionPlotManager` instances during periodic updates.
+
+## Threading Model
+
+```mermaid
+flowchart LR
+    subgraph "Background Thread"
+        UL["Update Loop<br>(DashboardServices)"]
+        UL --> O["Orchestrator.update()"]
+        UL --> SC["SessionRegistry.cleanup_stale_sessions()"]
+    end
+
+    subgraph "Per-Session Periodic Callback<br>(Tornado IOLoop)"
+        SU["SessionUpdater.periodic_update()"]
+        SU --> HB["Browser heartbeat check"]
+        SU --> NQ["Poll NotificationQueue"]
+        SU --> CH["Custom handlers<br>(plot pipe updates,<br>status widget refresh)"]
+    end
+
+    O -.->|writes| DS["DataService<br>(shared state)"]
+    CH -.->|reads| DS
 ```
 
-3. **Subscribe to ConfigService**:
-```python
-widget.subscribe(config_service)
+Two threading contexts exist:
+
+1. **Background thread** (`orchestrator-update`): Runs `Orchestrator.update()` in a loop at ~5 Hz. Consumes Kafka messages and writes to `DataService`. Uses `ActiveJobRegistry.ingestion_guard()` to serialize against UI-thread job cleanup.
+
+2. **Per-session Tornado callbacks**: Each browser session has a `SessionUpdater` that runs in the Tornado IOLoop at ~1 Hz. It batches all UI mutations inside `pn.io.hold()` + `doc.models.freeze()` to minimize Bokeh model recomputation.
+
+## Session Management
+
+```mermaid
+flowchart TD
+    Browser1["Browser Session A"] --> SU1["SessionUpdater A"]
+    Browser2["Browser Session B"] --> SU2["SessionUpdater B"]
+    SU1 --> SR["SessionRegistry"]
+    SU2 --> SR
+    SR --> Cleanup["Stale session cleanup<br>(heartbeat timeout)"]
 ```
 
-### Adding New Data Types
+Each browser session creates a `SessionUpdater` (see `dashboard/session_updater.py`) which:
+- Registers with `SessionRegistry` for lifecycle tracking
+- Embeds an invisible `HeartbeatWidget` that sends browser-side heartbeats via JavaScript
+- Runs custom handlers (plot updates, status widgets) in the correct session/document context
+- Batches all UI operations using `pn.io.hold()` + `doc.models.freeze()`
 
-1. Create new `DataKey` subclass
-2. Implement corresponding `DataSubscriber`
-3. Register subscriber with appropriate `DataService`
+`SessionRegistry` (see `dashboard/session_registry.py`) tracks active sessions with heartbeat-based stale detection. Sessions are cleaned up when `pn.state.on_session_destroyed()` fires, or after a heartbeat timeout (defense-in-depth for browser crashes).
 
-### Adding New Visualizations
+## Configuration Adapters
 
-1. Create new subscriber implementing `DataSubscriber`
-2. Register with appropriate `DataService`  
-3. Implement visualization using Holoviews/Panel
+Configuration widgets use the `ConfigurationAdapter` pattern (see `dashboard/configuration_adapter.py`):
+
+- `ConfigurationAdapter` is an abstract base providing: title, description, model class for parameters, available source names, aux source definitions, and a start action
+- `WorkflowConfigurationAdapter` implements this for workflow start dialogs
+- `PlotConfigurationAdapter` implements this for plot configuration modals
+- `ConfigurationState` persists parameter choices across sessions via `ConfigStore`
+
+The generic `ConfigurationWidget` (see `widgets/configuration_widget.py`) renders any adapter into a Panel form with source selection, parameter inputs, and a start button.
+
+## Transport Abstraction
+
+The `Transport` protocol (see `dashboard/transport.py`) abstracts message infrastructure:
+
+- `DashboardKafkaTransport` (see `dashboard/kafka_transport.py`): Connects to Kafka, provides `MessageSource` (consumer) and `MessageSink` instances (for commands and ROI updates)
+- `NullTransport`: No-op implementation for testing
+
+Both return `DashboardResources` containing a `MessageSource`, a command `MessageSink`, and an ROI `MessageSink`.
+
+## Key Widget Components
+
+Widgets live in `dashboard/widgets/` and follow a pattern of receiving shared services in their constructor and registering periodic refresh handlers with `SessionUpdater`:
+
+- `PlotGridTabs`: Tab container managing multiple plot grids, workflow configuration, and system status
+- `WorkflowStatusListWidget`: Displays active workflow jobs and their status
+- `SystemStatusWidget`: Shows session count, backend worker status, heartbeat info
+- `ConfigurationWidget`: Generic form builder driven by `ConfigurationAdapter`
+- `PlotConfigModal`: Modal dialog for configuring individual plot cells

@@ -268,3 +268,89 @@ class TestServiceRegistry:
         assert first_check is not None
         assert second_check is not None
         assert second_check > first_check
+
+    def test_get_inactive_worker_keys_includes_stopped(self) -> None:
+        registry = ServiceRegistry()
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.stopped,
+            started_at=1000,
+            active_job_count=0,
+            messages_processed=100,
+        )
+        registry.status_updated(status)
+        assert make_worker_key(status) in registry.get_inactive_worker_keys()
+
+    def test_get_inactive_worker_keys_includes_stale(self) -> None:
+        registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=1,
+            messages_processed=50,
+        )
+        registry.status_updated(status)
+        time.sleep(0.01)
+        assert make_worker_key(status) in registry.get_inactive_worker_keys()
+
+    def test_get_inactive_worker_keys_excludes_running(self) -> None:
+        registry = ServiceRegistry()
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=1,
+            messages_processed=50,
+        )
+        registry.status_updated(status)
+        assert registry.get_inactive_worker_keys() == []
+
+    def test_remove_inactive_workers_removes_stopped_and_stale(self) -> None:
+        registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)
+
+        stopped = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="stopped1",
+            state=ServiceState.stopped,
+            started_at=1000,
+            active_job_count=0,
+            messages_processed=100,
+        )
+        stale = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="stale1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=1,
+            messages_processed=50,
+        )
+        registry.status_updated(stopped)
+        registry.status_updated(stale)
+        time.sleep(0.01)
+
+        # Add a fresh running worker
+        fresh = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="fresh1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=1,
+            messages_processed=10,
+        )
+        registry.status_updated(fresh)
+
+        removed = registry.remove_inactive_workers()
+
+        assert removed == 2
+        assert len(registry.worker_statuses) == 1
+        assert make_worker_key(fresh) in registry.worker_statuses

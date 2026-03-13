@@ -12,7 +12,6 @@ from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.stream_manager import StreamManager
-from ess.livedata.dashboard.widgets.job_status_widget import JobStatusListWidget
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
@@ -62,20 +61,6 @@ def plot_orchestrator(
 
 
 @pytest.fixture
-def job_controller(command_service, job_service):
-    """Create a JobController for testing."""
-    from ess.livedata.dashboard.job_controller import JobController
-
-    return JobController(command_service=command_service, job_service=job_service)
-
-
-@pytest.fixture
-def job_status_widget(job_service, job_controller):
-    """Create a JobStatusListWidget for testing."""
-    return JobStatusListWidget(job_service=job_service, job_controller=job_controller)
-
-
-@pytest.fixture
 def workflow_controller(job_orchestrator, workflow_registry, data_service):
     """Create a WorkflowController for testing."""
     from ess.livedata.dashboard.workflow_controller import WorkflowController
@@ -118,7 +103,6 @@ def plot_grid_tabs(
     plot_orchestrator,
     workflow_registry,
     plotting_controller,
-    job_status_widget,
     workflow_status_widget,
     plot_data_service,
     session_updater,
@@ -128,7 +112,6 @@ def plot_grid_tabs(
         plot_orchestrator=plot_orchestrator,
         workflow_registry=workflow_registry,
         plotting_controller=plotting_controller,
-        job_status_widget=job_status_widget,
         workflow_status_widget=workflow_status_widget,
         plot_data_service=plot_data_service,
         session_updater=session_updater,
@@ -142,17 +125,16 @@ class TestPlotGridTabsInitialization:
         """Test that widget creates a Panel Tabs object."""
         assert isinstance(plot_grid_tabs.tabs, pn.Tabs)
 
-    def test_starts_with_three_tabs_when_no_grids(self, plot_grid_tabs):
-        """Test that widget starts with three static tabs when no grids exist."""
-        # Should have exactly three tabs (Jobs, Workflows, and Manage Plots)
-        assert len(plot_grid_tabs.tabs) == 3
+    def test_starts_with_two_tabs_when_no_grids(self, plot_grid_tabs):
+        """Test that widget starts with two static tabs when no grids exist."""
+        # Should have exactly two tabs (Workflows and Manage Plots)
+        assert len(plot_grid_tabs.tabs) == 2
 
     def test_initializes_from_existing_grids(
         self,
         plot_orchestrator,
         workflow_registry,
         plotting_controller,
-        job_status_widget,
         workflow_status_widget,
         plot_data_service,
         session_updater,
@@ -167,22 +149,21 @@ class TestPlotGridTabsInitialization:
             plot_orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
             plot_data_service=plot_data_service,
             session_updater=session_updater,
         )
 
-        # Should have 5 tabs: Jobs + Workflows + Manage + 2 grids
-        assert len(widget.tabs) == 5
+        # Should have 4 tabs: Workflows + Manage + 2 grids
+        assert len(widget.tabs) == 4
 
     def test_subscribes_to_lifecycle_events(self, plot_orchestrator, plot_grid_tabs):
         """Test that widget subscribes to orchestrator lifecycle events."""
         # Verify subscription by adding a grid and checking it appears
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
 
-        # Should now have 4 tabs: Jobs + Workflows + Manage + New Grid
-        assert len(plot_grid_tabs.tabs) == 4
+        # Should now have 3 tabs: Workflows + Manage + New Grid
+        assert len(plot_grid_tabs.tabs) == 3
 
 
 class TestGridTabManagement:
@@ -204,18 +185,18 @@ class TestGridTabManagement:
         plot_orchestrator.add_grid(title='Auto Switch', nrows=3, ncols=3)
 
         # Active tab should be newly created grid
-        # (Jobs=0, Workflows=1, Manage=2, grid=3)
-        assert plot_grid_tabs.tabs.active == 3
+        # (Workflows=0, Manage=1, grid=2)
+        assert plot_grid_tabs.tabs.active == 2
 
     def test_on_grid_removed_removes_tab(self, plot_orchestrator, plot_grid_tabs):
         """Test that removing a grid removes its tab."""
         grid_id = plot_orchestrator.add_grid(title='To Remove', nrows=3, ncols=3)
-        assert len(plot_grid_tabs.tabs) == 4  # Jobs + Workflows + Manage + Grid
+        assert len(plot_grid_tabs.tabs) == 3  # Workflows + Manage + Grid
 
         plot_orchestrator.remove_grid(grid_id)
 
-        # Should only have three static tabs left (Jobs + Workflows + Manage)
-        assert len(plot_grid_tabs.tabs) == 3
+        # Should only have two static tabs left (Workflows + Manage)
+        assert len(plot_grid_tabs.tabs) == 2
 
     def test_removing_grid_updates_correctly(self, plot_orchestrator, plot_grid_tabs):
         """Test that removing a grid from the middle works correctly."""
@@ -226,8 +207,8 @@ class TestGridTabManagement:
         # Remove middle grid
         plot_orchestrator.remove_grid(grid_id_2)
 
-        # Should have Jobs + Workflows + Manage + 2 remaining grids
-        assert len(plot_grid_tabs.tabs) == 5
+        # Should have Workflows + Manage + 2 remaining grids
+        assert len(plot_grid_tabs.tabs) == 4
 
     def test_multiple_widget_instances_stay_synchronized(
         self,
@@ -235,7 +216,6 @@ class TestGridTabManagement:
         workflow_registry,
         plotting_controller,
         job_service,
-        job_controller,
         job_orchestrator,
         plot_data_service,
     ):
@@ -252,14 +232,6 @@ class TestGridTabManagement:
             session_registry=registry,
         )
 
-        # Create separate job status widgets for each instance
-        job_status_widget1 = JobStatusListWidget(
-            job_service=job_service, job_controller=job_controller
-        )
-        job_status_widget2 = JobStatusListWidget(
-            job_service=job_service, job_controller=job_controller
-        )
-
         # Create separate workflow status widgets for each instance
         workflow_status_widget1 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
@@ -274,7 +246,6 @@ class TestGridTabManagement:
             plot_orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            job_status_widget=job_status_widget1,
             workflow_status_widget=workflow_status_widget1,
             plot_data_service=plot_data_service,
             session_updater=session_updater1,
@@ -283,7 +254,6 @@ class TestGridTabManagement:
             plot_orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            job_status_widget=job_status_widget2,
             workflow_status_widget=workflow_status_widget2,
             plot_data_service=plot_data_service,
             session_updater=session_updater2,
@@ -293,15 +263,15 @@ class TestGridTabManagement:
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
 
         # Both widgets should have the new tab
-        assert len(widget1.tabs) == 4  # Jobs + Workflows + Manage + Shared Grid
-        assert len(widget2.tabs) == 4
+        assert len(widget1.tabs) == 3  # Workflows + Manage + Shared Grid
+        assert len(widget2.tabs) == 3
 
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
 
         # Both widgets should reflect removal
-        assert len(widget1.tabs) == 3  # Jobs + Workflows + Manage
-        assert len(widget2.tabs) == 3
+        assert len(widget1.tabs) == 2  # Workflows + Manage
+        assert len(widget2.tabs) == 2
 
 
 class TestManageTab:
@@ -599,7 +569,6 @@ class TestDisabledGridTabs:
         plot_orchestrator,
         workflow_registry,
         plotting_controller,
-        job_status_widget,
         workflow_status_widget,
         plot_data_service,
         session_updater,
@@ -613,14 +582,13 @@ class TestDisabledGridTabs:
             plot_orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
             plot_data_service=plot_data_service,
             session_updater=session_updater,
         )
 
-        # 3 static tabs + 1 visible grid = 4
-        assert len(widget.tabs) == 4
+        # 2 static tabs + 1 visible grid = 3
+        assert len(widget.tabs) == 3
         assert 'Visible' in widget.tabs._names
         assert 'Hidden' not in widget.tabs._names
 

@@ -15,6 +15,7 @@ Provides a collapsible card for each workflow showing:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -48,6 +49,7 @@ class WorkflowWidgetStyles:
         'pending': '#17a2b8',  # Blue - command sent, waiting for backend response
         'paused': '#ffc107',  # Yellow
         'finishing': '#17a2b8',  # Blue
+        'scheduled': '#17a2b8',  # Blue - job created, waiting for first status
     }
     MODIFIED_BORDER_COLOR = '#ffc107'  # Yellow
     UNCONFIGURED_BG = '#fff3cd'
@@ -64,6 +66,16 @@ class WorkflowWidgetStyles:
     # Dimensions
     HEADER_HEIGHT = 40
     TOOLBAR_HEIGHT = 32
+
+
+@dataclass(frozen=True)
+class SourceStatus:
+    """Status of a single source within a workflow."""
+
+    source_name: str
+    display_title: str
+    state: JobState
+    error_summary: str | None
 
 
 @dataclass(frozen=True)
@@ -189,7 +201,7 @@ class WorkflowStatusWidget:
         self._orchestrator = orchestrator
         self._job_service = job_service
 
-        self._expanded = True
+        self._expanded = False
         self._panel: pn.Column | None = None
 
         # Modal container - zero height so it doesn't affect layout, but provides
@@ -198,6 +210,7 @@ class WorkflowStatusWidget:
 
         # References to updatable elements (avoid full rebuild on status/expand update)
         self._status_badge: pn.pane.HTML | None = None
+        self._status_dots: pn.pane.HTML | None = None
         self._timing_html: pn.pane.HTML | None = None
         self._expand_btn: pn.widgets.Button | None = None
         self._header: pn.Row | None = None
@@ -215,20 +228,29 @@ class WorkflowStatusWidget:
         return self._workflow_id
 
     def _build_widget(self) -> None:
-        """Build or rebuild the entire widget."""
+        """Build or rebuild the entire widget.
+
+        The body is created lazily on first expand. When collapsed (default),
+        only the header is built, avoiding Bokeh model creation for hidden content.
+        """
         with pn.io.hold():
             self._header = self._create_header()
-            self._body = self._create_body()
 
-            # Apply collapsed state
-            self._body.visible = self._expanded
+            if self._expanded:
+                self._body = self._create_body()
+            else:
+                self._body = None
+
             self._update_header_border()
+
+            children = [self._header]
+            if self._body is not None:
+                children.append(self._body)
+            children.append(self._modal_container)
 
             if self._panel is None:
                 self._panel = pn.Column(
-                    self._header,
-                    self._body,
-                    self._modal_container,
+                    *children,
                     styles={
                         'border': '1px solid #dee2e6',
                         'border-radius': '6px',
@@ -240,7 +262,7 @@ class WorkflowStatusWidget:
                 )
             else:
                 self._panel.clear()
-                self._panel.extend([self._header, self._body, self._modal_container])
+                self._panel.extend(children)
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
@@ -261,18 +283,22 @@ class WorkflowStatusWidget:
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
-        # Status badge (store reference for updates)
-        status, status_color = self._get_workflow_status()
+        # Status badge, per-source dots, and timing info (store references for updates)
+        status, status_color, timing_text, _, per_source = self._get_status_and_timing()
         self._status_badge = pn.pane.HTML(
             self._make_status_badge_html(status, status_color),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
-        # Timing info (store reference for updates)
-        timing_text = self._get_timing_text()
+        self._status_dots = pn.pane.HTML(
+            self._make_status_dots_html(per_source),
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={'display': 'flex', 'align-items': 'center'},
+        )
+
         self._timing_html = pn.pane.HTML(
-            f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>',
+            self._make_timing_html(timing_text),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
@@ -285,6 +311,8 @@ class WorkflowStatusWidget:
             title_html,
             pn.Spacer(width=12),
             self._status_badge,
+            pn.Spacer(width=8),
+            self._status_dots,
             pn.Spacer(width=12),
             self._timing_html,
             pn.Spacer(sizing_mode='stretch_width'),
@@ -369,7 +397,7 @@ class WorkflowStatusWidget:
         components = []
 
         # Error message (if any)
-        error_html = self._get_error_html()
+        _, _, _, error_html, _ = self._get_status_and_timing()
         if error_html:
             components.append(
                 pn.pane.HTML(
@@ -640,131 +668,177 @@ class WorkflowStatusWidget:
             f'{status}</span>'
         )
 
-    def _get_workflow_status(self) -> tuple[str, str]:
-        """Get workflow status text and color.
+    @staticmethod
+    def _make_timing_html(timing_text: str) -> str:
+        """Generate HTML for the timing display."""
+        return f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
 
-        Status is determined by backend JobStatus messages as source of truth:
-        - STOPPED: No job configured in orchestrator
-        - PENDING: Job configured but no backend confirmation or stale heartbeat
-        - ACTIVE/ERROR/WARNING/PAUSED: Based on recent backend JobStatus
+    @staticmethod
+    def _make_status_dots_html(sources: list[SourceStatus]) -> str:
+        """Generate HTML for per-source status indicator dots.
+
+        Each dot represents one source, colored by its job state.
         """
-        # Check job statuses from JobService
+        if not sources:
+            return ''
+        dots = []
+        for s in sources:
+            color = WorkflowWidgetStyles.STATUS_COLORS.get(
+                s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+            )
+            tooltip = f'{s.display_title}: {s.state.value}'
+            if s.error_summary:
+                tooltip += f' \u2014 {s.error_summary}'
+            dots.append(
+                f'<span title="{tooltip}" style="'
+                f'display: inline-block; width: 8px; height: 8px; '
+                f'border-radius: 50%; background: {color}; '
+                f'cursor: default;'
+                f'"></span>'
+            )
+        return (
+            '<span style="display: inline-flex; align-items: center; gap: 4px;">'
+            + ''.join(dots)
+            + '</span>'
+        )
+
+    def _get_status_and_timing(
+        self,
+    ) -> tuple[str, str, str, str | None, list[SourceStatus]]:
+        """Get workflow status, color, timing, error, and per-source statuses.
+
+        Iterates job statuses once to extract aggregated and per-source info.
+
+        Returns
+        -------
+        :
+            Tuple of (status_text, status_color, timing_text, error_html,
+            per_source_statuses).
+        """
+        # Deferred import: datetime is only needed for active workflows with
+        # a start_time, and importing at module level would add unnecessary
+        # startup cost for a rarely-used module.
+        from datetime import UTC, datetime
+
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
-            return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped']
+            return (
+                'STOPPED',
+                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
+                '',
+                None,
+                [],
+            )
 
-        # Check if backend has confirmed this job with recent heartbeat
-        # (source of truth)
+        # Single pass over job statuses to collect status, timing, and errors
         has_fresh_backend_status = False
         worst_state = JobState.active
+        earliest_start = None
+        error_html = None
+        per_source: dict[str, SourceStatus] = {}
 
         for job_status in self._job_service.job_statuses.values():
-            if job_status.workflow_id == self._workflow_id:
-                if job_status.job_id.job_number == active_job_number:
-                    # Check if status is fresh (not stale)
-                    if not self._job_service.is_status_stale(job_status.job_id):
-                        has_fresh_backend_status = True
-                        # Priority: error > warning > paused > active
-                        if job_status.state == JobState.error:
-                            worst_state = JobState.error
-                        elif (
-                            job_status.state == JobState.warning
-                            and worst_state != JobState.error
-                        ):
-                            worst_state = JobState.warning
-                        elif (
-                            job_status.state == JobState.paused
-                            and worst_state
-                            not in (
-                                JobState.error,
-                                JobState.warning,
-                            )
-                        ):
-                            worst_state = JobState.paused
+            if job_status.workflow_id != self._workflow_id:
+                continue
+            if job_status.job_id.job_number != active_job_number:
+                continue
+            if self._job_service.is_status_stale(job_status.job_id):
+                continue
 
-        # If orchestrator has job but no fresh backend status, job is PENDING
+            has_fresh_backend_status = True
+
+            # Collect per-source status
+            error_summary = (
+                extract_error_summary(job_status.error_message)
+                if job_status.error_message
+                else None
+            )
+            source_name = job_status.job_id.source_name
+            per_source[source_name] = SourceStatus(
+                source_name=source_name,
+                display_title=self._orchestrator.get_source_title(source_name),
+                state=job_status.state,
+                error_summary=error_summary,
+            )
+
+            # Status: priority error > warning > paused > active
+            if job_status.state == JobState.error:
+                worst_state = JobState.error
+            elif job_status.state == JobState.warning and worst_state != JobState.error:
+                worst_state = JobState.warning
+            elif job_status.state == JobState.paused and worst_state not in (
+                JobState.error,
+                JobState.warning,
+            ):
+                worst_state = JobState.paused
+
+            # Timing: track earliest start
+            start = job_status.start_time
+            if start is not None:
+                if earliest_start is None or start < earliest_start:
+                    earliest_start = start
+
+            # Error: capture first error message
+            if error_html is None and error_summary:
+                error_html = f'Error: {error_summary}'
+
+        # Order per-source statuses by workflow spec order
+        spec_order = {
+            name: i for i, name in enumerate(self._workflow_spec.source_names)
+        }
+        per_source_list = sorted(
+            per_source.values(),
+            key=lambda s: spec_order.get(s.source_name, len(spec_order)),
+        )
+
         if not has_fresh_backend_status:
-            return 'PENDING', WorkflowWidgetStyles.STATUS_COLORS['pending']
+            # Show expected sources as pending dots
+            pending_sources = [
+                SourceStatus(
+                    source_name=name,
+                    display_title=self._orchestrator.get_source_title(name),
+                    state=JobState.scheduled,
+                    error_summary=None,
+                )
+                for name in self._workflow_spec.source_names
+                if name in self._orchestrator.get_active_config(self._workflow_id)
+            ]
+            return (
+                'PENDING',
+                WorkflowWidgetStyles.STATUS_COLORS['pending'],
+                'Waiting for backend...',
+                None,
+                pending_sources,
+            )
 
         status_text = worst_state.value.upper()
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
             worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
         )
 
-        return status_text, status_color
-
-    def _get_timing_text(self) -> str:
-        """Get timing information text.
-
-        Returns:
-        - Empty string if workflow is stopped
-        - "Waiting for backend..." if pending (no fresh backend status)
-        - Start time and duration if active
-        """
-        from datetime import UTC, datetime
-
-        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
-
-        if active_job_number is None:
-            return ''
-
-        # Find earliest start time from fresh job statuses
-        earliest_start = None
-        has_fresh_backend_status = False
-
-        for job_status in self._job_service.job_statuses.values():
-            if job_status.workflow_id == self._workflow_id:
-                if job_status.job_id.job_number == active_job_number:
-                    # Check if status is fresh (not stale)
-                    if not self._job_service.is_status_stale(job_status.job_id):
-                        has_fresh_backend_status = True
-                        start = job_status.start_time
-                        if start is not None:
-                            if earliest_start is None or start < earliest_start:
-                                earliest_start = start
-
-        # If no fresh backend status, job is pending (waiting for backend)
-        if not has_fresh_backend_status:
-            return 'Waiting for backend...'
-
-        # If backend confirmed but no start_time yet, job is starting
+        # Build timing text
         if earliest_start is None:
-            return 'Starting...'
-
-        start_dt = datetime.fromtimestamp(earliest_start / 1e9, tz=UTC)
-        now = datetime.now(tz=UTC)
-        duration = now - start_dt
-        duration_secs = int(duration.total_seconds())
-
-        if duration_secs < 60:
-            duration_str = f'{duration_secs}s'
-        elif duration_secs < 3600:
-            mins = duration_secs // 60
-            secs = duration_secs % 60
-            duration_str = f'{mins}m {secs}s'
+            timing_text = 'Starting...'
         else:
-            hours = duration_secs // 3600
-            mins = (duration_secs % 3600) // 60
-            duration_str = f'{hours}h {mins}m'
+            start_dt = datetime.fromtimestamp(earliest_start / 1e9, tz=UTC)
+            now = datetime.now(tz=UTC)
+            duration_secs = int((now - start_dt).total_seconds())
 
-        return f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
+            if duration_secs < 60:
+                duration_str = f'{duration_secs}s'
+            elif duration_secs < 3600:
+                mins = duration_secs // 60
+                secs = duration_secs % 60
+                duration_str = f'{mins}m {secs}s'
+            else:
+                hours = duration_secs // 3600
+                mins = (duration_secs % 3600) // 60
+                duration_str = f'{hours}h {mins}m'
 
-    def _get_error_html(self) -> str | None:
-        """Get error message HTML if any job has an error."""
-        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+            timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
 
-        if active_job_number is None:
-            return None
-
-        for job_status in self._job_service.job_statuses.values():
-            if job_status.workflow_id == self._workflow_id:
-                if job_status.job_id.job_number == active_job_number:
-                    if job_status.error_message:
-                        summary = extract_error_summary(job_status.error_message)
-                        return f'Error: {summary}'
-
-        return None
+        return status_text, status_color, timing_text, error_html, per_source_list
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""
@@ -777,18 +851,31 @@ class WorkflowStatusWidget:
             self._update_expand_state()
 
     def _update_expand_state(self) -> None:
-        """Update UI elements for expand/collapse without full rebuild."""
-        # Update expand button indicator
-        if self._expand_btn is not None:
-            icon_name = 'chevron-down' if self._expanded else 'chevron-right'
-            self._expand_btn.icon = get_icon(icon_name)
+        """Update UI elements for expand/collapse without full rebuild.
 
-        # Update body visibility
-        if self._body is not None:
-            self._body.visible = self._expanded
+        On first expand, creates the body lazily and inserts it into the panel.
+        On collapse, removes the body from the panel to free Bokeh models.
+        """
+        with pn.io.hold():
+            # Update expand button indicator
+            if self._expand_btn is not None:
+                icon_name = 'chevron-down' if self._expanded else 'chevron-right'
+                self._expand_btn.icon = get_icon(icon_name)
 
-        # Update header border
-        self._update_header_border()
+            if self._expanded:
+                # Create body lazily on first expand (or recreate after collapse)
+                self._body = self._create_body()
+                if self._panel is not None:
+                    # Insert body between header and modal_container
+                    self._panel.insert(1, self._body)
+            else:
+                # Remove body from panel to free Bokeh models
+                if self._body is not None and self._panel is not None:
+                    self._panel.remove(self._body)
+                self._body = None
+
+            # Update header border
+            self._update_header_border()
 
     def _on_gear_click(self, source_names: list[str]) -> None:
         """Handle gear button click - show configuration modal."""
@@ -858,7 +945,8 @@ class WorkflowStatusWidget:
 
         Checks the orchestrator's workflow state version to detect structural
         changes (staging, commit, stop). On version change, does a full rebuild.
-        Otherwise, updates only the status badge and timing text.
+        Otherwise, updates only the status badge and timing text, skipping
+        assignments when the values haven't changed.
         """
         current_version = self._orchestrator.get_workflow_state_version(
             self._workflow_id
@@ -868,17 +956,22 @@ class WorkflowStatusWidget:
             self._build_widget()
             return
 
+        status, status_color, timing_text, _, per_source = self._get_status_and_timing()
+
         if self._status_badge is not None:
-            status, status_color = self._get_workflow_status()
-            self._status_badge.object = self._make_status_badge_html(
-                status, status_color
-            )
+            new_badge = self._make_status_badge_html(status, status_color)
+            if self._status_badge.object != new_badge:
+                self._status_badge.object = new_badge
+
+        if self._status_dots is not None:
+            new_dots = self._make_status_dots_html(per_source)
+            if self._status_dots.object != new_dots:
+                self._status_dots.object = new_dots
 
         if self._timing_html is not None:
-            timing_text = self._get_timing_text()
-            self._timing_html.object = (
-                f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
-            )
+            new_timing = self._make_timing_html(timing_text)
+            if self._timing_html.object != new_timing:
+                self._timing_html.object = new_timing
 
     def panel(self) -> pn.Column:
         """Get the panel layout for this widget."""
@@ -913,10 +1006,10 @@ class WorkflowStatusListWidget:
         """
         self._orchestrator = orchestrator
         self._job_service = job_service
+        self._is_visible: Callable[[], bool] | None = None
 
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
         self._panel = self._create_panel()
-        self._collapse_all()
 
     def _create_header_row(self) -> pn.Row:
         """Create the header row with expand/collapse all buttons."""
@@ -1015,18 +1108,33 @@ class WorkflowStatusListWidget:
         if widget is not None:
             widget._build_widget()
 
-    def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
+    def register_periodic_refresh(
+        self,
+        session_updater: SessionUpdater,
+        *,
+        is_visible: Callable[[], bool] | None = None,
+    ) -> None:
         """Register for periodic refresh of workflow status displays.
 
         Parameters
         ----------
         session_updater:
             The session updater to register the refresh handler with.
+        is_visible:
+            Optional predicate returning whether this tab is currently visible.
+            When provided, refreshes are skipped while the tab is hidden.
         """
+        self._is_visible = is_visible
         session_updater.register_custom_handler(self._refresh_all)
 
     def _refresh_all(self) -> None:
-        """Refresh all workflow status widgets."""
+        """Refresh all workflow status widgets.
+
+        Skips refresh when the tab is not visible, since updates would touch
+        Bokeh models that the user cannot see.
+        """
+        if self._is_visible is not None and not self._is_visible():
+            return
         for widget in self._widgets.values():
             widget.refresh()
 
