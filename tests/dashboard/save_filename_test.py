@@ -169,7 +169,7 @@ class TestBuildSaveFilename:
         assert ')' not in result
 
     def test_many_sources_omitted(self):
-        sources = ['Rear', 'Mid Bottom', 'Mid Left', 'Mid Top', 'Front Bottom']
+        sources = ['Rear', 'Mid Top', 'Mid Right', 'Mid Bottom', 'Front Top']
         result = build_save_filename('loki', sources, ['I(Q)'])
         assert result == 'LOKI_I-Q'
 
