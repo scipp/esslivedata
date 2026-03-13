@@ -72,6 +72,31 @@ class DetectorEvents(MonitorEvents):
 Events = TypeVar('Events', DetectorEvents, MonitorEvents)
 
 
+class _GrowableBuffer:
+    """A reusable numpy buffer that grows as needed, avoiding repeated allocations."""
+
+    def __init__(self, dtype: np.dtype) -> None:
+        self._dtype = dtype
+        self._buf: np.ndarray = np.empty(0, dtype=dtype)
+
+    def _ensure_capacity(self, n: int) -> None:
+        if n <= self._buf.size:
+            return
+        # Grow by at least 2x to amortize allocation cost.
+        new_capacity = max(n, self._buf.size * 2)
+        self._buf = np.empty(new_capacity, dtype=self._dtype)
+
+    def fill_from_chunks(self, chunks: list[np.ndarray], total: int) -> np.ndarray:
+        """Copy chunks into the buffer and return a view of the filled region."""
+        self._ensure_capacity(total)
+        offset = 0
+        for chunk in chunks:
+            n = len(chunk)
+            self._buf[offset : offset + n] = chunk
+            offset += n
+        return self._buf[:total]
+
+
 class ToNXevent_data(Accumulator[Events, sc.DataArray]):
     def __init__(self):
         self._chunks: list[Events] = []
@@ -79,6 +104,9 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         self._epoch = sc.epoch(unit='ns')
         self._have_event_id: bool | None = None
         self._toa_dtype = np.int64
+        self._toa_buf: _GrowableBuffer | None = None
+        self._pid_buf: _GrowableBuffer | None = None
+        self._weights_buf: np.ndarray = np.empty(0, dtype=np.float64)
 
     def add(self, timestamp: int, data: Events) -> None:
         if data.unit != 'ns':
@@ -86,27 +114,51 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         if self._have_event_id is None:
             self._have_event_id = isinstance(data, DetectorEvents)
             self._toa_dtype = np.asarray(data.time_of_arrival).dtype
+            self._toa_buf = _GrowableBuffer(self._toa_dtype)
+            if self._have_event_id:
+                self._pid_buf = _GrowableBuffer(np.asarray(data.pixel_id).dtype)
         elif self._have_event_id != isinstance(data, DetectorEvents):
             # This should never happen, but we check to be safe.
             raise ValueError("Inconsistent event_id")
         self._timestamps.append(int(timestamp))
         self._chunks.append(data)
 
+    def _ensure_weights(self, n: int) -> np.ndarray:
+        """Return a float64 ones-buffer of at least size n, reusing across calls."""
+        if self._weights_buf.size < n:
+            new_capacity = max(n, self._weights_buf.size * 2)
+            self._weights_buf = np.ones(new_capacity, dtype=np.float64)
+        return self._weights_buf[:n]
+
     def get(self) -> sc.DataArray:
         if self._have_event_id is None:
             raise ValueError("No data has been added")
-        if self._chunks:
-            toa_values = np.concatenate([d.time_of_arrival for d in self._chunks])
+
+        if self._toa_buf is None:
+            raise RuntimeError("Expected _toa_buf to be initialized")
+        total = sum(len(d.time_of_arrival) for d in self._chunks)
+
+        if total > 0:
+            toa_values = self._toa_buf.fill_from_chunks(
+                [d.time_of_arrival for d in self._chunks], total
+            )
         else:
             toa_values = np.array([], dtype=self._toa_dtype)
+
         event_time_offset = sc.array(dims=['event'], values=toa_values, unit='ns')
-        weights = sc.ones(sizes=event_time_offset.sizes, dtype='float64', unit='counts')
+        weights_values = self._ensure_weights(total)
+        weights = sc.Variable(dims=['event'], values=weights_values, unit='counts')
         events = sc.DataArray(
             data=weights, coords={'event_time_offset': event_time_offset}
         )
+
         if self._have_event_id:
-            if self._chunks:
-                ids = np.concatenate([d.pixel_id for d in self._chunks])
+            if self._pid_buf is None:
+                raise RuntimeError("Expected _pid_buf to be initialized")
+            if total > 0:
+                ids = self._pid_buf.fill_from_chunks(
+                    [d.pixel_id for d in self._chunks], total
+                )
             else:
                 ids = np.array([])
             event_id = sc.array(dims=['event'], values=ids, unit=None, dtype='int32')
