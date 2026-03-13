@@ -26,6 +26,7 @@ def make_detector_service_builder(
         .with_area_detector_route()
         .with_livedata_commands_route()
         .with_livedata_roi_route()
+        .with_run_control_route()
         .build()
     )
     instrument_obj = instrument_registry[instrument]
