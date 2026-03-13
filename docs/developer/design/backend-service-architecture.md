@@ -103,7 +103,7 @@ Manages lifecycle, signal handling (SIGTERM/SIGINT), background threading, and r
 
 ### Preprocessor Layer
 
-**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueHandler`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
+**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `handlers/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueHandler`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
 
 ## Job-Based Processing Architecture
 
@@ -155,12 +155,11 @@ stateDiagram-v2
     [*] --> scheduled: schedule_job()
     scheduled --> active: Time reached
     active --> finishing: End time reached
-    active --> stopped: stop_job()
+    active --> [*]: stop_job()
     active --> paused: pause()
     paused --> active: resume()
-    scheduled --> stopped: stop_job()
-    finishing --> stopped: Finalization complete
-    stopped --> [*]: remove_job()
+    scheduled --> [*]: stop_job()
+    finishing --> [*]: stop_job()
 
     active --> error: Finalization error
     active --> warning: Processing error
@@ -168,11 +167,11 @@ stateDiagram-v2
     warning --> active: Successful processing
 ```
 
-**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached) → `stopped` (complete). `paused` is defined but pause/resume raise `NotImplementedError` (placeholder for future use). Error states: `error` (finalization failure), `warning` (processing error).
+**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached). `stop_job()` removes the job from the system. `paused` is defined but pause/resume raise `NotImplementedError` (placeholder for future use). Error states: `error` (finalization failure), `warning` (processing error).
 
 ### JobManager
 
-Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processes jobs), `compute_results()` (only for jobs with primary data), `stop_job()`, `reset_job()`, `remove_job()`, `get_job_status()`.
+Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processes jobs), `compute_results()` (only for jobs with primary data), `stop_job()`, `reset_job()`, `get_job_status()`.
 
 **Key Features**: Time-based activation, primary data triggering, auxiliary data handling, error isolation, status tracking.
 
@@ -180,7 +179,7 @@ Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processe
 
 **Primary Data** (triggers job activation and computation): Detector/monitor events specified in `WorkflowSpec.source_names`.
 
-**Auxiliary Data** (non-triggering metadata): Sample environment, geometry, etc. specified in `WorkflowSpec.aux_source_names`.
+**Auxiliary Data** (non-triggering metadata): Sample environment, geometry, etc. Available auxiliary sources are defined in `WorkflowSpec.aux_sources` (a Pydantic model); selected stream names are provided per-job in `WorkflowConfig.aux_source_names`.
 
 Prevents unnecessary computations when only metadata updates; enables efficient slow/fast-changing data handling.
 
@@ -208,5 +207,5 @@ Services use `ExitStack` for automatic resource cleanup on service exit or error
 
 ## Building Services with DataServiceBuilder
 
-`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--sink-type`). Services can publish initialization messages on startup for workflow specifications or configuration values.
+`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--sink-type`, `--sync-scheduler`, `--job-threads`). Services can publish initialization messages on startup for workflow specifications or configuration values.
 

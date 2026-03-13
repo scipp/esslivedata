@@ -203,7 +203,7 @@ flowchart LR
     subgraph "Background Thread"
         UL["Update Loop<br>(DashboardServices)"]
         UL --> O["Orchestrator.update()"]
-        UL --> SC["SessionRegistry.cleanup_stale()"]
+        UL --> SC["SessionRegistry.cleanup_stale_sessions()"]
     end
 
     subgraph "Per-Session Periodic Callback<br>(Tornado IOLoop)"
