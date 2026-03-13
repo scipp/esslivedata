@@ -68,6 +68,15 @@ class WorkflowWidgetStyles:
 
 
 @dataclass(frozen=True)
+class SourceStatus:
+    """Status of a single source within a workflow."""
+
+    source_name: str
+    state: JobState
+    error_summary: str | None
+
+
+@dataclass(frozen=True)
 class ConfigGroup:
     """A group of sources sharing the same configuration."""
 
@@ -199,6 +208,7 @@ class WorkflowStatusWidget:
 
         # References to updatable elements (avoid full rebuild on status/expand update)
         self._status_badge: pn.pane.HTML | None = None
+        self._status_dots: pn.pane.HTML | None = None
         self._timing_html: pn.pane.HTML | None = None
         self._expand_btn: pn.widgets.Button | None = None
         self._header: pn.Row | None = None
@@ -271,10 +281,16 @@ class WorkflowStatusWidget:
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
-        # Status badge and timing info (store references for updates)
-        status, status_color, timing_text, _ = self._get_status_and_timing()
+        # Status badge, per-source dots, and timing info (store references for updates)
+        status, status_color, timing_text, _, per_source = self._get_status_and_timing()
         self._status_badge = pn.pane.HTML(
             self._make_status_badge_html(status, status_color),
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={'display': 'flex', 'align-items': 'center'},
+        )
+
+        self._status_dots = pn.pane.HTML(
+            self._make_status_dots_html(per_source),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
@@ -293,6 +309,8 @@ class WorkflowStatusWidget:
             title_html,
             pn.Spacer(width=12),
             self._status_badge,
+            pn.Spacer(width=8),
+            self._status_dots,
             pn.Spacer(width=12),
             self._timing_html,
             pn.Spacer(sizing_mode='stretch_width'),
@@ -377,7 +395,7 @@ class WorkflowStatusWidget:
         components = []
 
         # Error message (if any)
-        _, _, _, error_html = self._get_status_and_timing()
+        _, _, _, error_html, _ = self._get_status_and_timing()
         if error_html:
             components.append(
                 pn.pane.HTML(
@@ -653,17 +671,48 @@ class WorkflowStatusWidget:
         """Generate HTML for the timing display."""
         return f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
 
+    @staticmethod
+    def _make_status_dots_html(sources: list[SourceStatus]) -> str:
+        """Generate HTML for per-source status indicator dots.
+
+        Each dot represents one source, colored by its job state. Hidden when
+        there is only one source (the global badge is sufficient).
+        """
+        if len(sources) <= 1:
+            return ''
+        dots = []
+        for s in sources:
+            color = WorkflowWidgetStyles.STATUS_COLORS.get(
+                s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+            )
+            tooltip = f'{s.source_name}: {s.state.value}'
+            if s.error_summary:
+                tooltip += f' \u2014 {s.error_summary}'
+            dots.append(
+                f'<span title="{tooltip}" style="'
+                f'display: inline-block; width: 8px; height: 8px; '
+                f'border-radius: 50%; background: {color}; '
+                f'cursor: default;'
+                f'"></span>'
+            )
+        return (
+            '<span style="display: inline-flex; align-items: center; gap: 4px;">'
+            + ''.join(dots)
+            + '</span>'
+        )
+
     def _get_status_and_timing(
         self,
-    ) -> tuple[str, str, str, str | None]:
-        """Get workflow status, color, timing, and error in a single pass.
+    ) -> tuple[str, str, str, str | None, list[SourceStatus]]:
+        """Get workflow status, color, timing, error, and per-source statuses.
 
-        Iterates job statuses once to extract status, timing, and error info.
+        Iterates job statuses once to extract aggregated and per-source info.
 
         Returns
         -------
         :
-            Tuple of (status_text, status_color, timing_text, error_html).
+            Tuple of (status_text, status_color, timing_text, error_html,
+            per_source_statuses).
         """
         # Deferred import: datetime is only needed for active workflows with
         # a start_time, and importing at module level would add unnecessary
@@ -673,13 +722,20 @@ class WorkflowStatusWidget:
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
-            return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped'], '', None
+            return (
+                'STOPPED',
+                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
+                '',
+                None,
+                [],
+            )
 
         # Single pass over job statuses to collect status, timing, and errors
         has_fresh_backend_status = False
         worst_state = JobState.active
         earliest_start = None
         error_html = None
+        per_source: dict[str, SourceStatus] = {}
 
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id != self._workflow_id:
@@ -690,6 +746,18 @@ class WorkflowStatusWidget:
                 continue
 
             has_fresh_backend_status = True
+
+            # Collect per-source status
+            error_summary = (
+                extract_error_summary(job_status.error_message)
+                if job_status.error_message
+                else None
+            )
+            per_source[job_status.job_id.source_name] = SourceStatus(
+                source_name=job_status.job_id.source_name,
+                state=job_status.state,
+                error_summary=error_summary,
+            )
 
             # Status: priority error > warning > paused > active
             if job_status.state == JobState.error:
@@ -709,16 +777,35 @@ class WorkflowStatusWidget:
                     earliest_start = start
 
             # Error: capture first error message
-            if error_html is None and job_status.error_message:
-                summary = extract_error_summary(job_status.error_message)
-                error_html = f'Error: {summary}'
+            if error_html is None and error_summary:
+                error_html = f'Error: {error_summary}'
+
+        # Order per-source statuses by workflow spec order
+        spec_order = {
+            name: i for i, name in enumerate(self._workflow_spec.source_names)
+        }
+        per_source_list = sorted(
+            per_source.values(),
+            key=lambda s: spec_order.get(s.source_name, len(spec_order)),
+        )
 
         if not has_fresh_backend_status:
+            # Show expected sources as pending dots
+            pending_sources = [
+                SourceStatus(
+                    source_name=name,
+                    state=JobState.scheduled,
+                    error_summary=None,
+                )
+                for name in self._workflow_spec.source_names
+                if name in self._orchestrator.get_active_config(self._workflow_id)
+            ]
             return (
                 'PENDING',
                 WorkflowWidgetStyles.STATUS_COLORS['pending'],
                 'Waiting for backend...',
                 None,
+                pending_sources,
             )
 
         status_text = worst_state.value.upper()
@@ -747,7 +834,7 @@ class WorkflowStatusWidget:
 
             timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
 
-        return status_text, status_color, timing_text, error_html
+        return status_text, status_color, timing_text, error_html, per_source_list
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""
@@ -865,12 +952,17 @@ class WorkflowStatusWidget:
             self._build_widget()
             return
 
-        status, status_color, timing_text, _ = self._get_status_and_timing()
+        status, status_color, timing_text, _, per_source = self._get_status_and_timing()
 
         if self._status_badge is not None:
             new_badge = self._make_status_badge_html(status, status_color)
             if self._status_badge.object != new_badge:
                 self._status_badge.object = new_badge
+
+        if self._status_dots is not None:
+            new_dots = self._make_status_dots_html(per_source)
+            if self._status_dots.object != new_dots:
+                self._status_dots.object = new_dots
 
         if self._timing_html is not None:
             new_timing = self._make_timing_html(timing_text)
