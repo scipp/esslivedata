@@ -49,6 +49,7 @@ class WorkflowWidgetStyles:
         'pending': '#17a2b8',  # Blue - command sent, waiting for backend response
         'paused': '#ffc107',  # Yellow
         'finishing': '#17a2b8',  # Blue
+        'scheduled': '#17a2b8',  # Blue - job created, waiting for first status
     }
     MODIFIED_BORDER_COLOR = '#ffc107'  # Yellow
     UNCONFIGURED_BG = '#fff3cd'
@@ -675,10 +676,9 @@ class WorkflowStatusWidget:
     def _make_status_dots_html(sources: list[SourceStatus]) -> str:
         """Generate HTML for per-source status indicator dots.
 
-        Each dot represents one source, colored by its job state. Hidden when
-        there is only one source (the global badge is sufficient).
+        Each dot represents one source, colored by its job state.
         """
-        if len(sources) <= 1:
+        if not sources:
             return ''
         dots = []
         for s in sources:

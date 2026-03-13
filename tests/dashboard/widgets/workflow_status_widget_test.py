@@ -790,10 +790,15 @@ class TestPerSourceStatus:
         assert len(per_source) == 2
         assert all(s.state == JobState.scheduled for s in per_source)
 
-    def test_dots_html_empty_for_single_source(self):
-        """Single-source workflows produce no dots HTML."""
+    def test_dots_html_empty_for_no_sources(self):
+        """No sources produces no dots HTML."""
+        assert WorkflowStatusWidget._make_status_dots_html([]) == ''
+
+    def test_dots_html_renders_single_source(self):
+        """Single-source workflows still show a dot."""
         sources = [SourceStatus('only_source', JobState.active, None)]
-        assert WorkflowStatusWidget._make_status_dots_html(sources) == ''
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert html.count('border-radius: 50%') == 1
 
     def test_dots_html_contains_dot_per_source(self):
         """Each source gets one dot span."""
@@ -829,6 +834,20 @@ class TestPerSourceStatus:
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert WorkflowWidgetStyles.STATUS_COLORS['active'] in html
         assert WorkflowWidgetStyles.STATUS_COLORS['error'] in html
+
+    def test_scheduled_dots_use_pending_color(self):
+        """Scheduled (pending) dots use blue, not green."""
+        from ess.livedata.dashboard.widgets.workflow_status_widget import (
+            WorkflowWidgetStyles,
+        )
+
+        sources = [
+            SourceStatus('s1', JobState.scheduled, None),
+            SourceStatus('s2', JobState.scheduled, None),
+        ]
+        html = WorkflowStatusWidget._make_status_dots_html(sources)
+        assert WorkflowWidgetStyles.STATUS_COLORS['scheduled'] in html
+        assert WorkflowWidgetStyles.STATUS_COLORS['active'] not in html
 
     def test_status_dots_pane_in_header(
         self,
