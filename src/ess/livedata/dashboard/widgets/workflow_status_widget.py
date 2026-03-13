@@ -73,6 +73,7 @@ class SourceStatus:
     """Status of a single source within a workflow."""
 
     source_name: str
+    display_title: str
     state: JobState
     error_summary: str | None
 
@@ -685,7 +686,7 @@ class WorkflowStatusWidget:
             color = WorkflowWidgetStyles.STATUS_COLORS.get(
                 s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
             )
-            tooltip = f'{s.source_name}: {s.state.value}'
+            tooltip = f'{s.display_title}: {s.state.value}'
             if s.error_summary:
                 tooltip += f' \u2014 {s.error_summary}'
             dots.append(
@@ -753,8 +754,10 @@ class WorkflowStatusWidget:
                 if job_status.error_message
                 else None
             )
-            per_source[job_status.job_id.source_name] = SourceStatus(
-                source_name=job_status.job_id.source_name,
+            source_name = job_status.job_id.source_name
+            per_source[source_name] = SourceStatus(
+                source_name=source_name,
+                display_title=self._orchestrator.get_source_title(source_name),
                 state=job_status.state,
                 error_summary=error_summary,
             )
@@ -794,6 +797,7 @@ class WorkflowStatusWidget:
             pending_sources = [
                 SourceStatus(
                     source_name=name,
+                    display_title=self._orchestrator.get_source_title(name),
                     state=JobState.scheduled,
                     error_summary=None,
                 )

@@ -796,16 +796,16 @@ class TestPerSourceStatus:
 
     def test_dots_html_renders_single_source(self):
         """Single-source workflows still show a dot."""
-        sources = [SourceStatus('only_source', JobState.active, None)]
+        sources = [SourceStatus('only_source', 'Only Source', JobState.active, None)]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert html.count('border-radius: 50%') == 1
 
     def test_dots_html_contains_dot_per_source(self):
         """Each source gets one dot span."""
         sources = [
-            SourceStatus('s1', JobState.active, None),
-            SourceStatus('s2', JobState.error, 'bad'),
-            SourceStatus('s3', JobState.active, None),
+            SourceStatus('s1', 'S1', JobState.active, None),
+            SourceStatus('s2', 'S2', JobState.error, 'bad'),
+            SourceStatus('s3', 'S3', JobState.active, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert html.count('border-radius: 50%') == 3
@@ -813,12 +813,14 @@ class TestPerSourceStatus:
     def test_dots_html_includes_tooltip_with_source_name(self):
         """Dot tooltips contain source name and state."""
         sources = [
-            SourceStatus('mantle_detector', JobState.active, None),
-            SourceStatus('sans_detector', JobState.error, 'ZeroDivisionError'),
+            SourceStatus('mantle_detector', 'Mantle Detector', JobState.active, None),
+            SourceStatus(
+                'sans_detector', 'SANS Detector', JobState.error, 'ZeroDivisionError'
+            ),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
-        assert 'mantle_detector: active' in html
-        assert 'sans_detector: error' in html
+        assert 'Mantle Detector: active' in html
+        assert 'SANS Detector: error' in html
         assert 'ZeroDivisionError' in html
 
     def test_dots_html_uses_correct_colors(self):
@@ -828,8 +830,8 @@ class TestPerSourceStatus:
         )
 
         sources = [
-            SourceStatus('s1', JobState.active, None),
-            SourceStatus('s2', JobState.error, None),
+            SourceStatus('s1', 'S1', JobState.active, None),
+            SourceStatus('s2', 'S2', JobState.error, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert WorkflowWidgetStyles.STATUS_COLORS['active'] in html
@@ -842,8 +844,8 @@ class TestPerSourceStatus:
         )
 
         sources = [
-            SourceStatus('s1', JobState.scheduled, None),
-            SourceStatus('s2', JobState.scheduled, None),
+            SourceStatus('s1', 'S1', JobState.scheduled, None),
+            SourceStatus('s2', 'S2', JobState.scheduled, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert WorkflowWidgetStyles.STATUS_COLORS['scheduled'] in html
