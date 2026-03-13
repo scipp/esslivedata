@@ -95,6 +95,7 @@ def setup_factories(instrument: Instrument) -> None:
                 projection_type='xy_plane',
                 resolution=res,
                 pixel_noise='cylindrical',
+                flip_x=True,
             )
             for name, res in _bank_resolutions.items()
         },

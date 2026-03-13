@@ -324,9 +324,8 @@ def make_geometric_projector(
     resolution:
         Resolution (number of bins) for each screen dimension.
     flip_x:
-        Whether to mirror the x-axis for 'view from sample' orientation.
-        When True, negates x-coordinates so that backward-facing detectors
-        appear as seen from the sample position.
+        Whether to negate x-coordinates for 'view from sample' orientation.
+        See :class:`GeometricViewConfig` for details on when to enable this.
 
     Returns
     -------
