@@ -1,13 +1,13 @@
 # Orchestrator Flow: Plot Creation Lifecycle
 
-This document describes the interaction between PlotOrchestrator, JobOrchestrator, PlottingController, and DataService when a user requests a plot.
+This document describes the interaction between PlotOrchestrator, LayerSubscription, JobOrchestrator, PlottingController, and PlotDataService when a plot layer is created.
 
 ## Overview
 
 The plot creation follows a **two-phase subscription model**:
 
-1. **Phase 1**: Subscribe to JobOrchestrator → receive `job_number` when workflow is committed
-2. **Phase 2**: Use `job_number` to set up data pipeline → wait for data → create plot
+1. **Phase 1**: LayerSubscription subscribes to JobOrchestrator for each data source role. When *all* workflows are running, it fires an `on_ready` callback with `SubscriptionReady` (containing `keys_by_role`).
+2. **Phase 2**: PlotOrchestrator creates a plotter, sets up the data pipeline via PlottingController, and waits for data. When data arrives, `plotter.compute(data)` is called and PlotDataService transitions the layer to READY.
 
 ## Sequence Diagram
 
@@ -15,46 +15,49 @@ The plot creation follows a **two-phase subscription model**:
 sequenceDiagram
     participant User as User/PlotGridTabs
     participant PO as PlotOrchestrator
+    participant LS as LayerSubscription
     participant JO as JobOrchestrator
     participant PC as PlottingController
-    participant Sub as DataSubscriber
-    participant DS as DataService
+    participant PDS as PlotDataService
 
-    Note over User,DS: Setup Phase
-    User->>PO: add_plot(grid_id, PlotCell)<br/>"Plot workflow A output X here"
-    PO->>JO: subscribe_to_workflow(workflow_id, callback)
+    Note over User,PDS: Phase 1 — Subscribe to workflows
+    User->>PO: add_layer(cell_id, PlotConfig)
+    PO->>PDS: layer_added(layer_id)
+    PO->>LS: create(data_sources, on_ready, on_stopped)
+    PO->>LS: start()
+    loop For each role in data_sources
+        LS->>JO: subscribe_to_workflow(workflow_id, callbacks)
+    end
 
     alt Workflow not yet running
-        JO-->>PO: (subscription_id, was_invoked=false)
-        PO-->>User: on_cell_updated(cell, plot=None)<br/>"Waiting for workflow"
+        PO-->>User: on_cell_updated(cell)<br/>[PDS state: WAITING_FOR_JOB]
 
-        Note over JO: Later: User commits workflow
-        JO->>PO: callback(job_number=12345)
+        Note over JO: Later: user commits workflow
+        JO->>LS: on_started(job_number)
     else Workflow already running
-        JO->>PO: callback(job_number=12345)
-        JO-->>PO: (subscription_id, was_invoked=true)
+        JO->>LS: on_started(job_number) [synchronous]
     end
 
-    Note over User,DS: Data Pipeline Setup
-    PO->>PC: setup_data_pipeline(job_number,<br/>workflow_id, source_names,<br/>output_name, on_first_data)
-    PC->>Sub: Create with extractors and callback
-    Sub->>DS: Subscribe to ResultKey(s)
+    Note over LS: When ALL roles have a job_number:
+    LS->>PO: on_ready(SubscriptionReady{keys_by_role})
 
-    opt Data not yet available
-        PO-->>User: on_cell_updated(cell, plot=None)<br/>"Waiting for data"
-    end
+    Note over User,PDS: Phase 2 — Create plotter and data pipeline
+    PO->>PC: create_plotter(plot_name, params)
+    PC-->>PO: Plotter instance
+    PO->>PDS: job_started(layer_id, plotter)<br/>[state → WAITING_FOR_DATA]
 
-    Note over User,DS: Plot Creation (on first data)
-    DS-->>Sub: Data for job 12345
-    Sub->>PO: on_first_data(pipe)
-    PO->>PC: create_plot_from_pipeline(plot_name,<br/>params, pipe)
-    PC-->>PO: HoloViews DynamicMap
-    PO-->>User: on_cell_updated(cell, plot=DynamicMap)
+    PO->>PC: setup_pipeline(keys_by_role, plot_name,<br/>params, on_data callback)
+    PC-->>PO: DataServiceSubscriber
 
-    Note over User,DS: Subsequent Data Updates
-    loop Streaming updates
-        DS-->>Sub: New data for job 12345
-        Sub-->>User: Pipe triggers DynamicMap update
+    Note over User,PDS: Data arrival
+    Note over PO: on_data(dict[ResultKey, Any]) fires
+    PO->>PO: plotter.compute(data)
+    PO->>PDS: data_arrived(layer_id)<br/>[state → READY]
+
+    Note over User,PDS: Subsequent updates
+    loop Streaming data
+        Note over PO: on_data fires again
+        PO->>PO: plotter.compute(data)
     end
 ```
 
@@ -62,36 +65,49 @@ sequenceDiagram
 
 | Component | Responsibility |
 |-----------|----------------|
-| **PlotGridTabs** | UI widget where user selects what to plot and where |
-| **PlotOrchestrator** | Manages plot lifecycle, subscribes to job availability, coordinates plot creation |
-| **JobOrchestrator** | Manages workflow jobs, generates job numbers, notifies subscribers on commit |
-| **PlottingController** | Creates DataSubscribers and HoloViews plots |
-| **DataSubscriber** | Subscribes to DataService, invokes `on_first_data` callback when data arrives |
-| **DataService** | Holds job data, notifies subscribers when data arrives |
+| **PlotGridTabs** | UI widget; subscribes to PlotOrchestrator lifecycle events, polls PlotDataService for layer state |
+| **PlotOrchestrator** | Manages plot lifecycle: layer subscription, plotter creation, data pipeline setup. See `dashboard/plot_orchestrator.py` |
+| **LayerSubscription** | Subscribes to one or more workflows for a layer. Fires `on_ready` when *all* workflows are running, `on_stopped` when *any* stops. See `dashboard/layer_subscription.py` |
+| **JobOrchestrator** | Manages workflow jobs; notifies subscribers on start/stop via `WorkflowCallbacks`. See `dashboard/job_orchestrator.py` |
+| **PlottingController** | Two-phase plot creation: `create_plotter()` and `setup_pipeline()`. See `dashboard/plotting_controller.py` |
+| **PlotDataService** | Layer state machine (WAITING_FOR_JOB → WAITING_FOR_DATA → READY / STOPPED / ERROR). Version-based polling for UI. See `dashboard/plot_data_service.py` |
+| **DataService** | Holds job result data; manages subscriber lifecycle |
 
-## Waiting States
+## Layer States
 
-The UI can receive intermediate states before a plot is ready:
+Each layer transitions through explicit states managed by `PlotDataService`:
 
-1. **"Waiting for workflow"**: The workflow hasn't been committed yet. The plot cell is configured but no job exists.
-2. **"Waiting for data"**: The workflow is running (job exists) but no data has arrived yet.
-3. **Plot ready**: Data has arrived and the HoloViews DynamicMap is created.
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING_FOR_JOB: layer_added()
+    WAITING_FOR_JOB --> WAITING_FOR_DATA: job_started(plotter)
+    WAITING_FOR_JOB --> ERROR: error_occurred()
+
+    WAITING_FOR_DATA --> READY: data_arrived()
+    WAITING_FOR_DATA --> STOPPED: job_stopped()
+    WAITING_FOR_DATA --> ERROR: error_occurred()
+
+    READY --> STOPPED: job_stopped()
+    READY --> WAITING_FOR_DATA: job_started(plotter) [restart]
+    READY --> ERROR: error_occurred()
+
+    STOPPED --> WAITING_FOR_DATA: job_started(plotter)
+    STOPPED --> ERROR: error_occurred()
+```
+
+Each transition increments a version counter. UI components poll for version changes to detect when rebuilds are needed.
+
+## Multi-Source Layers (Correlation Plots)
+
+`PlotConfig.data_sources` maps role names to `DataSourceConfig`:
+
+- **"primary"**: Main data source (required for all layers)
+- **"x_axis"**, **"y_axis"**: Correlation axes (optional, for correlation histograms)
+
+`LayerSubscription` subscribes to *each* role's workflow independently. The `on_ready` callback only fires when all roles have running jobs. If any workflow stops, `on_stopped` fires immediately (a correlation plot cannot function with partial data).
+
+The resulting `keys_by_role` dict flows through to `setup_pipeline()`, preserving role structure so plotters receive data grouped by role.
 
 ## Lifecycle Callbacks
 
-PlotGridTabs subscribes to PlotOrchestrator lifecycle events:
-
-```python
-plot_orchestrator.subscribe_to_lifecycle(
-    on_grid_created=...,
-    on_grid_removed=...,
-    on_cell_updated=...,  # Receives plot or waiting state
-    on_cell_removed=...,
-)
-```
-
-The `on_cell_updated` callback is called:
-- When a cell is first added (waiting for workflow)
-- When job becomes available but no data yet (waiting for data)
-- When plot is created (with the DynamicMap)
-- When plot creation fails (with error message)
+PlotGridTabs subscribes to PlotOrchestrator lifecycle events (grid created/removed/updated, cell updated/removed). The `on_cell_updated` callback signals that a cell's layer configuration changed. Actual layer state (waiting, ready, error) is read from `PlotDataService` by the UI during periodic polling.
