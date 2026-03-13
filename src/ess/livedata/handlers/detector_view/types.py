@@ -79,6 +79,15 @@ class GeometricViewConfig:
     pixel_noise:
         Noise to add to pixel positions. 'cylindrical' uses detector geometry,
         a scalar Variable applies Gaussian noise, None disables noise.
+    flip_x:
+        Negate x-coordinates before binning. ESS NeXus geometry files use
+        instrument coordinates (Z along beam, Y up) where X points LEFT
+        when viewed from the sample position. For detectors downstream of
+        the sample (facing back toward the sample), set to True so the
+        dashboard shows a conventional plot with X going right. Upstream
+        detectors face the same direction as the observer and typically
+        do not need flipping. The preferred orientation may also depend on
+        instrument scientist conventions.
     """
 
     projection_type: Literal['xy_plane', 'cylinder_mantle_z']
@@ -145,7 +154,17 @@ ProjectionType = NewType(
 """Type of geometric projection to use, or None for logical view."""
 
 FlipX = NewType('FlipX', bool)
-"""Whether to mirror the x-axis for 'view from sample' orientation."""
+"""Whether to negate x-coordinates for 'view from sample' orientation.
+
+ESS NeXus files use instrument coordinates where, for detectors downstream
+of the sample, X points LEFT when viewed from the sample position. Set to
+True for such detectors so the dashboard X axis goes right, matching
+standard 2D plot conventions. Detectors upstream of the sample face the
+same direction as the observer and typically do not need flipping.
+
+Note that the preferred orientation may also depend on instrument scientist
+conventions for a particular instrument.
+"""
 
 # Intermediate types for event projection
 ScreenBinnedEvents = NewType('ScreenBinnedEvents', sc.DataArray)
