@@ -50,22 +50,28 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
-    # WARNING: _base_workflow construction triggers network downloads via pooch
-    # (geometry file and TOF lookup table). Since setup_factories() runs during
-    # test parametrize collection (via load_factories()), this blocks test
-    # collection when external servers are unavailable.
-    # Only _i_of_q_factory uses _base_workflow — consider deferring construction
-    # into that factory to avoid eager downloads. See issue #778.
-    _base_workflow = LokiWorkflow()
-    _base_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('loki')
-    _base_workflow[TofLookupTableFilename] = str(
-        ess.loki.data.loki_tof_lookup_table_no_choppers()
-    )
-    _base_workflow[DirectBeam] = None
-    _base_workflow[CorrectForGravity] = CorrectForGravity(False)
-    _base_workflow[ReturnEvents] = ReturnEvents(False)
-    _base_workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.upper_bound
-    _base_workflow[DetectorMasks] = DetectorMasks({})
+    _nexus_geometry_filename = get_nexus_geometry_filename('loki')
+
+    def _resolve_tof_lookup_table_filename() -> str:
+        """Resolve TOF lookup table filename lazily to avoid eager downloads."""
+        return str(ess.loki.data.loki_tof_lookup_table_no_choppers())
+
+    def _make_base_workflow() -> LokiWorkflow:
+        """Create the base LokiWorkflow for I(Q) reduction.
+
+        Called lazily inside the I(Q) factory to avoid triggering pooch downloads
+        at setup_factories() time (which would block test collection when external
+        servers are unavailable).
+        """
+        wf = LokiWorkflow()
+        wf[Filename[SampleRun]] = _nexus_geometry_filename
+        wf[TofLookupTableFilename] = _resolve_tof_lookup_table_filename()
+        wf[DirectBeam] = None
+        wf[CorrectForGravity] = CorrectForGravity(False)
+        wf[ReturnEvents] = ReturnEvents(False)
+        wf[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.upper_bound
+        wf[DetectorMasks] = DetectorMasks({})
+        return wf
 
     # Sciline-based detector view with XY projection for all detector banks.
     # Resolution values = base resolution * scale (12), matching the legacy setup.
@@ -83,7 +89,7 @@ def setup_factories(instrument: Instrument) -> None:
         'loki_detector_8': {'y': 108, 'x': 36},
     }
     _xy_projection = DetectorViewFactory(
-        data_source=NeXusDetectorSource(get_nexus_geometry_filename('loki')),
+        data_source=NeXusDetectorSource(_nexus_geometry_filename),
         view_config={
             name: GeometricViewConfig(
                 projection_type='xy_plane',
@@ -95,20 +101,47 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
+    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
-    # Monitor workflow factory (TOA-only)
+    @specs.xy_projection_handle.attach_factory()
+    def _detector_view_workflow_factory(
+        source_name: str, params: DetectorViewParams
+    ) -> StreamProcessorWorkflow:
+        """Factory for LOKI detector view with TOF lookup table support."""
+        tof_lookup_table_filename = None
+        if params.coordinate_mode.mode in ('tof', 'wavelength'):
+            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+
+        return _xy_projection.make_workflow(
+            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+        )
+
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
-    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+    from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 
     @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
-        """Factory for LOKI monitor workflow (TOA-only)."""
+    def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
+        """Factory for LOKI monitor workflow with TOF lookup table support."""
+        mode = params.coordinate_mode.mode
+        if mode == 'wavelength':
+            raise NotImplementedError(
+                "wavelength mode not yet implemented for monitors"
+            )
+
+        tof_lookup_table_filename = None
+        geometry_filename = None
+
+        if mode == 'tof':
+            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+            geometry_filename = _nexus_geometry_filename
+
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
-            coordinate_mode='toa',
+            coordinate_mode=mode,
+            tof_lookup_table_filename=tof_lookup_table_filename,
+            geometry_filename=geometry_filename,
         )
 
     # --- Providers for current_run transmission mode ---
@@ -151,7 +184,7 @@ def setup_factories(instrument: Instrument) -> None:
     def _i_of_q_factory(
         source_name: str, params: SansWorkflowParams
     ) -> StreamProcessorWorkflow:
-        wf = _base_workflow.copy()
+        wf = _make_base_workflow()
         wf[NeXusDetectorName] = source_name
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
