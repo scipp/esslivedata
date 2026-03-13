@@ -19,6 +19,7 @@ from .message_adapter import (
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
+    RunControlAdapter,
     X5f2ToStatusAdapter,
 )
 from .stream_mapping import StreamMapping
@@ -115,6 +116,11 @@ class RoutingAdapterBuilder:
             first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_ROI),
             second=Da00ToScippAdapter(),
         )
+        return self
+
+    def with_run_control_route(self) -> Self:
+        """Adds the run control route for filewriter run start/stop messages."""
+        self._routes[self._stream_mapping.filewriter_topic] = RunControlAdapter()
         return self
 
     def with_livedata_status_route(self) -> Self:
