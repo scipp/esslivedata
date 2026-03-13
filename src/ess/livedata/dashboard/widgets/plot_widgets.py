@@ -195,7 +195,11 @@ def create_cell_toolbar(
 
             # Convert newlines to <br> for HTML rendering
             html_description = description.replace('\n', '<br>')
-            tooltip = Tooltip(content=HTML(html_description), position='right')
+            tooltip = Tooltip(
+                content=HTML(html_description),
+                position='right',
+                stylesheets=[':host { max-width: 350px; }'],
+            )
             tooltip_icon = pn.widgets.TooltipIcon(
                 value=tooltip,
                 margin=0,
