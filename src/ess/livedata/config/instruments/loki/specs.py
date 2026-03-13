@@ -170,13 +170,13 @@ instrument = Instrument(
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),
-        'loki_detector_2': SourceMetadata(title='Mid Right'),
+        'loki_detector_2': SourceMetadata(title='Mid Left'),
         'loki_detector_3': SourceMetadata(title='Mid Bottom'),
-        'loki_detector_4': SourceMetadata(title='Mid Left'),
+        'loki_detector_4': SourceMetadata(title='Mid Right'),
         'loki_detector_5': SourceMetadata(title='Front Top'),
-        'loki_detector_6': SourceMetadata(title='Front Right'),
+        'loki_detector_6': SourceMetadata(title='Front Left'),
         'loki_detector_7': SourceMetadata(title='Front Bottom'),
-        'loki_detector_8': SourceMetadata(title='Front Left'),
+        'loki_detector_8': SourceMetadata(title='Front Right'),
         'beam_monitor_m0': SourceMetadata(
             title='Beam Monitor 0', description='Upstream, z = -16.8 m'
         ),
