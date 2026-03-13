@@ -23,7 +23,7 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import StreamId
+from .message import RunStart, RunStop, StreamId
 
 logger = structlog.get_logger(__name__)
 
@@ -157,6 +157,7 @@ class JobFactory:
             # Pass rendered aux source names (field name -> stream name mapping)
             # Job will use values for routing and remap keys for workflow
             aux_source_names=rendered_aux_names,
+            reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
 
 
@@ -314,6 +315,21 @@ class JobManager:
             self._job_states[job_id] = JobState.active
         else:
             self._job_states[job_id] = JobState.scheduled
+
+    def on_run_start(self, info: RunStart) -> None:
+        """Handle a run-start event from the ESS control system."""
+        logger.info("run_start", run_name=info.run_name)
+        self._reset_eligible_jobs()
+
+    def on_run_stop(self, info: RunStop) -> None:
+        """Handle a run-stop event from the ESS control system."""
+        logger.info("run_stop", run_name=info.run_name)
+        self._reset_eligible_jobs()
+
+    def _reset_eligible_jobs(self) -> None:
+        for job in list(self.active_jobs):
+            if job.reset_on_run_transition:
+                self.reset_job(job.job_id)
 
     def push_data(self, data: WorkflowData) -> list[JobReply]:
         """Push data into the active jobs and return status for each job."""
