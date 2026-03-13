@@ -195,7 +195,11 @@ def create_cell_toolbar(
 
             # Convert newlines to <br> for HTML rendering
             html_description = description.replace('\n', '<br>')
-            tooltip = Tooltip(content=HTML(html_description), position='right')
+            tooltip = Tooltip(
+                content=HTML(html_description),
+                position='right',
+                stylesheets=[':host { max-width: 350px; }'],
+            )
             tooltip_icon = pn.widgets.TooltipIcon(
                 value=tooltip,
                 margin=0,
@@ -312,8 +316,10 @@ def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
     try:
         spec = plotter_registry.get_spec(plotter_name)
         plotter_title = spec.title
+        plotter_desc = spec.description
     except KeyError:
         plotter_title = plotter_name.replace('_', ' ').title()
+        plotter_desc = ''
 
     # Use the user's custom name from output_name
     custom_name = config.output_name
@@ -323,6 +329,8 @@ def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
 
     # Build description for tooltip
     description = f'Static overlay: {plotter_title}\nName: {custom_name}'
+    if plotter_desc:
+        description += f'\n\n{plotter_desc}'
 
     return title, description
 
@@ -398,6 +406,16 @@ def get_plot_cell_display_info(
         output_desc = workflow_spec.get_output_description(config.output_name)
         if output_desc:
             description_parts.append(f'\n{output_desc}')
+
+    # Append plotter-specific description (e.g., usage instructions)
+    from ..plotter_registry import plotter_registry
+
+    try:
+        plotter_desc = plotter_registry.get_spec(config.plot_name).description
+        if plotter_desc:
+            description_parts.append(f'\n{plotter_desc}')
+    except KeyError:
+        pass
 
     description = '\n'.join(description_parts)
 
