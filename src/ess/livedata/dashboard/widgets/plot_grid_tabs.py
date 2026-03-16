@@ -20,6 +20,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..data_roles import PRIMARY
 from ..format_utils import extract_error_summary
+from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -964,17 +965,30 @@ class PlotGridTabs:
         if len(plots) == 1:
             result = plots[0]
         else:
-            result = hv.Overlay(plots)
+            # Collate so hooks survive for any number of DynamicMap layers.
+            # Without collation, HoloViews drops overlay-level opts (including
+            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
+            # produces a single DynamicMap whose outputs are plain Overlays;
+            # opts applied afterwards land on the OverlayPlot and persist.
+            result = hv.Overlay(plots).collate()
 
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.
         if not has_layout:
+            hooks: list = []
             filename = build_save_filename_from_cell(
                 cell, self._workflow_registry, self._orchestrator.get_source_title
             )
             if filename is not None:
-                hook = make_save_filename_hook(filename)
-                result = result.opts(hooks=[hook])
+                hooks.append(make_save_filename_hook(filename))
+            if cell.layers:
+                params = cell.layers[0].config.params
+                if hasattr(params, 'plot_aspect'):
+                    aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
+                    if aspect_hook is not None:
+                        hooks.append(aspect_hook)
+            if hooks:
+                result = result.opts(hooks=hooks)
 
         return result
 
