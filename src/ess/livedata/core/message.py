@@ -46,7 +46,8 @@ class RunStart:
     """Run start event from the ESS control system."""
 
     run_name: str
-    start_time: int  # ms since epoch
+    start_time: int  # ns since epoch
+    stop_time: int | None = None  # ns since epoch, None when unset
 
     def __str__(self) -> str:
         return f"RunStart(run_name={self.run_name!r})"
@@ -57,7 +58,7 @@ class RunStop:
     """Run stop event from the ESS control system."""
 
     run_name: str
-    stop_time: int  # ms since epoch
+    stop_time: int  # ns since epoch
 
     def __str__(self) -> str:
         return f"RunStop(run_name={self.run_name!r})"

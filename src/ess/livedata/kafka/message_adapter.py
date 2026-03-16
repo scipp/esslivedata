@@ -216,7 +216,13 @@ class X5f2ToStatusAdapter(
 
 
 class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]]):
-    """Adapts Kafka messages from the filewriter topic to RunStart/RunStop events."""
+    """Adapts Kafka messages from the filewriter topic to RunStart/RunStop events.
+
+    Converts timestamps from milliseconds (flatbuffer wire format) to nanoseconds
+    (domain convention) at the adapter boundary.
+    """
+
+    _MS_TO_NS = 1_000_000
 
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
@@ -224,12 +230,18 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
         timestamp = message.timestamp()[1]
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
+            stop_time = None if info.stop_time == 0 else info.stop_time * self._MS_TO_NS
             value: RunStart | RunStop = RunStart(
-                run_name=info.run_name, start_time=info.start_time
+                run_name=info.run_name,
+                start_time=info.start_time * self._MS_TO_NS,
+                stop_time=stop_time,
             )
         elif schema == '6s4t':
             info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
-            value = RunStop(run_name=info.run_name, stop_time=info.stop_time)
+            value = RunStop(
+                run_name=info.run_name,
+                stop_time=info.stop_time * self._MS_TO_NS,
+            )
         else:
             raise streaming_data_types.exceptions.WrongSchemaException(
                 f"Unexpected schema '{schema}' on filewriter topic. "

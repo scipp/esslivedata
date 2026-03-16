@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for run transition (start/stop) handling in JobManager."""
+"""Tests for deferred run transition (start/stop) resets in JobManager."""
 
 import uuid
 
 import pytest
 
 from ess.livedata.config.workflow_spec import (
+    JobSchedule,
     WorkflowConfig,
     WorkflowId,
 )
@@ -33,26 +34,81 @@ def _activate_jobs(manager: JobManager) -> None:
     manager.push_data(WorkflowData(start_time=0, end_time=1, data={}))
 
 
-class TestRunTransitionReset:
-    def test_on_run_start_resets_active_jobs(self, fake_job_factory):
+def _push_data_to(manager: JobManager, end_time: int) -> None:
+    """Push data with given end_time to trigger time advancement."""
+    manager.push_data(WorkflowData(start_time=0, end_time=end_time, data={}))
+
+
+class TestDeferredRunTransitionReset:
+    def test_reset_does_not_fire_before_scheduled_time(self, fake_job_factory):
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        manager.on_run_start(RunStart(run_name='run_1', start_time=1000))
+        # Push data that doesn't reach the scheduled time
+        _push_data_to(manager, end_time=999)
+        assert processor.clear_calls == 0
+
+    def test_reset_fires_when_data_reaches_scheduled_time(self, fake_job_factory):
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        manager.on_run_start(RunStart(run_name='run_1', start_time=1000))
+        _push_data_to(manager, end_time=1000)
+        assert processor.clear_calls == 1
+
+    def test_reset_fires_on_run_stop(self, fake_job_factory):
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        manager.on_run_stop(RunStop(run_name='run_1', stop_time=500))
+        _push_data_to(manager, end_time=500)
+        assert processor.clear_calls == 1
+
+    def test_past_reset_time_fires_on_next_data(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
         job_id = manager.schedule_job('det1', _make_config())
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
         manager.on_run_start(RunStart(run_name='run_1', start_time=100))
-        assert processor.clear_calls > 0
+        _push_data_to(manager, end_time=500)
+        assert processor.clear_calls == 1
 
-    def test_on_run_stop_resets_active_jobs(self, fake_job_factory):
+    def test_run_start_with_stop_time_schedules_two_resets(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
         job_id = manager.schedule_job('det1', _make_config())
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
-        manager.on_run_stop(RunStop(run_name='run_1', stop_time=200))
-        assert processor.clear_calls > 0
+        manager.on_run_start(RunStart(run_name='run_1', start_time=100, stop_time=500))
+        # First reset at start_time
+        _push_data_to(manager, end_time=100)
+        assert processor.clear_calls == 1
 
-    def test_run_transition_skips_jobs_with_flag_disabled(self):
+        # Second reset at stop_time
+        _push_data_to(manager, end_time=500)
+        assert processor.clear_calls == 2
+
+    def test_multiple_pending_resets_collapse_within_batch(self, fake_job_factory):
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        manager.on_run_start(RunStart(run_name='run_1', start_time=100))
+        manager.on_run_stop(RunStop(run_name='run_1', stop_time=200))
+        # Both fire in one batch → single _reset_eligible_jobs call
+        _push_data_to(manager, end_time=300)
+        assert processor.clear_calls == 1
+
+    def test_skips_jobs_with_flag_disabled(self):
         """Jobs with reset_on_run_transition=False are not reset."""
         processor = FakeProcessor()
         job = Job(
@@ -66,11 +122,13 @@ class TestRunTransitionReset:
         manager = JobManager(job_factory=factory)
         manager._active_jobs[job.job_id] = job
         manager._job_states[job.job_id] = JobState.active
+        manager._job_schedules[job.job_id] = JobSchedule()
 
         manager.on_run_start(RunStart(run_name='run_1', start_time=100))
+        _push_data_to(manager, end_time=200)
         assert processor.clear_calls == 0
 
-    def test_run_transition_resets_some_but_not_all(self):
+    def test_mixed_jobs_selective_reset(self):
         """Mixed jobs: only those with reset_on_run_transition=True are reset."""
         factory = FakeJobFactory()
         manager = JobManager(job_factory=factory)
@@ -95,17 +153,51 @@ class TestRunTransitionReset:
 
         manager._active_jobs[job_reset.job_id] = job_reset
         manager._job_states[job_reset.job_id] = JobState.active
+        manager._job_schedules[job_reset.job_id] = JobSchedule()
         manager._active_jobs[job_keep.job_id] = job_keep
         manager._job_states[job_keep.job_id] = JobState.active
+        manager._job_schedules[job_keep.job_id] = JobSchedule()
 
         manager.on_run_start(RunStart(run_name='run_2', start_time=300))
-        assert proc_reset.clear_calls > 0
+        _push_data_to(manager, end_time=300)
+        assert proc_reset.clear_calls == 1
         assert proc_keep.clear_calls == 0
 
-    def test_run_transition_with_no_active_jobs_is_noop(self, fake_job_factory):
+    def test_no_active_jobs_consumes_pending_reset(self, fake_job_factory):
+        """Pending resets are consumed even when no active jobs exist."""
         manager = JobManager(job_factory=fake_job_factory)
         manager.on_run_start(RunStart(run_name='run_1', start_time=100))
+        # No jobs scheduled/active, but push data past the reset time
+        _push_data_to(manager, end_time=200)
+        # Should not error; pending list should be cleared
+        assert manager._pending_reset_times == []
+
+    def test_pending_resets_persist_without_data(self, fake_job_factory):
+        """Pending resets accumulate and fire when data finally arrives."""
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        manager.on_run_start(RunStart(run_name='run_1', start_time=100))
         manager.on_run_stop(RunStop(run_name='run_1', stop_time=200))
+        manager.on_run_start(RunStart(run_name='run_2', start_time=300))
+        assert len(manager._pending_reset_times) == 3
+
+        # All fire when data catches up (collapsed to single call)
+        _push_data_to(manager, end_time=400)
+        assert processor.clear_calls == 1
+        assert manager._pending_reset_times == []
+
+    def test_no_pending_resets_is_noop(self, fake_job_factory):
+        """Pushing data without any scheduled resets does nothing."""
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        _push_data_to(manager, end_time=1000)
+        assert processor.clear_calls == 0
 
 
 @pytest.fixture
