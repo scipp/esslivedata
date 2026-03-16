@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
@@ -456,7 +457,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
         """Trim buffer to keep only data within required timespan."""
-        if self._required_timespan < 0:
+        if self._required_timespan < 0 or math.isinf(self._required_timespan):
             return
 
         if self._required_timespan == 0.0:
@@ -492,15 +493,20 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         self._drop_from_all_buffers(drop_count)
 
     def _make_room(self, new_data: sc.DataArray) -> None:
-        """Drop the minimum number of oldest elements to fit new data."""
+        """Drop oldest elements to fit new data.
+
+        Drops at least 10% of capacity to amortize the O(n) copy cost of
+        VariableBuffer.drop(), avoiding per-update copies in steady state.
+        """
         if 'time' in new_data.dims:
             n_incoming = new_data.sizes['time']
         else:
             n_incoming = 1
         available = self._data_buffer.max_capacity - self._data_buffer.size
-        drop_count = n_incoming - available
-        if drop_count > 0:
-            self._drop_from_all_buffers(drop_count)
+        min_drop = n_incoming - available
+        if min_drop > 0:
+            amortized_drop = max(min_drop, self._data_buffer.max_capacity // 10)
+            self._drop_from_all_buffers(amortized_drop)
 
     def _drop_from_all_buffers(self, drop_count: int) -> None:
         """Drop data from all buffers to keep them in sync."""

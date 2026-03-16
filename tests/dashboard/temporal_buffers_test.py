@@ -278,25 +278,27 @@ class TestTemporalBuffer:
         """Test that buffer drops oldest data when full and timespan is infinite."""
         buffer = TemporalBuffer()
         buffer.set_required_timespan(float('inf'))
-        buffer.set_max_memory(100)  # Small to fill quickly
+        buffer.set_max_memory(800)  # Large enough for amortized drop to be visible
 
         # Add first data point and determine capacity
         buffer.add(make_single_slice([1.0, 2.0], 0.0))
         capacity = buffer._data_buffer.max_capacity
+        assert capacity >= 10  # Need enough for 10% amortization to matter
 
         # Fill to capacity
         for t in range(1, capacity):
             buffer.add(make_single_slice([float(t)] * 2, float(t)))
         assert buffer._data_buffer.size == capacity
 
-        # Add one more — should succeed by dropping oldest
+        # Add one more — should succeed by dropping oldest (amortized: drops >=10%)
         buffer.add(make_single_slice([99.0, 99.0], 99.0))
 
         result = buffer.get()
-        assert result.sizes['time'] == capacity
-        # Oldest element was dropped, newest is present
-        assert result.coords['time'].values[0] == 1.0
+        # Amortized drop freed ~10% of capacity
+        assert result.sizes['time'] < capacity
         assert result.coords['time'].values[-1] == 99.0
+        # Oldest data was dropped
+        assert result.coords['time'].values[0] > 0.0
 
     def test_timespan_trimming_with_nanosecond_time_coords(self):
         """Test trimming works when time coordinates use nanoseconds.
