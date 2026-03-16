@@ -47,8 +47,8 @@ graph TD
     MS --> OP
     IP --> MSink
     OP --> MP
-    MP --> PF
-    PF -.creates.-> A1
+    PF -.creates.-> MP
+    MP -.uses.-> A1
     PF -.creates.-> A2
     PF -.creates.-> A3
     A1 --> JM
@@ -103,7 +103,7 @@ Manages lifecycle, signal handling (SIGTERM/SIGINT), background threading, and r
 
 ### Preprocessor Layer
 
-**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors: `GroupIntoPixels`, `CollectTOA`, `Cumulative`, `ToNXevent_data`, `ToNXlog`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
+**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `handlers/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueHandler`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
 
 ## Job-Based Processing Architecture
 
@@ -134,47 +134,11 @@ sequenceDiagram
     OP->>Sink: publish_messages(results + status)
 ```
 
-Key features: Configuration message handling, time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
+**ConfigProcessor** (see `handlers/config_handler.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges ConfigProcessor and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
 
 ## Message Flow in Backend Services
 
-### End-to-End Message Journey
-
-```mermaid
-graph LR
-    K[Kafka Raw Data] --> KC[KafkaConsumer]
-    KC --> BMS[BackgroundMessageSource]
-    BMS --> AMS[AdaptingMessageSource]
-    AMS --> P[OrchestratingProcessor]
-    P --> MP[MessagePreprocessor]
-    MP --> ACC[Accumulators]
-    ACC --> JM[JobManager]
-    JM --> WF[Workflows]
-    WF --> KS[KafkaSink]
-    KS --> K2[Kafka Processed Data]
-
-    classDef kafka fill:#fff3e0,stroke:#ef6c00;
-    classDef source fill:#e3f2fd,stroke:#1976d2;
-    classDef processor fill:#f3e5f5,stroke:#7b1fa2;
-    classDef preproc fill:#fff9c4,stroke:#f57f17;
-    classDef job fill:#fce4ec,stroke:#c2185b;
-    classDef sink fill:#e8f5e9,stroke:#388e3c;
-
-    class K,K2 kafka;
-    class KC,BMS,AMS source;
-    class P processor;
-    class MP,ACC preproc;
-    class JM,WF job;
-    class KS sink;
-```
-
-### Message Source Chain
-
-Services chain: **KafkaConsumer** → **BackgroundMessageSource** (non-blocking, background polling with queue buffering) → **AdaptingMessageSource** (applies adapters to convert Kafka messages to domain types).
-
-### Message Adaptation
-
-Adapters convert raw Kafka messages to typed domain messages. Available adapters: `KafkaToEv44Adapter`, `KafkaToDa00Adapter`, `KafkaToF144Adapter`, `ChainedAdapter`, `RouteByTopicAdapter`, `RouteBySchemaAdapter`.
+For a detailed view of the message source chain, adapter composition, and message transformations, see [](message-flow-and-transformation.md).
 
 ## Job-Based Processing System
 
@@ -182,18 +146,20 @@ Adapters convert raw Kafka messages to typed domain messages. Available adapters
 
 ### Job Lifecycle
 
-**Note** _Drawing this state machine highlights an issue: In practice we have a transition error<-->warning as well, because we can actually be in both states at once.
-We should fix the implementation so we have a proper state machine._
+```{note}
+The error/warning states are not fully exclusive in the current implementation — a job can transition between them. This state machine is a simplification.
+```
 
 ```mermaid
 stateDiagram-v2
     [*] --> scheduled: schedule_job()
     scheduled --> active: Time reached
     active --> finishing: End time reached
-    active --> stopped: stop_job()
-    scheduled --> stopped: stop_job()
-    finishing --> stopped: Finalization complete
-    stopped --> [*]: remove_job()
+    active --> [*]: stop_job()
+    active --> paused: pause()
+    paused --> active: resume()
+    scheduled --> [*]: stop_job()
+    finishing --> [*]: stop_job()
 
     active --> error: Finalization error
     active --> warning: Processing error
@@ -201,11 +167,11 @@ stateDiagram-v2
     warning --> active: Successful processing
 ```
 
-**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached) → `stopped` (complete). Error states: `error` (finalization failure), `warning` (processing error).
+**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached). `stop_job()` removes the job from the system. `paused` is defined but pause/resume raise `NotImplementedError` (placeholder for future use). Error states: `error` (finalization failure), `warning` (processing error).
 
 ### JobManager
 
-Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processes jobs), `compute_results()` (only for jobs with primary data), `stop_job()`, `reset_job()`, `remove_job()`, `get_job_status()`.
+Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processes jobs), `compute_results()` (only for jobs with primary data), `stop_job()`, `reset_job()`, `get_job_status()`.
 
 **Key Features**: Time-based activation, primary data triggering, auxiliary data handling, error isolation, status tracking.
 
@@ -213,7 +179,7 @@ Orchestrates job operations: `schedule_job()`, `push_data()` (activates/processe
 
 **Primary Data** (triggers job activation and computation): Detector/monitor events specified in `WorkflowSpec.source_names`.
 
-**Auxiliary Data** (non-triggering metadata): Sample environment, geometry, etc. specified in `WorkflowSpec.aux_source_names`.
+**Auxiliary Data** (non-triggering metadata): Sample environment, geometry, etc. Available auxiliary sources are defined in `WorkflowSpec.aux_sources` (a Pydantic model); selected stream names are provided per-job in `WorkflowConfig.aux_source_names`.
 
 Prevents unnecessary computations when only metadata updates; enables efficient slow/fast-changing data handling.
 
@@ -241,18 +207,5 @@ Services use `ExitStack` for automatic resource cleanup on service exit or error
 
 ## Building Services with DataServiceBuilder
 
-`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, use `DataServiceRunner` (adds `--instrument`, `--dev`, `--log-level`, `--sink-type` arguments). Services can publish initialization messages on startup for workflow specifications or configuration values.
+`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--sink-type`, `--sync-scheduler`, `--job-threads`). Services can publish initialization messages on startup for workflow specifications or configuration values.
 
-## Summary
-
-Backend service architecture provides:
-
-- Consistent Service-Processor-Workflow structure
-- Clear separation of concerns (lifecycle, routing, business logic)
-- Protocol-based design for testability and flexibility
-- Two processing tiers (simple routing vs job orchestration)
-- Robust error handling with per-job isolation
-- Graceful lifecycle management with signal handling
-- Builder pattern for service construction
-
-This enables real-time neutron data stream handling with complex workflow orchestration while maintaining code clarity and testability.

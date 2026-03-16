@@ -1087,6 +1087,11 @@ class PlotGridTabs:
         return self._widget
 
     @property
+    def active_tab_index(self) -> int:
+        """Index of the currently active tab."""
+        return self._tabs.active
+
+    @property
     def tabs(self) -> pn.Tabs:
         """Get the Tabs widget containing grid tabs."""
         return self._tabs

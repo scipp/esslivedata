@@ -15,7 +15,7 @@ from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 from ess.livedata.handlers.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
+    MonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -169,13 +169,13 @@ instrument = Instrument(
     ],
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
-        'loki_detector_1': SourceMetadata(title='Mid Bottom'),
+        'loki_detector_1': SourceMetadata(title='Mid Top'),
         'loki_detector_2': SourceMetadata(title='Mid Left'),
-        'loki_detector_3': SourceMetadata(title='Mid Top'),
+        'loki_detector_3': SourceMetadata(title='Mid Bottom'),
         'loki_detector_4': SourceMetadata(title='Mid Right'),
-        'loki_detector_5': SourceMetadata(title='Front Bottom'),
+        'loki_detector_5': SourceMetadata(title='Front Top'),
         'loki_detector_6': SourceMetadata(title='Front Left'),
-        'loki_detector_7': SourceMetadata(title='Front Top'),
+        'loki_detector_7': SourceMetadata(title='Front Bottom'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
         'beam_monitor_m0': SourceMetadata(
             title='Beam Monitor 0', description='Upstream, z = -16.8 m'
@@ -199,9 +199,8 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register monitor workflow spec (TOA-only, no TOF lookup tables)
 monitor_handle = register_monitor_workflow_specs(
-    instrument, instrument.monitors, params=TOAOnlyMonitorDataParams
+    instrument, instrument.monitors, params=MonitorDataParams
 )
 
 xy_projection_handle = register_detector_view_spec(
