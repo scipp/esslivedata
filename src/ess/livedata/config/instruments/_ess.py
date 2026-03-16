@@ -14,7 +14,10 @@ from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 
 def _make_cbm_monitors(
-    instrument: str, monitor_count: int = 10, monitor_names: list[str] | None = None
+    instrument: str,
+    monitor_count: int = 10,
+    monitor_names: list[str] | None = None,
+    cbm_start: int = 1,
 ) -> StreamLUT:
     # Might also be MONITOR_COUNTS, but topic is supposedly the same.
     topic = stream_kind_to_topic(instrument=instrument, kind=StreamKind.MONITOR_EVENTS)
@@ -22,7 +25,7 @@ def _make_cbm_monitors(
         monitor_names = [f'monitor{i}' for i in range(1, monitor_count + 1)]
     return {
         InputStreamKey(topic=topic, source_name=f'cbm{monitor}'): name
-        for monitor, name in enumerate(monitor_names, start=1)
+        for monitor, name in enumerate(monitor_names, start=cbm_start)
     }
 
 
@@ -111,10 +114,15 @@ def make_dev_stream_mapping(
 
 
 def make_common_stream_mapping_inputs(
-    instrument: str, *, monitor_names: list[str] | None = None
+    instrument: str,
+    *,
+    monitor_names: list[str] | None = None,
+    cbm_start: int = 1,
 ) -> dict[str, Any]:
     return {
         'instrument': instrument,
-        'monitors': _make_cbm_monitors(instrument, monitor_names=monitor_names),
+        'monitors': _make_cbm_monitors(
+            instrument, monitor_names=monitor_names, cbm_start=cbm_start
+        ),
         **_make_livedata_topics(instrument),
     }
