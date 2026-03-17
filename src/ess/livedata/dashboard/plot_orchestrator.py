@@ -1180,10 +1180,22 @@ class PlotOrchestrator:
             # or data_sources.
             data_sources = {}
 
+        # Determine whether the output supports windowing
+        supports_windowing = True
+        if PRIMARY in data_sources:
+            from .plotting_controller import output_has_time_coord
+
+            primary = data_sources[PRIMARY]
+            registry = self._job_orchestrator.get_workflow_registry()
+            spec = registry.get(primary.workflow_id)
+            if spec is not None:
+                supports_windowing = output_has_time_coord(spec, primary.output_name)
+
         config = PlotConfig(
             data_sources=data_sources,
             plot_name=plot_name,
             params=params,
+            supports_windowing=supports_windowing,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)

@@ -1,9 +1,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pydantic
+import scipp as sc
 
+from ess.livedata.config.workflow_spec import (
+    WorkflowId,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
+from ess.livedata.dashboard.data_roles import PRIMARY
+from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
 from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
-from ess.livedata.dashboard.widgets.plot_widgets import _format_window_info
+from ess.livedata.dashboard.widgets.plot_widgets import (
+    _format_window_info,
+    get_plot_cell_display_info,
+)
 
 
 class _FakeParams(pydantic.BaseModel):
@@ -37,3 +48,89 @@ class TestFormatWindowInfo:
             window=WindowParams(mode=WindowMode.window, window_duration_seconds=5)
         )
         assert _format_window_info(params, supports_windowing=False) == ''
+
+
+class TestGetPlotCellDisplayInfo:
+    def test_cumulative_output_omits_window_info(self) -> None:
+        """Toolbar title should not show window mode for cumulative outputs."""
+
+        class CumulativeOutputs(WorkflowOutputsBase):
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0], unit='counts'),
+                    coords={'x': sc.arange('x', 0, unit='m')},
+                ),
+                title='Cumulative',
+            )
+
+        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='Beam monitor data',
+            description='D',
+            outputs=CumulativeOutputs,
+            params=None,
+            source_names=['src1'],
+        )
+        registry = {wf_id: spec}
+
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf_id,
+                    source_names=['src1'],
+                    output_name='cumulative',
+                )
+            },
+            plot_name='lines',
+            params=_FakeParams(),
+        )
+
+        title, _ = get_plot_cell_display_info(config, registry)
+        assert 'latest' not in title
+        assert 'window' not in title
+
+    def test_current_output_shows_window_info(self) -> None:
+        """Toolbar title should show window mode for outputs with time coord."""
+
+        class CurrentOutputs(WorkflowOutputsBase):
+            current: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['time', 'x'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'time': sc.arange('time', 0, unit='s'),
+                        'x': sc.arange('x', 0, unit='m'),
+                    },
+                ),
+                title='Current',
+            )
+
+        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='Beam monitor data',
+            description='D',
+            outputs=CurrentOutputs,
+            params=None,
+            source_names=['src1'],
+        )
+        registry = {wf_id: spec}
+
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf_id,
+                    source_names=['src1'],
+                    output_name='current',
+                )
+            },
+            plot_name='lines',
+            params=_FakeParams(),
+        )
+
+        title, _ = get_plot_cell_display_info(config, registry)
+        assert 'latest' in title
