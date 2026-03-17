@@ -36,9 +36,14 @@ class NotificationLogWidget:
     def __init__(self, notification_queue: NotificationQueue) -> None:
         self._queue = notification_queue
         self._last_version: int | None = None
+        self._header = pn.pane.HTML(
+            "<h3>Notifications</h3>",
+            margin=(10, 10, 5, 10),
+        )
         self._content_pane = pn.pane.HTML(
             self._render_empty(),
             sizing_mode="stretch_width",
+            margin=(0, 10),
         )
 
     def refresh(self) -> None:
@@ -81,25 +86,22 @@ class NotificationLogWidget:
                 f'{badge} {message_html}</div>'
             )
 
-        count_text = f"{len(events)} notification{'s' if len(events) != 1 else ''}"
-        header = "<h3 style='margin: 10px 10px 5px 10px;'>Notifications</h3>"
-        summary = (
-            f'<div style="margin: 0 10px 5px 10px; font-size: 13px;">{count_text}</div>'
-        )
-        body = (
+        self._content_pane.object = (
             f'<div style="max-height: 400px; overflow-y: auto; '
             f'border: 1px solid #dee2e6; border-radius: 4px;">'
             f'{"".join(rows)}</div>'
         )
-        self._content_pane.object = header + summary + body
 
     def _render_empty(self) -> str:
         return (
-            "<h3 style='margin: 10px 10px 5px 10px;'>Notifications</h3>"
             '<div style="text-align: center; padding: 20px; '
             f'color: {StatusColors.MUTED};">No notifications</div>'
         )
 
-    def panel(self) -> pn.pane.HTML:
+    def panel(self) -> pn.Column:
         """Get the panel for this widget."""
-        return self._content_pane
+        return pn.Column(
+            self._header,
+            self._content_pane,
+            sizing_mode="stretch_width",
+        )

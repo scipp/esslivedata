@@ -80,8 +80,8 @@ class SystemStatusWidget:
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
         return pn.Column(
-            self._notification_widget.panel(),
             self._session_widget.panel(),
             self._backend_widget.panel(),
+            self._notification_widget.panel(),
             sizing_mode="stretch_width",
         )

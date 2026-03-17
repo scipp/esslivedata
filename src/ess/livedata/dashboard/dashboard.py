@@ -252,9 +252,20 @@ class DashboardBase(ServiceBase, ABC):
                 background-size: 30px 36px;
             }}
 
-            /* Widen toast notifications so longer messages fit without overflow */
+            /* Widen toast notifications so longer messages fit without overflow.
+               Disable the ripple animation: at wider sizes the circular ripple
+               does not fully cover the toast, leaving visible curved edges. */
             .notyf__toast {{
                 max-width: 500px !important;
+            }}
+            .notyf__ripple {{
+                animation: none !important;
+                width: 100% !important;
+                height: 100% !important;
+                border-radius: 0 !important;
+                transform: none !important;
+                top: 0 !important;
+                left: 0 !important;
             }}
             """
         ]

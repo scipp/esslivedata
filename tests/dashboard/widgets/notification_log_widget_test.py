@@ -12,6 +12,11 @@ from ess.livedata.dashboard.widgets.notification_log_widget import (
 )
 
 
+def _all_html(widget: NotificationLogWidget) -> str:
+    """Concatenate all rendered HTML from the widget's panel children."""
+    return "".join(child.object for child in widget.panel() if hasattr(child, "object"))
+
+
 class TestNotificationLogWidget:
     def test_empty_queue_renders_placeholder(self):
         queue = NotificationQueue()
@@ -19,8 +24,7 @@ class TestNotificationLogWidget:
 
         widget.refresh()
 
-        html = widget.panel().object
-        assert "No notifications" in html
+        assert "No notifications" in _all_html(widget)
 
     def test_renders_events(self):
         queue = NotificationQueue()
@@ -40,12 +44,11 @@ class TestNotificationLogWidget:
 
         widget.refresh()
 
-        html = widget.panel().object
+        html = _all_html(widget)
         assert "Something failed" in html
         assert "All good" in html
         assert "ERROR" in html
         assert "SUCCESS" in html
-        assert "2 notifications" in html
 
     def test_newest_first_ordering(self):
         queue = NotificationQueue()
@@ -55,7 +58,7 @@ class TestNotificationLogWidget:
 
         widget.refresh()
 
-        html = widget.panel().object
+        html = _all_html(widget)
         # "Second" should appear before "First" in the rendered HTML
         assert html.index("Second") < html.index("First")
 
@@ -65,11 +68,11 @@ class TestNotificationLogWidget:
         widget = NotificationLogWidget(notification_queue=queue)
 
         widget.refresh()
-        html_after_first = widget.panel().object
+        content_after_first = widget._content_pane.object
 
         # Refresh again without new events: content should remain identical
         widget.refresh()
-        assert widget.panel().object is html_after_first
+        assert widget._content_pane.object is content_after_first
 
     def test_refreshes_when_version_changes(self):
         queue = NotificationQueue()
@@ -84,7 +87,7 @@ class TestNotificationLogWidget:
         )
         widget.refresh()
 
-        html = widget.panel().object
+        html = _all_html(widget)
         assert "New event" in html
         assert "WARNING" in html
 
@@ -98,6 +101,6 @@ class TestNotificationLogWidget:
 
         widget.refresh()
 
-        html = widget.panel().object
+        html = _all_html(widget)
         for ntype in NotificationType:
             assert ntype.value.upper() in html
