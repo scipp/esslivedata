@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import ClassVar
 
 import panel as pn
@@ -60,7 +60,7 @@ class NotificationLogWidget:
         for event in display_events:
             color = _BADGE_COLORS.get(event.notification_type, StatusColors.INFO)
             label = event.notification_type.value.upper()
-            ts = datetime.fromtimestamp(event.timestamp, tz=datetime.UTC)
+            ts = datetime.fromtimestamp(event.timestamp, tz=timezone.utc)
             time_str = ts.strftime("%H:%M:%S")
 
             badge = (
