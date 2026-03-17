@@ -11,15 +11,17 @@ import panel as pn
 
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 
+from .styles import StatusColors
+
 
 class SessionUIConstants:
     """Constants for session status UI styling and sizing."""
 
     # Colors
-    ACTIVE_COLOR = "#28a745"  # Green
-    YOU_COLOR = "#007bff"  # Blue for "this is you"
-    STALE_COLOR = "#dc3545"  # Red for stale sessions
-    DEFAULT_COLOR = "#6c757d"  # Gray
+    ACTIVE_COLOR = StatusColors.SUCCESS
+    YOU_COLOR = StatusColors.PRIMARY
+    STALE_COLOR = StatusColors.ERROR
+    DEFAULT_COLOR = StatusColors.MUTED
 
     # Thresholds
     # Sessions without browser heartbeats for this long are shown as "Stale".

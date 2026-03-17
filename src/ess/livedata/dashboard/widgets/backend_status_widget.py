@@ -13,6 +13,7 @@ from ess.livedata.core.job import ServiceState, ServiceStatus
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
+from .styles import StatusColors
 
 
 class WorkerUIConstants:
@@ -20,14 +21,14 @@ class WorkerUIConstants:
 
     # Colors for service states
     COLORS: ClassVar[dict[ServiceState, str]] = {
-        ServiceState.starting: "#6c757d",  # Gray
-        ServiceState.running: "#28a745",  # Green
-        ServiceState.stopping: "#ffc107",  # Yellow
-        ServiceState.stopped: "#6c757d",  # Gray
-        ServiceState.error: "#dc3545",  # Red
+        ServiceState.starting: StatusColors.MUTED,
+        ServiceState.running: StatusColors.SUCCESS,
+        ServiceState.stopping: StatusColors.WARNING,
+        ServiceState.stopped: StatusColors.MUTED,
+        ServiceState.error: StatusColors.ERROR,
     }
-    DEFAULT_COLOR = "#6c757d"
-    STALE_COLOR = "#dc3545"  # Red for unexpectedly disappeared workers
+    DEFAULT_COLOR = StatusColors.MUTED
+    STALE_COLOR = StatusColors.ERROR
 
     # Sizes
     NAMESPACE_WIDTH = 200

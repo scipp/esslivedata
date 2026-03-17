@@ -251,6 +251,11 @@ class DashboardBase(ServiceBase, ABC):
                 background-position: center;
                 background-size: 30px 36px;
             }}
+
+            /* Widen toast notifications so longer messages fit without overflow */
+            .notyf__toast {{
+                max-width: 500px !important;
+            }}
             """
         ]
 
