@@ -81,6 +81,22 @@ class TestDeferredRunTransitionReset:
         _push_data_to(manager, end_time=500)
         assert processor.clear_calls == 1
 
+    def test_reset_time_in_past_relative_to_data_already_seen(self, fake_job_factory):
+        """If data has advanced to T=5000 and a RunStart arrives with T=3000,
+        the reset fires on the next data push regardless of its end_time."""
+        manager = JobManager(job_factory=fake_job_factory)
+        job_id = manager.schedule_job('det1', _make_config())
+        _activate_jobs(manager)
+        processor = fake_job_factory.processors[job_id]
+
+        _push_data_to(manager, end_time=5000)
+        assert processor.clear_calls == 0
+
+        manager.on_run_start(RunStart(run_name='run_1', start_time=3000))
+        # Next data push has end_time=5001, but reset time 3000 is already past
+        _push_data_to(manager, end_time=5001)
+        assert processor.clear_calls == 1
+
     def test_run_start_with_stop_time_schedules_two_resets(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
         job_id = manager.schedule_job('det1', _make_config())
