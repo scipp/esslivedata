@@ -255,6 +255,36 @@ class LifecycleSubscription:
     on_cell_removed: CellRemovedCallback | None = None
 
 
+def _resolve_supports_windowing(
+    data_sources: dict[str, DataSourceConfig],
+    registry: Mapping[WorkflowId, WorkflowSpec],
+) -> bool:
+    """Determine whether the primary output supports time-based windowing.
+
+    Parameters
+    ----------
+    data_sources:
+        Mapping of data roles to their source configurations.
+    registry:
+        Workflow registry to look up workflow specifications.
+
+    Returns
+    -------
+    :
+        ``True`` if windowing is supported or if no primary source is
+        available, ``False`` for cumulative outputs.
+    """
+    if PRIMARY not in data_sources:
+        return True
+    from .plotting_controller import output_has_time_coord
+
+    primary = data_sources[PRIMARY]
+    spec = registry.get(primary.workflow_id)
+    if spec is None:
+        return True
+    return output_has_time_coord(spec, primary.output_name)
+
+
 class PlotOrchestrator:
     """Manages plot grid configurations and plot lifecycle."""
 
@@ -1180,16 +1210,9 @@ class PlotOrchestrator:
             # or data_sources.
             data_sources = {}
 
-        # Determine whether the output supports windowing
-        supports_windowing = True
-        if PRIMARY in data_sources:
-            from .plotting_controller import output_has_time_coord
-
-            primary = data_sources[PRIMARY]
-            registry = self._job_orchestrator.get_workflow_registry()
-            spec = registry.get(primary.workflow_id)
-            if spec is not None:
-                supports_windowing = output_has_time_coord(spec, primary.output_name)
+        supports_windowing = _resolve_supports_windowing(
+            data_sources, self._job_orchestrator.get_workflow_registry()
+        )
 
         config = PlotConfig(
             data_sources=data_sources,

@@ -105,6 +105,39 @@ def _resolve_axis_source_titles(
     return result
 
 
+def _resolve_windowing_support(
+    *,
+    is_static: bool,
+    workflow_spec: WorkflowSpec | None,
+    output_name: str,
+) -> tuple[bool, frozenset[str]]:
+    """Determine whether the selected output supports windowing.
+
+    Parameters
+    ----------
+    is_static:
+        Whether the plot uses a static overlay workflow.
+    workflow_spec:
+        Workflow specification for the selected output. May be ``None``
+        for static overlays.
+    output_name:
+        Name of the output field.
+
+    Returns
+    -------
+    :
+        A tuple of (supports_windowing, hidden_fields). When windowing is
+        not supported the ``'window'`` field is included in hidden_fields.
+    """
+    if is_static:
+        return True, frozenset()
+    from ess.livedata.dashboard.plotting_controller import output_has_time_coord
+
+    supports = output_has_time_coord(workflow_spec, output_name)
+    hidden = frozenset({'window'}) if not supports else frozenset()
+    return supports, hidden
+
+
 def _inject_axis_source_titles(
     params: pydantic.BaseModel | dict,
     axis_sources: dict[str, DataSourceConfig],
@@ -1132,20 +1165,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
-        # Determine whether the selected output supports windowing
-        hidden_fields: frozenset[str] = frozenset()
-        if not is_static:
-            from ess.livedata.dashboard.plotting_controller import (
-                output_has_time_coord,
-            )
-
-            self._supports_windowing = output_has_time_coord(
-                workflow_spec, self._plotter_selection.output_name
-            )
-            if not self._supports_windowing:
-                hidden_fields = frozenset({'window'})
-        else:
-            self._supports_windowing = True
+        self._supports_windowing, hidden_fields = _resolve_windowing_support(
+            is_static=is_static,
+            workflow_spec=workflow_spec if not is_static else None,
+            output_name=self._plotter_selection.output_name,
+        )
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
