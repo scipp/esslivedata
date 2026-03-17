@@ -374,17 +374,8 @@ def get_plot_cell_display_info(
 
     # Build title: "Workflow → Output (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane
-    supports_windowing = config.supports_windowing
-    if supports_windowing:
-        # Derive from workflow registry in case PlotConfig was created without
-        # the flag (e.g. grid templates loaded from YAML).
-        from ..plotting_controller import output_has_time_coord
-
-        spec = workflow_registry.get(config.workflow_id)
-        if spec is not None:
-            supports_windowing = output_has_time_coord(spec, config.output_name)
     window_info = _format_window_info(
-        config.params, supports_windowing=supports_windowing
+        config.params, supports_windowing=config.supports_windowing
     )
 
     # Helper to get display title for a source

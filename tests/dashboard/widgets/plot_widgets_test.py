@@ -86,6 +86,7 @@ class TestGetPlotCellDisplayInfo:
             },
             plot_name='lines',
             params=_FakeParams(),
+            supports_windowing=False,
         )
 
         title, _ = get_plot_cell_display_info(config, registry)
