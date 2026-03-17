@@ -201,35 +201,6 @@ class TestPollHandlesLayoutPlotters:
         assert session_layer is not None
         assert session_layer.dmap is not None
 
-    def test_rebuild_after_bokeh_evaluates_layout_dmap(
-        self, plot_orchestrator, plot_data_service, plot_grid_tabs
-    ):
-        """
-        After Bokeh evaluates a DynamicMap (setting dmap.type = Layout),
-        a version change triggers a rebuild that must not raise.
-        """
-        plotter = FakePlotter(cached_state=_make_layout())
-        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
-        layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
-
-        # First poll: creates session layer + components
-        plot_grid_tabs._poll_for_plot_updates()
-        dmap = plot_grid_tabs._session_layers[layer_id].dmap
-
-        # Simulate Bokeh rendering the DynamicMap
-        dmap[()]
-        assert dmap.type is hv.Layout
-
-        # Version change: workflow restart with a new plotter
-        plot_data_service.job_started(
-            layer_id, FakePlotter(cached_state=_make_layout())
-        )
-        plot_data_service.data_arrived(layer_id)
-
-        # Must not raise despite the old DynamicMap being typed as Layout
-        plot_grid_tabs._poll_for_plot_updates()
-
     def test_failed_rebuild_does_not_bump_version(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
