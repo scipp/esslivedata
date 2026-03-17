@@ -142,6 +142,7 @@ class PlotConfig:
     data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
+    supports_windowing: bool = True
 
     @property
     def workflow_id(self) -> WorkflowId:

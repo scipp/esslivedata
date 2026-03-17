@@ -110,6 +110,7 @@ class ConfigurationWidget:
                 initial_values=self._config.initial_parameter_values,
                 show_descriptions=True,
                 cards_collapsed=False,
+                hidden_fields=self._config.hidden_fields,
             )
 
     def _on_aux_source_changed(self, event) -> None:

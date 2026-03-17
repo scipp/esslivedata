@@ -985,6 +985,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._last_axis_sources: dict[str, DataSourceConfig] | None = None
         # Store result from callback
         self._last_config_result: PlotConfig | None = None
+        self._supports_windowing: bool = True
 
     @property
     def name(self) -> str:
@@ -1131,6 +1132,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
+        # Determine whether the selected output supports windowing
+        hidden_fields: frozenset[str] = frozenset()
+        if not is_static:
+            from ess.livedata.dashboard.plotting_controller import (
+                output_has_time_coord,
+            )
+
+            self._supports_windowing = output_has_time_coord(
+                workflow_spec, self._plotter_selection.output_name
+            )
+            if not self._supports_windowing:
+                hidden_fields = frozenset({'window', 'rate'})
+        else:
+            self._supports_windowing = True
+
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
             source_names=source_names,
@@ -1138,6 +1154,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state=config_state,
             initial_source_names=initial_source_names,
             instrument_config=self._instrument_config,
+            hidden_fields=hidden_fields,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
@@ -1183,6 +1200,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             data_sources=data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
+            supports_windowing=self._supports_windowing,
         )
 
 
