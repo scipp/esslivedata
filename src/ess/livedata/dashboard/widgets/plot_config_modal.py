@@ -1143,7 +1143,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 workflow_spec, self._plotter_selection.output_name
             )
             if not self._supports_windowing:
-                hidden_fields = frozenset({'window', 'rate'})
+                hidden_fields = frozenset({'window'})
         else:
             self._supports_windowing = True
 
