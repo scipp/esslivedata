@@ -156,6 +156,60 @@ class TestHasLayoutGuardRace:
         has_layout = isinstance(plotter.get_cached_state(), hv.Layout)
         assert has_layout, "Guard should detect Layout when cached state is available"
 
+    def test_dmap_type_guard_catches_layout_when_cached_state_is_none(self):
+        """
+        The fix: checking `dmap.type is hv.Layout` catches evaluated Layout
+        DynamicMaps even when the plotter's cached state is transiently None.
+        """
+        layout = hv.Layout(
+            [hv.Curve([1, 2, 3]).relabel('A'), hv.Curve([4, 5, 6]).relabel('B')]
+        )
+        plotter = FakePlotter(cached_state=layout)
+        layer_id = LayerId(uuid4())
+        pds = PlotDataService()
+        pds.job_started(layer_id, plotter)
+        pds.data_arrived(layer_id)
+
+        state = pds.get(layer_id)
+        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer.ensure_components(state)
+
+        # Simulate Bokeh rendering
+        session_layer.dmap[()]
+
+        # Plotter's cached state goes away
+        plotter._cached_state = None
+
+        dmap = session_layer.dmap
+        # Old guard misses it:
+        assert not isinstance(plotter.get_cached_state(), hv.Layout)
+        # New guard catches it:
+        assert isinstance(dmap, hv.DynamicMap)
+        assert dmap.type is hv.Layout
+
+    def test_dmap_type_guard_does_not_block_unevaluated_non_layout(self):
+        """
+        The dmap.type check must not false-positive on an unevaluated
+        DynamicMap whose content is a plain Element.
+        """
+        plotter = FakePlotter(cached_state=hv.Curve([1, 2, 3]))
+        layer_id = LayerId(uuid4())
+        pds = PlotDataService()
+        pds.job_started(layer_id, plotter)
+        pds.data_arrived(layer_id)
+
+        state = pds.get(layer_id)
+        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer.ensure_components(state)
+
+        dmap = session_layer.dmap
+        assert isinstance(dmap, hv.DynamicMap)
+        # Not evaluated — type is None, guard should NOT flag as Layout
+        assert dmap.type is not hv.Layout
+        assert not isinstance(plotter.get_cached_state(), hv.Layout)
+        # Hooks should work fine
+        dmap.opts(hooks=[lambda p, e: None])  # should not raise
+
 
 # ---------------------------------------------------------------------------
 # Issue (b): last_seen_version bumped before rebuild → no recovery
