@@ -15,9 +15,16 @@ from ess.livedata.config import streams
 from ess.livedata.config.instruments import available_instruments
 
 
-@pytest.mark.parametrize('instrument', available_instruments())
+@pytest.mark.parametrize(
+    'instrument',
+    [i for i in available_instruments() if i != 'loki'],
+)
 def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
-    """All instruments use 1-based cbm source names (cbm1, cbm2, ...)."""
+    """All instruments except LOKI use 1-based cbm source names (cbm1, cbm2, ...).
+
+    LOKI is excluded: it temporarily uses 0-based cbm source names (cbm0..4)
+    during the commissioning period. See tracking issue #806.
+    """
     stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
     cbm_source_names = [
         key.source_name
@@ -31,10 +38,10 @@ def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
 
 
 def test_loki_monitors_correctly_mapped() -> None:
-    """LOKI monitors use 1-based cbm source names.
+    """LOKI monitors use 0-based cbm source names during the commissioning period.
 
-    Source names verified against NeXus data file
-    ``coda_loki_999999_00020680.hdf`` (cbm1 through cbm5).
+    Producers currently send cbm0..4. Once they rename to cbm1..5, update this
+    test and remove cbm_start=0 from loki/streams.py (see #806).
     """
     stream_mapping = streams.get_stream_mapping(instrument='loki', dev=False)
     actual_mapping = {
@@ -43,11 +50,11 @@ def test_loki_monitors_correctly_mapped() -> None:
         if key.source_name.startswith('cbm')
     }
     expected_mapping = {
-        'cbm1': 'beam_monitor_m0',
-        'cbm2': 'beam_monitor_m1',
-        'cbm3': 'beam_monitor_m2',
-        'cbm4': 'beam_monitor_m3',
-        'cbm5': 'beam_monitor_m4',
+        'cbm0': 'beam_monitor_m0',
+        'cbm1': 'beam_monitor_m1',
+        'cbm2': 'beam_monitor_m2',
+        'cbm3': 'beam_monitor_m3',
+        'cbm4': 'beam_monitor_m4',
     }
     assert actual_mapping == expected_mapping
 
