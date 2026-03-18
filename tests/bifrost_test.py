@@ -9,6 +9,7 @@ from ess.reduce.nexus.types import (
     NeXusData,
     SampleRun,
 )
+from ess.reduce.uncertainty import UncertaintyBroadcastMode
 from scipp.testing import assert_identical
 from scippnexus import NXdetector
 
@@ -37,6 +38,73 @@ def bifrost_workflow():
     ) = _create_base_reduction_workflow()
     workflow.insert(detector_ratemeter)
     return workflow, DetectorRegionCounts
+
+
+def test_q_cut_workflow_drops_monitor_variances():
+    """Regression test for #796: variances in monitor must not raise VariancesError.
+
+    The monitor accumulated from neutron counting statistics has variances. The
+    Q-cut normalization must use UncertaintyBroadcastMode.drop so that scipp
+    does not raise VariancesError when dividing binned events by the monitor.
+    """
+    from ess.bifrost.normalization import normalize_by_monitor_and_proton_charge
+    from ess.spectroscopy.types import (
+        FrameMonitor3,
+        IncidentEnergyDetector,
+        ProtonCharge,
+        WavelengthMonitor,
+    )
+
+    # Monitor histogram with variances (as accumulated from real neutron data)
+    wavelength_edges = sc.array(
+        dims=['wavelength'], values=[1.0, 1.5, 2.0, 2.5, 3.0], unit='angstrom'
+    )
+    monitor_values = sc.array(
+        dims=['wavelength'],
+        values=[100.0, 200.0, 150.0, 80.0],
+        variances=[100.0, 200.0, 150.0, 80.0],  # Poisson counting statistics
+        unit='counts',
+    )
+    monitor = WavelengthMonitor[SampleRun, FrameMonitor3](
+        sc.DataArray(monitor_values, coords={'wavelength': wavelength_edges})
+    )
+
+    # Simple binned detector
+    events = sc.DataArray(
+        sc.ones(sizes={'event': 10}, unit='counts'),
+        coords={
+            'wavelength': sc.array(
+                dims=['event'],
+                values=[1.2, 1.7, 2.1, 2.3, 1.4, 1.9, 2.2, 1.6, 1.8, 2.4],
+                unit='angstrom',
+            )
+        },
+    )
+    detector = IncidentEnergyDetector[SampleRun](
+        sc.DataArray(
+            sc.bins(
+                begin=sc.array(dims=['x'], values=[0], unit=None, dtype='int64'),
+                end=sc.array(dims=['x'], values=[10], unit=None, dtype='int64'),
+                dim='event',
+                data=events,
+            )
+        )
+    )
+    proton_charge = ProtonCharge[SampleRun](
+        sc.DataArray(sc.scalar(1.0, unit='microampere*hour'))
+    )
+
+    # With drop mode (what our factory sets), this must not raise
+    result = normalize_by_monitor_and_proton_charge(
+        detector, monitor, proton_charge, UncertaintyBroadcastMode.drop
+    )
+    assert result is not None
+
+    # With fail mode (the default), this would raise VariancesError
+    with pytest.raises(Exception, match=r'[Vv]ariances'):
+        normalize_by_monitor_and_proton_charge(
+            detector, monitor, proton_charge, UncertaintyBroadcastMode.fail
+        )
 
 
 @pytest.mark.slow
