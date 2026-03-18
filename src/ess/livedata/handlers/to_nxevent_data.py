@@ -72,29 +72,63 @@ class DetectorEvents(MonitorEvents):
 Events = TypeVar('Events', DetectorEvents, MonitorEvents)
 
 
-class _GrowableBuffer:
-    """A reusable numpy buffer that grows as needed, avoiding repeated allocations."""
+class _ScippBackedBuffer:
+    """A growable buffer backed by a scipp Variable.
 
-    def __init__(self, dtype: np.dtype) -> None:
-        self._dtype = dtype
-        self._buf: np.ndarray = np.empty(0, dtype=dtype)
+    Chunks are copied directly into the Variable's underlying memory via its
+    ``.values`` view.  When ``get()`` is called the filled region is returned as
+    a zero-copy scipp slice — no additional allocation or memcpy needed.
+    """
+
+    def __init__(
+        self, dtype: np.dtype, *, unit: str | None, sc_dtype: str | None = None
+    ):
+        self._np_dtype = dtype
+        self._unit = unit
+        self._sc_dtype = sc_dtype
+        self._var: sc.Variable | None = None
+        self._view: np.ndarray | None = None  # writable view into _var
 
     def _ensure_capacity(self, n: int) -> None:
-        if n <= self._buf.size:
+        if self._var is not None and self._var.sizes['event'] >= n:
             return
-        # Grow by at least 2x to amortize allocation cost.
-        new_capacity = max(n, self._buf.size * 2)
-        self._buf = np.empty(new_capacity, dtype=self._dtype)
+        old = 0 if self._var is None else self._var.sizes['event']
+        new_capacity = max(n, old * 2)
+        self._var = sc.array(
+            dims=['event'],
+            values=np.empty(new_capacity, dtype=self._np_dtype),
+            unit=self._unit,
+            dtype=self._sc_dtype,
+        )
+        self._view = self._var.values
 
-    def fill_from_chunks(self, chunks: list[np.ndarray], total: int) -> np.ndarray:
-        """Copy chunks into the buffer and return a view of the filled region."""
+    def fill_and_slice(self, chunks: list[np.ndarray], total: int) -> sc.Variable:
+        """Copy chunks into the buffer and return a zero-copy scipp slice."""
         self._ensure_capacity(total)
         offset = 0
         for chunk in chunks:
             n = len(chunk)
-            self._buf[offset : offset + n] = chunk
+            self._view[offset : offset + n] = chunk
             offset += n
-        return self._buf[:total]
+        return self._var['event', :total]
+
+
+class _WeightsBuffer:
+    """A reusable scipp Variable filled with ones."""
+
+    def __init__(self) -> None:
+        self._var: sc.Variable | None = None
+
+    def get(self, n: int) -> sc.Variable:
+        if self._var is not None and self._var.sizes['event'] >= n:
+            return self._var['event', :n]
+        new_capacity = max(n, 0 if self._var is None else self._var.sizes['event'] * 2)
+        self._var = sc.Variable(
+            dims=['event'],
+            values=np.ones(new_capacity, dtype=np.float64),
+            unit='counts',
+        )
+        return self._var['event', :n]
 
 
 class ToNXevent_data(Accumulator[Events, sc.DataArray]):
@@ -104,9 +138,10 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         self._epoch = sc.epoch(unit='ns')
         self._have_event_id: bool | None = None
         self._toa_dtype = np.int64
-        self._toa_buf: _GrowableBuffer | None = None
-        self._pid_buf: _GrowableBuffer | None = None
-        self._weights_buf: np.ndarray = np.empty(0, dtype=np.float64)
+        self._toa_buf: _ScippBackedBuffer | None = None
+        self._pid_buf: _ScippBackedBuffer | None = None
+        self._weights = _WeightsBuffer()
+        self._buffers_in_use = False
 
     def add(self, timestamp: int, data: Events) -> None:
         if data.unit != 'ns':
@@ -114,55 +149,61 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         if self._have_event_id is None:
             self._have_event_id = isinstance(data, DetectorEvents)
             self._toa_dtype = np.asarray(data.time_of_arrival).dtype
-            self._toa_buf = _GrowableBuffer(self._toa_dtype)
+            self._toa_buf = _ScippBackedBuffer(self._toa_dtype, unit='ns')
             if self._have_event_id:
-                self._pid_buf = _GrowableBuffer(np.asarray(data.pixel_id).dtype)
+                self._pid_buf = _ScippBackedBuffer(
+                    np.asarray(data.pixel_id).dtype, unit=None, sc_dtype='int32'
+                )
         elif self._have_event_id != isinstance(data, DetectorEvents):
             # This should never happen, but we check to be safe.
             raise ValueError("Inconsistent event_id")
         self._timestamps.append(int(timestamp))
         self._chunks.append(data)
 
-    def _ensure_weights(self, n: int) -> np.ndarray:
-        """Return a float64 ones-buffer of at least size n, reusing across calls."""
-        if self._weights_buf.size < n:
-            new_capacity = max(n, self._weights_buf.size * 2)
-            self._weights_buf = np.ones(new_capacity, dtype=np.float64)
-        return self._weights_buf[:n]
-
     def get(self) -> sc.DataArray:
+        """Build a binned DataArray from the accumulated chunks.
+
+        The returned DataArray shares its underlying buffers with this
+        accumulator.  Callers must call :meth:`release_buffers` before the next
+        :meth:`get` call to signal that the result is no longer in use.
+        """
         if self._have_event_id is None:
             raise ValueError("No data has been added")
+        if self._buffers_in_use:
+            raise RuntimeError(
+                "Buffers from a previous get() have not been released. "
+                "Call release_buffers() after the result has been consumed."
+            )
+        self._buffers_in_use = True
 
         if self._toa_buf is None:
             raise RuntimeError("Expected _toa_buf to be initialized")
         total = sum(len(d.time_of_arrival) for d in self._chunks)
 
         if total > 0:
-            toa_values = self._toa_buf.fill_from_chunks(
+            toa_var = self._toa_buf.fill_and_slice(
                 [d.time_of_arrival for d in self._chunks], total
             )
         else:
-            toa_values = np.array([], dtype=self._toa_dtype)
+            toa_var = sc.array(
+                dims=['event'], values=[], dtype=self._toa_dtype, unit='ns'
+            )
 
-        event_time_offset = sc.array(dims=['event'], values=toa_values, unit='ns')
-        weights_values = self._ensure_weights(total)
-        weights = sc.Variable(dims=['event'], values=weights_values, unit='counts')
         events = sc.DataArray(
-            data=weights, coords={'event_time_offset': event_time_offset}
+            data=self._weights.get(total),
+            coords={'event_time_offset': toa_var},
         )
 
         if self._have_event_id:
             if self._pid_buf is None:
                 raise RuntimeError("Expected _pid_buf to be initialized")
             if total > 0:
-                ids = self._pid_buf.fill_from_chunks(
+                pid_var = self._pid_buf.fill_and_slice(
                     [d.pixel_id for d in self._chunks], total
                 )
             else:
-                ids = np.array([])
-            event_id = sc.array(dims=['event'], values=ids, unit=None, dtype='int32')
-            events.coords['event_id'] = event_id
+                pid_var = sc.array(dims=['event'], values=[], dtype='int32', unit=None)
+            events.coords['event_id'] = pid_var
 
         lens = [len(d.time_of_arrival) for d in self._chunks]
         sizes = sc.array(
@@ -175,6 +216,10 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         )
         self.clear()
         return binned
+
+    def release_buffers(self) -> None:
+        """Signal that the result from the last :meth:`get` is no longer in use."""
+        self._buffers_in_use = False
 
     def clear(self) -> None:
         self._chunks.clear()

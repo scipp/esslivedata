@@ -69,8 +69,10 @@ def test_MonitorEvents_ToNXevent_data() -> None:
             },
         ),
     )
+    to_nx.release_buffers()
     empty_events = to_nx.get()
     assert empty_events.sizes == {'event_time_zero': 0}
+    to_nx.release_buffers()
     assert_identical(empty_events, events[0:0])
 
 
@@ -106,8 +108,10 @@ def test_DetectorEvents_ToNXevent_data() -> None:
             },
         ),
     )
+    to_nx.release_buffers()
     empty_events = to_nx.get()
     assert empty_events.sizes == {'event_time_zero': 0}
+    to_nx.release_buffers()
     assert_identical(empty_events, events[0:0])
 
 
@@ -152,6 +156,7 @@ def test_ToNXevent_data_get_works_if_no_data_after_previous_get() -> None:
     to_nx = ToNXevent_data()
     to_nx.add(0, DetectorEvents(time_of_arrival=[1, 2], pixel_id=[1, 2], unit='ns'))
     ref = to_nx.get()
+    to_nx.release_buffers()
     # Empty, but initial data allowed for full initialization
     empty = to_nx.get()
     assert sc.identical(empty, ref['event_time_zero', 0:0])

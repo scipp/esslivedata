@@ -183,7 +183,9 @@ def test_accumulator_get_detector(
     def run():
         for i, chunk in enumerate(chunks):
             acc.add(i * 1000, chunk)
-        return acc.get()
+        result = acc.get()
+        acc.release_buffers()
+        return result
 
     benchmark(run)
 
@@ -211,6 +213,8 @@ def test_accumulator_get_monitor(benchmark, n_msgs: int, n_events_per_msg: int) 
     def run():
         for i, chunk in enumerate(chunks):
             acc.add(i * 1000, chunk)
-        return acc.get()
+        result = acc.get()
+        acc.release_buffers()
+        return result
 
     benchmark(run)

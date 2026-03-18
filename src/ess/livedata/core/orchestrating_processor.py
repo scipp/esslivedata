@@ -58,6 +58,16 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         # We assume the accumulator is cleared in `get`.
         return accumulator.get()
 
+    def release_buffers(self) -> None:
+        """Signal that preprocessed data from the last cycle is no longer in use.
+
+        Accumulators that use zero-copy buffer reuse require this call between
+        ``get()`` cycles so they can safely overwrite their internal buffers.
+        """
+        for accumulator in self._accumulators.values():
+            if hasattr(accumulator, 'release_buffers'):
+                accumulator.release_buffers()
+
     def preprocess_messages(self, batch: MessageBatch) -> WorkflowData:
         """
         Preprocess messages before they are sent to the accumulators.
@@ -170,6 +180,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # When job_threads > 1, each job's accumulation and finalization run as
         # a single threaded task, avoiding two fan-out/fan-in cycles.
         job_replies, results = self._job_manager.process_jobs(workflow_data)
+        self._message_preprocessor.release_buffers()
 
         # Log any errors from data processing
         for reply in job_replies:

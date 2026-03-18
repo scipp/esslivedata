@@ -42,10 +42,16 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
 
     def get(self) -> sc.DataArray:
         ungrouped = self._inner.get()
+        # group_event_data re-bins, producing an independent copy.
+        # Release the inner buffer immediately since ungrouped is consumed here.
+        self._inner.release_buffers()
         return group_event_data(
             event_data=ungrouped,
             detector_number=self._detector_number,
         )
+
+    def release_buffers(self) -> None:
+        self._inner.release_buffers()
 
     def clear(self) -> None:
         self._inner.clear()
