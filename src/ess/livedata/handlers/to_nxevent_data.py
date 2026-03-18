@@ -124,10 +124,8 @@ class _WeightsBuffer:
         if self._var is not None and self._var.sizes['event'] >= n:
             return self._var['event', :n]
         new_capacity = max(n, 0 if self._var is None else self._var.sizes['event'] * 2)
-        self._var = sc.Variable(
-            dims=['event'],
-            values=np.ones(new_capacity, dtype=np.float64),
-            unit='counts',
+        self._var = sc.ones(
+            sizes={'event': new_capacity}, dtype='float64', unit='counts'
         )
         return self._var['event', :n]
 
