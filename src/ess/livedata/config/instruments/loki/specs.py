@@ -207,6 +207,10 @@ instrument = Instrument(
             title='Beam Monitor 4',
             description='Downstream, movable (on detector carriage)',
         ),
+        'detector_carriage': SourceMetadata(
+            title='Sample-Rear Distance',
+            description='Rear detector carriage position along the beam axis (z).',
+        ),
     },
 )
 
