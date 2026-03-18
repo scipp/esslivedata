@@ -142,6 +142,7 @@ class PlotConfig:
     data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
+    supports_windowing: bool = True
 
     @property
     def workflow_id(self) -> WorkflowId:
@@ -252,6 +253,36 @@ class LifecycleSubscription:
     on_grid_updated: GridUpdatedCallback | None = None
     on_cell_updated: CellUpdatedCallback | None = None
     on_cell_removed: CellRemovedCallback | None = None
+
+
+def _resolve_supports_windowing(
+    data_sources: dict[str, DataSourceConfig],
+    registry: Mapping[WorkflowId, WorkflowSpec],
+) -> bool:
+    """Determine whether the primary output supports time-based windowing.
+
+    Parameters
+    ----------
+    data_sources:
+        Mapping of data roles to their source configurations.
+    registry:
+        Workflow registry to look up workflow specifications.
+
+    Returns
+    -------
+    :
+        ``True`` if windowing is supported or if no primary source is
+        available, ``False`` for cumulative outputs.
+    """
+    if PRIMARY not in data_sources:
+        return True
+    from .plotting_controller import output_has_time_coord
+
+    primary = data_sources[PRIMARY]
+    spec = registry.get(primary.workflow_id)
+    if spec is None:
+        return True
+    return output_has_time_coord(spec, primary.output_name)
 
 
 class PlotOrchestrator:
@@ -1179,10 +1210,15 @@ class PlotOrchestrator:
             # or data_sources.
             data_sources = {}
 
+        supports_windowing = _resolve_supports_windowing(
+            data_sources, self._job_orchestrator.get_workflow_registry()
+        )
+
         config = PlotConfig(
             data_sources=data_sources,
             plot_name=plot_name,
             params=params,
+            supports_windowing=supports_windowing,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)
