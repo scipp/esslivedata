@@ -156,6 +156,17 @@ class SansWorkflowParams(pydantic.BaseModel):
 # Detector names for LOKI
 detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 
+# f144 log streams for LOKI.
+# The detector carriage readback is the position dependency of loki_detector_0
+# (depends_on -> /entry/instrument/detector_carriage/value in the NeXus file).
+f144_log_streams = {
+    'detector_carriage': {
+        'source': 'LOKI-DtCar1:MC-LinX-01:Mtr.RBV',
+        'topic': 'loki_motion',
+        'units': 'mm',
+    },
+}
+
 # Create instrument
 instrument = Instrument(
     name='loki',
@@ -167,6 +178,9 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
+    f144_attribute_registry={
+        name: {'units': info['units']} for name, info in f144_log_streams.items()
+    },
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),
