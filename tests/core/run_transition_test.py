@@ -183,6 +183,7 @@ class TestDeferredRunTransitionReset:
         """Pending resets are consumed even when no active jobs exist."""
         manager = JobManager(job_factory=fake_job_factory)
         manager.on_run_start(RunStart(run_name='run_1', start_time=100))
+        assert manager._pending_reset_times == [100]
         # No jobs scheduled/active, but push data past the reset time
         _push_data_to(manager, end_time=200)
         # Should not error; pending list should be cleared

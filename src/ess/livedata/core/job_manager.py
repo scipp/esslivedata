@@ -339,12 +339,7 @@ class JobManager:
         """Fire pending resets whose scheduled time has been reached by data."""
         if not self._pending_reset_times:
             return
-        triggered = 0
-        for t in self._pending_reset_times:
-            if t <= end_time:
-                triggered += 1
-            else:
-                break
+        triggered = bisect.bisect_right(self._pending_reset_times, end_time)
         if triggered:
             self._pending_reset_times = self._pending_reset_times[triggered:]
             self._reset_eligible_jobs()
