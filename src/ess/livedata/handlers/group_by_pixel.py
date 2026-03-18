@@ -50,8 +50,5 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
             detector_number=self._detector_number,
         )
 
-    def release_buffers(self) -> None:
-        self._inner.release_buffers()
-
     def clear(self) -> None:
         self._inner.clear()
