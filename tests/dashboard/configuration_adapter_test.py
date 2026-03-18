@@ -114,6 +114,14 @@ class TestInitialSourceNames:
         )
         assert adapter.initial_source_names == ['source1', 'source2']
 
+    def test_explicit_empty_list_preserved(self) -> None:
+        """An explicit empty list is preserved, not treated as 'select all'."""
+        adapter = ConcreteAdapter(
+            available_sources=['source1', 'source2', 'source3'],
+            initial_source_names=[],
+        )
+        assert adapter.initial_source_names == []
+
 
 class TestInitialParameterValues:
     """Tests for initial_parameter_values behavior."""
