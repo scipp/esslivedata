@@ -156,9 +156,6 @@ def setup_factories(instrument: Instrument) -> None:
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
         # ProtonCharge is not used in streaming normalization, set to 1
         workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='microampere*hour')
-        # In live streaming, the monitor is accumulated from counting statistics and
-        # has variances. Broadcasting those per event would introduce artificial
-        # correlations, so we drop them instead.
         workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.drop
         return workflow
 
