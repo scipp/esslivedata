@@ -69,6 +69,11 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """Configuration description."""
 
     @property
+    def hidden_fields(self) -> frozenset[str]:
+        """Fields to hide in the parameter UI."""
+        return frozenset()
+
+    @property
     def aux_sources(self) -> type[BaseModel] | None:
         """
         Pydantic model class for auxiliary sources.

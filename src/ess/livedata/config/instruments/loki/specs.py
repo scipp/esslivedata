@@ -181,13 +181,13 @@ instrument = Instrument(
             title='Beam Monitor 0', description='Upstream, z = -16.8 m'
         ),
         'beam_monitor_m1': SourceMetadata(
-            title='Incident Monitor', description='Upstream, z = -8.4 m'
+            title='Beam Monitor 1', description='Upstream, z = -8.4 m'
         ),
         'beam_monitor_m2': SourceMetadata(
             title='Beam Monitor 2', description='Upstream, z = -2.04 m'
         ),
         'beam_monitor_m3': SourceMetadata(
-            title='Transmission Monitor', description='Downstream, z = +0.2 m'
+            title='Beam Monitor 3', description='Downstream, z = +0.2 m'
         ),
         'beam_monitor_m4': SourceMetadata(
             title='Beam Monitor 4',

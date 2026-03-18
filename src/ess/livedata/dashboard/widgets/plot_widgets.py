@@ -272,7 +272,7 @@ def get_workflow_display_info(
     return workflow_title, output_title
 
 
-def _format_window_info(params) -> str:
+def _format_window_info(params, *, supports_windowing: bool = True) -> str:
     """
     Format window parameters into a human-readable string.
 
@@ -280,12 +280,17 @@ def _format_window_info(params) -> str:
     ----------
     params:
         Plotter params that may contain window settings.
+    supports_windowing:
+        Whether the output supports windowing. When ``False`` (e.g. for
+        cumulative outputs), an empty string is returned.
 
     Returns
     -------
     :
         Formatted string like "current" or "10s average".
     """
+    if not supports_windowing:
+        return ''
     window = getattr(params, 'window', None)
     if window is None:
         return ''
@@ -369,7 +374,9 @@ def get_plot_cell_display_info(
 
     # Build title: "Workflow → Output (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane
-    window_info = _format_window_info(config.params)
+    window_info = _format_window_info(
+        config.params, supports_windowing=config.supports_windowing
+    )
 
     # Helper to get display title for a source
     def _title(source_name: str) -> str:

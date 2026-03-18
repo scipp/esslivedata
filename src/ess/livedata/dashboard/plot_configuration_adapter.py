@@ -36,6 +36,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         config_state: ConfigurationState | None = None,
         initial_source_names: list[str] | None = None,
         instrument_config: Instrument | None = None,
+        hidden_fields: frozenset[str] = frozenset(),
     ):
         """
         Initialize plot configuration adapter.
@@ -54,6 +55,8 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             Source names to pre-select in the UI. None to select all available.
         instrument_config:
             Optional instrument configuration for source metadata lookup.
+        hidden_fields:
+            Field names to hide in the parameter configuration UI.
         """
         super().__init__(
             config_state=config_state, initial_source_names=initial_source_names
@@ -62,6 +65,12 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self._source_names = source_names
         self._success_callback = success_callback
         self._instrument_config = instrument_config
+        self._hidden_fields = hidden_fields
+
+    @property
+    def hidden_fields(self) -> frozenset[str]:
+        """Fields to hide in the parameter UI."""
+        return self._hidden_fields
 
     @property
     def title(self) -> str:
