@@ -54,4 +54,5 @@ def register_timeseries_workflow_specs(
         description="Accumulated log data as timeseries.",
         source_names=source_names,
         outputs=TimeseriesOutputs,
+        reset_on_run_transition=False,
     )

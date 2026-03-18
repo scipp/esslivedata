@@ -18,6 +18,7 @@ def make_monitor_service_builder(
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_beam_monitor_route()
         .with_livedata_commands_route()
+        .with_run_control_route()
         .build()
     )
     instrument_obj = instrument_registry[instrument]
