@@ -254,6 +254,29 @@ class PlottingController:
         return plotter
 
 
+def output_has_time_coord(workflow_spec: WorkflowSpec, output_name: str) -> bool:
+    """Check whether a workflow output includes a ``time`` coordinate.
+
+    Parameters
+    ----------
+    workflow_spec:
+        Workflow specification to inspect.
+    output_name:
+        Name of the output field.
+
+    Returns
+    -------
+    :
+        ``True`` if the output template contains a ``time`` coordinate or if
+        no template is available (assume windowing is supported). ``False``
+        for cumulative outputs that lack a ``time`` coordinate.
+    """
+    template = workflow_spec.get_output_template(output_name)
+    if template is None:
+        return True
+    return 'time' in template.coords
+
+
 def create_extractors_from_params(
     keys: list[ResultKey],
     window: WindowParams | None,

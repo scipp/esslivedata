@@ -41,6 +41,7 @@ class ModelWidget:
         initial_values: dict[str, Any] | None = None,
         show_descriptions: bool = True,
         cards_collapsed: bool = False,
+        hidden_fields: frozenset[str] = frozenset(),
     ) -> None:
         """
         Initialize model configuration widget.
@@ -55,11 +56,15 @@ class ModelWidget:
             Whether to show field descriptions
         cards_collapsed
             Whether parameter cards should be initially collapsed
+        hidden_fields
+            Field names to exclude from the UI. Hidden fields use their
+            model defaults in ``parameter_values``.
         """
         self._model_class = model_class
         self._initial_values = initial_values or {}
         self._show_descriptions = show_descriptions
         self._cards_collapsed = cards_collapsed
+        self._hidden_fields = hidden_fields
         self._parameter_widgets: dict[str, ParamWidget] = {}
         try:
             self._widget = self._create_widget()
@@ -110,6 +115,8 @@ class ModelWidget:
         for field_name, field_info in self._model_class.model_fields.items():
             if field_name.startswith('_'):
                 continue  # Skip private fields
+            if field_name in self._hidden_fields:
+                continue
             field_type: type[pydantic.BaseModel] = field_info.annotation  # type: ignore[assignment]
             values = get_defaults(field_type)
             values.update(root_defaults.get(field_name, {}))

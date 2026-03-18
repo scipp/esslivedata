@@ -61,3 +61,40 @@ class TestModelWidget:
         # Verify the widget correctly uses the default from default_factory
         params = widget.parameter_values
         assert params.inner.constrained_value == 5
+
+    def test_hidden_fields_excluded_from_widgets(self) -> None:
+        """Hidden fields should not produce widgets."""
+
+        class Inner1(pydantic.BaseModel):
+            a: int = 1
+
+        class Inner2(pydantic.BaseModel):
+            b: int = 2
+
+        class Outer(pydantic.BaseModel):
+            visible: Inner1 = pydantic.Field(default_factory=Inner1, title='Visible')
+            hidden: Inner2 = pydantic.Field(default_factory=Inner2, title='Hidden')
+
+        widget = ModelWidget(Outer, hidden_fields=frozenset({'hidden'}))
+
+        assert widget.get_parameter_widget('visible') is not None
+        assert widget.get_parameter_widget('hidden') is None
+
+    def test_hidden_fields_use_defaults_in_parameter_values(self) -> None:
+        """Hidden fields should use model defaults in parameter_values."""
+
+        class Inner1(pydantic.BaseModel):
+            a: int = 1
+
+        class Inner2(pydantic.BaseModel):
+            b: int = 99
+
+        class Outer(pydantic.BaseModel):
+            visible: Inner1 = pydantic.Field(default_factory=Inner1, title='Visible')
+            hidden: Inner2 = pydantic.Field(default_factory=Inner2, title='Hidden')
+
+        widget = ModelWidget(Outer, hidden_fields=frozenset({'hidden'}))
+        params = widget.parameter_values
+
+        assert params.visible.a == 1
+        assert params.hidden.b == 99
