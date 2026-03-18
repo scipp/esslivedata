@@ -90,10 +90,10 @@ class _ScippBackedBuffer:
         self._view: np.ndarray | None = None  # writable view into _var
 
     def _ensure_capacity(self, n: int) -> None:
-        if self._var is not None and self._var.sizes['event'] >= n:
+        capacity = 0 if self._var is None else self._var.sizes['event']
+        if capacity >= max(n, 1):
             return
-        old = 0 if self._var is None else self._var.sizes['event']
-        new_capacity = max(n, old * 2)
+        new_capacity = max(n, 1, capacity * 2)
         self._var = sc.array(
             dims=['event'],
             values=np.empty(new_capacity, dtype=self._np_dtype),
@@ -102,8 +102,9 @@ class _ScippBackedBuffer:
         )
         self._view = self._var.values
 
-    def fill_and_slice(self, chunks: list[np.ndarray], total: int) -> sc.Variable:
+    def fill_and_slice(self, chunks: list[np.ndarray]) -> sc.Variable:
         """Copy chunks into the buffer and return a zero-copy scipp slice."""
+        total = sum(len(c) for c in chunks)
         self._ensure_capacity(total)
         offset = 0
         for chunk in chunks:
@@ -178,16 +179,10 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
 
         if self._toa_buf is None:
             raise RuntimeError("Expected _toa_buf to be initialized")
-        total = sum(len(d.time_of_arrival) for d in self._chunks)
-
-        if total > 0:
-            toa_var = self._toa_buf.fill_and_slice(
-                [d.time_of_arrival for d in self._chunks], total
-            )
-        else:
-            toa_var = sc.array(
-                dims=['event'], values=[], dtype=self._toa_dtype, unit='ns'
-            )
+        toa_var = self._toa_buf.fill_and_slice(
+            [d.time_of_arrival for d in self._chunks]
+        )
+        total = toa_var.sizes['event']
 
         events = sc.DataArray(
             data=self._weights.get(total),
@@ -197,13 +192,9 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         if self._have_event_id:
             if self._pid_buf is None:
                 raise RuntimeError("Expected _pid_buf to be initialized")
-            if total > 0:
-                pid_var = self._pid_buf.fill_and_slice(
-                    [d.pixel_id for d in self._chunks], total
-                )
-            else:
-                pid_var = sc.array(dims=['event'], values=[], dtype='int32', unit=None)
-            events.coords['event_id'] = pid_var
+            events.coords['event_id'] = self._pid_buf.fill_and_slice(
+                [d.pixel_id for d in self._chunks]
+            )
 
         lens = [len(d.time_of_arrival) for d in self._chunks]
         sizes = sc.array(
