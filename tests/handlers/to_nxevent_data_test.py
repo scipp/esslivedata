@@ -162,6 +162,70 @@ def test_ToNXevent_data_get_works_if_no_data_after_previous_get() -> None:
     assert sc.identical(empty, ref['event_time_zero', 0:0])
 
 
+def test_ToNXevent_data_second_cycle_not_corrupted_by_buffer_reuse() -> None:
+    """After release, a new add/get cycle must return fresh data, not stale values."""
+    acc = ToNXevent_data()
+
+    acc.add(0, DetectorEvents(time_of_arrival=[10, 20], pixel_id=[1, 2], unit='ns'))
+    acc.get()
+    acc.release_buffers()
+
+    acc.add(
+        1000,
+        DetectorEvents(time_of_arrival=[30, 40, 50], pixel_id=[3, 4, 5], unit='ns'),
+    )
+    result2 = acc.get()
+    acc.release_buffers()
+
+    toa2 = result2.bins.coords['event_time_offset'].values[0].values
+    assert list(toa2) == [30, 40, 50]
+    pid2 = result2.bins.coords['event_id'].values[0].values
+    assert list(pid2) == [3, 4, 5]
+
+
+def test_ToNXevent_data_buffer_grows_across_cycles() -> None:
+    """A cycle with more events than the previous must still be correct."""
+    acc = ToNXevent_data()
+
+    acc.add(0, MonitorEvents(time_of_arrival=[1, 2], unit='ns'))
+    acc.get()
+    acc.release_buffers()
+
+    acc.add(1000, MonitorEvents(time_of_arrival=[10, 20, 30, 40, 50], unit='ns'))
+    result = acc.get()
+    acc.release_buffers()
+
+    toa = result.bins.coords['event_time_offset'].values[0].values
+    assert list(toa) == [10, 20, 30, 40, 50]
+
+
+def test_ToNXevent_data_buffer_shrinks_across_cycles() -> None:
+    """A cycle with fewer events than a previous one must not include stale data."""
+    acc = ToNXevent_data()
+
+    acc.add(0, MonitorEvents(time_of_arrival=[1, 2, 3, 4, 5], unit='ns'))
+    acc.get()
+    acc.release_buffers()
+
+    acc.add(1000, MonitorEvents(time_of_arrival=[10, 20], unit='ns'))
+    result = acc.get()
+    acc.release_buffers()
+
+    toa = result.bins.coords['event_time_offset'].values[0].values
+    assert list(toa) == [10, 20]
+    assert result.bins.size().values[0] == 2
+
+
+def test_ToNXevent_data_get_raises_without_release() -> None:
+    acc = ToNXevent_data()
+    acc.add(0, MonitorEvents(time_of_arrival=[1], unit='ns'))
+    acc.get()
+    # No release_buffers() call
+    acc.add(1000, MonitorEvents(time_of_arrival=[2], unit='ns'))
+    with pytest.raises(RuntimeError, match="have not been released"):
+        acc.get()
+
+
 def test_ToNXevent_data_empty_chunks() -> None:
     to_nx = ToNXevent_data()
     to_nx.add(0, DetectorEvents(time_of_arrival=[], pixel_id=[], unit='ns'))
