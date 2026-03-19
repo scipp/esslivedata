@@ -16,10 +16,13 @@ from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
     COMMANDS_STREAM_ID,
+    RUN_CONTROL_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSink,
     MessageSource,
+    RunStart,
+    RunStop,
     StreamId,
     StreamKind,
     Tin,
@@ -143,16 +146,27 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         messages = self._source.get_messages()
         self._messages_processed += len(messages)
         config_messages: list[Message[Tin]] = []
+        run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
 
         for msg in messages:
             if msg.stream == COMMANDS_STREAM_ID:
                 config_messages.append(msg)
+            elif msg.stream == RUN_CONTROL_STREAM_ID:
+                run_control_messages.append(msg)
             else:
                 data_messages.append(msg)
 
         # Handle config messages
         result_messages = self._config_processor.process_messages(config_messages)
+
+        # Handle run control messages (run start/stop from filewriter topic)
+        for msg in run_control_messages:
+            match msg.value:
+                case RunStart():
+                    self._job_manager.on_run_start(msg.value)
+                case RunStop():
+                    self._job_manager.on_run_stop(msg.value)
 
         self._report_status()
 
