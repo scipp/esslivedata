@@ -950,13 +950,21 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
-                if state.plotter is not None and isinstance(
-                    state.plotter.get_cached_state(), hv.Layout
+
+            dmap = session_layer.dmap
+            if dmap is not None:
+                # Check the DynamicMap's resolved type (set after Bokeh
+                # renders it) and the plotter's cached state.  Either
+                # being a Layout means hooks must be skipped.
+                if isinstance(dmap, hv.DynamicMap) and dmap.type is hv.Layout:
+                    has_layout = True
+                elif (
+                    state is not None
+                    and state.plotter is not None
+                    and isinstance(state.plotter.get_cached_state(), hv.Layout)
                 ):
                     has_layout = True
-
-            if session_layer.dmap is not None:
-                plots.append(session_layer.dmap)
+                plots.append(dmap)
 
         if not plots:
             return None
@@ -1012,6 +1020,7 @@ class PlotGridTabs:
         acceptable for config UI updates.
         """
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
+        versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
         active_grid_id = self._get_active_grid_id()
 
@@ -1052,7 +1061,7 @@ class PlotGridTabs:
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
                             cells_to_rebuild[cell_id] = (cell, plot_grid)
-                            session_layer.last_seen_version = state.version
+                            versions_to_apply[layer_id] = state.version
 
         # Clean up orphaned session layers (removed from orchestrator)
         for layer_id in list(self._session_layers.keys()):
@@ -1072,6 +1081,13 @@ class PlotGridTabs:
                     g, w
                 )
             )
+            # Bump versions only after successful rebuild — if the rebuild
+            # raised, the version stays stale so the next poll retries.
+            for layer in cell.layers:
+                if layer.layer_id in versions_to_apply:
+                    sl = self._session_layers.get(layer.layer_id)
+                    if sl is not None:
+                        sl.last_seen_version = versions_to_apply[layer.layer_id]
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and clean up session state."""
