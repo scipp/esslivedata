@@ -190,7 +190,7 @@ def create_monitor_workflow(
     tof_lookup_table_filename:
         Path to TOF lookup table file. Required for 'tof' mode.
     """
-    from .accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
+    from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
 
     # Validate TOF mode requirements
@@ -228,6 +228,7 @@ def create_monitor_workflow(
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
     # WindowMonitorHistogram during finalize, not accumulated separately.
+    cumulative, window = make_no_copy_accumulator_pair()
     return StreamProcessorWorkflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
@@ -241,8 +242,8 @@ def create_monitor_workflow(
             'counts_in_toa_range': MonitorCountsInRange,
         },
         accumulators={
-            CumulativeMonitorHistogram: NoCopyAccumulator(),
-            WindowMonitorHistogram: NoCopyWindowAccumulator(),
+            CumulativeMonitorHistogram: cumulative,
+            WindowMonitorHistogram: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

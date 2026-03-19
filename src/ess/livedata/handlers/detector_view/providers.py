@@ -190,7 +190,7 @@ def accumulated_histogram(
 
     - AccumulatedHistogram[Cumulative]: Uses EternalAccumulator
       (accumulates forever)
-    - AccumulatedHistogram[Current]: Uses NoCopyWindowAccumulator
+    - AccumulatedHistogram[Current]: Uses a window accumulator
       (clears after finalize)
 
     Sciline instantiates this provider for each concrete type parameter.
