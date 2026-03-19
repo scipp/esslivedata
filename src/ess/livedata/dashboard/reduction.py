@@ -145,8 +145,8 @@ class ReductionApp(DashboardBase):
             session_registry=self._services.session_registry,
             service_registry=self._services.service_registry,
             current_session_id=session_updater.session_id,
+            notification_queue=self._services.notification_queue,
         )
-        system_status_widget.register_periodic_refresh(session_updater)
 
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
@@ -165,6 +165,10 @@ class ReductionApp(DashboardBase):
         workflow_status_widget.register_periodic_refresh(
             session_updater,
             is_visible=lambda: plot_grid_tabs.active_tab_index == 0,
+        )
+        system_status_widget.register_periodic_refresh(
+            session_updater,
+            is_visible=lambda: plot_grid_tabs.active_tab_index == 1,
         )
 
         return plot_grid_tabs.panel

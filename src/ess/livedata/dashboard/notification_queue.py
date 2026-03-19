@@ -11,8 +11,9 @@ session polls and displays in its own context.
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .session_registry import SessionId
@@ -33,6 +34,7 @@ class NotificationEvent:
 
     message: str
     notification_type: NotificationType = NotificationType.INFO
+    timestamp: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -69,6 +71,7 @@ class NotificationQueue:
         self._event_offset = 0  # Index of first event in deque
         self._cursors: dict[SessionId, _SessionCursor] = {}
         self._lock = threading.Lock()
+        self._version = 0
 
     def push(self, event: NotificationEvent) -> None:
         """
@@ -85,6 +88,7 @@ class NotificationQueue:
                 # The oldest event will be dropped, so increment offset
                 self._event_offset += 1
             self._events.append(event)
+            self._version += 1
 
     def register_session(self, session_id: SessionId) -> None:
         """
@@ -147,6 +151,23 @@ class NotificationQueue:
             cursor.next_index = self._event_offset + len(self._events)
 
             return new_events
+
+    @property
+    def version(self) -> int:
+        """Monotonic counter incremented on each push. Used for change detection."""
+        return self._version
+
+    def get_all_events(self) -> list[NotificationEvent]:
+        """
+        Get all retained events without affecting cursors.
+
+        Returns
+        -------
+        :
+            Copy of all events currently in the queue, oldest first.
+        """
+        with self._lock:
+            return list(self._events)
 
     def clear(self) -> None:
         """Clear all events and cursors. Mainly useful for testing."""

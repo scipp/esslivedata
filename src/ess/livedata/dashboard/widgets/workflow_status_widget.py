@@ -29,6 +29,7 @@ from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
 from .icons import get_icon
+from .styles import StatusColors
 
 if TYPE_CHECKING:
     from ..job_orchestrator import JobConfig, JobOrchestrator
@@ -42,16 +43,16 @@ class WorkflowWidgetStyles:
 
     # Colors (matching existing JobStatusWidget)
     STATUS_COLORS: ClassVar[dict[str, str]] = {
-        'active': '#28a745',  # Green
-        'stopped': '#6c757d',  # Gray
-        'error': '#dc3545',  # Red
-        'warning': '#fd7e14',  # Orange
-        'pending': '#17a2b8',  # Blue - command sent, waiting for backend response
-        'paused': '#ffc107',  # Yellow
-        'finishing': '#17a2b8',  # Blue
-        'scheduled': '#17a2b8',  # Blue - job created, waiting for first status
+        'active': StatusColors.SUCCESS,
+        'stopped': StatusColors.MUTED,
+        'error': StatusColors.ERROR,
+        'warning': '#fd7e14',  # Orange (unique to workflow status)
+        'pending': StatusColors.PENDING,
+        'paused': StatusColors.WARNING,
+        'finishing': StatusColors.PENDING,
+        'scheduled': StatusColors.PENDING,
     }
-    MODIFIED_BORDER_COLOR = '#ffc107'  # Yellow
+    MODIFIED_BORDER_COLOR = StatusColors.WARNING
     UNCONFIGURED_BG = '#fff3cd'
     UNCONFIGURED_BORDER = '#ffc107'
     ERROR_BG = '#f8d7da'

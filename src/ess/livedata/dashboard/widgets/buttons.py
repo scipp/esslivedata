@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import panel as pn
 
 from .icons import get_icon
+from .styles import StatusColors
 
 
 @dataclass(frozen=True)
@@ -17,8 +18,8 @@ class ButtonStyles:
     """Styling constants for tool buttons."""
 
     # Colors
-    PRIMARY_BLUE = '#007bff'
-    DANGER_RED = '#dc3545'
+    PRIMARY_BLUE = StatusColors.PRIMARY
+    DANGER_RED = StatusColors.ERROR
 
     # Dimensions
     CELL_MARGIN = 2
