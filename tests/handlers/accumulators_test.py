@@ -352,6 +352,38 @@ class TestNoCopyWindowAccumulator:
         # Cumulative should have the sum of all cycles
         assert sc.identical(cumulative.value, expected_cumulative)
 
+    def test_safe_with_multiple_pushes_per_window(self) -> None:
+        """Multiple pushes must not cause cross-accumulator corruption.
+
+        Varies the number of pushes per window (1-4) and randomizes push order.
+        Both accumulators must independently track correct sums.
+        """
+        rng = np.random.default_rng(seed=123)
+        cumulative = NoCopyAccumulator()
+        current = NoCopyWindowAccumulator()
+
+        expected_cumulative = sc.array(dims=['x'], values=[0.0, 0.0])
+        n_windows = 10
+        for _ in range(n_windows):
+            n_pushes = int(rng.integers(1, 5))
+            expected_window = sc.array(dims=['x'], values=[0.0, 0.0])
+
+            for j in range(n_pushes):
+                shared_hist = sc.array(dims=['x'], values=[float(j), float(j + 1)])
+                expected_window = expected_window + shared_hist
+                expected_cumulative = expected_cumulative + shared_hist
+
+                accumulators: list[NoCopyAccumulator] = [cumulative, current]
+                if rng.random() > 0.5:
+                    accumulators.reverse()
+                for acc in accumulators:
+                    acc.push(shared_hist)
+
+            assert sc.identical(current.value, expected_window)
+            current.on_finalize()
+
+        assert sc.identical(cumulative.value, expected_cumulative)
+
     def test_differs_from_eternal_accumulator_behavior(self) -> None:
         """NoCopyWindowAccumulator clears after on_finalize.
 
