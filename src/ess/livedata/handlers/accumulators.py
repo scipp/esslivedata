@@ -108,6 +108,12 @@ class NoCopyWindowAccumulator(NoCopyAccumulator):
     its first push, isolating its buffer. Since ``+=`` only mutates the left operand
     (``self._value``), never the right (the input), no consumer ever mutates the shared
     input histogram — regardless of push count or accumulator evaluation order.
+
+    .. warning::
+
+       At most one ``NoCopyWindowAccumulator`` may subscribe to a given shared input.
+       If two instances received the same object, the first one's ``+=`` on a subsequent
+       push would mutate the reference held by the second, silently corrupting its data.
     """
 
     def _do_push(self, value: T) -> None:
