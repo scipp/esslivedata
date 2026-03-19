@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from numbers import Number
 from typing import Any
 
+import structlog
+
 from ess.livedata.core.message import Message
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -23,6 +28,26 @@ class MessageBatcher(ABC):
         If no batch can be created (batch incomplete), return None.
         """
 
+    def report_batch(self, message_count: int | None) -> None:  # noqa: B027
+        """Report the outcome of the last processing cycle.
+
+        Called by the processor after each cycle. Batchers that support adaptive
+        behavior override this to adjust their batch length. The default is a
+        no-op.
+
+        Parameters
+        ----------
+        message_count:
+            Number of messages in the processed batch. ``None`` if the batcher
+            returned ``None`` (idle cycle). 0 indicates an empty batch from a
+            time gap.
+        """
+
+    @property
+    def batch_length_s(self) -> float:
+        """Current effective batch length in seconds."""
+        return 1.0
+
 
 class NaiveMessageBatcher(MessageBatcher):
     """
@@ -35,8 +60,13 @@ class NaiveMessageBatcher(MessageBatcher):
         self, batch_length_s: float = 1.0, pulse_length_s: float = 1.0 / 14
     ) -> None:
         # Batch length is currently ignored.
+        self._batch_length_s = batch_length_s
         self._batch_length_ns = int(batch_length_s * 1_000_000_000)
         self._pulse_length_ns = int(pulse_length_s * 1_000_000_000)
+
+    @property
+    def batch_length_s(self) -> float:
+        return self._batch_length_s
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
@@ -81,9 +111,14 @@ class SimpleMessageBatcher(MessageBatcher):
     """
 
     def __init__(self, batch_length_s: float = 1.0) -> None:
+        self._batch_length_s_value = batch_length_s
         self._batch_length_ns = int(batch_length_s * 1_000_000_000)
         self._active_batch: MessageBatch | None = None
         self._future_messages: list[Message[Any]] = []
+
+    @property
+    def batch_length_s(self) -> float:
+        return self._batch_length_s_value
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
@@ -143,3 +178,90 @@ class SimpleMessageBatcher(MessageBatcher):
         before = [msg for msg in messages if msg.timestamp < timestamp]
         after = [msg for msg in messages if msg.timestamp >= timestamp]
         return before, after
+
+
+ESCALATION_THRESHOLD = 5
+DEESCALATION_IDLE_WINDOWS = 3
+
+
+@dataclass(frozen=True)
+class AdaptiveBatcherState:
+    """State snapshot of an AdaptiveMessageBatcher for status reporting."""
+
+    level: int
+    batch_length_s: float
+
+
+class AdaptiveMessageBatcher(MessageBatcher):
+    """A message batcher that dynamically adjusts its batch length based on load.
+
+    Wraps a ``SimpleMessageBatcher`` and monitors the pattern of batch results
+    to detect sustained overload. When the system cannot keep up with the current
+    batch window, consecutive non-empty batches accumulate and the batcher
+    escalates to a longer window. When the system demonstrates spare capacity
+    (consecutive idle cycles), it de-escalates.
+
+    Each escalation level doubles the batch window from the base length.
+    """
+
+    def __init__(self, base_batch_length_s: float = 1.0, max_level: int = 3) -> None:
+        self._base_batch_length_s = base_batch_length_s
+        self._max_level = max_level
+        self._level = 0
+        self._consecutive_batches = 0
+        self._last_nonempty_batch_time: float | None = None
+        self._inner = SimpleMessageBatcher(batch_length_s=base_batch_length_s)
+
+    def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
+        return self._inner.batch(messages)
+
+    def report_batch(self, message_count: int | None) -> None:
+        if message_count is None:
+            # Idle cycle (batcher returned None). De-escalate only after being
+            # idle for multiple batch windows, not just multiple process-loop
+            # iterations. This prevents oscillation when the system barely keeps
+            # up: the short inter-batch gap at 0.1s sleep intervals would
+            # otherwise produce many rapid idle reports.
+            self._consecutive_batches = 0
+            if self._level > 0 and self._last_nonempty_batch_time is not None:
+                idle_s = time.monotonic() - self._last_nonempty_batch_time
+                idle_windows = idle_s / self.batch_length_s
+                if idle_windows >= DEESCALATION_IDLE_WINDOWS:
+                    self._set_level(self._level - 1)
+                    self._last_nonempty_batch_time = time.monotonic()
+        elif message_count == 0:
+            # Empty batch from time gap — not a load signal
+            pass
+        else:
+            # Non-empty batch
+            self._last_nonempty_batch_time = time.monotonic()
+            self._consecutive_batches += 1
+            if (
+                self._consecutive_batches >= ESCALATION_THRESHOLD
+                and self._level < self._max_level
+            ):
+                self._set_level(self._level + 1)
+                self._consecutive_batches = 0
+
+    def _set_level(self, new_level: int) -> None:
+        old_length = self.batch_length_s
+        self._level = new_level
+        new_length = self.batch_length_s
+        logger.warning(
+            'adaptive_batch_level_change',
+            old_batch_length_s=old_length,
+            new_batch_length_s=new_length,
+            level=new_level,
+        )
+        self._inner = SimpleMessageBatcher(batch_length_s=new_length)
+
+    @property
+    def batch_length_s(self) -> float:
+        return self._base_batch_length_s * (2**self._level)
+
+    @property
+    def state(self) -> AdaptiveBatcherState:
+        return AdaptiveBatcherState(
+            level=self._level,
+            batch_length_s=self.batch_length_s,
+        )

@@ -868,6 +868,20 @@ class TestServiceStatusX5F2Integration:
             converted = x5f2_to_service_status(x5f2_data)
             assert converted.state == state, f"Failed for state {state}"
 
+    def test_service_status_x5f2_batch_interval_round_trip(self):
+        """Test that batch_interval_s survives x5f2 encode/decode."""
+        original = make_service_status(batch_interval_s=4.0)
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.batch_interval_s == 4.0
+
+    def test_service_status_x5f2_batch_interval_default(self):
+        """Test that batch_interval_s defaults to 1.0 for backward compatibility."""
+        original = make_service_status()
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.batch_interval_s == 1.0
+
 
 class TestX5f2ToStatusDiscriminator:
     """Test x5f2_to_status function.

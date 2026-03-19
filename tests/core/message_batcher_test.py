@@ -1,7 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from unittest.mock import patch
+
 from ess.livedata.core.message import Message, StreamId, StreamKind
-from ess.livedata.core.message_batcher import SimpleMessageBatcher
+from ess.livedata.core.message_batcher import (
+    DEESCALATION_IDLE_WINDOWS,
+    ESCALATION_THRESHOLD,
+    AdaptiveMessageBatcher,
+    SimpleMessageBatcher,
+)
 
 
 def make_message(timestamp_ns: int, value: str = "test") -> Message[str]:
@@ -385,3 +392,216 @@ class TestSimpleMessageBatcher:
         assert next_batch.start_time == 1000 + batch_length_ns
         assert next_batch.end_time == 1000 + 2 * batch_length_ns
         assert len(next_batch.messages) == 0
+
+
+class FakeClock:
+    """Fake monotonic clock for testing time-based de-escalation."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class TestAdaptiveMessageBatcher:
+    def test_initial_state_is_level_zero(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+        assert batcher.state.level == 0
+        assert batcher.state.batch_length_s == 1.0
+
+    def test_delegates_to_inner_batcher(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0)
+        msg = make_message(1000)
+        batch = batcher.batch([msg])
+        assert batch is not None
+        assert batch.messages == [msg]
+
+    def test_escalates_after_consecutive_non_empty_batches(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(ESCALATION_THRESHOLD):
+            batcher.report_batch(100)
+
+        assert batcher.state.level == 1
+        assert batcher.state.batch_length_s == 2.0
+
+    def test_does_not_escalate_before_threshold(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(ESCALATION_THRESHOLD - 1):
+            batcher.report_batch(100)
+
+        assert batcher.state.level == 0
+
+    def test_escalation_capped_at_max_level(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Escalate to max
+        for _ in range(ESCALATION_THRESHOLD):
+            batcher.report_batch(100)
+        assert batcher.state.level == 1
+
+        for _ in range(ESCALATION_THRESHOLD):
+            batcher.report_batch(100)
+        assert batcher.state.level == 2
+
+        # Further non-empty batches should not exceed max
+        for _ in range(ESCALATION_THRESHOLD * 2):
+            batcher.report_batch(100)
+        assert batcher.state.level == 2
+        assert batcher.state.batch_length_s == 4.0
+
+    def test_deescalates_after_idle_duration(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Escalate to level 1 (batch_length = 2s)
+            for _ in range(ESCALATION_THRESHOLD):
+                batcher.report_batch(100)
+            assert batcher.state.level == 1
+
+            # Idle for just under the threshold — no de-escalation
+            clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+            batcher.report_batch(None)
+            assert batcher.state.level == 1
+
+            # Cross the threshold
+            clock.advance(0.2)
+            batcher.report_batch(None)
+            assert batcher.state.level == 0
+
+    def test_does_not_deescalate_below_zero(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Many idle cycles at level 0 should stay at 0
+            clock.advance(100.0)
+            batcher.report_batch(None)
+            assert batcher.state.level == 0
+
+    def test_idle_cycle_resets_consecutive_batches(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Almost reach escalation threshold
+        for _ in range(ESCALATION_THRESHOLD - 1):
+            batcher.report_batch(100)
+
+        # One idle cycle resets
+        batcher.report_batch(None)
+
+        # Need full threshold again
+        for _ in range(ESCALATION_THRESHOLD - 1):
+            batcher.report_batch(100)
+        assert batcher.state.level == 0
+
+    def test_non_empty_batch_resets_idle_timer(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Escalate to level 1 (batch_length = 2s)
+            for _ in range(ESCALATION_THRESHOLD):
+                batcher.report_batch(100)
+            assert batcher.state.level == 1
+
+            # Almost reach de-escalation time
+            clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+            batcher.report_batch(None)
+            assert batcher.state.level == 1
+
+            # A non-empty batch resets the idle timer
+            batcher.report_batch(100)
+
+            # Now need the full idle duration again
+            clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+            batcher.report_batch(None)
+            assert batcher.state.level == 1
+
+    def test_empty_batches_excluded_from_both_counters(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Interleave empty batches (count=0) with non-empty — should not reset
+        for _ in range(ESCALATION_THRESHOLD - 1):
+            batcher.report_batch(100)
+            batcher.report_batch(0)  # empty batch from time gap
+
+        batcher.report_batch(100)
+        assert batcher.state.level == 1
+
+    def test_empty_batches_do_not_contribute_to_escalation(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Only empty batches should not escalate
+        for _ in range(ESCALATION_THRESHOLD * 3):
+            batcher.report_batch(0)
+        assert batcher.state.level == 0
+
+    def test_multi_level_escalation_and_deescalation(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Escalate to level 2
+            for _ in range(ESCALATION_THRESHOLD):
+                batcher.report_batch(100)
+            assert batcher.state.level == 1
+            assert batcher.state.batch_length_s == 2.0
+
+            for _ in range(ESCALATION_THRESHOLD):
+                batcher.report_batch(100)
+            assert batcher.state.level == 2
+            assert batcher.state.batch_length_s == 4.0
+
+            # De-escalate one level at a time
+            # At level 2 (4s window), need 3 x4s = 12s idle
+            clock.advance(DEESCALATION_IDLE_WINDOWS * 4.0)
+            batcher.report_batch(None)
+            assert batcher.state.level == 1
+            assert batcher.state.batch_length_s == 2.0
+
+            # At level 1 (2s window), need 3 x2s = 6s idle
+            clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0)
+            batcher.report_batch(None)
+            assert batcher.state.level == 0
+            assert batcher.state.batch_length_s == 1.0
+
+    def test_state_reflects_custom_base_length(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=0.5, max_level=2)
+        assert batcher.state.batch_length_s == 0.5
+
+        for _ in range(ESCALATION_THRESHOLD):
+            batcher.report_batch(100)
+        assert batcher.state.batch_length_s == 1.0
+
+        for _ in range(ESCALATION_THRESHOLD):
+            batcher.report_batch(100)
+        assert batcher.state.batch_length_s == 2.0
+
+    def test_no_oscillation_when_barely_keeping_up(self):
+        """At 8s window, rapid idle cycles between batches should not de-escalate."""
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Escalate to level 3 (8s window)
+            for _ in range(ESCALATION_THRESHOLD * 3):
+                batcher.report_batch(100)
+            assert batcher.state.level == 3
+
+            # Simulate "barely keeping up": process batch in 7s, then 1s of idle
+            for _ in range(10):
+                clock.advance(7.0)  # batch processing
+                batcher.report_batch(100)
+                # Rapid idle cycles during the 1s gap (0.1s each)
+                for _ in range(10):
+                    clock.advance(0.1)
+                    batcher.report_batch(None)
+
+            # Should stay at level 3 — the 1s inter-batch gaps are not enough
+            assert batcher.state.level == 3

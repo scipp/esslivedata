@@ -28,7 +28,11 @@ from .message import (
     Tin,
     Tout,
 )
-from .message_batcher import MessageBatch, MessageBatcher, SimpleMessageBatcher
+from .message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatch,
+    MessageBatcher,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -112,7 +116,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             job_factory=JobFactory(instrument=instrument), job_threads=job_threads
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
-        self._message_batcher = message_batcher or SimpleMessageBatcher()
+        self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
@@ -172,6 +176,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
+            self._report_batch(None)
             self._empty_batches += 1
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
@@ -220,6 +225,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             else:
                 valid_results.append(result)
 
+        self._report_batch(len(message_batch.messages))
         self._batches_processed += 1
         self._maybe_log_metrics()
 
@@ -248,6 +254,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         self._sink.publish_messages(messages)
 
+    def _report_batch(self, message_count: int | None) -> None:
+        """Forward batch outcome to the batcher for adaptive behavior."""
+        self._message_batcher.report_batch(message_count)
+
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
         return ServiceStatus(
@@ -259,6 +269,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
             error=self._service_error,
+            batch_interval_s=self._message_batcher.batch_length_s,
         )
 
     def _maybe_log_metrics(self) -> None:

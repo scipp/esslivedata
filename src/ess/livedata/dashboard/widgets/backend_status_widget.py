@@ -190,7 +190,10 @@ class WorkerStatusRow:
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
         msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
-        self._stats_pane.object = f"<span>{jobs_text} | {msgs_text}</span>"
+        batch_text = f"Batch: {status.batch_interval_s:.0f}s"
+        self._stats_pane.object = (
+            f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
+        )
 
     def _calculate_uptime(self, started_at_ns: int) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
