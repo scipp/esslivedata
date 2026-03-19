@@ -234,7 +234,7 @@ class TestTemporalBuffer:
             buffer.add(make_single_slice([float(t), float(t)], float(t)))
 
         result = buffer.get()
-        # With default large capacity (10000), no trimming should occur
+        # With default large capacity, no trimming should occur
         # All 6 time points should be present despite timespan=2.0
         assert result.sizes['time'] == 6
         assert result.coords['time'].values[0] == 0.0
@@ -260,20 +260,46 @@ class TestTemporalBuffer:
         # Only data >= 99.0 should remain (100 - 1.0 timespan)
         assert result.coords['time'].values[0] >= 99.0
 
-    def test_capacity_exceeded_even_after_trimming_raises(self):
-        """Test that ValueError is raised if data exceeds capacity even after trim."""
+    def test_capacity_exceeded_when_single_chunk_exceeds_total_capacity(self):
+        """Test that ValueError is raised if a single chunk exceeds total capacity."""
         buffer = TemporalBuffer()
-        buffer.set_required_timespan(1.0)
         buffer.set_max_memory(20)  # Very small capacity (~ 1 element)
 
         # Add first data point
         buffer.add(make_single_slice([1.0, 2.0], 0.0))
 
-        # Try to add thick slice that exceeds capacity
+        # Try to add thick slice that exceeds total max_capacity
         large_data = make_thick_slice(2, list(range(10)))
 
         with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
             buffer.add(large_data)
+
+    def test_ring_buffer_behavior_when_full_with_infinite_timespan(self):
+        """Test that buffer drops oldest data when full and timespan is infinite."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(float('inf'))
+        buffer.set_max_memory(800)  # Large enough for amortized drop to be visible
+
+        # Add first data point and determine capacity
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
+        capacity = buffer._data_buffer.max_capacity
+        assert capacity >= 10  # Need enough for 10% amortization to matter
+
+        # Fill to capacity
+        for t in range(1, capacity):
+            buffer.add(make_single_slice([float(t)] * 2, float(t)))
+        assert buffer._data_buffer.size == capacity
+        assert buffer.get().coords['time'].values[0] == 0.0
+
+        # Add one more — should succeed by dropping oldest (amortized: drops >=10%)
+        buffer.add(make_single_slice([99.0, 99.0], 99.0))
+
+        result = buffer.get()
+        # Amortized drop freed ~10% of capacity
+        assert result.sizes['time'] < capacity
+        assert result.coords['time'].values[-1] == 99.0
+        # Oldest data was dropped
+        assert result.coords['time'].values[0] > 0.0
 
     def test_timespan_trimming_with_nanosecond_time_coords(self):
         """Test trimming works when time coordinates use nanoseconds.

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
@@ -289,10 +290,15 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     Uses VariableBuffer for efficient appending without expensive concat operations.
     Validates that non-time coords and masks remain constant across all added data.
+
+    When the buffer reaches capacity, it behaves as a ring buffer: oldest data is
+    dropped to make room for new data.
     """
 
     # Coordinates that should be accumulated per-item rather than stored as scalars
     _ACCUMULATED_COORDS = ('time', 'start_time', 'end_time')
+
+    DEFAULT_MAX_MEMORY = 20 * 1024 * 1024  # 20 MB
 
     def __init__(self) -> None:
         """Initialize empty temporal buffer."""
@@ -301,7 +307,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         self._start_time_buffer: VariableBuffer | None = None
         self._end_time_buffer: VariableBuffer | None = None
         self._reference: sc.DataArray | None = None
-        self._max_memory: int | None = None
+        self._max_memory: int = self.DEFAULT_MAX_MEMORY
         self._required_timespan: float = 0.0
 
     def add(self, data: sc.DataArray) -> None:
@@ -331,7 +337,11 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             # Failed - trim old data and retry
             self._trim_to_timespan(data)
             if not self._data_buffer.append(data.data):
-                raise ValueError("Data exceeds buffer capacity even after trimming")
+                # Timespan trimming wasn't enough (e.g., required_timespan=inf).
+                # Fall back to ring-buffer behavior: drop oldest to make room.
+                self._make_room(data)
+                if not self._data_buffer.append(data.data):
+                    raise ValueError("Data exceeds buffer capacity even after trimming")
 
         # Time buffer should succeed (buffers kept in sync by trimming)
         if not self._time_buffer.append(data.coords['time']):
@@ -398,16 +408,19 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         )
         self._reference = ref
 
-        # Calculate max_capacity from memory limit
+        # Calculate max_capacity from memory limit, accounting for all buffers
+        # (data + time coord + optional start_time/end_time coords).
+        # 'time' coord is always present: it is required for timeseries extraction.
+        bytes_per_element = data.data.values.nbytes
+        bytes_per_element += data.coords['time'].values.nbytes
+        if 'start_time' in data.coords:
+            bytes_per_element += data.coords['start_time'].values.nbytes
+        if 'end_time' in data.coords:
+            bytes_per_element += data.coords['end_time'].values.nbytes
         if 'time' in data.dims:
-            bytes_per_element = data.data.values.nbytes / data.sizes['time']
-        else:
-            bytes_per_element = data.data.values.nbytes
+            bytes_per_element /= data.sizes['time']
 
-        if self._max_memory is not None:
-            max_capacity = int(self._max_memory / bytes_per_element)
-        else:
-            max_capacity = 10000  # Default large capacity
+        max_capacity = max(1, int(self._max_memory / bytes_per_element))
 
         # Create buffers
         self._data_buffer = VariableBuffer(
@@ -438,7 +451,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
         """Trim buffer to keep only data within required timespan."""
-        if self._required_timespan < 0:
+        if self._required_timespan < 0 or math.isinf(self._required_timespan):
             return
 
         if self._required_timespan == 0.0:
@@ -472,6 +485,22 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
         # Trim all buffers by same amount to keep them in sync
         self._drop_from_all_buffers(drop_count)
+
+    def _make_room(self, new_data: sc.DataArray) -> None:
+        """Drop oldest elements to fit new data.
+
+        Drops at least 10% of capacity to amortize the O(n) copy cost of
+        VariableBuffer.drop(), avoiding per-update copies in steady state.
+        """
+        if 'time' in new_data.dims:
+            n_incoming = new_data.sizes['time']
+        else:
+            n_incoming = 1
+        available = self._data_buffer.max_capacity - self._data_buffer.size
+        min_drop = n_incoming - available
+        if min_drop > 0:
+            amortized_drop = max(min_drop, self._data_buffer.max_capacity // 10)
+            self._drop_from_all_buffers(amortized_drop)
 
     def _drop_from_all_buffers(self, drop_count: int) -> None:
         """Drop data from all buffers to keep them in sync."""
