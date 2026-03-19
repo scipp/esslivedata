@@ -105,13 +105,28 @@ def _resolve_axis_source_titles(
     return result
 
 
-def _resolve_windowing_support(
+@dataclass(frozen=True)
+class OutputDisplayHints:
+    """UI hints derived from inspecting a workflow output template.
+
+    Consolidates all output-template-dependent decisions for the plot
+    configuration modal so that the template is inspected in one place.
+    """
+
+    hidden_fields: frozenset[str]
+    preselect_all_sources: bool
+
+
+def _resolve_output_display_hints(
     *,
     is_static: bool,
     workflow_spec: WorkflowSpec | None,
     output_name: str,
-) -> tuple[bool, frozenset[str]]:
-    """Determine whether the selected output supports windowing.
+) -> OutputDisplayHints:
+    """Derive UI hints from the workflow output template.
+
+    Inspects the output template once and returns all decisions that depend
+    on its properties (dimensionality, coordinates, etc.).
 
     Parameters
     ----------
@@ -126,16 +141,23 @@ def _resolve_windowing_support(
     Returns
     -------
     :
-        A tuple of (supports_windowing, hidden_fields). When windowing is
-        not supported the ``'window'`` field is included in hidden_fields.
+        Display hints for the configuration UI.
     """
     if is_static:
-        return True, frozenset()
+        return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
     from ess.livedata.dashboard.plotting_controller import output_has_time_coord
 
-    supports = output_has_time_coord(workflow_spec, output_name)
-    hidden = frozenset({'window'}) if not supports else frozenset()
-    return supports, hidden
+    supports_windowing = output_has_time_coord(workflow_spec, output_name)
+    hidden = frozenset({'window'}) if not supports_windowing else frozenset()
+
+    template = (
+        workflow_spec.get_output_template(output_name)
+        if workflow_spec is not None
+        else None
+    )
+    preselect_all = template is None or template.ndim < 2
+
+    return OutputDisplayHints(hidden_fields=hidden, preselect_all_sources=preselect_all)
 
 
 def _inject_axis_source_titles(
@@ -1165,11 +1187,17 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
-        self._supports_windowing, hidden_fields = _resolve_windowing_support(
+        hints = _resolve_output_display_hints(
             is_static=is_static,
             workflow_spec=workflow_spec if not is_static else None,
             output_name=self._plotter_selection.output_name,
         )
+        self._supports_windowing = 'window' not in hints.hidden_fields
+
+        # For new plots, use display hints to decide source pre-selection.
+        # 2D+ outputs (images) default to empty so the user picks one source.
+        if initial_source_names is None and not hints.preselect_all_sources:
+            initial_source_names = []
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
@@ -1178,7 +1206,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state=config_state,
             initial_source_names=initial_source_names,
             instrument_config=self._instrument_config,
-            hidden_fields=hidden_fields,
+            hidden_fields=hints.hidden_fields,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
