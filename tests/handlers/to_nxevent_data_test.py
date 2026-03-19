@@ -44,14 +44,14 @@ def test_MonitorEvents_from_ev44_raises_with_multi_pulse_message(
 
 def test_MonitorEvents_ToNXevent_data() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, MonitorEvents(time_of_arrival=[1.0, 10.0], unit='ns'))
-    to_nx.add(1000, MonitorEvents(time_of_arrival=[2.0], unit='ns'))
+    to_nx.add(0, MonitorEvents(time_of_arrival=[1, 10], unit='ns'))
+    to_nx.add(1000, MonitorEvents(time_of_arrival=[2], unit='ns'))
     events = to_nx.get()
     content = sc.DataArray(
         data=sc.ones(dims=['event'], shape=[3], unit='counts', dtype='float32'),
         coords={
             'event_time_offset': sc.array(
-                dims=['event'], values=[1.0, 10.0, 2.0], unit='ns'
+                dims=['event'], values=[1, 10, 2], unit='ns', dtype='int32'
             )
         },
     )
@@ -78,16 +78,14 @@ def test_MonitorEvents_ToNXevent_data() -> None:
 
 def test_DetectorEvents_ToNXevent_data() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(
-        0, DetectorEvents(time_of_arrival=[1.0, 10.0], pixel_id=[2, 1], unit='ns')
-    )
-    to_nx.add(1000, DetectorEvents(time_of_arrival=[2.0], pixel_id=[1], unit='ns'))
+    to_nx.add(0, DetectorEvents(time_of_arrival=[1, 10], pixel_id=[2, 1], unit='ns'))
+    to_nx.add(1000, DetectorEvents(time_of_arrival=[2], pixel_id=[1], unit='ns'))
     events = to_nx.get()
     content = sc.DataArray(
         data=sc.ones(dims=['event'], shape=[3], unit='counts', dtype='float32'),
         coords={
             'event_time_offset': sc.array(
-                dims=['event'], values=[1.0, 10.0, 2.0], unit='ns'
+                dims=['event'], values=[1, 10, 2], unit='ns', dtype='int32'
             ),
             'event_id': sc.array(
                 dims=['event'], values=[2, 1, 1], unit=None, dtype='int32'

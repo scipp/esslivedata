@@ -80,12 +80,9 @@ class _ScippBackedBuffer:
     a zero-copy scipp slice — no additional allocation or memcpy needed.
     """
 
-    def __init__(
-        self, dtype: np.dtype, *, unit: str | None, sc_dtype: str | None = None
-    ):
-        self._np_dtype = dtype
+    def __init__(self, *, dtype: str, unit: str | None):
+        self._dtype = dtype
         self._unit = unit
-        self._sc_dtype = sc_dtype
         self._var: sc.Variable | None = None
         self._view: np.ndarray | None = None  # writable view into _var
 
@@ -94,11 +91,11 @@ class _ScippBackedBuffer:
         if capacity >= max(n, 1):
             return
         new_capacity = max(n, 1, capacity * 2)
-        self._var = sc.array(
+        self._var = sc.empty(
             dims=['event'],
-            values=np.empty(new_capacity, dtype=self._np_dtype),
+            shape=[new_capacity],
             unit=self._unit,
-            dtype=self._sc_dtype,
+            dtype=self._dtype,
         )
         self._view = self._var.values
 
@@ -136,7 +133,6 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         self._timestamps: list[int] = []
         self._epoch = sc.epoch(unit='ns')
         self._have_event_id: bool | None = None
-        self._toa_dtype = np.int64
         self._toa_buf: _ScippBackedBuffer | None = None
         self._pid_buf: _ScippBackedBuffer | None = None
         self._weights = _WeightsBuffer()
@@ -147,12 +143,9 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
             raise ValueError(f"Expected unit 'ns', got '{data.unit}'")
         if self._have_event_id is None:
             self._have_event_id = isinstance(data, DetectorEvents)
-            self._toa_dtype = np.asarray(data.time_of_arrival).dtype
-            self._toa_buf = _ScippBackedBuffer(self._toa_dtype, unit='ns')
+            self._toa_buf = _ScippBackedBuffer(dtype='int32', unit='ns')
             if self._have_event_id:
-                self._pid_buf = _ScippBackedBuffer(
-                    np.asarray(data.pixel_id).dtype, unit=None, sc_dtype='int32'
-                )
+                self._pid_buf = _ScippBackedBuffer(dtype='int32', unit=None)
         elif self._have_event_id != isinstance(data, DetectorEvents):
             # This should never happen, but we check to be safe.
             raise ValueError("Inconsistent event_id")
