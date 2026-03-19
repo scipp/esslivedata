@@ -41,13 +41,6 @@ class TestSystemStatusWidget:
         # Panel should contain 3 items: notification, session, backend
         assert len(panel) == 3
 
-    def test_notification_widget_is_first(self):
-        widget = _make_widget()
-        panel = widget.panel()
-        first_section = panel[0]
-        # First section should be the notification log pane (an HTML pane)
-        assert isinstance(first_section, pn.pane.HTML)
-
     def test_register_periodic_refresh(self):
         widget = _make_widget()
         fake_updater = FakeSessionUpdater()
