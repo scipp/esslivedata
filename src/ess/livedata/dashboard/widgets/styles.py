@@ -18,7 +18,6 @@ class StatusColors:
     PENDING = "#17a2b8"  # Blue
     MUTED = "#6c757d"  # Gray (alias for default/stopped)
     PRIMARY = "#007bff"  # Blue (actions, "you" indicator)
-    ORANGE = "#fd7e14"  # Orange (warning-level job states)
 
 
 class HoverColors:

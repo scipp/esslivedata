@@ -45,9 +45,8 @@ class WorkflowWidgetStyles:
         'active': StatusColors.SUCCESS,
         'stopped': StatusColors.MUTED,
         'error': StatusColors.ERROR,
-        'warning': StatusColors.ORANGE,
+        'warning': StatusColors.WARNING,
         'pending': StatusColors.PENDING,
-        'paused': StatusColors.WARNING,
         'finishing': StatusColors.PENDING,
         'scheduled': StatusColors.PENDING,
     }
@@ -777,16 +776,11 @@ class WorkflowStatusWidget:
                 error_summary=error_summary,
             )
 
-            # Status: priority error > warning > paused > active
+            # Status: priority error > warning > active
             if job_status.state == JobState.error:
                 worst_state = JobState.error
             elif job_status.state == JobState.warning and worst_state != JobState.error:
                 worst_state = JobState.warning
-            elif job_status.state == JobState.paused and worst_state not in (
-                JobState.error,
-                JobState.warning,
-            ):
-                worst_state = JobState.paused
 
             # Timing: track earliest start
             start = job_status.start_time
