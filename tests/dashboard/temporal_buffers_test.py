@@ -289,6 +289,7 @@ class TestTemporalBuffer:
         for t in range(1, capacity):
             buffer.add(make_single_slice([float(t)] * 2, float(t)))
         assert buffer._data_buffer.size == capacity
+        assert buffer.get().coords['time'].values[0] == 0.0
 
         # Add one more — should succeed by dropping oldest (amortized: drops >=10%)
         buffer.add(make_single_slice([99.0, 99.0], 99.0))

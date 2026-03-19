@@ -409,22 +409,16 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         self._reference = ref
 
         # Calculate max_capacity from memory limit, accounting for all buffers
-        # (data + time coord + optional start_time/end_time coords)
+        # (data + time coord + optional start_time/end_time coords).
+        # 'time' coord is always present: it is required for timeseries extraction.
+        bytes_per_element = data.data.values.nbytes
+        bytes_per_element += data.coords['time'].values.nbytes
+        if 'start_time' in data.coords:
+            bytes_per_element += data.coords['start_time'].values.nbytes
+        if 'end_time' in data.coords:
+            bytes_per_element += data.coords['end_time'].values.nbytes
         if 'time' in data.dims:
-            n_time = data.sizes['time']
-            bytes_per_element = data.data.values.nbytes / n_time
-            bytes_per_element += data.coords['time'].values.nbytes / n_time
-            if 'start_time' in data.coords:
-                bytes_per_element += data.coords['start_time'].values.nbytes / n_time
-            if 'end_time' in data.coords:
-                bytes_per_element += data.coords['end_time'].values.nbytes / n_time
-        else:
-            bytes_per_element = data.data.values.nbytes
-            bytes_per_element += data.coords['time'].values.nbytes
-            if 'start_time' in data.coords:
-                bytes_per_element += data.coords['start_time'].values.nbytes
-            if 'end_time' in data.coords:
-                bytes_per_element += data.coords['end_time'].values.nbytes
+            bytes_per_element /= data.sizes['time']
 
         max_capacity = max(1, int(self._max_memory / bytes_per_element))
 
