@@ -258,7 +258,8 @@ class TestNoCopyWindowAccumulator:
         acc.push(data1)
         acc.push(data2)
         result = acc.value
-        expected = data1 + data2
+        # data1 was mutated in-place by += (no deepcopy on first push)
+        expected = sc.array(dims=['x'], values=[4.0, 6.0])
         assert sc.identical(result, expected)
 
     def test_value_after_on_finalize_raises(self) -> None:
@@ -267,6 +268,51 @@ class TestNoCopyWindowAccumulator:
         acc.on_finalize()
         with pytest.raises(ValueError, match="empty"):
             _ = acc.value
+
+    def test_first_push_stores_reference_without_copy(self) -> None:
+        """First push stores the value by reference, not by deepcopy.
+
+        This is safe because the paired Cumulative accumulator (NoCopyAccumulator)
+        deepcopies on its first push, isolating its buffer. Since += only mutates the
+        left operand, no consumer ever mutates the shared input.
+        """
+        acc = NoCopyWindowAccumulator()
+        data = sc.array(dims=['x'], values=[1.0, 2.0])
+        acc.push(data)
+        assert acc.value is data
+
+    def test_first_push_after_finalize_stores_reference_without_copy(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        data1 = sc.array(dims=['x'], values=[1.0, 2.0])
+        acc.push(data1)
+        acc.on_finalize()
+
+        data2 = sc.array(dims=['x'], values=[3.0, 4.0])
+        acc.push(data2)
+        assert acc.value is data2
+
+    def test_safe_with_paired_cumulative_accumulator(self) -> None:
+        """Pushing the same value to both accumulators does not cause corruption.
+
+        NoCopyAccumulator (Cumulative) deepcopies on first push, so its += never
+        mutates the shared input. NoCopyWindowAccumulator stores a bare reference,
+        which is safe because no other consumer mutates the original.
+        """
+        cumulative = NoCopyAccumulator()
+        current = NoCopyWindowAccumulator()
+        shared_hist = sc.array(dims=['x'], values=[1.0, 2.0])
+
+        cumulative.push(shared_hist)
+        current.push(shared_hist)
+
+        # Cumulative's += on a subsequent push must not corrupt Current's reference
+        next_hist = sc.array(dims=['x'], values=[3.0, 4.0])
+        cumulative.push(next_hist)
+
+        # Current still sees the original, unmodified values
+        assert sc.identical(current.value, sc.array(dims=['x'], values=[1.0, 2.0]))
+        # Cumulative sees the sum
+        assert sc.identical(cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0]))
 
     def test_differs_from_eternal_accumulator_behavior(self) -> None:
         """NoCopyWindowAccumulator clears after on_finalize.

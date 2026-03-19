@@ -102,7 +102,19 @@ class NoCopyWindowAccumulator(NoCopyAccumulator):
 
     Combines the performance benefits of NoCopyAccumulator with window semantics
     (clearing after each finalize cycle).
+
+    Skips the deepcopy on push that the base EternalAccumulator performs. This is
+    safe because the paired Cumulative accumulator (NoCopyAccumulator) deepcopies on
+    its first push, isolating its buffer. Since ``+=`` only mutates the left operand
+    (``self._value``), never the right (the input), no consumer ever mutates the shared
+    input histogram — regardless of push count or accumulator evaluation order.
     """
+
+    def _do_push(self, value: T) -> None:
+        if self._value is None:
+            self._value = value
+        else:
+            self._value += value
 
     def on_finalize(self) -> None:
         """Clear accumulated value after finalize retrieves it."""
