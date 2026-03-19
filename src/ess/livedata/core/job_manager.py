@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import bisect
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +24,7 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import StreamId
+from .message import RunStart, RunStop, StreamId
 
 logger = structlog.get_logger(__name__)
 
@@ -157,6 +158,7 @@ class JobFactory:
             # Pass rendered aux source names (field name -> stream name mapping)
             # Job will use values for routing and remap keys for workflow
             aux_source_names=rendered_aux_names,
+            reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
 
 
@@ -175,6 +177,8 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
+        # Pending reset times (ns since epoch), kept sorted via bisect.insort
+        self._pending_reset_times: list[int] = []
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
@@ -204,7 +208,8 @@ class JobManager:
         )
 
     def _advance_to_time(self, start_time: int, end_time: int) -> None:
-        """Activate jobs that should start and mark jobs that should finish."""
+        """Fire pending resets, activate jobs, and mark jobs that should finish."""
+        self._fire_pending_resets(end_time)
         to_activate = [
             job_id
             for job_id in self._scheduled_jobs.keys()
@@ -314,6 +319,35 @@ class JobManager:
             self._job_states[job_id] = JobState.active
         else:
             self._job_states[job_id] = JobState.scheduled
+
+    def on_run_start(self, info: RunStart) -> None:
+        """Handle a run-start event by scheduling deferred resets."""
+        logger.info("run_start", run_name=info.run_name, start_time=info.start_time)
+        self._schedule_reset(info.start_time)
+        if info.stop_time is not None:
+            self._schedule_reset(info.stop_time)
+
+    def on_run_stop(self, info: RunStop) -> None:
+        """Handle a run-stop event by scheduling a deferred reset."""
+        logger.info("run_stop", run_name=info.run_name, stop_time=info.stop_time)
+        self._schedule_reset(info.stop_time)
+
+    def _schedule_reset(self, time_ns: int) -> None:
+        bisect.insort(self._pending_reset_times, time_ns)
+
+    def _fire_pending_resets(self, end_time: int) -> None:
+        """Fire pending resets whose scheduled time has been reached by data."""
+        if not self._pending_reset_times:
+            return
+        triggered = bisect.bisect_right(self._pending_reset_times, end_time)
+        if triggered:
+            self._pending_reset_times = self._pending_reset_times[triggered:]
+            self._reset_eligible_jobs()
+
+    def _reset_eligible_jobs(self) -> None:
+        for job in list(self.active_jobs):
+            if job.reset_on_run_transition:
+                self.reset_job(job.job_id)
 
     def push_data(self, data: WorkflowData) -> list[JobReply]:
         """Push data into the active jobs and return status for each job."""

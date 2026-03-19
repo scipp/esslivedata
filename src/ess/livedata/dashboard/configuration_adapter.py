@@ -69,6 +69,11 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """Configuration description."""
 
     @property
+    def hidden_fields(self) -> frozenset[str]:
+        """Fields to hide in the parameter UI."""
+        return frozenset()
+
+    @property
     def aux_sources(self) -> type[BaseModel] | None:
         """
         Pydantic model class for auxiliary sources.
@@ -160,9 +165,14 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         Initially selected source names.
 
         Returns the pre-configured source names (filtered to available sources),
-        or all available sources if none were specified.
+        or all available sources if none were specified. An explicit empty list
+        is preserved (e.g., for 2D outputs where no source should be pre-selected).
+        If a non-empty list filters down to nothing (all sources became unavailable),
+        falls back to all available sources.
         """
         if self._initial_source_names is not None:
+            if not self._initial_source_names:
+                return []
             available = set(self.source_names)
             filtered = [s for s in self._initial_source_names if s in available]
             return filtered if filtered else self.source_names

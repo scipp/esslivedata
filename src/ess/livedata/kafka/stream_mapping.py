@@ -76,6 +76,11 @@ class StreamMapping:
         return self._livedata_status_topic
 
     @property
+    def filewriter_topic(self) -> KafkaTopic:
+        """Returns the filewriter topic for run start/stop messages."""
+        return f"{self.instrument}_filewriter"
+
+    @property
     def detector_topics(self) -> set[KafkaTopic]:
         """Returns the list of detector topics."""
         return {stream.topic for stream in self.detectors.keys()}

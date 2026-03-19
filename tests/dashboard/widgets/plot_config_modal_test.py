@@ -14,6 +14,7 @@ from ess.livedata.dashboard.widgets.plot_config_modal import (
     _build_timeseries_options,
     _inject_axis_source_titles,
     _resolve_axis_source_titles,
+    _resolve_output_display_hints,
 )
 
 
@@ -273,3 +274,101 @@ class TestBuildTimeseriesOptions:
 
         options = _build_timeseries_options(timeseries, {wf_id: spec}, None)
         assert list(options.keys()) == ["Timeseries data: raw_source"]
+
+
+class TestResolveOutputDisplayHints:
+    def test_static_overlay_preselects_all_and_no_hidden_fields(self):
+        hints = _resolve_output_display_hints(
+            is_static=True, workflow_spec=None, output_name="any"
+        )
+        assert hints.preselect_all_sources is True
+        assert hints.hidden_fields == frozenset()
+
+    def test_0d_output_preselects_all(self):
+        class Outputs(WorkflowOutputsBase):
+            counts: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+            )
+
+        spec = _make_workflow_spec("Scalar output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="counts"
+        )
+        assert hints.preselect_all_sources is True
+
+    def test_1d_output_preselects_all(self):
+        class Outputs(WorkflowOutputsBase):
+            spectrum: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.zeros(sizes={'wavelength': 0})),
+            )
+
+        spec = _make_workflow_spec("1D output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="spectrum"
+        )
+        assert hints.preselect_all_sources is True
+
+    def test_2d_output_does_not_preselect_all(self):
+        class Outputs(WorkflowOutputsBase):
+            image: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.zeros(sizes={'x': 0, 'y': 0})),
+            )
+
+        spec = _make_workflow_spec("2D output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="image"
+        )
+        assert hints.preselect_all_sources is False
+
+    def test_3d_output_does_not_preselect_all(self):
+        class Outputs(WorkflowOutputsBase):
+            volume: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(sizes={'x': 0, 'y': 0, 'z': 0})
+                ),
+            )
+
+        spec = _make_workflow_spec("3D output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="volume"
+        )
+        assert hints.preselect_all_sources is False
+
+    def test_output_with_time_coord_does_not_hide_window(self):
+        class Outputs(WorkflowOutputsBase):
+            spectrum: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(sizes={'time': 0, 'wavelength': 0}),
+                    coords={'time': sc.zeros(sizes={'time': 0})},
+                ),
+            )
+
+        spec = _make_workflow_spec("Windowed output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="spectrum"
+        )
+        assert 'window' not in hints.hidden_fields
+
+    def test_output_without_time_coord_hides_window(self):
+        class Outputs(WorkflowOutputsBase):
+            total: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.zeros(sizes={'wavelength': 0})),
+            )
+
+        spec = _make_workflow_spec("Cumulative output", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="total"
+        )
+        assert 'window' in hints.hidden_fields
+
+    def test_unknown_output_preselects_all(self):
+        class Outputs(WorkflowOutputsBase):
+            data: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+            )
+
+        spec = _make_workflow_spec("Some workflow", Outputs)
+        hints = _resolve_output_display_hints(
+            is_static=False, workflow_spec=spec, output_name="nonexistent"
+        )
+        assert hints.preselect_all_sources is True
