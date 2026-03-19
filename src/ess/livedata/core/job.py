@@ -93,7 +93,6 @@ class JobReply:
 class JobState(StrEnum):
     scheduled = "scheduled"
     active = "active"
-    paused = "paused"
     finishing = "finishing"
     error = "error"
     warning = "warning"

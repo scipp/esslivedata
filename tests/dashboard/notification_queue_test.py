@@ -107,6 +107,43 @@ class TestNotificationQueue:
         assert len(events) == 2
         assert [e.message for e in events] == ['Event 2', 'Event 3']
 
+    def test_timestamp_auto_populated(self):
+        event = NotificationEvent(message='Test')
+        assert event.timestamp > 0
+
+    def test_version_increments_on_push(self):
+        queue = NotificationQueue()
+        assert queue.version == 0
+
+        queue.push(NotificationEvent(message='Event 1'))
+        assert queue.version == 1
+
+        queue.push(NotificationEvent(message='Event 2'))
+        assert queue.version == 2
+
+    def test_get_all_events_returns_all_retained(self):
+        queue = NotificationQueue()
+        queue.push(NotificationEvent(message='Event 1'))
+        queue.push(NotificationEvent(message='Event 2'))
+
+        events = queue.get_all_events()
+
+        assert len(events) == 2
+        assert events[0].message == 'Event 1'
+        assert events[1].message == 'Event 2'
+
+    def test_get_all_events_does_not_affect_cursors(self):
+        queue = NotificationQueue()
+        session_id = SessionId('session-1')
+        queue.register_session(session_id)
+        queue.push(NotificationEvent(message='Event 1'))
+
+        queue.get_all_events()
+
+        events = queue.get_new_events(session_id)
+        assert len(events) == 1
+        assert events[0].message == 'Event 1'
+
     def test_clear(self):
         queue = NotificationQueue()
         session_id = SessionId('session-1')

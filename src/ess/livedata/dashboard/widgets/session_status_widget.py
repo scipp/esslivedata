@@ -11,15 +11,17 @@ import panel as pn
 
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 
+from .styles import Colors, StatusColors
+
 
 class SessionUIConstants:
     """Constants for session status UI styling and sizing."""
 
     # Colors
-    ACTIVE_COLOR = "#28a745"  # Green
-    YOU_COLOR = "#007bff"  # Blue for "this is you"
-    STALE_COLOR = "#dc3545"  # Red for stale sessions
-    DEFAULT_COLOR = "#6c757d"  # Gray
+    ACTIVE_COLOR = StatusColors.SUCCESS
+    YOU_COLOR = StatusColors.PRIMARY
+    STALE_COLOR = StatusColors.ERROR
+    DEFAULT_COLOR = StatusColors.MUTED
 
     # Thresholds
     # Sessions without browser heartbeats for this long are shown as "Stale".
@@ -93,7 +95,7 @@ class SessionStatusRow:
             self._session_id_pane,
             self._status_pane,
             self._heartbeat_pane,
-            styles={"border-bottom": "1px solid #dee2e6"},
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
         )
 
@@ -181,7 +183,7 @@ class SessionStatusWidget:
         # Table header
         header_style = (
             "font-weight: bold; font-size: 12px; "
-            "background-color: #f8f9fa; padding: 5px 0;"
+            f"background-color: {Colors.BG_LIGHT}; padding: 5px 0;"
         )
         self._table_header = pn.Row(
             pn.pane.HTML(
@@ -199,7 +201,7 @@ class SessionStatusWidget:
                 width=SessionUIConstants.HEARTBEAT_WIDTH,
                 margin=SessionUIConstants.STANDARD_MARGIN,
             ),
-            styles={"border-bottom": "2px solid #dee2e6"},
+            styles={"border-bottom": f"2px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
             margin=(0, 10),
         )

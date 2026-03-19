@@ -8,9 +8,12 @@ called from within a session context (e.g. Panel callbacks or periodic callbacks
 For notifications from background threads, use NotificationQueue instead.
 
 Display durations per type (milliseconds):
-  - ERROR: 0 (persistent until the user dismisses)
+  - ERROR: 30000 (auto-dismisses after 30 seconds)
   - WARNING: 8000
   - SUCCESS / INFO: 3000
+
+Toast messages are truncated to 120 characters. Full details are available
+in the notification log on the System Status tab.
 """
 
 from __future__ import annotations
@@ -22,11 +25,13 @@ import panel as pn
 from .notification_queue import NotificationEvent, NotificationType
 
 _DURATIONS: dict[NotificationType, int] = {
-    NotificationType.ERROR: 0,
+    NotificationType.ERROR: 30_000,
     NotificationType.WARNING: 8000,
     NotificationType.SUCCESS: 3000,
     NotificationType.INFO: 3000,
 }
+
+_MAX_TOAST_LENGTH = 120
 
 
 def show_info(message: str) -> None:
@@ -67,6 +72,17 @@ _DISPATCH: dict[NotificationType, Callable[[str], None]] = {
 }
 
 
+def _truncate_for_toast(message: str) -> str:
+    """Truncate a message for toast display.
+
+    Takes the first line only and caps at ``_MAX_TOAST_LENGTH`` characters.
+    """
+    first_line = message.split('\n', 1)[0]
+    if len(first_line) <= _MAX_TOAST_LENGTH:
+        return first_line
+    return first_line[: _MAX_TOAST_LENGTH - 3] + "..."
+
+
 def show_notification(event: NotificationEvent) -> None:
     """Show a notification for a NotificationEvent, dispatching on its type."""
-    _DISPATCH[event.notification_type](event.message)
+    _DISPATCH[event.notification_type](_truncate_for_toast(event.message))

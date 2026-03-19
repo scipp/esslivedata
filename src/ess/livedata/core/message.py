@@ -83,7 +83,7 @@ class Message(Generic[T]):
 
     timestamp: int = field(
         default_factory=lambda: int(
-            datetime.datetime.now(datetime.UTC).timestamp() * 1_000_000_000
+            datetime.datetime.now(datetime.timezone.utc).timestamp() * 1_000_000_000
         )
     )
     stream: StreamId
