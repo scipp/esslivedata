@@ -51,6 +51,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
     )
     from ess.reduce.streaming import EternalAccumulator
+    from ess.reduce.uncertainty import UncertaintyBroadcastMode
     from ess.spectroscopy.types import (
         InstrumentAngle,
         PreopenNeXusFile,
@@ -155,6 +156,7 @@ def setup_factories(instrument: Instrument) -> None:
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
         # ProtonCharge is not used in streaming normalization, set to 1
         workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='microampere*hour')
+        workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.drop
         return workflow
 
     def _get_q_cut_workflow() -> sciline.Pipeline:

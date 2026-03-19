@@ -237,9 +237,9 @@ class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
     cut_data: sc.DataArray = pydantic.Field(
-        default_factory=_make_2d_template,
+        default_factory=_make_3d_template,
         title='Cut Data',
-        description='2D cut of intensity in Q-space or Q-E space.',
+        description='Q-space or Q-E space intensity per arc (arc x axis1 x axis2).',
     )
 
 
