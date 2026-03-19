@@ -11,7 +11,7 @@ import panel as pn
 
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 
-from .styles import StatusColors
+from .styles import Colors, StatusColors
 
 
 class SessionUIConstants:
@@ -95,7 +95,7 @@ class SessionStatusRow:
             self._session_id_pane,
             self._status_pane,
             self._heartbeat_pane,
-            styles={"border-bottom": "1px solid #dee2e6"},
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
         )
 
@@ -183,7 +183,7 @@ class SessionStatusWidget:
         # Table header
         header_style = (
             "font-weight: bold; font-size: 12px; "
-            "background-color: #f8f9fa; padding: 5px 0;"
+            f"background-color: {Colors.BG_LIGHT}; padding: 5px 0;"
         )
         self._table_header = pn.Row(
             pn.pane.HTML(
@@ -201,7 +201,7 @@ class SessionStatusWidget:
                 width=SessionUIConstants.HEARTBEAT_WIDTH,
                 margin=SessionUIConstants.STANDARD_MARGIN,
             ),
-            styles={"border-bottom": "2px solid #dee2e6"},
+            styles={"border-bottom": f"2px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
             margin=(0, 10),
         )

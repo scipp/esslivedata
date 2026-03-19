@@ -27,6 +27,7 @@ from ..plot_orchestrator import (
 )
 from .buttons import ButtonStyles, create_download_button, create_tool_button
 from .plot_widgets import get_workflow_display_info
+from .styles import Colors, HoverColors, StatusColors
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
@@ -85,15 +86,15 @@ class GridRow:
     """
 
     _CARD_STYLES: ClassVar[dict[str, str]] = {
-        'border': '1px solid #dee2e6',
+        'border': f'1px solid {Colors.BORDER}',
         'border-radius': '6px',
-        'background': '#f8f9fa',
+        'background': Colors.BG_LIGHT,
         'padding': '2px 8px',
     }
 
     _DISABLED_CARD_STYLES: ClassVar[dict[str, str]] = {
         **_CARD_STYLES,
-        'background': '#e9ecef',
+        'background': Colors.BG_MUTED,
         'opacity': '0.7',
     }
 
@@ -119,8 +120,8 @@ class GridRow:
         # Move up button
         move_up_button = create_tool_button(
             icon_name='chevron-up',
-            button_color='#6c757d',
-            hover_color='rgba(108, 117, 125, 0.1)',
+            button_color=StatusColors.MUTED,
+            hover_color=HoverColors.MUTED,
             on_click_callback=on_move_up or (lambda: None),
         )
         move_up_button.disabled = is_first or on_move_up is None
@@ -128,8 +129,8 @@ class GridRow:
         # Move down button
         move_down_button = create_tool_button(
             icon_name='chevron-down',
-            button_color='#6c757d',
-            hover_color='rgba(108, 117, 125, 0.1)',
+            button_color=StatusColors.MUTED,
+            hover_color=HoverColors.MUTED,
             on_click_callback=on_move_down or (lambda: None),
         )
         move_down_button.disabled = is_last or on_move_down is None
@@ -152,14 +153,14 @@ class GridRow:
             )
             edit_button.stylesheets = [
                 *edit_button.stylesheets,
-                'button { background-color: #007bff !important; '
-                'border-radius: 4px !important; }',
+                f'button {{ background-color: {StatusColors.PRIMARY} !important; '
+                f'border-radius: 4px !important; }}',
             ]
         else:
             edit_button = create_tool_button(
                 icon_name='pencil',
                 button_color=ButtonStyles.PRIMARY_BLUE,
-                hover_color='rgba(0, 123, 255, 0.1)',
+                hover_color=ButtonStyles.PRIMARY_HOVER,
                 on_click_callback=on_edit or (lambda: None),
             )
         if on_edit is None:
@@ -167,11 +168,11 @@ class GridRow:
 
         # Enable/disable button
         eye_icon = 'eye' if grid_config.enabled else 'eye-off'
-        eye_color = '#6c757d' if grid_config.enabled else '#dc3545'
+        eye_color = StatusColors.MUTED if grid_config.enabled else StatusColors.ERROR
         self._toggle_button = create_tool_button(
             icon_name=eye_icon,
             button_color=eye_color,
-            hover_color='rgba(108, 117, 125, 0.1)',
+            hover_color=HoverColors.MUTED,
             on_click_callback=lambda: (
                 on_toggle_enabled(not grid_config.enabled)
                 if on_toggle_enabled
@@ -194,7 +195,7 @@ class GridRow:
         remove_button = create_tool_button(
             icon_name='x',
             button_color=ButtonStyles.DANGER_RED,
-            hover_color='rgba(220, 53, 69, 0.1)',
+            hover_color=ButtonStyles.DANGER_HOVER,
             on_click_callback=on_remove,
         )
 

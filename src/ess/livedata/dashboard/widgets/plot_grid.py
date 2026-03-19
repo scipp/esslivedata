@@ -10,19 +10,22 @@ import panel as pn
 
 from ..notifications import show_error
 from ..plot_orchestrator import CellGeometry
+from .styles import Colors, StatusColors
 
 
 @dataclass(frozen=True)
 class GridCellStyles:
     """Styling constants for PlotGrid cells."""
 
-    # Colors
-    PRIMARY_BLUE = '#007bff'
-    LIGHT_GRAY = '#dee2e6'
+    # Colors referencing shared palette
+    PRIMARY_BLUE = StatusColors.PRIMARY
+    LIGHT_GRAY = Colors.BORDER
+    VERY_LIGHT_GRAY = Colors.BG_LIGHT
+    MEDIUM_GRAY = Colors.TEXT_MUTED
+
+    # Grid-specific colors
     LIGHT_RED = '#ffe6e6'
     LIGHT_BLUE = '#e7f3ff'
-    VERY_LIGHT_GRAY = '#f8f9fa'
-    MEDIUM_GRAY = '#6c757d'
     MUTED_GRAY = '#adb5bd'
 
     # Dimensions

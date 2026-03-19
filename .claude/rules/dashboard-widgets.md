@@ -57,6 +57,26 @@ Note that `dynamic=True` only gates Bokeh model creation. Python-side periodic c
 (e.g., `SessionUpdater` custom handlers) still run for all registered widgets regardless
 of which tab is visible. Use an `is_visible` predicate to skip refresh work for hidden tabs.
 
+## Colors and styling
+
+All colors must come from `dashboard/widgets/styles.py`. Do not hard-code hex color values
+or rgba strings in widget files. The shared module provides:
+
+- `StatusColors` — semantic status indicators (ERROR, SUCCESS, WARNING, etc.)
+- `HoverColors` — translucent hover backgrounds derived from StatusColors
+- `Colors` — neutral palette (BORDER, BG_LIGHT, TEXT, TEXT_MUTED, etc.)
+- `ErrorBox` / `WarningBox` — alert box color sets (BG, BORDER, TEXT)
+
+`ButtonStyles` in `buttons.py` re-exports commonly used color+hover pairs
+(e.g., `DANGER_RED`/`DANGER_HOVER`, `PRIMARY_BLUE`/`PRIMARY_HOVER`).
+
+Widget-specific decorative colors (e.g., output chip colors, grid preview cell colors)
+that are not shared across widgets may stay local.
+
+Panel does not support CSS custom properties (`var()`) in `styles=` dicts or inline
+HTML `style=` attributes — only in `stylesheets=` parameters. This is why we use
+Python constants rather than CSS variables for centralized color management.
+
 ## Avoiding flicker
 
 Make sure all widget-updates that touch more than a single widget (or a single widget multiple times) use `pn.io.hold()`.
