@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from ess.reduce import streaming
@@ -291,19 +292,27 @@ class TestNoCopyWindowAccumulator:
         acc.push(data2)
         assert acc.value is data2
 
-    def test_safe_with_paired_cumulative_accumulator(self) -> None:
+    @pytest.mark.parametrize("cumulative_first", [True, False])
+    def test_safe_with_paired_cumulative_accumulator(
+        self, cumulative_first: bool
+    ) -> None:
         """Pushing the same value to both accumulators does not cause corruption.
 
         NoCopyAccumulator (Cumulative) deepcopies on first push, so its += never
         mutates the shared input. NoCopyWindowAccumulator stores a bare reference,
         which is safe because no other consumer mutates the original.
+
+        Order of pushes must not matter.
         """
         cumulative = NoCopyAccumulator()
         current = NoCopyWindowAccumulator()
         shared_hist = sc.array(dims=['x'], values=[1.0, 2.0])
 
-        cumulative.push(shared_hist)
-        current.push(shared_hist)
+        accumulators = [cumulative, current]
+        if not cumulative_first:
+            accumulators.reverse()
+        for acc in accumulators:
+            acc.push(shared_hist)
 
         # Cumulative's += on a subsequent push must not corrupt Current's reference
         next_hist = sc.array(dims=['x'], values=[3.0, 4.0])
@@ -313,6 +322,35 @@ class TestNoCopyWindowAccumulator:
         assert sc.identical(current.value, sc.array(dims=['x'], values=[1.0, 2.0]))
         # Cumulative sees the sum
         assert sc.identical(cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0]))
+
+    def test_safe_with_paired_cumulative_over_multiple_cycles(self) -> None:
+        """Simulate multiple push/finalize cycles with randomized push order.
+
+        Exercises the full lifecycle: both accumulators receive the same histogram
+        each cycle, Current finalizes (clears) while Cumulative keeps accumulating.
+        """
+        rng = np.random.default_rng(seed=42)
+        cumulative = NoCopyAccumulator()
+        current = NoCopyWindowAccumulator()
+
+        expected_cumulative = sc.array(dims=['x'], values=[0.0, 0.0])
+        n_cycles = 20
+        for i in range(n_cycles):
+            shared_hist = sc.array(dims=['x'], values=[float(i), float(i + 1)])
+            expected_cumulative = expected_cumulative + shared_hist
+
+            accumulators: list[NoCopyAccumulator] = [cumulative, current]
+            if rng.random() > 0.5:
+                accumulators.reverse()
+            for acc in accumulators:
+                acc.push(shared_hist)
+
+            # Current should reflect this cycle's histogram
+            assert sc.identical(current.value, shared_hist)
+            current.on_finalize()
+
+        # Cumulative should have the sum of all cycles
+        assert sc.identical(cumulative.value, expected_cumulative)
 
     def test_differs_from_eternal_accumulator_behavior(self) -> None:
         """NoCopyWindowAccumulator clears after on_finalize.
