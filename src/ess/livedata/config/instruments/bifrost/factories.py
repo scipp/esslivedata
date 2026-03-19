@@ -154,8 +154,9 @@ def setup_factories(instrument: Instrument) -> None:
         workflow[Filename[SampleRun]] = fname
         workflow[TimeOfFlightLookupTableFilename] = tof_lookup_table_simulation()
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
-        # ProtonCharge is not used in streaming normalization, set to 1
-        workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='microampere*hour')
+        # ProtonCharge is not used in streaming normalization, set to 1. Revisit once
+        # there is a established stream for this.
+        workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='pC')
         workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.drop
         return workflow
 
