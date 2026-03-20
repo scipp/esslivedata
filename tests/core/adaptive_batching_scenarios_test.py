@@ -893,8 +893,11 @@ class TestDeescalation:
         stay stuck at the peak level.
 
         Severe phase at 1s: 1.8 + 0.2 = 2.0s (needs level 2).
-        Moderate phase at 1s: 0.6 + 0.6 = 1.2s (needs level 1).
-        Moderate phase at 2s: 0.6 + 1.2 = 1.8s (fits at level 1).
+        Moderate phase at 1s: 0.6 + 0.5 = 1.1s (overloaded, needs level 1).
+        Moderate phase at 2s: 0.6 + 1.0 = 1.6s (fits, 80% — no headroom to
+            de-escalate further).
+        Moderate phase at 4s: 0.6 + 2.0 = 2.6s (65% — has headroom, should
+            de-escalate from level 2).
         """
         lim = LIMITS["partial_deescalation"]
         batcher = make_default_batcher()
@@ -905,7 +908,7 @@ class TestDeescalation:
             after=step_function_cost(
                 step_time_s=60.0,
                 before=constant_overhead_cost(overhead_s=1.8, per_second_cost=0.2),
-                after=constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6),
+                after=constant_overhead_cost(overhead_s=0.6, per_second_cost=0.5),
             ),
         )
 

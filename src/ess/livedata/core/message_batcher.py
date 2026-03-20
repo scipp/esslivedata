@@ -233,10 +233,11 @@ class AdaptiveMessageBatcher(MessageBatcher):
         processing_time_s: float = 0.0,
     ) -> None:
         if message_count is None:
-            # Idle cycle — reset both counters. Fall back to wall-clock
-            # de-escalation when data stops entirely.
-            self._consecutive_overloaded = 0
-            self._consecutive_underloaded = 0
+            # Idle cycle — no load signal, leave consecutive counters
+            # untouched.  Genuine idleness is handled by the wall-clock
+            # fallback below; resetting counters here would prevent
+            # de-escalation under continuous light load where idle polls
+            # between batches outnumber real reports.
             if self._level > 0 and self._last_nonempty_batch_time is not None:
                 idle_s = time.monotonic() - self._last_nonempty_batch_time
                 idle_windows = idle_s / self.batch_length_s

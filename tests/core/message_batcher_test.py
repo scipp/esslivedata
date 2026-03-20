@@ -494,20 +494,34 @@ class TestAdaptiveMessageBatcher:
             batcher.report_batch(None)
             assert batcher.state.level == 0
 
-    def test_idle_cycle_resets_overload_counter(self):
+    def test_underloaded_batch_resets_overload_counter(self):
         batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
 
         # Almost reach escalation threshold
         for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
             batcher.report_batch(100, processing_time_s=1.5)
 
-        # One idle cycle resets
-        batcher.report_batch(None)
+        # One underloaded batch resets the overload counter
+        batcher.report_batch(100, processing_time_s=0.3)
 
         # Need full threshold again
         for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
             batcher.report_batch(100, processing_time_s=1.5)
         assert batcher.state.level == 0
+
+    def test_idle_cycles_do_not_reset_overload_counter(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Almost reach escalation threshold
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+
+        # Idle cycles (polling between batches) do not reset counters
+        batcher.report_batch(None)
+
+        # One more overloaded batch completes the threshold
+        batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 1
 
     def test_non_empty_batch_resets_idle_timer(self):
         clock = FakeClock()
