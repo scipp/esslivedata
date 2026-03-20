@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from numbers import Number
 from typing import Any
@@ -229,13 +230,19 @@ class AdaptiveMessageBatcher(MessageBatcher):
     Idle periods also trigger de-escalation via a wall-clock fallback.
     """
 
-    def __init__(self, base_batch_length_s: float = 1.0, max_level: int = 3) -> None:
+    def __init__(
+        self,
+        base_batch_length_s: float = 1.0,
+        max_level: int = 3,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._base_batch_length_s = base_batch_length_s
         self._max_half_steps = max_level * 2
         self._half_step = 0
         self._consecutive_overloaded = 0
         self._consecutive_underloaded = 0
         self._last_nonempty_batch_time: float | None = None
+        self._clock = clock
         self._inner = SimpleMessageBatcher(batch_length_s=base_batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
@@ -253,17 +260,17 @@ class AdaptiveMessageBatcher(MessageBatcher):
             # de-escalation under continuous light load where idle polls
             # between batches outnumber real reports.
             if self._half_step > 0 and self._last_nonempty_batch_time is not None:
-                idle_s = time.monotonic() - self._last_nonempty_batch_time
+                idle_s = self._clock() - self._last_nonempty_batch_time
                 idle_windows = idle_s / self.batch_length_s
                 if idle_windows >= DEESCALATION_IDLE_WINDOWS:
                     self._set_half_step(self._half_step - 1)
-                    self._last_nonempty_batch_time = time.monotonic()
+                    self._last_nonempty_batch_time = self._clock()
         elif message_count == 0:
             # Empty batch from time gap — not a load signal
             pass
         else:
             # Non-empty batch — use processing time to decide
-            self._last_nonempty_batch_time = time.monotonic()
+            self._last_nonempty_batch_time = self._clock()
 
             if processing_time_s > self.batch_length_s:
                 # Overloaded: processing exceeded the batch window

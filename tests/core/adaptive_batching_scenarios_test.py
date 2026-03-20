@@ -26,7 +26,6 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from typing import Protocol
-from unittest.mock import patch
 
 import pytest
 
@@ -85,6 +84,12 @@ LIMITS: dict[str, dict[str, float]] = {
         "min_level": 6,
         "max_level": 6,
     },
+    # -- Non-default base batch length ------------------------------------
+    # overhead_s=1.2, per_s=0.6 -> at 2s: 2.4, at 4s: 3.6 (OK at level 2)
+    "non_default_base": {
+        "min_level": 2,
+        "max_level": 2,
+    },
     # -- No escalation when not needed ------------------------------------
     # Parameterized across utilization levels.
     "light_load_20pct": {"max_level": 0},
@@ -140,6 +145,7 @@ LIMITS: dict[str, dict[str, float]] = {
     "repeated_shutter_cycles": {
         "min_level_reached": 1,
         "max_final_level": 0,
+        "min_escalation_events": 2,
     },
     "severe_to_cosmic_background": {
         "min_level_during_load": 3,
@@ -473,20 +479,22 @@ def cyclic_cost(
 # ---------------------------------------------------------------------------
 
 
+def make_default_batcher(
+    **kwargs,
+) -> tuple[AdaptiveMessageBatcher, FakeClock]:
+    clock = kwargs.pop("clock", None) or FakeClock()
+    defaults = {"base_batch_length_s": 1.0, "max_level": 3, "clock": clock}
+    defaults.update(kwargs)
+    return AdaptiveMessageBatcher(**defaults), clock
+
+
 def run_scenario(
-    batcher: MessageBatcher,
+    batcher: AdaptiveMessageBatcher,
     duration_s: float,
     cost_fn: ProcessingCostFn,
+    clock: FakeClock,
 ) -> SimulationResult:
-    clock = FakeClock()
-    with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
-        return simulate(batcher, duration_s, cost_fn, clock)
-
-
-def make_default_batcher(**kwargs) -> AdaptiveMessageBatcher:
-    defaults = {"base_batch_length_s": 1.0, "max_level": 3}
-    defaults.update(kwargs)
-    return AdaptiveMessageBatcher(**defaults)
+    return simulate(batcher, duration_s, cost_fn, clock)
 
 
 # ===========================================================================
@@ -500,7 +508,7 @@ class TestStepFunctionEscalation:
     def test_escalates_within_bounded_time(self):
         """After a step increase in load, the batcher must escalate quickly."""
         lim = LIMITS["step_function_escalation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # 10s idle, then overhead-dominated load with jitter
         # At 1s window: 0.8 + 0.3 = 1.1s -> overloaded
@@ -515,7 +523,7 @@ class TestStepFunctionEscalation:
             ),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
 
         first_esc = result.first_escalation_time_s()
         assert first_esc is not None, "Batcher never escalated"
@@ -532,7 +540,7 @@ class TestStepFunctionEscalation:
         At 2s window: 0.6 + 1.2 = 1.8s (OK).
         """
         lim = LIMITS["step_function_backlog"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=5.0,
@@ -540,7 +548,7 @@ class TestStepFunctionEscalation:
             after=constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
 
         assert result.max_level >= 1, (
             "Precondition: load must trigger escalation for backlog test "
@@ -594,7 +602,7 @@ class TestStepFunctionEscalation:
         severity, ensuring the response is proportional.
         """
         lim = LIMITS[limits_key]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=5.0,
@@ -604,7 +612,7 @@ class TestStepFunctionEscalation:
             ),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
         assert result.max_level >= lim["min_level"], (
             f"Only reached level {result.max_level} (need >= {lim['min_level']})"
         )
@@ -615,7 +623,7 @@ class TestStepFunctionEscalation:
     def test_stabilizes_after_escalation(self):
         """After reaching the correct level, the batcher must not oscillate."""
         lim = LIMITS["stabilization_after_step"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # At 1s: 0.8+0.3=1.1 (overloaded). At 2s: 0.8+0.6=1.4 (OK).
         cost = step_function_cost(
@@ -624,7 +632,7 @@ class TestStepFunctionEscalation:
             after=constant_overhead_cost(overhead_s=0.8, per_second_cost=0.3),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
 
         assert result.max_level >= 1, "Precondition: must have escalated"
         # After the initial transient, the level should be stable.
@@ -638,6 +646,36 @@ class TestStepFunctionEscalation:
         assert result.oscillation_count() <= lim["max_oscillations"], (
             f"Oscillated {result.oscillation_count()} times "
             f"(limit: {lim['max_oscillations']})"
+        )
+
+
+class TestNonDefaultBaseBatchLength:
+    """Verify scaling with a non-default base batch length."""
+
+    def test_escalation_with_doubled_base(self):
+        """With base=2.0, the level grid shifts: level 0 = 2s, level 2 = 4s.
+
+        The batcher must scale correctly — a bug that hardcodes sqrt(2)^level
+        without multiplying by the base would produce wrong batch windows.
+
+        Level 0 (2.0s): 1.2 + 1.2 = 2.4s (overloaded).
+        Level 2 (4.0s): 1.2 + 2.4 = 3.6s (90%, dead zone — stable).
+        """
+        lim = LIMITS["non_default_base"]
+        batcher, clock = make_default_batcher(base_batch_length_s=2.0)
+
+        cost = step_function_cost(
+            step_time_s=5.0,
+            before=idle_cost(),
+            after=constant_overhead_cost(overhead_s=1.2, per_second_cost=0.6),
+        )
+
+        result = run_scenario(batcher, 120.0, cost, clock)
+        assert result.max_level >= lim["min_level"], (
+            f"Only reached level {result.max_level} (need >= {lim['min_level']})"
+        )
+        assert result.max_level <= lim["max_level"], (
+            f"Over-escalated to level {result.max_level} (limit: {lim['max_level']})"
         )
 
 
@@ -660,12 +698,12 @@ class TestNoEscalationWhenNotNeeded:
         even at high utilization.
         """
         lim = LIMITS[limits_key]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
         cost = constant_overhead_cost(
             overhead_s=overhead_s, per_second_cost=per_second_cost
         )
 
-        result = run_scenario(batcher, 60.0, cost)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level <= lim["max_level"], (
             f"Escalated to level {result.max_level} at "
             f"{overhead_s + per_second_cost:.0%} utilization "
@@ -684,7 +722,7 @@ class TestNoEscalationWhenNotNeeded:
         seeds to avoid seed-dependent false confidence.
         """
         lim = LIMITS["gc_jitter"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
         cost = constant_overhead_cost(
             overhead_s=0.2,
             per_second_cost=0.1,
@@ -692,7 +730,7 @@ class TestNoEscalationWhenNotNeeded:
             rng=random.Random(seed),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
         assert result.max_level <= lim["max_level"], (
             f"Escalated to level {result.max_level} from jitter alone "
             f"(seed={seed}, limit: {lim['max_level']})"
@@ -703,14 +741,22 @@ class TestNoOscillation:
     """The batcher must not oscillate between levels."""
 
     def test_no_oscillation_at_steady_load(self):
-        """Constant load near the threshold should stabilize."""
+        """Constant overload that triggers escalation should stabilize without
+        oscillating.
+
+        Level 0 (1.0s): 0.6 + 0.6 = 1.2s (overloaded, escalates).
+        Level 2 (2.0s): 0.6 + 1.2 = 1.8s (90%, dead zone — stable).
+        """
         lim = LIMITS["steady_load_oscillation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
-        # Processing at ~90% of 1s window
-        cost = constant_overhead_cost(overhead_s=0.5, per_second_cost=0.4)
+        cost = constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6)
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
+        assert result.max_level >= 1, (
+            "Precondition: load must trigger escalation for oscillation test "
+            "to be meaningful"
+        )
         assert result.oscillation_count() <= lim["max_oscillations"], (
             f"Oscillated {result.oscillation_count()} times "
             f"(limit: {lim['max_oscillations']})"
@@ -719,7 +765,7 @@ class TestNoOscillation:
     def test_limited_oscillation_at_boundary(self):
         """Processing right at the window with jitter: bounded oscillation."""
         lim = LIMITS["boundary_oscillation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # Mean processing = 1.0s = window, jitter +-10%
         cost = constant_overhead_cost(
@@ -729,7 +775,7 @@ class TestNoOscillation:
             rng=random.Random(42),
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.oscillation_count() <= lim["max_oscillations"], (
             f"Oscillated {result.oscillation_count()} times "
             f"(limit: {lim['max_oscillations']})"
@@ -745,7 +791,7 @@ class TestCreepingOverload:
         Ramp from 0.5s to 1.3s at 1s window over 60s.
         """
         lim = LIMITS["creeping_overload"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = creeping_cost(
             overhead_s=0.3,
@@ -754,7 +800,7 @@ class TestCreepingOverload:
             ramp_duration_s=60.0,
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
         assert result.max_level >= lim["min_level_reached"], (
             f"Only reached level {result.max_level} "
             f"(need >= {lim['min_level_reached']})"
@@ -765,14 +811,14 @@ class TestCreepingOverload:
         )
 
     def test_mild_overload_does_not_over_escalate(self):
-        """A slow creep to barely over 1x should escalate but not beyond level 1.
+        """A slow creep to barely over 1x should escalate but not beyond level 2.
 
         overhead=0.3, per_s ramps 0.5 -> 0.8 over 60s.
-        At 1s window: 0.3 + 0.8 = 1.1s -> needs escalation.
-        At 2s window: 0.3 + 0.8*2 = 1.9s < 2s -> stable at level 1.
+        Level 0 (1.0s): 0.3 + 0.8 = 1.1s (overloaded).
+        Level 2 (2.0s): 0.3 + 1.6 = 1.9s (95%, dead zone — stable).
         """
         lim = LIMITS["mild_creeping_overload"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = creeping_cost(
             overhead_s=0.3,
@@ -781,7 +827,7 @@ class TestCreepingOverload:
             ramp_duration_s=60.0,
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.max_level >= lim["min_level_reached"], (
             f"Only reached level {result.max_level} — mild overload should "
             f"still trigger escalation (need >= {lim['min_level_reached']})"
@@ -800,7 +846,7 @@ class TestDeescalation:
         At 1s window: 0.8 + 0.3 = 1.1s (overloaded, triggers escalation).
         """
         lim = LIMITS["deescalation_to_idle"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # 30s high load, then idle
         cost = step_function_cost(
@@ -813,7 +859,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: batcher must have escalated during high-load phase "
             f"(reached level {result.max_level}, "
@@ -833,7 +879,7 @@ class TestDeescalation:
         Light phase at 1s window: 0.1 + 0.1 = 0.2s (well within budget).
         """
         lim = LIMITS["deescalation_to_light_load"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # Heavy load for 40s, then light load
         cost = step_function_cost(
@@ -846,7 +892,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: batcher must have escalated during heavy-load "
             f"phase (reached level {result.max_level}, "
@@ -860,12 +906,14 @@ class TestDeescalation:
         """De-escalation must work when processing fills a moderate fraction
         of the escalated window, not just under near-idle conditions.
 
-        Heavy phase at 1s window: 0.8 + 0.3 = 1.1s (overloaded, escalate to level 1).
-        Moderate phase at 2s window: 0.3 + 0.3*2 = 0.9s (45% utilization, headroom).
-        Moderate phase at 1s window: 0.3 + 0.3 = 0.6s (fits at base level).
+        Heavy phase at level 0 (1.0s): 0.8 + 0.3 = 1.1s
+            (overloaded, escalates to level 2).
+        Moderate phase at level 2 (2.0s): 0.3 + 0.6 = 0.9s (45%, underloaded).
+        Moderate phase at level 0 (1.0s): 0.3 + 0.3 = 0.6s (fits at base
+            level).
         """
         lim = LIMITS["deescalation_moderate_load"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=0.0,
@@ -877,7 +925,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: batcher must have escalated during heavy-load "
             f"phase (reached level {result.max_level}, "
@@ -888,15 +936,17 @@ class TestDeescalation:
         )
 
     def test_multi_level_deescalation(self):
-        """After reaching level 2+, a drop to light load should step back
+        """After reaching level 3+, a drop to light load should step back
         through all levels to 0.
 
-        Heavy phase at 1s: 1.8 + 0.2 = 2.0s (2x overloaded, needs level 2+).
-        At 4s: 1.8 + 0.8 = 2.6s (OK, escalation stops at level 2).
-        Light phase at 4s: 0.1 + 0.4 = 0.5s (well within any window).
+        Heavy phase:
+            Level 0 (1.0s): 1.8 + 0.2 = 2.0s (overloaded).
+            Level 2 (2.0s): 1.8 + 0.4 = 2.2s (overloaded).
+            Level 4 (4.0s): 1.8 + 0.8 = 2.6s (65%, underloaded → settles).
+        Light phase at any level: 0.1 + 0.1*w = well within any window.
         """
         lim = LIMITS["multi_level_deescalation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=0.0,
@@ -908,7 +958,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost)
+        result = run_scenario(batcher, 240.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during heavy phase (reached {result.max_level})"
@@ -919,18 +969,21 @@ class TestDeescalation:
         )
 
     def test_partial_deescalation(self):
-        """Load drops from severe to moderate: should settle at level 1, not
-        stay stuck at the peak level.
+        """Load drops from severe to moderate: should partially de-escalate,
+        not stay stuck at the peak level.
 
-        Severe phase at 1s: 1.8 + 0.2 = 2.0s (needs level 2).
-        Moderate phase at 1s: 0.6 + 0.5 = 1.1s (overloaded, needs level 1).
-        Moderate phase at 2s: 0.6 + 1.0 = 1.6s (fits, 80% — no headroom to
-            de-escalate further).
-        Moderate phase at 4s: 0.6 + 2.0 = 2.6s (65% — has headroom, should
-            de-escalate from level 2).
+        Severe phase (escalates to level 4):
+            Level 0 (1.0s): 1.8 + 0.2 = 2.0s (overloaded).
+            Level 2 (2.0s): 1.8 + 0.4 = 2.2s (overloaded).
+            Level 4 (4.0s): 1.8 + 0.8 = 2.6s (65%, underloaded).
+            De-escalates to level 3 (2.83s): 1.8 + 0.57 = 2.37s (84%, dead zone).
+
+        Moderate phase (de-escalates from level 3 to level 2):
+            Level 3 (2.83s): 0.6 + 1.41 = 2.01s (71%, underloaded).
+            Level 2 (2.0s): 0.6 + 1.0 = 1.6s (80%, dead zone — stuck).
         """
         lim = LIMITS["partial_deescalation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=0.0,
@@ -942,7 +995,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost)
+        result = run_scenario(batcher, 240.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during severe phase (reached {result.max_level})"
@@ -966,7 +1019,7 @@ class TestRealisticShutterScenario:
         with very few events, resulting in overhead-dominated processing.
         """
         lim = LIMITS["shutter_open_close"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         rng = random.Random(42)
         cosmic = constant_overhead_cost(overhead_s=0.2, per_second_cost=0.01)
@@ -985,7 +1038,7 @@ class TestRealisticShutterScenario:
             ),
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
 
         assert result.max_level >= lim["min_level_reached"], (
             f"Only reached level {result.max_level} during shutter open "
@@ -1007,7 +1060,7 @@ class TestRealisticShutterScenario:
         background) must allow de-escalation back to base.
         """
         lim = LIMITS["repeated_shutter_cycles"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         rng = random.Random(42)
         high = constant_overhead_cost(
@@ -1025,7 +1078,7 @@ class TestRealisticShutterScenario:
             off_cost=cosmic,
         )
 
-        result = run_scenario(batcher, 200.0, cost)
+        result = run_scenario(batcher, 200.0, cost, clock)
 
         assert result.max_level >= lim["min_level_reached"], (
             f"Precondition: at least one on-phase must trigger escalation "
@@ -1036,9 +1089,17 @@ class TestRealisticShutterScenario:
             f"Stuck at level {result.final_level} after repeated cycles "
             f"(limit: {lim['max_final_level']})"
         )
+        escalation_events = sum(
+            1 for _, old, new in result.level_changes() if new > old
+        )
+        assert escalation_events >= lim["min_escalation_events"], (
+            f"Only {escalation_events} escalation event(s) — expected the batcher "
+            f"to re-escalate during subsequent on-phases "
+            f"(need >= {lim['min_escalation_events']})"
+        )
 
     def test_severe_overload_to_cosmic_background(self):
-        """After severe overload reaching level 2+, shutter close drops load
+        """After severe overload reaching level 3+, shutter close drops load
         to cosmic background.  Must de-escalate through all levels back to 0.
 
         This is the most operationally important de-escalation path: ev44
@@ -1047,18 +1108,18 @@ class TestRealisticShutterScenario:
         apply; the batcher must de-escalate via the underload counter.
 
         Severe phase (overhead-dominated):
-            Level 0 (1s): 2.0 + 0.3 = 2.3s (overloaded).
-            Level 1 (2s): 2.0 + 0.6 = 2.6s (overloaded).
-            Level 2 (4s): 2.0 + 1.2 = 3.2s (80%, dead zone — stable).
+            Level 0 (1.0s): 2.0 + 0.3 = 2.3s (overloaded).
+            Level 2 (2.0s): 2.0 + 0.6 = 2.6s (overloaded).
+            Level 4 (4.0s): 2.0 + 1.2 = 3.2s (80%, dead zone — stable).
 
         Cosmic background phase (overhead-dominated, near-zero data cost):
-            Level 2 (4s): 0.2 + 0.04 = 0.24s (6% utilization).
-            Level 1 (2s): 0.2 + 0.02 = 0.22s (11% utilization).
-            Level 0 (1s): 0.2 + 0.01 = 0.21s (21% utilization).
-            All levels are well below the 70% headroom threshold.
+            Level 4 (4.0s): 0.2 + 0.04 = 0.24s (6% utilization).
+            Level 2 (2.0s): 0.2 + 0.02 = 0.22s (11% utilization).
+            Level 0 (1.0s): 0.2 + 0.01 = 0.21s (21% utilization).
+            All levels are well below the 75% headroom threshold.
         """
         lim = LIMITS["severe_to_cosmic_background"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=0.0,
@@ -1070,7 +1131,7 @@ class TestRealisticShutterScenario:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost)
+        result = run_scenario(batcher, 240.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during severe phase (reached {result.max_level})"
@@ -1091,11 +1152,11 @@ class TestBacklogDraining:
         At 2s: 0.6 + 1.2 = 1.8s (OK, surplus drains backlog).
         """
         lim = LIMITS["backlog_drains"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6)
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
 
         assert result.max_level >= lim["min_level_reached"], (
             f"Precondition: escalation must occur for backlog draining to be "
@@ -1119,11 +1180,11 @@ class TestBacklogDraining:
         At 2s: 0.8 + 0.6 = 1.4s (OK).
         """
         lim = LIMITS["backlog_peaks_and_decreases"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = constant_overhead_cost(overhead_s=0.8, per_second_cost=0.3)
 
-        result = run_scenario(batcher, 120.0, cost)
+        result = run_scenario(batcher, 120.0, cost, clock)
 
         assert result.max_level >= lim["min_level_reached"], (
             "Precondition: escalation must occur to test backlog draining"
@@ -1149,12 +1210,12 @@ class TestProcessingTimeAwareness:
         """When processing demonstrably exceeds the batch window,
         escalation should be fast."""
         lim = LIMITS["fast_escalation_clear_overload"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         # Clear overload: 1.5x the window at every level
         cost = constant_overhead_cost(overhead_s=0.0, per_second_cost=1.5)
 
-        result = run_scenario(batcher, 60.0, cost)
+        result = run_scenario(batcher, 60.0, cost, clock)
 
         first_esc = result.first_escalation_time_s()
         assert first_esc is not None, "Never escalated under overload"
@@ -1166,11 +1227,11 @@ class TestProcessingTimeAwareness:
     def test_no_escalation_when_processing_fits(self):
         """No escalation if processing completes within the window."""
         lim = LIMITS["no_escalation_when_fits"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = constant_overhead_cost(overhead_s=0.1, per_second_cost=0.3)
 
-        result = run_scenario(batcher, 60.0, cost)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level <= lim["max_level"], (
             f"Escalated to {result.max_level} despite fitting "
             f"(limit: {lim['max_level']})"
@@ -1178,11 +1239,11 @@ class TestProcessingTimeAwareness:
 
 
 class TestDeescalationDeadZone:
-    """The 70-100% utilization dead zone where de-escalation cannot trigger.
+    """The 75-100% utilization dead zone where de-escalation cannot trigger.
 
-    When processing fills 70-100% of the escalated window, it falls in the
+    When processing fills 75-100% of the escalated window, it falls in the
     "in between" zone: not overloaded (processing < window) and not
-    underloaded (processing >= 0.7 * window).  Both consecutive counters
+    underloaded (processing >= 0.75 * window).  Both consecutive counters
     are reset every cycle, so neither escalation nor de-escalation can
     trigger — even if a lower level would handle the load fine.
     """
@@ -1192,18 +1253,19 @@ class TestDeescalationDeadZone:
         at the escalated level keeps the batcher stuck, even though a lower
         level would work.
 
-        Severe phase (reaches level 2):
-            Level 0 (1s): 2.0 + 0.3 = 2.3s (overloaded).
-            Level 1 (2s): 2.0 + 0.6 = 2.6s (overloaded).
-            Level 2 (4s): 2.0 + 1.2 = 3.2s (80%, dead zone — stable).
+        Severe phase (reaches level 4):
+            Level 0 (1.0s): 2.0 + 0.3 = 2.3s (overloaded).
+            Level 2 (2.0s): 2.0 + 0.6 = 2.6s (overloaded).
+            Level 4 (4.0s): 2.0 + 1.2 = 3.2s (80%, dead zone).
 
-        Moderate phase (stuck at level 2):
-            Level 2 (4s): 0.5 + 2.4 = 2.9s (72.5%, dead zone — stuck).
-            Level 1 (2s): 0.5 + 1.2 = 1.7s (would fit at 85%).
-            Level 0 (1s): 0.5 + 0.6 = 1.1s (would be overloaded).
+        Moderate phase (de-escalates from level 4 to level 3, then stuck):
+            Level 4 (4.0s): 0.5 + 2.4 = 2.9s (72.5%, underloaded < 75%).
+            Level 3 (2.83s): 0.5 + 1.7 = 2.2s (78%, dead zone — stuck).
+            Level 2 (2.0s): 0.5 + 1.2 = 1.7s (would fit at 85%).
+            Level 0 (1.0s): 0.5 + 0.6 = 1.1s (would be overloaded).
         """
         lim = LIMITS["dead_zone_stuck"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = step_function_cost(
             step_time_s=0.0,
@@ -1215,7 +1277,7 @@ class TestDeescalationDeadZone:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost)
+        result = run_scenario(batcher, 240.0, cost, clock)
 
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
@@ -1236,22 +1298,22 @@ class TestJitterInducedStickyEscalation:
     When mean processing equals the batch window, jitter causes roughly
     half the batches to be overloaded.  Two consecutive overloaded batches
     (~25% probability per pair) trigger escalation.  At the escalated level,
-    processing lands in the dead zone (70-100% utilization), preventing
-    de-escalation.  The batcher stays at level 1 permanently.
+    processing lands in the dead zone (75-100% utilization), preventing
+    de-escalation.  The batcher stays permanently escalated.
     """
 
     def test_jitter_at_boundary_causes_sticky_escalation(self):
         """Mean processing = window with 10% jitter: escalates and stays.
 
-        At 1s window: 0.5 + 0.5 = 1.0s mean, jitter +/-10%.
+        At level 0 (1s window): 0.5 + 0.5 = 1.0s mean, jitter +/-10%.
             ~50% of cycles are overloaded (processing > 1.0).
             P(2 consecutive overloaded) ~ 25%, so escalation is very likely.
 
-        At 2s window: 0.5 + 1.0 = 1.5s mean (75% utilization).
-            In the dead zone (>70%), so de-escalation never triggers.
+        At level 2 (2s window): 0.5 + 1.0 = 1.5s mean (75% utilization).
+            At the dead-zone boundary (>= 75%), so de-escalation never triggers.
         """
         lim = LIMITS["jitter_sticky_escalation"]
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
         cost = constant_overhead_cost(
             overhead_s=0.5,
@@ -1260,7 +1322,7 @@ class TestJitterInducedStickyEscalation:
             rng=random.Random(42),
         )
 
-        result = run_scenario(batcher, 180.0, cost)
+        result = run_scenario(batcher, 180.0, cost, clock)
 
         assert result.max_level >= lim["min_level"], (
             f"Expected escalation from boundary jitter "
@@ -1292,16 +1354,14 @@ class TestTimeGapBatches:
         and time gaps (processing_time=0 reported as message_count=0).
         """
         lim = LIMITS["time_gaps_during_escalation"]
-        clock = FakeClock()
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
-        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
-            for _ in range(20):
-                # Overloaded real batch
-                clock.advance(1.5)
-                batcher.report_batch(100, processing_time_s=1.5)
-                # Time-gap empty batch (should be a no-op)
-                batcher.report_batch(0)
+        for _ in range(20):
+            # Overloaded real batch
+            clock.advance(1.5)
+            batcher.report_batch(100, processing_time_s=1.5)
+            # Time-gap empty batch (should be a no-op)
+            batcher.report_batch(0)
 
         assert batcher.state.level >= lim["min_level_reached"], (
             f"Time gaps prevented escalation: only reached level "
@@ -1313,25 +1373,23 @@ class TestTimeGapBatches:
         should not prevent de-escalation.
         """
         lim = LIMITS["time_gaps_during_deescalation"]
-        clock = FakeClock()
-        batcher = make_default_batcher()
+        batcher, clock = make_default_batcher()
 
-        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
-            # Escalate to level 1
-            for _ in range(3):
-                window = batcher.batch_length_s
-                clock.advance(window * 1.5)
-                batcher.report_batch(100, processing_time_s=window * 1.5)
-            assert batcher.state.level >= 1, "Precondition: must escalate"
+        # Escalate to level 1
+        for _ in range(3):
+            window = batcher.batch_length_s
+            clock.advance(window * 1.5)
+            batcher.report_batch(100, processing_time_s=window * 1.5)
+        assert batcher.state.level >= 1, "Precondition: must escalate"
 
-            # Underloaded batches interleaved with time gaps
-            for _ in range(20):
-                window = batcher.batch_length_s
-                processing = window * 0.3
-                clock.advance(processing)
-                batcher.report_batch(100, processing_time_s=processing)
-                # Time-gap empty batch
-                batcher.report_batch(0)
+        # Underloaded batches interleaved with time gaps
+        for _ in range(20):
+            window = batcher.batch_length_s
+            processing = window * 0.3
+            clock.advance(processing)
+            batcher.report_batch(100, processing_time_s=processing)
+            # Time-gap empty batch
+            batcher.report_batch(0)
 
         assert batcher.state.level <= lim["max_final_level"], (
             f"Time gaps prevented de-escalation: stuck at level "
