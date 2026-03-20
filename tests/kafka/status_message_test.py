@@ -135,9 +135,6 @@ class TestJobStateToNicosStatus:
         assert job_state_to_nicos_status_constant(JobState.error) == NicosStatus.ERROR
         assert job_state_to_nicos_status_constant(JobState.finishing) == NicosStatus.OK
         assert (
-            job_state_to_nicos_status_constant(JobState.paused) == NicosStatus.DISABLED
-        )
-        assert (
             job_state_to_nicos_status_constant(JobState.scheduled)
             == NicosStatus.DISABLED
         )

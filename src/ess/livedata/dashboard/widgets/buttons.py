@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import panel as pn
 
 from .icons import get_icon
-from .styles import StatusColors
+from .styles import HoverColors, StatusColors
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,12 @@ class ButtonStyles:
     # Colors
     PRIMARY_BLUE = StatusColors.PRIMARY
     DANGER_RED = StatusColors.ERROR
+
+    # Hover colors
+    PRIMARY_HOVER = HoverColors.PRIMARY
+    DANGER_HOVER = HoverColors.ERROR
+    SUCCESS_HOVER = HoverColors.SUCCESS
+    MUTED_HOVER = HoverColors.MUTED
 
     # Dimensions
     CELL_MARGIN = 2
@@ -184,7 +190,7 @@ def create_download_button(
     # and has an anchor element inside that needs centering
     stylesheet = create_tool_button_stylesheet(
         button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color='rgba(0, 123, 255, 0.1)',
+        hover_color=ButtonStyles.PRIMARY_HOVER,
         selector=':host(.solid) button.bk-btn.bk-btn-primary',
         include_anchor_styles=True,
     )

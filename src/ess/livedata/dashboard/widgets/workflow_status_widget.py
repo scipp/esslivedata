@@ -29,7 +29,7 @@ from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
 from .icons import get_icon
-from .styles import StatusColors
+from .styles import Colors, ErrorBox, HoverColors, StatusColors, WarningBox
 
 if TYPE_CHECKING:
     from ..job_orchestrator import JobConfig, JobOrchestrator
@@ -41,25 +41,23 @@ if TYPE_CHECKING:
 class WorkflowWidgetStyles:
     """Styling constants for workflow status widget."""
 
-    # Colors (matching existing JobStatusWidget)
     STATUS_COLORS: ClassVar[dict[str, str]] = {
         'active': StatusColors.SUCCESS,
         'stopped': StatusColors.MUTED,
         'error': StatusColors.ERROR,
-        'warning': '#fd7e14',  # Orange (unique to workflow status)
+        'warning': StatusColors.WARNING,
         'pending': StatusColors.PENDING,
-        'paused': StatusColors.WARNING,
         'finishing': StatusColors.PENDING,
         'scheduled': StatusColors.PENDING,
     }
     MODIFIED_BORDER_COLOR = StatusColors.WARNING
-    UNCONFIGURED_BG = '#fff3cd'
-    UNCONFIGURED_BORDER = '#ffc107'
-    ERROR_BG = '#f8d7da'
-    ERROR_BORDER = '#f5c6cb'
-    ERROR_TEXT = '#721c24'
+    UNCONFIGURED_BG = WarningBox.BG
+    UNCONFIGURED_BORDER = WarningBox.BORDER
+    ERROR_BG = ErrorBox.BG
+    ERROR_BORDER = ErrorBox.BORDER
+    ERROR_TEXT = ErrorBox.TEXT
 
-    # Output chip colors
+    # Output chip colors (unique to workflow outputs display)
     OUTPUT_CHIP_BG = '#e7f1ff'
     OUTPUT_CHIP_BORDER = '#b6d4fe'
     OUTPUT_CHIP_TEXT = '#0d6efd'
@@ -253,7 +251,7 @@ class WorkflowStatusWidget:
                 self._panel = pn.Column(
                     *children,
                     styles={
-                        'border': '1px solid #dee2e6',
+                        'border': f'1px solid {Colors.BORDER}',
                         'border-radius': '6px',
                         'overflow': 'hidden',
                         'background': 'white',
@@ -271,14 +269,15 @@ class WorkflowStatusWidget:
         icon_name = 'chevron-down' if self._expanded else 'chevron-right'
         self._expand_btn = create_tool_button(
             icon_name=icon_name,
-            button_color='#6c757d',
+            button_color=StatusColors.MUTED,
             hover_color='rgba(0, 0, 0, 0.05)',
             on_click_callback=lambda: self.set_expanded(not self._expanded),
         )
 
         # Workflow title
         title_html = pn.pane.HTML(
-            f'<span style="font-weight: 600; font-size: 14px; color: #212529;">'
+            f'<span style="font-weight: 600; font-size: 14px; '
+            f'color: {Colors.TEXT_DARK};">'
             f'{self._workflow_spec.title}</span>',
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
@@ -320,7 +319,7 @@ class WorkflowStatusWidget:
             action_buttons,
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={
-                'background': '#f8f9fa',
+                'background': Colors.BG_LIGHT,
                 'padding': '6px 12px',  # Fit 28px buttons in 40px header
             },
             sizing_mode='stretch_width',
@@ -332,7 +331,7 @@ class WorkflowStatusWidget:
     def _update_header_border(self) -> None:
         """Update header border based on expanded state."""
         if self._header is not None:
-            border = '1px solid #dee2e6' if self._expanded else 'none'
+            border = f'1px solid {Colors.BORDER}' if self._expanded else 'none'
             self._header.styles = {**self._header.styles, 'border-bottom': border}
 
     def _create_header_buttons(self) -> pn.Row:
@@ -349,7 +348,7 @@ class WorkflowStatusWidget:
             play_btn = create_tool_button(
                 icon_name='player-play',
                 button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
-                hover_color='rgba(40, 167, 69, 0.1)',
+                hover_color=HoverColors.SUCCESS,
                 on_click_callback=self._on_commit_click,
             )
             buttons.append(play_btn)
@@ -359,15 +358,15 @@ class WorkflowStatusWidget:
             stop_btn = create_tool_button(
                 icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
-                hover_color='rgba(220, 53, 69, 0.1)',
+                hover_color=ButtonStyles.DANGER_HOVER,
                 on_click_callback=self._on_stop_click,
             )
             buttons.append(stop_btn)
 
             reset_btn = create_tool_button(
                 icon_name='backspace',
-                button_color='#6c757d',
-                hover_color='rgba(108, 117, 125, 0.1)',
+                button_color=StatusColors.MUTED,
+                hover_color=HoverColors.MUTED,
                 on_click_callback=self._on_reset_click,
             )
             buttons.append(reset_btn)
@@ -421,7 +420,7 @@ class WorkflowStatusWidget:
         if self._workflow_spec.description:
             components.append(
                 pn.pane.HTML(
-                    f'<div style="font-size: 12px; color: #6c757d; '
+                    f'<div style="font-size: 12px; color: {Colors.TEXT_MUTED}; '
                     f'font-style: italic; line-height: 1.4;">'
                     f'{self._workflow_spec.description}</div>',
                     sizing_mode='stretch_width',
@@ -429,7 +428,7 @@ class WorkflowStatusWidget:
                     styles={
                         'padding': '8px 12px',
                         'background': '#ffffff',
-                        'border-bottom': '1px solid #dee2e6',
+                        'border-bottom': f'1px solid {Colors.BORDER}',
                     },
                 )
             )
@@ -486,7 +485,9 @@ class WorkflowStatusWidget:
         label_text = 'Configuration (staged)' if has_modifications else 'Configuration'
 
         label = pn.pane.HTML(
-            f'<span style="font-size: 11px; color: #6c757d; text-transform: uppercase; '
+            f'<span style="font-size: 11px; '
+            f'color: {Colors.TEXT_MUTED}; '
+            f'text-transform: uppercase; '
             f'letter-spacing: 0.5px;">{label_text}</span>',
             margin=(0, 0, 6, 0),
         )
@@ -494,7 +495,10 @@ class WorkflowStatusWidget:
         return pn.Column(
             label,
             *toolbars,
-            styles={'padding': '8px 12px', 'border-bottom': '1px solid #dee2e6'},
+            styles={
+                'padding': '8px 12px',
+                'border-bottom': f'1px solid {Colors.BORDER}',
+            },
             sizing_mode='stretch_width',
             margin=0,
         )
@@ -506,7 +510,7 @@ class WorkflowStatusWidget:
         # Source tags - use display titles from orchestrator
         source_tags_html = ''.join(
             f'<span style="display: inline-block; padding: 1px 6px; '
-            f'background: {"#fff3cd" if is_unconfigured else "#e9ecef"}; '
+            f'background: {WarningBox.BG if is_unconfigured else Colors.BG_MUTED}; '
             f'border-radius: 3px; margin-right: 4px; font-size: 11px;">'
             f'{self._orchestrator.get_source_title(name)}</span>'
             for name in group.source_names
@@ -514,11 +518,14 @@ class WorkflowStatusWidget:
 
         if is_unconfigured:
             source_tags_html += (
-                '<span style="font-style: italic; color: #856404;">unconfigured</span>'
+                f'<span style="font-style: italic; '
+                f'color: {WarningBox.TEXT};">unconfigured</span>'
             )
 
         source_list = pn.pane.HTML(
-            f'<div style="font-size: 12px; color: #495057;">{source_tags_html}</div>',
+            f'<div style="font-size: 12px; '
+            f'color: {Colors.TEXT};">'
+            f'{source_tags_html}</div>',
             sizing_mode='stretch_width',
         )
 
@@ -526,7 +533,7 @@ class WorkflowStatusWidget:
         gear_btn = create_tool_button(
             icon_name='settings',
             button_color=ButtonStyles.PRIMARY_BLUE,
-            hover_color='rgba(0, 123, 255, 0.1)',
+            hover_color=ButtonStyles.PRIMARY_HOVER,
             on_click_callback=lambda: self._on_gear_click(list(group.source_names)),
         )
 
@@ -537,7 +544,7 @@ class WorkflowStatusWidget:
             remove_btn = create_tool_button(
                 icon_name='x',
                 button_color=ButtonStyles.DANGER_RED,
-                hover_color='rgba(220, 53, 69, 0.1)',
+                hover_color=ButtonStyles.DANGER_HOVER,
                 on_click_callback=lambda: self._on_remove_click(
                     list(group.source_names)
                 ),
@@ -549,13 +556,13 @@ class WorkflowStatusWidget:
             'padding': '6px 8px',
             'background': WorkflowWidgetStyles.UNCONFIGURED_BG
             if is_unconfigured
-            else '#f8f9fa',
+            else Colors.BG_LIGHT,
             'border': (
                 '1px solid '
                 + (
                     WorkflowWidgetStyles.UNCONFIGURED_BORDER
                     if is_unconfigured
-                    else '#dee2e6'
+                    else Colors.BORDER
                 )
             ),
             'border-radius': '4px',
@@ -598,8 +605,10 @@ class WorkflowStatusWidget:
             )
 
         label = pn.pane.HTML(
-            '<span style="font-size: 11px; color: #6c757d; text-transform: uppercase; '
-            'letter-spacing: 0.5px;">Outputs</span>',
+            f'<span style="font-size: 11px; '
+            f'color: {Colors.TEXT_MUTED}; '
+            f'text-transform: uppercase; '
+            f'letter-spacing: 0.5px;">Outputs</span>',
             margin=(0, 0, 6, 0),
         )
 
@@ -654,8 +663,8 @@ class WorkflowStatusWidget:
             commit_btn,
             styles={
                 'padding': '8px 12px',
-                'background': '#f8f9fa',
-                'border-top': '1px solid #dee2e6',
+                'background': Colors.BG_LIGHT,
+                'border-top': f'1px solid {Colors.BORDER}',
             },
             sizing_mode='stretch_width',
             margin=0,
@@ -672,7 +681,11 @@ class WorkflowStatusWidget:
     @staticmethod
     def _make_timing_html(timing_text: str) -> str:
         """Generate HTML for the timing display."""
-        return f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
+        return (
+            f'<span style="font-size: 12px; '
+            f'color: {Colors.TEXT_MUTED};">'
+            f'{timing_text}</span>'
+        )
 
     @staticmethod
     def _make_status_dots_html(sources: list[SourceStatus]) -> str:
@@ -763,16 +776,11 @@ class WorkflowStatusWidget:
                 error_summary=error_summary,
             )
 
-            # Status: priority error > warning > paused > active
+            # Status: priority error > warning > active
             if job_status.state == JobState.error:
                 worst_state = JobState.error
             elif job_status.state == JobState.warning and worst_state != JobState.error:
                 worst_state = JobState.warning
-            elif job_status.state == JobState.paused and worst_state not in (
-                JobState.error,
-                JobState.warning,
-            ):
-                worst_state = JobState.paused
 
             # Timing: track earliest start
             start = job_status.start_time
@@ -1014,25 +1022,27 @@ class WorkflowStatusListWidget:
 
     def _create_header_row(self) -> pn.Row:
         """Create the header row with expand/collapse all buttons."""
+        compact_btn_css = [
+            f"""
+            button {{
+                font-size: 12px !important;
+                padding: 4px 8px !important;
+                border: 1px solid {Colors.BORDER} !important;
+                border-radius: 4px !important;
+            }}
+            button:hover {{
+                background-color: {Colors.BG_MUTED} !important;
+            }}
+            """
+        ]
+
         expand_all_btn = pn.widgets.Button(
             name='Expand all',
             button_type='light',
             width=90,
             height=28,
             margin=(0, 4, 0, 0),
-            stylesheets=[
-                """
-                button {
-                    font-size: 12px !important;
-                    padding: 4px 8px !important;
-                    border: 1px solid #dee2e6 !important;
-                    border-radius: 4px !important;
-                }
-                button:hover {
-                    background-color: #e9ecef !important;
-                }
-                """
-            ],
+            stylesheets=compact_btn_css,
         )
         expand_all_btn.on_click(lambda e: self._expand_all())
 
@@ -1042,19 +1052,7 @@ class WorkflowStatusListWidget:
             width=90,
             height=28,
             margin=0,
-            stylesheets=[
-                """
-                button {
-                    font-size: 12px !important;
-                    padding: 4px 8px !important;
-                    border: 1px solid #dee2e6 !important;
-                    border-radius: 4px !important;
-                }
-                button:hover {
-                    background-color: #e9ecef !important;
-                }
-                """
-            ],
+            stylesheets=compact_btn_css,
         )
         collapse_all_btn.on_click(lambda e: self._collapse_all())
 
