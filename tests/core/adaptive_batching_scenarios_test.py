@@ -157,6 +157,27 @@ LIMITS: dict[str, dict[str, float]] = {
     "stabilization_after_step": {
         "max_oscillations": 0,
     },
+    # -- Dead zone (70-100% utilization at escalated level) ---------------
+    # Documents limitation: batcher cannot de-escalate when processing
+    # fills the dead zone, even if a lower level would suffice.
+    "dead_zone_stuck": {
+        "min_level_during_load": 2,
+        "min_final_level": 2,
+    },
+    # -- Jitter-induced sticky escalation ---------------------------------
+    # Jitter at the exact boundary causes escalation that becomes permanent
+    # because the escalated level lands in the dead zone.
+    "jitter_sticky_escalation": {
+        "min_level": 1,
+        "min_final_level": 1,
+    },
+    # -- Time-gap batches (message_count=0) -------------------------------
+    "time_gaps_during_escalation": {
+        "min_level_reached": 1,
+    },
+    "time_gaps_during_deescalation": {
+        "max_final_level": 0,
+    },
 }
 
 
@@ -1096,4 +1117,166 @@ class TestProcessingTimeAwareness:
         assert result.max_level <= lim["max_level"], (
             f"Escalated to {result.max_level} despite fitting "
             f"(limit: {lim['max_level']})"
+        )
+
+
+class TestDeescalationDeadZone:
+    """The 70-100% utilization dead zone where de-escalation cannot trigger.
+
+    When processing fills 70-100% of the escalated window, it falls in the
+    "in between" zone: not overloaded (processing < window) and not
+    underloaded (processing >= 0.7 * window).  Both consecutive counters
+    are reset every cycle, so neither escalation nor de-escalation can
+    trigger — even if a lower level would handle the load fine.
+    """
+
+    def test_stuck_in_dead_zone_after_load_drop(self):
+        """After severe overload, a moderate load that lands in the dead zone
+        at the escalated level keeps the batcher stuck, even though a lower
+        level would work.
+
+        Severe phase (reaches level 2):
+            Level 0 (1s): 2.0 + 0.3 = 2.3s (overloaded).
+            Level 1 (2s): 2.0 + 0.6 = 2.6s (overloaded).
+            Level 2 (4s): 2.0 + 1.2 = 3.2s (80%, dead zone — stable).
+
+        Moderate phase (stuck at level 2):
+            Level 2 (4s): 0.5 + 2.4 = 2.9s (72.5%, dead zone — stuck).
+            Level 1 (2s): 0.5 + 1.2 = 1.7s (would fit at 85%).
+            Level 0 (1s): 0.5 + 0.6 = 1.1s (would be overloaded).
+        """
+        lim = LIMITS["dead_zone_stuck"]
+        batcher = make_default_batcher()
+
+        cost = step_function_cost(
+            step_time_s=0.0,
+            before=idle_cost(),
+            after=step_function_cost(
+                step_time_s=60.0,
+                before=constant_overhead_cost(overhead_s=2.0, per_second_cost=0.3),
+                after=constant_overhead_cost(overhead_s=0.5, per_second_cost=0.6),
+            ),
+        )
+
+        result = run_scenario(batcher, 240.0, cost)
+
+        assert result.max_level >= lim["min_level_during_load"], (
+            f"Precondition: must reach level {lim['min_level_during_load']}+ "
+            f"during severe phase (reached {result.max_level})"
+        )
+        # Documents the limitation: batcher stays at level 2 despite level 1
+        # being sufficient.  If the strategy is improved to probe lower levels,
+        # this assertion should change to max_final_level: 1.
+        assert result.final_level >= lim["min_final_level"], (
+            f"Final level {result.final_level} — expected to stay stuck "
+            f"at level {lim['min_final_level']}+ (dead zone)"
+        )
+
+
+class TestJitterInducedStickyEscalation:
+    """Jitter at the exact boundary can cause permanent escalation.
+
+    When mean processing equals the batch window, jitter causes roughly
+    half the batches to be overloaded.  Two consecutive overloaded batches
+    (~25% probability per pair) trigger escalation.  At the escalated level,
+    processing lands in the dead zone (70-100% utilization), preventing
+    de-escalation.  The batcher stays at level 1 permanently.
+    """
+
+    def test_jitter_at_boundary_causes_sticky_escalation(self):
+        """Mean processing = window with 10% jitter: escalates and stays.
+
+        At 1s window: 0.5 + 0.5 = 1.0s mean, jitter +/-10%.
+            ~50% of cycles are overloaded (processing > 1.0).
+            P(2 consecutive overloaded) ~ 25%, so escalation is very likely.
+
+        At 2s window: 0.5 + 1.0 = 1.5s mean (75% utilization).
+            In the dead zone (>70%), so de-escalation never triggers.
+        """
+        lim = LIMITS["jitter_sticky_escalation"]
+        batcher = make_default_batcher()
+
+        cost = constant_overhead_cost(
+            overhead_s=0.5,
+            per_second_cost=0.5,
+            jitter_fraction=0.1,
+            rng=random.Random(42),
+        )
+
+        result = run_scenario(batcher, 180.0, cost)
+
+        assert result.max_level >= lim["min_level"], (
+            f"Expected escalation from boundary jitter "
+            f"(reached level {result.max_level})"
+        )
+        # Documents the limitation: once escalated, stays at level 1 due to
+        # the dead zone.  If the strategy is improved to handle this case,
+        # the expected final level should be 0.
+        assert result.final_level >= lim["min_final_level"], (
+            f"Expected to stay at level {lim['min_final_level']}+ "
+            f"(dead zone prevents de-escalation)"
+        )
+
+
+class TestTimeGapBatches:
+    """Time-gap batches (message_count=0) should not disrupt adaptive behavior.
+
+    The ``SimpleMessageBatcher`` can return empty batches when there is a
+    time gap in the data stream.  The ``AdaptiveMessageBatcher`` treats
+    these as a no-op, which means they should not interfere with ongoing
+    escalation or de-escalation.
+    """
+
+    def test_time_gaps_do_not_disrupt_escalation(self):
+        """Interleaving empty (time-gap) batches with overloaded batches
+        should not prevent escalation.
+
+        Uses a cost model that alternates between real overloaded batches
+        and time gaps (processing_time=0 reported as message_count=0).
+        """
+        lim = LIMITS["time_gaps_during_escalation"]
+        clock = FakeClock()
+        batcher = make_default_batcher()
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            for _ in range(20):
+                # Overloaded real batch
+                clock.advance(1.5)
+                batcher.report_batch(100, processing_time_s=1.5)
+                # Time-gap empty batch (should be a no-op)
+                batcher.report_batch(0)
+
+        assert batcher.state.level >= lim["min_level_reached"], (
+            f"Time gaps prevented escalation: only reached level "
+            f"{batcher.state.level} (need >= {lim['min_level_reached']})"
+        )
+
+    def test_time_gaps_do_not_disrupt_deescalation(self):
+        """Interleaving empty (time-gap) batches with underloaded batches
+        should not prevent de-escalation.
+        """
+        lim = LIMITS["time_gaps_during_deescalation"]
+        clock = FakeClock()
+        batcher = make_default_batcher()
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            # Escalate to level 1
+            for _ in range(3):
+                window = batcher.batch_length_s
+                clock.advance(window * 1.5)
+                batcher.report_batch(100, processing_time_s=window * 1.5)
+            assert batcher.state.level >= 1, "Precondition: must escalate"
+
+            # Underloaded batches interleaved with time gaps
+            for _ in range(20):
+                window = batcher.batch_length_s
+                processing = window * 0.3
+                clock.advance(processing)
+                batcher.report_batch(100, processing_time_s=processing)
+                # Time-gap empty batch
+                batcher.report_batch(0)
+
+        assert batcher.state.level <= lim["max_final_level"], (
+            f"Time gaps prevented de-escalation: stuck at level "
+            f"{batcher.state.level} (limit: {lim['max_final_level']})"
         )
