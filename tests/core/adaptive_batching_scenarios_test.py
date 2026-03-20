@@ -114,6 +114,18 @@ LIMITS: dict[str, dict[str, float]] = {
         "min_level_during_load": 1,
         "max_final_level": 0,
     },
+    "deescalation_moderate_load": {
+        "min_level_during_load": 1,
+        "max_final_level": 0,
+    },
+    "multi_level_deescalation": {
+        "min_level_during_load": 2,
+        "max_final_level": 0,
+    },
+    "partial_deescalation": {
+        "min_level_during_load": 2,
+        "max_final_level": 1,
+    },
     # -- Realistic shutter ------------------------------------------------
     "shutter_open_close": {
         "min_level_reached": 1,
@@ -781,16 +793,6 @@ class TestDeescalation:
             f"Final level {result.final_level} (limit: {lim['max_final_level']})"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known limitation: idle poll cycles between batches reset the "
-            "consecutive-underloaded counter, preventing de-escalation under "
-            "continuous light load. At level 1 (2s window) with 0.3s "
-            "processing, the 1.7s of spare time generates ~17 idle polls "
-            "that each reset _consecutive_underloaded to 0."
-        ),
-        strict=True,
-    )
     def test_deescalates_after_step_down_to_light_load(self):
         """When load decreases to light (but non-zero), must de-escalate.
 
@@ -822,6 +824,99 @@ class TestDeescalation:
         )
         assert result.final_level <= lim["max_final_level"], (
             f"Final level {result.final_level} (limit: {lim['max_final_level']})"
+        )
+
+    def test_deescalates_under_moderate_continuous_load(self):
+        """De-escalation must work when processing fills a moderate fraction
+        of the escalated window, not just under near-idle conditions.
+
+        Heavy phase at 1s window: 0.8 + 0.3 = 1.1s (overloaded, escalate to level 1).
+        Moderate phase at 2s window: 0.3 + 0.3*2 = 0.9s (45% utilization, headroom).
+        Moderate phase at 1s window: 0.3 + 0.3 = 0.6s (fits at base level).
+        """
+        lim = LIMITS["deescalation_moderate_load"]
+        batcher = make_default_batcher()
+
+        cost = step_function_cost(
+            step_time_s=0.0,
+            before=idle_cost(),
+            after=step_function_cost(
+                step_time_s=40.0,
+                before=constant_overhead_cost(overhead_s=0.8, per_second_cost=0.3),
+                after=constant_overhead_cost(overhead_s=0.3, per_second_cost=0.3),
+            ),
+        )
+
+        result = run_scenario(batcher, 180.0, cost)
+        assert result.max_level >= lim["min_level_during_load"], (
+            f"Precondition: batcher must have escalated during heavy-load "
+            f"phase (reached level {result.max_level}, "
+            f"need >= {lim['min_level_during_load']})"
+        )
+        assert result.final_level <= lim["max_final_level"], (
+            f"Final level {result.final_level} (limit: {lim['max_final_level']})"
+        )
+
+    def test_multi_level_deescalation(self):
+        """After reaching level 2+, a drop to light load should step back
+        through all levels to 0.
+
+        Heavy phase at 1s: 1.8 + 0.2 = 2.0s (2x overloaded, needs level 2+).
+        At 4s: 1.8 + 0.8 = 2.6s (OK, escalation stops at level 2).
+        Light phase at 4s: 0.1 + 0.4 = 0.5s (well within any window).
+        """
+        lim = LIMITS["multi_level_deescalation"]
+        batcher = make_default_batcher()
+
+        cost = step_function_cost(
+            step_time_s=0.0,
+            before=idle_cost(),
+            after=step_function_cost(
+                step_time_s=60.0,
+                before=constant_overhead_cost(overhead_s=1.8, per_second_cost=0.2),
+                after=constant_overhead_cost(overhead_s=0.1, per_second_cost=0.1),
+            ),
+        )
+
+        result = run_scenario(batcher, 240.0, cost)
+        assert result.max_level >= lim["min_level_during_load"], (
+            f"Precondition: must reach level {lim['min_level_during_load']}+ "
+            f"during heavy phase (reached {result.max_level})"
+        )
+        assert result.final_level <= lim["max_final_level"], (
+            f"Final level {result.final_level} after load dropped "
+            f"(limit: {lim['max_final_level']})"
+        )
+
+    def test_partial_deescalation(self):
+        """Load drops from severe to moderate: should settle at level 1, not
+        stay stuck at the peak level.
+
+        Severe phase at 1s: 1.8 + 0.2 = 2.0s (needs level 2).
+        Moderate phase at 1s: 0.6 + 0.6 = 1.2s (needs level 1).
+        Moderate phase at 2s: 0.6 + 1.2 = 1.8s (fits at level 1).
+        """
+        lim = LIMITS["partial_deescalation"]
+        batcher = make_default_batcher()
+
+        cost = step_function_cost(
+            step_time_s=0.0,
+            before=idle_cost(),
+            after=step_function_cost(
+                step_time_s=60.0,
+                before=constant_overhead_cost(overhead_s=1.8, per_second_cost=0.2),
+                after=constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6),
+            ),
+        )
+
+        result = run_scenario(batcher, 240.0, cost)
+        assert result.max_level >= lim["min_level_during_load"], (
+            f"Precondition: must reach level {lim['min_level_during_load']}+ "
+            f"during severe phase (reached {result.max_level})"
+        )
+        assert result.final_level <= lim["max_final_level"], (
+            f"Final level {result.final_level} after load reduced "
+            f"(limit: {lim['max_final_level']})"
         )
 
 
