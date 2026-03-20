@@ -136,6 +136,10 @@ LIMITS: dict[str, dict[str, float]] = {
         "min_level_reached": 1,
         "max_final_level": 0,
     },
+    "severe_to_cosmic_background": {
+        "min_level_during_load": 2,
+        "max_final_level": 0,
+    },
     # -- Backlog draining -------------------------------------------------
     "backlog_drains": {
         "min_level_reached": 1,
@@ -948,18 +952,22 @@ class TestRealisticShutterScenario:
     """End-to-end shutter open/close simulation with noise."""
 
     def test_shutter_open_close_cycle(self):
-        """Idle -> shutter open (high load) -> shutter close (idle).
+        """Cosmic background -> shutter open (high load) -> shutter close
+        (cosmic background).
 
         Must handle the full cycle: escalation, stable operation,
-        de-escalation back to base.
+        de-escalation back to base.  The shutter-closed phase is not idle:
+        cosmic background produces a continuous stream of ev44 messages
+        with very few events, resulting in overhead-dominated processing.
         """
         lim = LIMITS["shutter_open_close"]
         batcher = make_default_batcher()
 
         rng = random.Random(42)
+        cosmic = constant_overhead_cost(overhead_s=0.2, per_second_cost=0.01)
         cost = step_function_cost(
             step_time_s=10.0,
-            before=idle_cost(),
+            before=cosmic,
             after=step_function_cost(
                 step_time_s=70.0,
                 before=constant_overhead_cost(
@@ -968,7 +976,7 @@ class TestRealisticShutterScenario:
                     jitter_fraction=0.15,
                     rng=rng,
                 ),
-                after=idle_cost(),
+                after=cosmic,
             ),
         )
 
@@ -990,8 +998,8 @@ class TestRealisticShutterScenario:
     def test_repeated_shutter_cycles(self):
         """Multiple on/off cycles should not cause runaway escalation.
 
-        Each on-phase must trigger escalation, and each off-phase must
-        allow de-escalation back to base.
+        Each on-phase must trigger escalation, and each off-phase (cosmic
+        background) must allow de-escalation back to base.
         """
         lim = LIMITS["repeated_shutter_cycles"]
         batcher = make_default_batcher()
@@ -1003,12 +1011,13 @@ class TestRealisticShutterScenario:
             jitter_fraction=0.1,
             rng=rng,
         )
+        cosmic = constant_overhead_cost(overhead_s=0.2, per_second_cost=0.01)
 
         cost = cyclic_cost(
             on_duration_s=20.0,
             off_duration_s=20.0,
             on_cost=high,
-            off_cost=idle_cost(),
+            off_cost=cosmic,
         )
 
         result = run_scenario(batcher, 200.0, cost)
@@ -1021,6 +1030,49 @@ class TestRealisticShutterScenario:
         assert result.final_level <= lim["max_final_level"], (
             f"Stuck at level {result.final_level} after repeated cycles "
             f"(limit: {lim['max_final_level']})"
+        )
+
+    def test_severe_overload_to_cosmic_background(self):
+        """After severe overload reaching level 2+, shutter close drops load
+        to cosmic background.  Must de-escalate through all levels back to 0.
+
+        This is the most operationally important de-escalation path: ev44
+        messages keep flowing with very few events (cosmic rays), so the
+        system is never truly idle.  Wall-clock idle de-escalation does not
+        apply; the batcher must de-escalate via the underload counter.
+
+        Severe phase (overhead-dominated):
+            Level 0 (1s): 2.0 + 0.3 = 2.3s (overloaded).
+            Level 1 (2s): 2.0 + 0.6 = 2.6s (overloaded).
+            Level 2 (4s): 2.0 + 1.2 = 3.2s (80%, dead zone — stable).
+
+        Cosmic background phase (overhead-dominated, near-zero data cost):
+            Level 2 (4s): 0.2 + 0.04 = 0.24s (6% utilization).
+            Level 1 (2s): 0.2 + 0.02 = 0.22s (11% utilization).
+            Level 0 (1s): 0.2 + 0.01 = 0.21s (21% utilization).
+            All levels are well below the 70% headroom threshold.
+        """
+        lim = LIMITS["severe_to_cosmic_background"]
+        batcher = make_default_batcher()
+
+        cost = step_function_cost(
+            step_time_s=0.0,
+            before=idle_cost(),
+            after=step_function_cost(
+                step_time_s=60.0,
+                before=constant_overhead_cost(overhead_s=2.0, per_second_cost=0.3),
+                after=constant_overhead_cost(overhead_s=0.2, per_second_cost=0.01),
+            ),
+        )
+
+        result = run_scenario(batcher, 240.0, cost)
+        assert result.max_level >= lim["min_level_during_load"], (
+            f"Precondition: must reach level {lim['min_level_during_load']}+ "
+            f"during severe phase (reached {result.max_level})"
+        )
+        assert result.final_level <= lim["max_final_level"], (
+            f"Final level {result.final_level} after shutter close to cosmic "
+            f"background (limit: {lim['max_final_level']})"
         )
 
 
