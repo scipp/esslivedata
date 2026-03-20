@@ -647,6 +647,98 @@ class TestAdaptiveMessageBatcher:
 
             assert batcher.state.level == 6
 
+    def test_escalation_preserves_buffered_active_messages(self):
+        """Messages in the active batch must survive escalation."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        # Establish timeline
+        initial = batcher.batch([make_message(0, "init")])
+        assert initial is not None
+        # Inner: active_batch=[0, 1e9), messages=[], future=[]
+
+        # Buffer a message in active batch (no future → returns None)
+        buffered = make_message(500_000_000, "buffered")
+        assert batcher.batch([buffered]) is None
+        # Inner: active_batch messages=[buffered], future=[]
+
+        # Trigger escalation — replaces inner batcher
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+        # Drain all batches with a far-future trigger
+        trigger = make_message(5_000_000_000, "trigger")
+        all_values: set[str] = set()
+        batch = batcher.batch([trigger])
+        while batch is not None:
+            all_values.update(m.value for m in batch.messages)
+            batch = batcher.batch([])
+
+        assert "buffered" in all_values, (
+            "Active batch message dropped during escalation"
+        )
+
+    def test_escalation_preserves_future_messages(self):
+        """Messages in future_messages must survive escalation."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        # Establish timeline
+        batcher.batch([make_message(0, "init")])
+
+        # Send a far-future message: completes active batch, stays in _future
+        far_future = make_message(3_000_000_000, "far_future")
+        batch = batcher.batch([far_future])
+        assert batch is not None  # completed (empty) active batch
+        # Inner: active=[1e9, 2e9) msgs=[], future=[far_future(3e9)]
+
+        # Trigger escalation
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+        # Drain with another trigger
+        trigger = make_message(10_000_000_000, "trigger")
+        all_values: set[str] = set()
+        batch = batcher.batch([trigger])
+        while batch is not None:
+            all_values.update(m.value for m in batch.messages)
+            batch = batcher.batch([])
+
+        assert "far_future" in all_values, "Future message dropped during escalation"
+
+    def test_deescalation_preserves_buffered_messages(self):
+        """Messages in the active batch must survive de-escalation."""
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        with patch('ess.livedata.core.message_batcher.time.monotonic', clock):
+            _escalate_to_level(batcher, 2)
+            assert batcher.state.level == 2
+
+            # Establish timeline at escalated batch length (~2s)
+            batcher.batch([make_message(0, "init")])
+
+            # Buffer a message
+            buffered = make_message(500_000_000, "buffered")
+            assert batcher.batch([buffered]) is None
+
+            # Trigger de-escalation via idle
+            clock.advance(DEESCALATION_IDLE_WINDOWS * batcher.batch_length_s + 0.1)
+            batcher.report_batch(None)
+            assert batcher.state.level == 1
+
+            # Drain
+            trigger = make_message(10_000_000_000, "trigger")
+            all_values: set[str] = set()
+            batch = batcher.batch([trigger])
+            while batch is not None:
+                all_values.update(m.value for m in batch.messages)
+                batch = batcher.batch([])
+
+            assert "buffered" in all_values, (
+                "Active batch message dropped during de-escalation"
+            )
+
     def test_overload_resets_underload_counter(self):
         batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
         _escalate_to_level(batcher, 2)

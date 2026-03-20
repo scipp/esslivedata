@@ -128,6 +128,15 @@ class SimpleMessageBatcher(MessageBatcher):
     def batch_length_s(self) -> float:
         return self._batch_length_s_value
 
+    def set_batch_length(self, batch_length_s: float) -> None:
+        """Update the batch length for future batches.
+
+        The current active batch keeps its boundaries and completes normally.
+        Only the next batch boundary will use the new length.
+        """
+        self._batch_length_s_value = batch_length_s
+        self._batch_length_ns = int(batch_length_s * 1_000_000_000)
+
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
         messages = [msg for msg in messages if isinstance(msg.timestamp, Number)]
@@ -295,7 +304,7 @@ class AdaptiveMessageBatcher(MessageBatcher):
             new_batch_length_s=new_length,
             level=self._half_step,
         )
-        self._inner = SimpleMessageBatcher(batch_length_s=new_length)
+        self._inner.set_batch_length(new_length)
 
     @property
     def batch_length_s(self) -> float:
