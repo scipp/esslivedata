@@ -59,26 +59,31 @@ LIMITS: dict[str, dict[str, float]] = {
         "max_final_backlog_s": 1.0,
     },
     # -- Escalation reaches appropriate level for given severity ----------
-    # overhead_s=0.6, per_s=0.6 -> at 1s: 1.2 (overloaded), at 2s: 1.8 (OK)
+    # Levels are half-steps: window = base * sqrt(2)^level.
+    # Escalation jumps +2 (x2), de-escalation drops -1 (x1/sqrt(2)).
+    #   level 0: 1.0s   level 3: 2.83s   level 6: 8.0s
+    #   level 1: 1.41s  level 4: 4.0s
+    #   level 2: 2.0s   level 5: 5.66s
+    #
+    # overhead_s=0.6, per_s=0.6 -> at 1s: 1.2, at 2s: 1.8 (OK at level 2)
     "severity_moderate": {
-        "min_level": 1,
-        "max_level": 1,
+        "min_level": 2,
+        "max_level": 2,
     },
-    # overhead_s=0.8, per_s=0.3 -> at 1s: 1.1, at 2s: 1.4 (OK)
+    # overhead_s=0.8, per_s=0.3 -> at 1s: 1.1, at 1.41s: 1.22 (OK at level 1)
     "severity_overhead_dominated": {
         "min_level": 1,
-        "max_level": 1,
+        "max_level": 2,
     },
-    # overhead_s=1.8, per_s=0.2 -> at 1s: 2.0, at 2s: 2.2, at 4s: 2.6 (OK)
+    # overhead_s=1.8, per_s=0.2 -> needs level 3+ (2.83s window: 2.37s OK)
     "severity_severe": {
-        "min_level": 2,
-        "max_level": 3,
-    },
-    # overhead_s=0.5, per_s=1.5 -> at 1s: 2.0, at 2s: 3.5, at 4s: 6.5, at 8s: 12.5
-    # Overloaded at every level — must reach max.
-    "severity_extreme": {
         "min_level": 3,
-        "max_level": 3,
+        "max_level": 5,
+    },
+    # overhead_s=0.5, per_s=1.5 -> overloaded at every level, must reach max.
+    "severity_extreme": {
+        "min_level": 6,
+        "max_level": 6,
     },
     # -- No escalation when not needed ------------------------------------
     # Parameterized across utilization levels.
@@ -103,7 +108,7 @@ LIMITS: dict[str, dict[str, float]] = {
     },
     "mild_creeping_overload": {
         "min_level_reached": 1,
-        "max_level": 1,
+        "max_level": 2,
     },
     # -- De-escalation ----------------------------------------------------
     "deescalation_to_idle": {
@@ -119,12 +124,12 @@ LIMITS: dict[str, dict[str, float]] = {
         "max_final_level": 0,
     },
     "multi_level_deescalation": {
-        "min_level_during_load": 2,
+        "min_level_during_load": 3,
         "max_final_level": 0,
     },
     "partial_deescalation": {
-        "min_level_during_load": 2,
-        "max_final_level": 1,
+        "min_level_during_load": 3,
+        "max_final_level": 2,
     },
     # -- Realistic shutter ------------------------------------------------
     "shutter_open_close": {
@@ -137,7 +142,7 @@ LIMITS: dict[str, dict[str, float]] = {
         "max_final_level": 0,
     },
     "severe_to_cosmic_background": {
-        "min_level_during_load": 2,
+        "min_level_during_load": 3,
         "max_final_level": 0,
     },
     # -- Backlog draining -------------------------------------------------
@@ -159,14 +164,14 @@ LIMITS: dict[str, dict[str, float]] = {
     },
     # -- Stabilization after escalation -----------------------------------
     "stabilization_after_step": {
-        "max_oscillations": 0,
+        "max_oscillations": 1,
     },
     # -- Dead zone (70-100% utilization at escalated level) ---------------
     # Documents limitation: batcher cannot de-escalate when processing
     # fills the dead zone, even if a lower level would suffice.
     "dead_zone_stuck": {
-        "min_level_during_load": 2,
-        "min_final_level": 2,
+        "min_level_during_load": 4,
+        "min_final_level": 3,
     },
     # -- Jitter-induced sticky escalation ---------------------------------
     # Jitter at the exact boundary causes escalation that becomes permanent

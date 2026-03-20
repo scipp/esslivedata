@@ -189,10 +189,12 @@ class SimpleMessageBatcher(MessageBatcher):
 
 
 ESCALATION_OVERLOAD_THRESHOLD = 2
-ESCALATION_LEVEL_JUMP = 1
-DEESCALATION_HEADROOM_RATIO = 0.7
-DEESCALATION_UNDERLOAD_THRESHOLD = 5
+ESCALATION_HALF_STEPS = 2
+DEESCALATION_HEADROOM_RATIO = 0.75
+DEESCALATION_UNDERLOAD_THRESHOLD = 3
 DEESCALATION_IDLE_WINDOWS = 3
+
+_SQRT2 = 2**0.5
 
 
 @dataclass(frozen=True)
@@ -207,18 +209,21 @@ class AdaptiveMessageBatcher(MessageBatcher):
     """A message batcher that dynamically adjusts its batch length based on load.
 
     Wraps a ``SimpleMessageBatcher`` and uses processing-time feedback to detect
-    overload. When processing consistently exceeds the batch window, the batcher
-    escalates to a longer window (multiplicative increase). When processing
-    completes with significant headroom, it de-escalates (additive decrease).
-    Idle periods also trigger de-escalation via a wall-clock fallback.
+    overload.  When processing consistently exceeds the batch window, the batcher
+    escalates by doubling the window (+2 half-steps).  When processing completes
+    with headroom, it de-escalates by a factor of 1/sqrt(2) (-1 half-step).
 
-    Each escalation level doubles the batch window from the base length.
+    The asymmetric step sizes mean two de-escalation steps undo one escalation,
+    providing natural damping.  The batch window is always on the grid
+    ``base * sqrt(2)^n``, avoiding floating-point drift.
+
+    Idle periods also trigger de-escalation via a wall-clock fallback.
     """
 
     def __init__(self, base_batch_length_s: float = 1.0, max_level: int = 3) -> None:
         self._base_batch_length_s = base_batch_length_s
-        self._max_level = max_level
-        self._level = 0
+        self._max_half_steps = max_level * 2
+        self._half_step = 0
         self._consecutive_overloaded = 0
         self._consecutive_underloaded = 0
         self._last_nonempty_batch_time: float | None = None
@@ -238,11 +243,11 @@ class AdaptiveMessageBatcher(MessageBatcher):
             # fallback below; resetting counters here would prevent
             # de-escalation under continuous light load where idle polls
             # between batches outnumber real reports.
-            if self._level > 0 and self._last_nonempty_batch_time is not None:
+            if self._half_step > 0 and self._last_nonempty_batch_time is not None:
                 idle_s = time.monotonic() - self._last_nonempty_batch_time
                 idle_windows = idle_s / self.batch_length_s
                 if idle_windows >= DEESCALATION_IDLE_WINDOWS:
-                    self._set_level(self._level - 1)
+                    self._set_half_step(self._half_step - 1)
                     self._last_nonempty_batch_time = time.monotonic()
         elif message_count == 0:
             # Empty batch from time gap — not a load signal
@@ -257,47 +262,48 @@ class AdaptiveMessageBatcher(MessageBatcher):
                 self._consecutive_underloaded = 0
                 if (
                     self._consecutive_overloaded >= ESCALATION_OVERLOAD_THRESHOLD
-                    and self._level < self._max_level
+                    and self._half_step < self._max_half_steps
                 ):
-                    new_level = min(
-                        self._level + ESCALATION_LEVEL_JUMP, self._max_level
+                    new = min(
+                        self._half_step + ESCALATION_HALF_STEPS,
+                        self._max_half_steps,
                     )
-                    self._set_level(new_level)
+                    self._set_half_step(new)
                     self._consecutive_overloaded = 0
             elif processing_time_s < self.batch_length_s * DEESCALATION_HEADROOM_RATIO:
-                # Underloaded: significant headroom
+                # Underloaded: headroom available
                 self._consecutive_underloaded += 1
                 self._consecutive_overloaded = 0
                 if (
                     self._consecutive_underloaded >= DEESCALATION_UNDERLOAD_THRESHOLD
-                    and self._level > 0
+                    and self._half_step > 0
                 ):
-                    self._set_level(self._level - 1)
+                    self._set_half_step(self._half_step - 1)
                     self._consecutive_underloaded = 0
             else:
                 # In between — processing fits but without much headroom
                 self._consecutive_overloaded = 0
                 self._consecutive_underloaded = 0
 
-    def _set_level(self, new_level: int) -> None:
+    def _set_half_step(self, new_half_step: int) -> None:
         old_length = self.batch_length_s
-        self._level = new_level
+        self._half_step = new_half_step
         new_length = self.batch_length_s
         logger.warning(
             'adaptive_batch_level_change',
             old_batch_length_s=old_length,
             new_batch_length_s=new_length,
-            level=new_level,
+            level=self._half_step,
         )
         self._inner = SimpleMessageBatcher(batch_length_s=new_length)
 
     @property
     def batch_length_s(self) -> float:
-        return self._base_batch_length_s * (2**self._level)
+        return self._base_batch_length_s * _SQRT2**self._half_step
 
     @property
     def state(self) -> AdaptiveBatcherState:
         return AdaptiveBatcherState(
-            level=self._level,
+            level=self._half_step,
             batch_length_s=self.batch_length_s,
         )
