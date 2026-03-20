@@ -176,7 +176,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
-            self._report_batch(None)
+            self._report_batch(None, processing_time_s=0.0)
             self._empty_batches += 1
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
@@ -186,6 +186,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 # may trigger costly workflow creation.
                 time.sleep(0.1)
             return
+
+        batch_start = time.monotonic()
 
         # Pre-process message batch
         workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
@@ -225,7 +227,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             else:
                 valid_results.append(result)
 
-        self._report_batch(len(message_batch.messages))
+        processing_time_s = time.monotonic() - batch_start
+        self._report_batch(
+            len(message_batch.messages), processing_time_s=processing_time_s
+        )
         self._batches_processed += 1
         self._maybe_log_metrics()
 
@@ -254,9 +259,13 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         self._sink.publish_messages(messages)
 
-    def _report_batch(self, message_count: int | None) -> None:
+    def _report_batch(
+        self, message_count: int | None, processing_time_s: float = 0.0
+    ) -> None:
         """Forward batch outcome to the batcher for adaptive behavior."""
-        self._message_batcher.report_batch(message_count)
+        self._message_batcher.report_batch(
+            message_count, processing_time_s=processing_time_s
+        )
 
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
