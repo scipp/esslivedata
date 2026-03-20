@@ -28,7 +28,11 @@ class MessageBatcher(ABC):
         If no batch can be created (batch incomplete), return None.
         """
 
-    def report_batch(self, message_count: int | None) -> None:  # noqa: B027
+    def report_batch(  # noqa: B027
+        self,
+        message_count: int | None,
+        processing_time_s: float = 0.0,
+    ) -> None:
         """Report the outcome of the last processing cycle.
 
         Called by the processor after each cycle. Batchers that support adaptive
@@ -41,6 +45,10 @@ class MessageBatcher(ABC):
             Number of messages in the processed batch. ``None`` if the batcher
             returned ``None`` (idle cycle). 0 indicates an empty batch from a
             time gap.
+        processing_time_s:
+            Wall-clock time spent processing the batch (preprocessing, workflow
+            execution, serialization). Used by adaptive batchers to detect
+            overload. Ignored for idle cycles.
         """
 
     @property
@@ -180,7 +188,10 @@ class SimpleMessageBatcher(MessageBatcher):
         return before, after
 
 
-ESCALATION_THRESHOLD = 5
+ESCALATION_OVERLOAD_THRESHOLD = 2
+ESCALATION_LEVEL_JUMP = 1
+DEESCALATION_HEADROOM_RATIO = 0.7
+DEESCALATION_UNDERLOAD_THRESHOLD = 5
 DEESCALATION_IDLE_WINDOWS = 3
 
 
@@ -195,11 +206,11 @@ class AdaptiveBatcherState:
 class AdaptiveMessageBatcher(MessageBatcher):
     """A message batcher that dynamically adjusts its batch length based on load.
 
-    Wraps a ``SimpleMessageBatcher`` and monitors the pattern of batch results
-    to detect sustained overload. When the system cannot keep up with the current
-    batch window, consecutive non-empty batches accumulate and the batcher
-    escalates to a longer window. When the system demonstrates spare capacity
-    (consecutive idle cycles), it de-escalates.
+    Wraps a ``SimpleMessageBatcher`` and uses processing-time feedback to detect
+    overload. When processing consistently exceeds the batch window, the batcher
+    escalates to a longer window (multiplicative increase). When processing
+    completes with significant headroom, it de-escalates (additive decrease).
+    Idle periods also trigger de-escalation via a wall-clock fallback.
 
     Each escalation level doubles the batch window from the base length.
     """
@@ -208,21 +219,24 @@ class AdaptiveMessageBatcher(MessageBatcher):
         self._base_batch_length_s = base_batch_length_s
         self._max_level = max_level
         self._level = 0
-        self._consecutive_batches = 0
+        self._consecutive_overloaded = 0
+        self._consecutive_underloaded = 0
         self._last_nonempty_batch_time: float | None = None
         self._inner = SimpleMessageBatcher(batch_length_s=base_batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         return self._inner.batch(messages)
 
-    def report_batch(self, message_count: int | None) -> None:
+    def report_batch(
+        self,
+        message_count: int | None,
+        processing_time_s: float = 0.0,
+    ) -> None:
         if message_count is None:
-            # Idle cycle (batcher returned None). De-escalate only after being
-            # idle for multiple batch windows, not just multiple process-loop
-            # iterations. This prevents oscillation when the system barely keeps
-            # up: the short inter-batch gap at 0.1s sleep intervals would
-            # otherwise produce many rapid idle reports.
-            self._consecutive_batches = 0
+            # Idle cycle — reset both counters. Fall back to wall-clock
+            # de-escalation when data stops entirely.
+            self._consecutive_overloaded = 0
+            self._consecutive_underloaded = 0
             if self._level > 0 and self._last_nonempty_batch_time is not None:
                 idle_s = time.monotonic() - self._last_nonempty_batch_time
                 idle_windows = idle_s / self.batch_length_s
@@ -233,15 +247,36 @@ class AdaptiveMessageBatcher(MessageBatcher):
             # Empty batch from time gap — not a load signal
             pass
         else:
-            # Non-empty batch
+            # Non-empty batch — use processing time to decide
             self._last_nonempty_batch_time = time.monotonic()
-            self._consecutive_batches += 1
-            if (
-                self._consecutive_batches >= ESCALATION_THRESHOLD
-                and self._level < self._max_level
-            ):
-                self._set_level(self._level + 1)
-                self._consecutive_batches = 0
+
+            if processing_time_s > self.batch_length_s:
+                # Overloaded: processing exceeded the batch window
+                self._consecutive_overloaded += 1
+                self._consecutive_underloaded = 0
+                if (
+                    self._consecutive_overloaded >= ESCALATION_OVERLOAD_THRESHOLD
+                    and self._level < self._max_level
+                ):
+                    new_level = min(
+                        self._level + ESCALATION_LEVEL_JUMP, self._max_level
+                    )
+                    self._set_level(new_level)
+                    self._consecutive_overloaded = 0
+            elif processing_time_s < self.batch_length_s * DEESCALATION_HEADROOM_RATIO:
+                # Underloaded: significant headroom
+                self._consecutive_underloaded += 1
+                self._consecutive_overloaded = 0
+                if (
+                    self._consecutive_underloaded >= DEESCALATION_UNDERLOAD_THRESHOLD
+                    and self._level > 0
+                ):
+                    self._set_level(self._level - 1)
+                    self._consecutive_underloaded = 0
+            else:
+                # In between — processing fits but without much headroom
+                self._consecutive_overloaded = 0
+                self._consecutive_underloaded = 0
 
     def _set_level(self, new_level: int) -> None:
         old_length = self.batch_length_s
