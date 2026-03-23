@@ -12,7 +12,6 @@ from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
-from .param_widget import ParamWidget
 from .styles import ErrorBox, StatusColors
 
 
