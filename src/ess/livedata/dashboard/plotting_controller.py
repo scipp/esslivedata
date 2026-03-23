@@ -24,6 +24,8 @@ from .plotter_registry import (
     PlotterSpec,
     plotter_registry,
 )
+from .range_publisher import RangePublisher
+from .range_request_plots import RangePublisherAware
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
@@ -45,15 +47,20 @@ class PlottingController:
         Manager for creating data streams.
     roi_publisher:
         Publisher for ROI updates to Kafka. If None, ROI publishing is disabled.
+    range_publisher:
+        Publisher for histogram slice range updates. If None, range publishing
+        is disabled.
     """
 
     def __init__(
         self,
         stream_manager: StreamManager,
         roi_publisher: ROIPublisher | None = None,
+        range_publisher: RangePublisher | None = None,
     ) -> None:
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
+        self._range_publisher = range_publisher
 
     def get_available_plotters_from_spec(
         self, workflow_spec: WorkflowSpec, output_name: str
@@ -251,6 +258,9 @@ class PlottingController:
         # ROI request plotters need the ROI publisher
         if isinstance(plotter, ROIPublisherAware):
             plotter.set_roi_publisher(self._roi_publisher)
+        # Range request plotters need the range publisher
+        if isinstance(plotter, RangePublisherAware):
+            plotter.set_range_publisher(self._range_publisher)
         return plotter
 
 

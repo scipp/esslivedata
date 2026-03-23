@@ -877,6 +877,17 @@ class Overlay1DPlotter(Plotter):
         slice_size = data.sizes[slice_dim]
 
         if slice_size == 0:
+            plot_dim = data.dims[1]
+            if plot_dim in data.coords and data.sizes[plot_dim] > 0:
+                coord = data.coords[plot_dim]
+                empty = sc.DataArray(
+                    data=sc.zeros(
+                        sizes={plot_dim: data.sizes[plot_dim]}, unit=data.unit
+                    ),
+                    coords={plot_dim: coord},
+                )
+                empty = self._convert_bin_edges_to_midpoints(empty, dim=plot_dim)
+                return to_holoviews(empty).opts(**self._base_opts, **self._sizing_opts)
             return hv.Curve([]).opts(**self._base_opts)
 
         # Update autoscaler with full 2D data to establish global bounds

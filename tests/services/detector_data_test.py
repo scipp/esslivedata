@@ -66,31 +66,31 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 10 results: cumulative, current,
+    # Each workflow call returns 11 results: cumulative, current,
     # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa,
-    # counts_total_cumulative, counts_in_toa_range_cumulative,
+    # counts_total_cumulative, counts_in_toa_range_cumulative, histogram_slice,
     # roi_rectangle, roi_polygon
-    assert len(sink.messages) == 10
+    assert len(sink.messages) == 11
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 10
+    assert len(sink.messages) == 11
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 20  # 10 + 10
-    assert sink.messages[10].value.nansum().value == 5000  # cumulative
-    assert sink.messages[11].value.nansum().value == 3000  # current
+    assert len(sink.messages) == 22  # 11 + 11
+    assert sink.messages[11].value.nansum().value == 5000  # cumulative
+    assert sink.messages[12].value.nansum().value == 3000  # current
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 30  # 20 + 10
-    assert sink.messages[20].value.nansum().value == 7000  # cumulative
-    assert sink.messages[21].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 33  # 22 + 11
+    assert sink.messages[22].value.nansum().value == 7000  # cumulative
+    assert sink.messages[23].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -101,7 +101,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 30
+    assert len(sink.messages) == 33
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -140,8 +140,9 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered; get data only (no ack without message_id)
-    # First finalize sends 10 data messages (8 + 2 initial ROI readbacks)
-    assert len(sink.messages) == 10
+    # First finalize sends 11 data messages
+    # (8 + histogram_slice + 2 initial ROI readbacks)
+    assert len(sink.messages) == 11
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -172,8 +173,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     service.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative, roi_rectangle, roi_polygon
-    assert len(sink.messages) == 10
+    # counts_in_toa_range_cumulative, histogram_slice, roi_rectangle, roi_polygon
+    assert len(sink.messages) == 11
     assert sink.messages[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -187,9 +188,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    # No error ack without message_id, just data messages (10 + 10)
-    assert len(sink.messages) == 20
-    assert sink.messages[10].value.values.sum() == 5000  # cumulative
+    # No error ack without message_id, just data messages (11 + 11)
+    assert len(sink.messages) == 22
+    assert sink.messages[11].value.values.sum() == 5000  # cumulative
 
 
 @pytest.fixture
@@ -228,8 +229,8 @@ def test_message_with_unknown_schema_is_ignored(
 
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(sink.messages) == 10
+    # counts_in_toa_range_cumulative, histogram_slice + 2 initial ROI readbacks
+    assert len(sink.messages) == 11
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for warnings
@@ -255,8 +256,8 @@ def test_message_that_cannot_be_decoded_is_ignored(
 
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(sink.messages) == 10
+    # counts_in_toa_range_cumulative, histogram_slice + 2 initial ROI readbacks
+    assert len(sink.messages) == 11
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions

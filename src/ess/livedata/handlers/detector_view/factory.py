@@ -29,6 +29,8 @@ from .types import (
     Current,
     DetectorImage,
     GeometricViewConfig,
+    HistogramSliceReadback,
+    HistogramSliceRequest,
     LogicalViewConfig,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -191,8 +193,11 @@ class DetectorViewFactory:
             'counts_in_toa_range': CountsInRange[Current],
             'counts_total_cumulative': CountsTotal[Cumulative],
             'counts_in_toa_range_cumulative': CountsInRange[Cumulative],
+            'histogram_slice': HistogramSliceReadback,
         }
-        context_keys: dict[str, type] = {}
+        context_keys: dict[str, type] = {
+            'histogram_slice': HistogramSliceRequest,
+        }
         window_outputs = (
             'current',
             'counts_total',

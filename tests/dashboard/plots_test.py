@@ -1356,12 +1356,14 @@ class TestOverlay1DPlotter:
         # Single curve, not wrapped in Overlay
         assert isinstance(result, hv.Curve)
 
-    def test_empty_first_dim_returns_empty_curve(
+    def test_empty_first_dim_returns_curve_with_correct_axis(
         self, overlay_plotter, data_2d_empty_first_dim, data_key
     ):
-        """Test that empty first dimension returns empty curve."""
+        """Test that empty first dim returns zero curve with correct spectral axis."""
         result = overlay_plotter.plot(data_2d_empty_first_dim, data_key)
         assert isinstance(result, hv.Curve)
+        # Should have data points (not be completely empty)
+        assert len(result.data) > 0
 
     def test_curves_labeled_by_coord_value(
         self, overlay_plotter, data_2d_with_roi_coord, data_key

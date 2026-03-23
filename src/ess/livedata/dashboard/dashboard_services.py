@@ -25,6 +25,7 @@ from .orchestrator import Orchestrator
 from .plot_data_service import PlotDataService
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
+from .range_publisher import RangePublisher
 from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
 from .session_registry import SessionRegistry
@@ -163,12 +164,14 @@ class DashboardServices:
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
 
-        # Create ROI publisher for publishing ROI updates to Kafka
+        # Create publishers for interactive plot updates to Kafka
         roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
+        range_publisher = RangePublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             stream_manager=self.stream_manager,
             roi_publisher=roi_publisher,
+            range_publisher=range_publisher,
         )
 
         # Orchestrator will be wired to job_orchestrator after workflow setup

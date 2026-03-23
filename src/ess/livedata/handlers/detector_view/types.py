@@ -135,6 +135,13 @@ HistogramBins = NewType('HistogramBins', sc.Variable)
 HistogramSlice = NewType('HistogramSlice', tuple[sc.Variable, sc.Variable] | None)
 """Optional (low, high) range for slicing output images. None means full range."""
 
+HistogramSliceRequest = NewType('HistogramSliceRequest', sc.DataArray)
+"""Histogram slice request as DataArray with dim 'bound' and two values [low, high].
+Empty (bound size 0) means no slice (full range)."""
+
+HistogramSliceReadback = NewType('HistogramSliceReadback', sc.DataArray)
+"""Histogram slice readback echoing the active request for frontend display."""
+
 # Logical transform configuration
 LogicalTransform = NewType(
     'LogicalTransform',

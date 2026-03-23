@@ -213,6 +213,11 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         ),
         default_factory=_make_0d_template_with_time,
     )
+    histogram_slice: sc.DataArray = pydantic.Field(
+        title='Histogram slice (readback)',
+        description='Active spectral range filter echoed back for frontend display.',
+        default_factory=lambda: sc.DataArray(data=sc.zeros(sizes={'bound': 0})),
+    )
 
 
 class DetectorViewOutputs(DetectorViewOutputsBase):
@@ -340,6 +345,7 @@ class DetectorROIAuxSources(AuxSourcesBase):
         return {
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
+            'histogram_slice': f"{job_id}/histogram_slice",
         }
 
 

@@ -24,6 +24,8 @@ from .types import (
     EventCoordName,
     HistogramBins,
     HistogramSlice,
+    HistogramSliceReadback,
+    HistogramSliceRequest,
     PixelWeights,
     ScreenBinnedEvents,
     ScreenMetadata,
@@ -292,3 +294,45 @@ def counts_in_range(
         sliced = histogram
 
     return CountsInRange[AccumulationMode](sliced.sum())
+
+
+def parse_histogram_slice(request: HistogramSliceRequest) -> HistogramSlice:
+    """Convert serialized DataArray request to HistogramSlice tuple.
+
+    Parameters
+    ----------
+    request:
+        DataArray with dim 'bound' containing [low, high] values.
+        Empty (bound size 0) or None means no slice (full range).
+        StreamProcessor initializes context keys to None before the first
+        update arrives.
+
+    Returns
+    -------
+    :
+        Tuple of (low, high) Variables, or None if request is empty/unset.
+    """
+    if request is None or request.sizes.get('bound', 0) == 0:
+        return HistogramSlice(None)
+    return HistogramSlice((request['bound', 0].data, request['bound', 1].data))
+
+
+def histogram_slice_readback(
+    request: HistogramSliceRequest,
+) -> HistogramSliceReadback:
+    """Echo the histogram slice request as readback for frontend display.
+
+    Parameters
+    ----------
+    request:
+        The incoming histogram slice request. May be None if context key
+        has not been set yet.
+
+    Returns
+    -------
+    :
+        The same DataArray typed as readback, or an empty DataArray if unset.
+    """
+    if request is None:
+        return HistogramSliceReadback(sc.DataArray(data=sc.zeros(sizes={'bound': 0})))
+    return HistogramSliceReadback(request)

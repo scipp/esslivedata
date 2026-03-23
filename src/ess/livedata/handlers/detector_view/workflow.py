@@ -37,6 +37,8 @@ from .providers import (
     counts_total,
     detector_image,
     get_screen_metadata,
+    histogram_slice_readback,
+    parse_histogram_slice,
     project_raw_detector,
     project_tof_detector,
 )
@@ -52,7 +54,7 @@ from .types import (
     EventCoordName,
     FlipX,
     HistogramBins,
-    HistogramSlice,
+    HistogramSliceRequest,
     LogicalTransform,
     ProjectionType,
     ReductionDim,
@@ -130,10 +132,22 @@ def create_base_workflow(
     workflow.insert(precompute_roi_rectangle_bounds)
     workflow.insert(precompute_roi_polygon_masks)
 
+    # Add histogram slice providers (request → parse → slice, request → readback)
+    workflow.insert(parse_histogram_slice)
+    workflow.insert(histogram_slice_readback)
+
     # Set configuration parameters
     workflow[HistogramBins] = bins
     workflow[EventCoordName] = event_coord
-    workflow[HistogramSlice] = histogram_slice
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        workflow[HistogramSliceRequest] = HistogramSliceRequest(
+            sc.DataArray(data=sc.concat([low, high], dim='bound'))
+        )
+    else:
+        workflow[HistogramSliceRequest] = HistogramSliceRequest(
+            sc.DataArray(data=sc.zeros(sizes={'bound': 0}))
+        )
 
     return workflow
 

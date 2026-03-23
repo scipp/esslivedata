@@ -279,6 +279,9 @@ OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
     'polygons_readback': [
         ('roi_polygon', 'polygons_request'),
     ],
+    'overlay_1d': [
+        ('histogram_slice', 'range_request'),
+    ],
 }
 
 _registered = False
@@ -306,6 +309,7 @@ def _register_all_plotters() -> None:
         LinePlotter,
         Overlay1DPlotter,
     )
+    from .range_request_plots import RangeRequestPlotter
     from .roi_readback_plots import (
         PolygonsReadbackPlotter,
         RectanglesReadbackPlotter,
@@ -498,6 +502,28 @@ def _register_all_plotters() -> None:
         '</ul>',
         data_requirements=DataRequirements(**_polygon_roi_requirements),
         factory=PolygonsRequestPlotter.from_params,
+    )
+
+    # Register histogram slice range plotter
+    plotter_registry.register_plotter(
+        name='range_request',
+        title='Range Selection (Interactive)',
+        description='Draw a spectral range band to filter the detector image. '
+        'Only the horizontal (spectral axis) bounds are used.'
+        '<ul>'
+        '<li><strong>Add range:</strong> Click and hold for 300 ms to set one edge, '
+        'then move to the other edge and hold for 300 ms. '
+        'Or hold Shift and click-drag.</li>'
+        '<li><strong>Move range:</strong> Click and drag the existing band.</li>'
+        '<li><strong>Delete range:</strong> Tap the band to select it, '
+        'then press Backspace.</li>'
+        '</ul>',
+        data_requirements=DataRequirements(
+            min_dims=0,
+            max_dims=1,
+            multiple_datasets=False,
+        ),
+        factory=RangeRequestPlotter.from_params,
     )
 
 

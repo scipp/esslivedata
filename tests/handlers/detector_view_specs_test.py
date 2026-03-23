@@ -202,7 +202,8 @@ class TestDetectorROIAuxSources:
 
         assert 'roi_rectangle' in rendered
         assert 'roi_polygon' in rendered
-        assert len(rendered) == 2
+        assert 'histogram_slice' in rendered
+        assert len(rendered) == 3
 
     def test_render_prefixes_stream_names_with_job_id(self) -> None:
         """Test that render() prefixes stream names with full job_id."""
