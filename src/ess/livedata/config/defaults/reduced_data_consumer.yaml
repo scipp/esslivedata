@@ -1,6 +1,7 @@
 auto.offset.reset: latest
 enable.auto.commit: true
 fetch.min.bytes: 1
+fetch.wait.max.ms: 200  # reduce broker-side wait to avoid head-of-line blocking on idle partitions
 session.timeout.ms: 6000
 heartbeat.interval.ms: 2000
 max.partition.fetch.bytes: 104857600
