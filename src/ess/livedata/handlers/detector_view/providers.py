@@ -340,7 +340,7 @@ def histogram_slice_readback(
     :
         The same DataArray typed as readback, or an empty DataArray if unset.
     """
-    if request is None:
+    if request is None or request.sizes.get('bound', 0) != 2:
         return HistogramSliceReadback(
             sc.DataArray(data=sc.zeros(sizes={'bound': 0}, unit=bins.unit))
         )

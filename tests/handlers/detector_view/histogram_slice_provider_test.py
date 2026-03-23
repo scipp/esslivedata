@@ -83,7 +83,9 @@ class TestHistogramSliceReadback:
         assert readback.sizes == {'bound': 0}
         assert readback.data.unit == 'ms'
 
-    def test_echoes_empty_request(self):
+    def test_empty_request_returns_empty_with_unit(self):
+        """Clear messages from RangePublisher have no unit — readback uses bins unit."""
         request = HistogramSliceRequest(sc.DataArray(data=sc.zeros(sizes={'bound': 0})))
-        readback = histogram_slice_readback(request, self._bins())
+        readback = histogram_slice_readback(request, self._bins(unit='ms'))
         assert readback.sizes == {'bound': 0}
+        assert readback.data.unit == 'ms'
