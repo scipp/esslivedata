@@ -8,10 +8,10 @@ import panel as pn
 import pydantic
 import structlog
 
+from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
-from .param_widget import ParamWidget
 from .styles import ErrorBox, StatusColors
 
 
@@ -65,36 +65,30 @@ class ConfigurationWidget:
             margin=(0, 0, 0, 0),
         )
 
-    def _create_aux_sources_widget(self) -> ParamWidget | None:
-        """Create auxiliary sources widget using ParamWidget."""
-        aux_sources_model = self._config.aux_sources
-        if aux_sources_model is None:
+    def _create_aux_sources_widget(self) -> AuxSourcesWidget | None:
+        """Create auxiliary sources widget."""
+        aux_sources = self._config.aux_sources
+        if aux_sources is None:
             return None
 
-        # Create ParamWidget for the aux_sources model
-        aux_widget = ParamWidget(aux_sources_model)
-
-        # Set initial values if available
         initial_values = self._config.initial_aux_source_names
-        if initial_values:
-            aux_widget.set_values(initial_values)
+
+        widget = AuxSourcesWidget(
+            aux_sources,
+            initial_values=initial_values,
+            get_source_title=self._config.get_source_title,
+        )
 
         # Watch for changes to trigger model_widget recreation
-        for widget in aux_widget.widgets.values():
-            # Handle both wrapped (bool) and unwrapped widgets
-            actual_widget = widget[0] if isinstance(widget, pn.Row) else widget
-            actual_widget.param.watch(self._on_aux_source_changed, 'value')
+        for select in widget.select_widgets.values():
+            select.param.watch(self._on_aux_source_changed, 'value')
 
-        return aux_widget
+        return widget
 
     def _create_model_widget(self) -> ModelWidget | NoParamsWidget | ErrorWidget:
         """Create model widget based on current aux source selections."""
-        # Get aux source selections as a model instance
         if self._aux_sources_widget is not None:
-            try:
-                aux_selections = self._aux_sources_widget.create_model()
-            except Exception as e:
-                return ErrorWidget(f"Invalid aux source selection: {e}")
+            aux_selections = self._aux_sources_widget.get_values()
         else:
             aux_selections = None
 
@@ -151,7 +145,7 @@ class ConfigurationWidget:
 
         # Add auxiliary sources widget if it exists
         if self._aux_sources_widget is not None:
-            components.append(self._aux_sources_widget.panel())
+            components.append(self._aux_sources_widget.panel)
 
         components.append(self._model_widget.widget)
 
@@ -448,6 +442,51 @@ class ConfigurationModal:
     def modal(self) -> pn.Modal:
         """Get the modal widget."""
         return self._modal
+
+
+class AuxSourcesWidget:
+    """Widget for selecting auxiliary data sources from an AuxSources spec."""
+
+    def __init__(
+        self,
+        aux_sources: AuxSources,
+        initial_values: dict[str, str] | None = None,
+        get_source_title: Callable[[str], str] | None = None,
+    ) -> None:
+        self._aux_sources = aux_sources
+        self._get_source_title = get_source_title or (lambda x: x)
+        self._select_widgets: dict[str, pn.widgets.Select] = {}
+
+        for name, inp in aux_sources.inputs.items():
+            # Build options: {display_title: stream_name}
+            options = {self._get_source_title(c): c for c in inp.choices}
+            initial = (
+                initial_values.get(name, inp.default) if initial_values else inp.default
+            )
+            self._select_widgets[name] = pn.widgets.Select(
+                name=inp.title or name,
+                options=options,
+                value=initial,
+                sizing_mode='stretch_width',
+            )
+
+        self._panel = pn.Column(
+            *self._select_widgets.values(), sizing_mode='stretch_width'
+        )
+
+    @property
+    def select_widgets(self) -> dict[str, pn.widgets.Select]:
+        """Exposed for watching changes."""
+        return self._select_widgets
+
+    @property
+    def panel(self) -> pn.Column:
+        """Panel widget for display."""
+        return self._panel
+
+    def get_values(self) -> dict[str, str]:
+        """Return current selections as {input_name: stream_name}."""
+        return {name: w.value for name, w in self._select_widgets.items()}
 
 
 class NoParamsWidget:

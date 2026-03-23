@@ -158,7 +158,7 @@ class TestSpecRequirements:
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
 
-        assert spec_req.validate_spec(DetectorROIAuxSources) is True
+        assert spec_req.validate_spec(DetectorROIAuxSources()) is True
 
     def test_returns_true_for_subclass_of_required(self) -> None:
         """Test that validation passes for subclasses of required type."""
@@ -171,21 +171,22 @@ class TestSpecRequirements:
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
 
-        assert spec_req.validate_spec(CustomROIAuxSources) is True
+        assert spec_req.validate_spec(CustomROIAuxSources()) is True
 
     def test_returns_false_when_aux_sources_does_not_match(self) -> None:
         """Test that validation fails when aux_sources doesn't match requirement."""
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.config.workflow_spec import AuxSources
         from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         # Create a different aux_sources type
-        class OtherAuxSources(AuxSourcesBase):
-            pass
+        class OtherAuxSources(AuxSources):
+            def __init__(self) -> None:
+                super().__init__({})
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
 
-        assert spec_req.validate_spec(OtherAuxSources) is False
+        assert spec_req.validate_spec(OtherAuxSources()) is False
 
     def test_default_spec_requirements_has_no_requirements(self) -> None:
         """Test that default SpecRequirements has no aux_sources requirements."""

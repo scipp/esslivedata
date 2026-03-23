@@ -180,7 +180,7 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     # Get default aux_source_names from the workflow spec
     aux_source_names = {}
     if spec.aux_sources is not None:
-        aux_source_names = spec.aux_sources().model_dump()
+        aux_source_names = spec.aux_sources.get_defaults()
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id, aux_source_names=aux_source_names
     )

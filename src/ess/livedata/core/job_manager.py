@@ -137,19 +137,21 @@ class JobFactory:
         if workflow_spec is None:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
 
-        # Render aux source names using the model's render() method if applicable
+        # Render aux source names using the spec's render() method if applicable
         if workflow_spec.aux_sources is not None:
-            # Reconstruct the Pydantic model from the dict to call render()
-            # Empty dict will trigger Pydantic defaults if defined in the model
-            aux_model = workflow_spec.aux_sources.model_validate(
-                config.aux_source_names
+            rendered_aux_names = workflow_spec.aux_sources.render(
+                job_id=job_id,
+                selections=config.aux_source_names if config.aux_source_names else None,
             )
-            rendered_aux_names = aux_model.render(job_id=job_id)
         else:
             rendered_aux_names = config.aux_source_names
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
-        stream_processor = factory.create(source_name=job_id.source_name, config=config)
+        stream_processor = factory.create(
+            source_name=job_id.source_name,
+            config=config,
+            aux_source_names=rendered_aux_names,
+        )
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
