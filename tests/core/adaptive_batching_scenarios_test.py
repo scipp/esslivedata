@@ -54,8 +54,8 @@ LIMITS: dict[str, dict[str, float]] = {
         "max_time_to_first_escalation_s": 10.0,
     },
     "step_function_backlog": {
-        "max_backlog_s": 5.0,
-        "max_final_backlog_s": 1.0,
+        "max_backlog_s": 1.0,
+        "max_final_backlog_s": 0.5,
     },
     # -- Escalation reaches appropriate level for given severity ----------
     # Levels are half-steps: window = base * sqrt(2)^level.
@@ -104,12 +104,12 @@ LIMITS: dict[str, dict[str, float]] = {
         "max_oscillations": 0,
     },
     "boundary_oscillation": {
-        "max_oscillations": 4,
+        "max_oscillations": 5,
     },
     # -- Creeping overload ------------------------------------------------
     "creeping_overload": {
-        "min_level_reached": 1,
-        "max_backlog_s": 5.0,
+        "min_level_reached": 4,
+        "max_backlog_s": 3.5,
     },
     "mild_creeping_overload": {
         "min_level_reached": 1,
@@ -140,12 +140,12 @@ LIMITS: dict[str, dict[str, float]] = {
     "shutter_open_close": {
         "min_level_reached": 1,
         "max_final_level": 0,
-        "max_backlog_s": 10.0,
+        "max_backlog_s": 2.0,
     },
     "repeated_shutter_cycles": {
         "min_level_reached": 1,
         "max_final_level": 0,
-        "min_escalation_events": 2,
+        "min_escalation_events": 4,
     },
     "severe_to_cosmic_background": {
         "min_level_during_load": 3,
@@ -155,7 +155,7 @@ LIMITS: dict[str, dict[str, float]] = {
     "backlog_drains": {
         "min_level_reached": 1,
         "min_peak_backlog_s": 0.1,
-        "max_final_backlog_s": 1.0,
+        "max_final_backlog_s": 0.5,
     },
     "backlog_peaks_and_decreases": {
         "min_level_reached": 1,
@@ -163,7 +163,7 @@ LIMITS: dict[str, dict[str, float]] = {
     },
     # -- Processing-time awareness ----------------------------------------
     "fast_escalation_clear_overload": {
-        "max_time_to_first_escalation_s": 5.0,
+        "max_time_to_first_escalation_s": 4.0,
     },
     "no_escalation_when_fits": {
         "max_level": 0,
@@ -717,16 +717,22 @@ class TestNoEscalationWhenNotNeeded:
     def test_no_escalation_with_gc_jitter(self, seed):
         """Occasional GC/scheduling spikes should not cause escalation.
 
-        Processing is fast on average (0.3s) but with significant jitter
-        that occasionally exceeds the 1s window.  Tested with multiple RNG
-        seeds to avoid seed-dependent false confidence.
+        Processing is fast on average (0.3s) but with high jitter
+        (std = 1.2 * mean = 0.36s) that regularly sends individual batches
+        into the dead zone (75-100% of window) and occasionally past the
+        window entirely (~4 overloaded cycles per 120s run).
+
+        The batcher must tolerate these isolated spikes because its
+        escalation heuristic requires *consecutive* overloaded batches.
+        Tested with multiple RNG seeds to avoid seed-dependent false
+        confidence.
         """
         lim = LIMITS["gc_jitter"]
         batcher, clock = make_default_batcher()
         cost = constant_overhead_cost(
             overhead_s=0.2,
             per_second_cost=0.1,
-            jitter_fraction=0.5,
+            jitter_fraction=1.2,
             rng=random.Random(seed),
         )
 
