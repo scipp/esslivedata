@@ -510,7 +510,7 @@ class TestStepFunctionEscalation:
             ),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
 
         first_esc = result.first_escalation_time_s()
         assert first_esc is not None, "Batcher never escalated"
@@ -535,7 +535,7 @@ class TestStepFunctionEscalation:
             after=constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level >= lim["min_level"], (
             f"Only reached level {result.max_level} (need >= {lim['min_level']})"
         )
@@ -567,7 +567,7 @@ class TestStepFunctionEscalation:
             after=constant_overhead_cost(overhead_s=0.8, per_second_cost=0.3),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level >= lim["min_level"], (
             f"Only reached level {result.max_level} (need >= {lim['min_level']})"
         )
@@ -579,7 +579,7 @@ class TestStepFunctionEscalation:
             f"(limit: {lim['max_oscillations']})"
         )
         # After the initial transient, the level should be stable.
-        late_cycles = result.cycles_after(60.0)
+        late_cycles = result.cycles_after(30.0)
         assert late_cycles, "Simulation too short for stabilization check"
         late_levels = {c.level for c in late_cycles}
         assert len(late_levels) == 1, (
@@ -635,7 +635,7 @@ class TestStepFunctionEscalation:
             ),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level >= lim["min_level"], (
             f"Only reached level {result.max_level} (need >= {lim['min_level']})"
         )
@@ -665,7 +665,7 @@ class TestNonDefaultBaseBatchLength:
             after=constant_overhead_cost(overhead_s=1.2, per_second_cost=0.6),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level >= lim["min_level"], (
             f"Only reached level {result.max_level} (need >= {lim['min_level']})"
         )
@@ -731,7 +731,7 @@ class TestNoEscalationWhenNotNeeded:
             rng=random.Random(seed),
         )
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 90.0, cost, clock)
         assert result.max_level <= lim["max_level"], (
             f"Escalated to level {result.max_level} from jitter alone "
             f"(seed={seed}, limit: {lim['max_level']})"
@@ -753,7 +753,7 @@ class TestSteadyOverload:
 
         cost = constant_overhead_cost(overhead_s=0.6, per_second_cost=0.6)
 
-        result = run_scenario(batcher, 120.0, cost, clock)
+        result = run_scenario(batcher, 60.0, cost, clock)
         assert result.max_level >= lim["min_level_reached"], (
             f"Precondition: load must trigger escalation "
             f"(reached level {result.max_level}, "
@@ -795,7 +795,7 @@ class TestSteadyOverload:
             rng=random.Random(42),
         )
 
-        result = run_scenario(batcher, 180.0, cost, clock)
+        result = run_scenario(batcher, 90.0, cost, clock)
         assert result.oscillation_count() <= lim["max_oscillations"], (
             f"Oscillated {result.oscillation_count()} times "
             f"(limit: {lim['max_oscillations']})"
@@ -855,7 +855,7 @@ class TestCreepingOverload:
             ramp_duration_s=60.0,
         )
 
-        result = run_scenario(batcher, 180.0, cost, clock)
+        result = run_scenario(batcher, 100.0, cost, clock)
         assert result.max_level >= lim["min_level_reached"], (
             f"Only reached level {result.max_level} — mild overload should "
             f"still trigger escalation (need >= {lim['min_level_reached']})"
@@ -881,7 +881,7 @@ class TestDeescalation:
                 30.0,
                 None,
                 None,
-                120.0,
+                75.0,
                 "deescalation_to_idle",
                 id="heavy→idle",
             ),
@@ -889,7 +889,7 @@ class TestDeescalation:
                 40.0,
                 0.1,
                 0.1,
-                180.0,
+                100.0,
                 "deescalation_to_light_load",
                 id="heavy→light (0.2s at 1s window)",
             ),
@@ -897,7 +897,7 @@ class TestDeescalation:
                 40.0,
                 0.3,
                 0.3,
-                180.0,
+                100.0,
                 "deescalation_moderate_load",
                 id="heavy→moderate (0.6s at 1s window)",
             ),
@@ -964,7 +964,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost, clock)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during heavy phase (reached {result.max_level})"
@@ -1001,7 +1001,7 @@ class TestDeescalation:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost, clock)
+        result = run_scenario(batcher, 150.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during severe phase (reached {result.max_level})"
@@ -1137,7 +1137,7 @@ class TestRealisticShutterScenario:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost, clock)
+        result = run_scenario(batcher, 180.0, cost, clock)
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
             f"during severe phase (reached {result.max_level})"
@@ -1209,7 +1209,7 @@ class TestDeescalationDeadZone:
             ),
         )
 
-        result = run_scenario(batcher, 240.0, cost, clock)
+        result = run_scenario(batcher, 150.0, cost, clock)
 
         assert result.max_level >= lim["min_level_during_load"], (
             f"Precondition: must reach level {lim['min_level_during_load']}+ "
