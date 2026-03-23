@@ -163,7 +163,7 @@ class RangeRequestPresenter(PresenterBase):
         """Forward edit stream events to the plotter's callback."""
         data = event.new if hasattr(event, 'new') else event
         try:
-            self._on_edit_callback(data or {})
+            self._on_edit_callback(data if data is not None else {})
         except Exception as e:
             logger.error("Failed to process range edit: %s", e)
 

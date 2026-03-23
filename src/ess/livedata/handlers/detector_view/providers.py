@@ -303,7 +303,7 @@ def parse_histogram_slice(request: HistogramSliceRequest) -> HistogramSlice:
     ----------
     request:
         DataArray with dim 'bound' containing [low, high] values.
-        Empty (bound size 0) or None means no slice (full range).
+        Empty (bound size != 2) or None means no slice (full range).
         StreamProcessor initializes context keys to None before the first
         update arrives.
 
@@ -312,7 +312,7 @@ def parse_histogram_slice(request: HistogramSliceRequest) -> HistogramSlice:
     :
         Tuple of (low, high) Variables, or None if request is empty/unset.
     """
-    if request is None or request.sizes.get('bound', 0) == 0:
+    if request is None or request.sizes.get('bound', 0) != 2:
         return HistogramSlice(None)
     return HistogramSlice((request['bound', 0].data, request['bound', 1].data))
 
