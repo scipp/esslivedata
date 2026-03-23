@@ -63,18 +63,23 @@ def setup_factories(instrument: Instrument) -> None:
                 resolution={'arc_length': 80, 'z': 320},
                 pixel_noise=_pixel_noise,
             ),
+            # Backward/upstream detectors: no flip needed, x already points
+            # right when viewed from the sample looking back.
             'endcap_backward_detector': GeometricViewConfig(
                 projection_type='xy_plane',
                 resolution={'y': 240, 'x': 160},
                 pixel_noise=_pixel_noise,
-                flip_x=True,
+                flip_x=False,
             ),
-            'endcap_forward_detector': GeometricViewConfig(
+            'high_resolution_detector': GeometricViewConfig(
                 projection_type='xy_plane',
                 resolution={'y': 160, 'x': 160},
                 pixel_noise=_pixel_noise,
+                flip_x=False,
             ),
-            'high_resolution_detector': GeometricViewConfig(
+            # Forward/downstream detectors: flip_x because x points left
+            # when viewed from the sample along the beam.
+            'endcap_forward_detector': GeometricViewConfig(
                 projection_type='xy_plane',
                 resolution={'y': 160, 'x': 160},
                 pixel_noise=_pixel_noise,
@@ -84,6 +89,7 @@ def setup_factories(instrument: Instrument) -> None:
                 projection_type='xy_plane',
                 resolution={'y': 160, 'x': 160},
                 pixel_noise=_pixel_noise,
+                flip_x=True,
             ),
         },
     )

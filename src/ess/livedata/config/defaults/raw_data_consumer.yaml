@@ -2,5 +2,6 @@ auto.offset.reset: latest
 enable.auto.commit: true
 fetch.min.bytes: 1
 fetch.max.bytes: 200000000  # might need at least 10x this in RAM for processing
+fetch.wait.max.ms: 200  # reduce broker-side wait to avoid head-of-line blocking on idle partitions
 session.timeout.ms: 30000
 heartbeat.interval.ms: 10000  # long so we do not timeout when processing large data
