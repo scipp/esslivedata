@@ -63,6 +63,9 @@ class TestParseHistogramSlice:
 class TestHistogramSliceReadback:
     """Tests for histogram_slice_readback provider."""
 
+    def _bins(self, unit='ms'):
+        return sc.linspace('tof', 0.0, 100.0, 10, unit=unit)
+
     def test_echoes_request(self):
         data = sc.DataArray(
             data=sc.concat(
@@ -70,16 +73,17 @@ class TestHistogramSliceReadback:
             )
         )
         request = HistogramSliceRequest(data)
-        readback = histogram_slice_readback(request)
+        readback = histogram_slice_readback(request, self._bins())
         assert isinstance(readback, sc.DataArray)
         assert sc.identical(readback, request)
 
-    def test_none_request_returns_empty(self):
+    def test_none_request_returns_empty_with_unit(self):
         """StreamProcessor initializes context keys to None."""
-        readback = histogram_slice_readback(None)
+        readback = histogram_slice_readback(None, self._bins(unit='ms'))
         assert readback.sizes == {'bound': 0}
+        assert readback.data.unit == 'ms'
 
     def test_echoes_empty_request(self):
         request = HistogramSliceRequest(sc.DataArray(data=sc.zeros(sizes={'bound': 0})))
-        readback = histogram_slice_readback(request)
+        readback = histogram_slice_readback(request, self._bins())
         assert readback.sizes == {'bound': 0}

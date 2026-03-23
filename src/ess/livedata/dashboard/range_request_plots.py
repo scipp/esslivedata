@@ -215,9 +215,10 @@ class RangeRequestPlotter(Plotter):
         data_key, da = next(iter(data.items()))
         self._data_key = data_key
 
-        # Extract unit from the bound coordinate values
-        if da.sizes.get('bound', 0) > 0:
-            self._spectral_unit = str(da.data.unit) if da.data.unit else None
+        # Extract spectral unit from readback data. The readback provider
+        # always attaches the histogram bins unit, even when empty.
+        if da.data.unit:
+            self._spectral_unit = str(da.data.unit)
 
         self._set_cached_state(data)
         return data

@@ -38,8 +38,10 @@ def _make_readback_data(
     )
 
 
-def _make_empty_readback() -> sc.DataArray:
-    return HistogramSliceReadback(sc.DataArray(data=sc.zeros(sizes={'bound': 0})))
+def _make_empty_readback(unit: str = 'ns') -> sc.DataArray:
+    return HistogramSliceReadback(
+        sc.DataArray(data=sc.zeros(sizes={'bound': 0}, unit=unit))
+    )
 
 
 class TestRangeRequestPlotter:
@@ -55,16 +57,15 @@ class TestRangeRequestPlotter:
         assert plotter._spectral_unit == str(sc.Unit('us'))
         assert plotter._data_key == data_key
 
-    def test_compute_handles_empty_readback(self):
+    def test_compute_extracts_unit_from_empty_readback(self):
         plotter = RangeRequestPlotter(RangeRequestParams())
         data_key = _make_data_key()
-        data = _make_empty_readback()
+        data = _make_empty_readback(unit='ms')
 
         plotter.compute({data_key: data})
 
         assert plotter._data_key == data_key
-        # Unit not set for empty readback
-        assert plotter._spectral_unit is None
+        assert plotter._spectral_unit == 'ms'
 
     def test_edit_handler_publishes_range(self):
         publisher = FakeRangePublisher()

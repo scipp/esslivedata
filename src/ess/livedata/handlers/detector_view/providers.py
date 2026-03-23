@@ -319,14 +319,21 @@ def parse_histogram_slice(request: HistogramSliceRequest) -> HistogramSlice:
 
 def histogram_slice_readback(
     request: HistogramSliceRequest,
+    bins: HistogramBins,
 ) -> HistogramSliceReadback:
     """Echo the histogram slice request as readback for frontend display.
+
+    The readback always carries the spectral unit from HistogramBins,
+    even when empty. This allows the frontend plotter to publish range
+    updates with the correct unit.
 
     Parameters
     ----------
     request:
         The incoming histogram slice request. May be None if context key
         has not been set yet.
+    bins:
+        Histogram bin edges, used to determine the spectral unit.
 
     Returns
     -------
@@ -334,5 +341,7 @@ def histogram_slice_readback(
         The same DataArray typed as readback, or an empty DataArray if unset.
     """
     if request is None:
-        return HistogramSliceReadback(sc.DataArray(data=sc.zeros(sizes={'bound': 0})))
+        return HistogramSliceReadback(
+            sc.DataArray(data=sc.zeros(sizes={'bound': 0}, unit=bins.unit))
+        )
     return HistogramSliceReadback(request)
