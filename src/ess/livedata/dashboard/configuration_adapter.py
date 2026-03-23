@@ -70,6 +70,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
     def description(self) -> str:
         """Configuration description."""
 
+    @property
     def hidden_fields(self) -> frozenset[str]:
         """Fields to hide in the parameter UI."""
         return frozenset()
