@@ -74,7 +74,7 @@ class TestRangeRequestPlotter:
         plotter.compute({data_key: _make_readback_data(unit='ns')})
 
         handler = plotter._create_edit_handler()
-        handler({'x0': [1000.0], 'x1': [5000.0], 'y0': [-1e10], 'y1': [1e10]})
+        handler((1000.0, 5000.0))
 
         assert len(publisher.published) == 1
         job_id, low, high, unit = publisher.published[0]
@@ -90,8 +90,8 @@ class TestRangeRequestPlotter:
         plotter.compute({data_key: _make_readback_data()})
 
         handler = plotter._create_edit_handler()
-        # x0 > x1 (user dragged right-to-left)
-        handler({'x0': [5000.0], 'x1': [1000.0], 'y0': [0], 'y1': [1]})
+        # high before low (user dragged right-to-left)
+        handler((5000.0, 1000.0))
 
         _, low, high, _ = publisher.published[0]
         assert low == 1000.0
@@ -104,12 +104,12 @@ class TestRangeRequestPlotter:
         plotter.compute({data_key: _make_readback_data()})
 
         handler = plotter._create_edit_handler()
-        handler({'x0': [100.0], 'x1': [200.0], 'y0': [0], 'y1': [1]})
-        handler({'x0': [100.0], 'x1': [200.0], 'y0': [0], 'y1': [1]})
+        handler((100.0, 200.0))
+        handler((100.0, 200.0))
 
         assert len(publisher.published) == 1
 
-    def test_edit_handler_publishes_clear_on_empty(self):
+    def test_edit_handler_publishes_clear_on_none(self):
         publisher = FakeRangePublisher()
         plotter = RangeRequestPlotter(RangeRequestParams(), range_publisher=publisher)
         data_key = _make_data_key()
@@ -117,23 +117,23 @@ class TestRangeRequestPlotter:
 
         handler = plotter._create_edit_handler()
         # Set a range first
-        handler({'x0': [100.0], 'x1': [200.0], 'y0': [0], 'y1': [1]})
+        handler((100.0, 200.0))
         # Then clear it
-        handler({'x0': [], 'x1': [], 'y0': [], 'y1': []})
+        handler(None)
 
         assert len(publisher.published) == 2
         _, low, _, _ = publisher.published[1]
         assert low is None  # FakeRangePublisher records None for clear
 
-    def test_edit_handler_ignores_empty_when_already_empty(self):
+    def test_edit_handler_ignores_none_when_already_empty(self):
         publisher = FakeRangePublisher()
         plotter = RangeRequestPlotter(RangeRequestParams(), range_publisher=publisher)
         data_key = _make_data_key()
         plotter.compute({data_key: _make_readback_data()})
 
         handler = plotter._create_edit_handler()
-        # Empty when no range was ever set — should not publish
-        handler({'x0': [], 'x1': [], 'y0': [], 'y1': []})
+        # None when no range was ever set — should not publish
+        handler(None)
 
         assert len(publisher.published) == 0
 
@@ -144,7 +144,7 @@ class TestRangeRequestPlotter:
 
         handler = plotter._create_edit_handler()
         # Should not raise even without publisher
-        handler({'x0': [100.0], 'x1': [200.0], 'y0': [0], 'y1': [1]})
+        handler((100.0, 200.0))
 
     def test_set_range_publisher(self):
         plotter = RangeRequestPlotter(RangeRequestParams())

@@ -2,9 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Interactive histogram slice range plotter for spectrum plots.
 
-This plotter creates a BoxEdit-enabled rectangle overlay on spectrum plots
-that allows users to select a spectral range for filtering the detector image.
-Edits are published to Kafka for backend processing.
+This plotter creates a Bokeh RangeTool overlay on spectrum plots that allows
+users to select a spectral range for filtering the detector image.
+Edits are debounced and published to Kafka for backend processing.
 
 Architecture
 ------------
@@ -12,26 +12,29 @@ Follows the same two-stage compute/present pattern as ROI request plotters:
 
 1. compute(): Extracts ResultKey and spectral unit from the readback data.
 
-2. create_presenter(): Creates a presenter with BoxEdit stream and an edit
-   handler callback. The callback captures per-session range state in a closure.
+2. create_presenter(): Creates a presenter with a Bokeh hook that attaches
+   a RangeTool to the plot. The hook captures per-session range state and
+   a debounce timer in a closure.
 
-3. Presenter.__init__(): Creates session-bound Pipe, DynamicMap, and BoxEdit
-   stream. Each browser session gets its own presenter instance.
+3. Presenter.present(): Returns a transparent Curve element whose sole purpose
+   is to carry the Bokeh hook that installs the RangeTool on the figure.
 
-4. Presenter.present(): Returns the pre-created DynamicMap.
-
-The presenter handles only HoloViews mechanics. Domain logic (range parsing,
+The presenter handles only HoloViews/Bokeh mechanics. Domain logic (range
 comparison, publishing) stays in the plotter via the edit callback.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Timer
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import holoviews as hv
+import numpy as np
 import pydantic
 import structlog
+from bokeh.models import Range1d
+from bokeh.models.tools import RangeTool
 
 from .plots import Plotter, PresenterBase
 from .static_plots import Color, LineDash
@@ -41,6 +44,9 @@ if TYPE_CHECKING:
     from .range_publisher import RangePublisher
 
 logger = structlog.get_logger(__name__)
+
+DEBOUNCE_DELAY_S = 0.3
+"""Delay before publishing a range change after the user stops dragging."""
 
 
 @runtime_checkable
@@ -90,89 +96,107 @@ class RangeRequestParams(pydantic.BaseModel):
 
 
 class RangeRequestPresenter(PresenterBase):
-    """
-    Presenter for histogram range selection using BoxEdit on spectrum plot.
+    """Presenter for histogram range selection using Bokeh RangeTool.
 
-    Creates a session-bound Pipe, DynamicMap with Rectangles element,
-    and BoxEdit stream for interactive range selection.
+    Attaches a RangeTool to the spectrum plot via a Bokeh hook. The tool
+    provides a draggable/resizable band overlay. Range changes are debounced
+    so that only the final position after the user stops dragging is published.
 
     Parameters
     ----------
     plotter:
         The plotter that created this presenter.
-    initial_hv_data:
-        Initial data in HoloViews Rectangles format.
-    initial_stream_data:
-        Initial data in BoxEdit stream format.
     style:
         Style parameters for the range band.
     on_edit:
-        Callback for handling edit events.
+        Callback invoked with ``(low, high)`` when the range settles after
+        dragging, or ``None`` when the range is cleared.
     """
 
     def __init__(
         self,
         *,
         plotter: Plotter,
-        initial_hv_data: list,
-        initial_stream_data: dict,
         style: RangeRequestStyle,
-        on_edit: Callable[[dict], None],
+        on_edit: Callable[[tuple[float, float] | None], None],
     ) -> None:
         super().__init__(plotter)
         self._style = style
-        self._on_edit_callback = on_edit
+        self._on_edit = on_edit
 
-        # Create session-bound components
-        self._pipe = hv.streams.Pipe(data=[])
-        self._dmap = hv.DynamicMap(self._create_element, streams=[self._pipe])
-        self._edit_stream = hv.streams.BoxEdit(
-            source=self._dmap,
-            num_objects=1,
-            data=initial_stream_data,
-        )
+    def present(self, pipe: hv.streams.Pipe) -> hv.Curve:
+        """Return a transparent Curve that carries the RangeTool hook.
 
-        # Initialize pipe with data
-        self._pipe.send(initial_hv_data)
-
-        # Set up edit callback
-        self._edit_stream.param.watch(self._handle_edit, 'data')
-
-    def _create_element(self, data: list) -> hv.Rectangles:
-        """Create HoloViews Rectangles element."""
-        return hv.Rectangles(data)
-
-    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
-        """
-        Return pre-created DynamicMap.
-
-        The passed pipe is ignored - range request plotters create their own
-        internal pipe and don't update from external data changes.
+        The passed pipe is ignored — range request plotters do not render
+        data, they only provide the interactive tool overlay.
         """
         del pipe
-        return self._dmap.opts(
-            color=self._style.color,
-            fill_alpha=self._style.fill_alpha,
-            line_width=self._style.line_width,
-            line_dash=self._style.line_dash,
-            # Bokeh bug: line_dash='dashed' doesn't render with WebGL backend
-            backend_opts={'plot.output_backend': 'canvas'},
-        )
+        style = self._style
+        on_edit = self._on_edit
 
-    def _handle_edit(self, event) -> None:
-        """Forward edit stream events to the plotter's callback."""
-        data = event.new if hasattr(event, 'new') else event
-        try:
-            self._on_edit_callback(data if data is not None else {})
-        except Exception as e:
-            logger.error("Failed to process range edit: %s", e)
+        # Per-session state captured in closure
+        selection_range = Range1d()
+        debounce_timer: list[Timer | None] = [None]
+        committed_range: list[tuple[float, float] | None] = [None]
+
+        def _settle():
+            low = min(selection_range.start, selection_range.end)
+            high = max(selection_range.start, selection_range.end)
+            new_range = (low, high)
+            if new_range != committed_range[0]:
+                committed_range[0] = new_range
+                try:
+                    on_edit(new_range)
+                except Exception:
+                    logger.exception("Failed to process range edit")
+
+        def _on_range_change(attr, old, new):
+            if debounce_timer[0] is not None:
+                debounce_timer[0].cancel()
+            debounce_timer[0] = Timer(DEBOUNCE_DELAY_S, _settle)
+            debounce_timer[0].daemon = True
+            debounce_timer[0].start()
+
+        def hook(plot, element):
+            fig = plot.state
+            tool = RangeTool(
+                x_range=selection_range,
+                x_interaction=True,
+                y_interaction=False,
+            )
+            tool.overlay.fill_color = str(style.color)
+            tool.overlay.fill_alpha = style.fill_alpha
+            tool.overlay.line_color = str(style.color)
+            tool.overlay.line_alpha = min(style.fill_alpha * 4, 1.0)
+            tool.overlay.line_dash = style.line_dash.value
+            tool.overlay.line_width = style.line_width
+
+            tool.start_gesture = "tap"
+            tool.overlay.inverted = True
+            tool.overlay.use_handles = True
+            tool.overlay.handles.all.hover_fill_color = "grey"
+            tool.overlay.handles.all.hover_fill_alpha = 0.25
+            tool.overlay.handles.all.fill_alpha = 0.1
+            tool.overlay.handles.all.line_alpha = 0.25
+
+            fig.add_tools(tool)
+            selection_range.on_change("start", _on_range_change)
+            selection_range.on_change("end", _on_range_change)
+
+        # Return a transparent Curve that only serves as the hook carrier.
+        # Using NaN data so it doesn't affect axis ranges.
+        return hv.Curve([(np.nan, np.nan)]).opts(
+            alpha=0,
+            hooks=[hook],
+        )
 
 
 class RangeRequestPlotter(Plotter):
     """Interactive plotter for histogram range selection on spectrum plots.
 
-    Creates presenters with BoxEdit-enabled DynamicMaps that allow users
-    to draw a range band. Edits are published to Kafka when the range changes.
+    Creates presenters with RangeTool-enabled overlays that allow users
+    to select a spectral range band. Edits are published to Kafka when
+    the range changes (debounced).
     """
 
     def __init__(
@@ -193,8 +217,7 @@ class RangeRequestPlotter(Plotter):
         self._range_publisher = publisher
 
     def compute(self, data: dict[ResultKey, Any], **kwargs) -> dict[ResultKey, Any]:
-        """
-        Extract data-dependent info from histogram slice readback.
+        """Extract data-dependent info from histogram slice readback.
 
         Stores the ResultKey and spectral unit from the readback data.
         These are used by the edit handler callback created in create_presenter().
@@ -228,47 +251,41 @@ class RangeRequestPlotter(Plotter):
         on_edit = self._create_edit_handler()
         presenter = RangeRequestPresenter(
             plotter=self,
-            initial_hv_data=[],
-            initial_stream_data={'x0': [], 'x1': [], 'y0': [], 'y1': []},
             style=self._params.style,
             on_edit=on_edit,
         )
         self._presenters.add(presenter)
         return presenter
 
-    def _create_edit_handler(self) -> Callable[[dict], None]:
-        """
-        Create a per-session edit handler with closure-captured range state.
+    def _create_edit_handler(
+        self,
+    ) -> Callable[[tuple[float, float] | None], None]:
+        """Create a per-session edit handler with closure-captured range state.
 
         Returns
         -------
         :
-            Callback function for handling edit events.
+            Callback invoked with ``(low, high)`` when the range settles,
+            or ``None`` when the range is cleared.
         """
         current_range: tuple[float, float] | None = None
 
-        def handle_edit(stream_data: dict) -> None:
+        def handle_edit(new_range: tuple[float, float] | None) -> None:
             nonlocal current_range
 
-            x0_list = stream_data.get('x0', [])
-            x1_list = stream_data.get('x1', [])
-
-            if not x0_list:
-                # Range was cleared
+            if new_range is None:
                 if current_range is not None:
                     current_range = None
                     self._publish_clear()
                 return
 
-            new_range = (
-                min(x0_list[0], x1_list[0]),
-                max(x0_list[0], x1_list[0]),
-            )
-            if new_range == current_range:
+            low, high = min(new_range), max(new_range)
+            normalized = (low, high)
+            if normalized == current_range:
                 return
 
-            current_range = new_range
-            self._publish_range(*new_range)
+            current_range = normalized
+            self._publish_range(low, high)
 
         return handle_edit
 

@@ -508,15 +508,12 @@ def _register_all_plotters() -> None:
     plotter_registry.register_plotter(
         name='range_request',
         title='Range Selection (Interactive)',
-        description='Draw a spectral range band to filter the detector image. '
+        description='Spectral range band to filter the detector image. '
         'Only the horizontal (spectral axis) bounds are used.'
         '<ul>'
-        '<li><strong>Add range:</strong> Click and hold for 300 ms to set one edge, '
-        'then move to the other edge and hold for 300 ms. '
-        'Or hold Shift and click-drag.</li>'
-        '<li><strong>Move range:</strong> Click and drag the existing band.</li>'
-        '<li><strong>Delete range:</strong> Tap the band to select it, '
-        'then press Backspace.</li>'
+        '<li><strong>Activate:</strong> Tap the plot to show the range band.</li>'
+        '<li><strong>Resize:</strong> Drag the left or right edge handle.</li>'
+        '<li><strong>Move:</strong> Drag the shaded band itself.</li>'
         '</ul>',
         data_requirements=DataRequirements(
             min_dims=0,
