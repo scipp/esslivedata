@@ -170,7 +170,6 @@ def create_monitor_workflow(
     geometry_filename: str | None = None,
     tof_lookup_table_filename: str | None = None,
     context_keys: dict[str, type] | None = None,
-    reset_on_context_change: frozenset[str] = frozenset(),
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -195,10 +194,6 @@ def create_monitor_workflow(
         Optional mapping from aux source stream names to sciline pipeline keys.
         Used to inject dynamic data (e.g., position streams) into the workflow
         via StreamProcessorWorkflow's context mechanism.
-    reset_on_context_change:
-        Context key names whose value changes should trigger an accumulator reset.
-        For monitor views, a position change invalidates the accumulated histogram
-        since the data is in detector-local coordinates.
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
@@ -257,5 +252,4 @@ def create_monitor_workflow(
             WindowMonitorHistogram: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
-        reset_on_context_change=reset_on_context_change,
     )

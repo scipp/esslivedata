@@ -318,17 +318,6 @@ class TestCreateMonitorWorkflow:
         assert 'position' in workflow._context_keys
         assert workflow._context_keys['position'] is sc.Variable
 
-    def test_reset_on_context_change_forwarded(self, toa_edges):
-        """Test that reset_on_context_change is passed to StreamProcessorWorkflow."""
-        context_keys = {'position': sc.Variable}
-        workflow = create_monitor_workflow(
-            'monitor_1',
-            toa_edges,
-            context_keys=context_keys,
-            reset_on_context_change=frozenset({'position'}),
-        )
-        assert workflow._reset_on_context_change == frozenset({'position'})
-
     def test_without_context_keys_still_works(self, toa_edges):
         """Test that omitting context_keys preserves existing behavior."""
         from ess.livedata.handlers.stream_processor_workflow import (
@@ -338,7 +327,6 @@ class TestCreateMonitorWorkflow:
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
-        assert workflow._reset_on_context_change == frozenset()
 
 
 class TestMonitorWorkflowIntegration:
