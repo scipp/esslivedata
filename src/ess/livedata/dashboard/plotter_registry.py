@@ -322,7 +322,12 @@ def _register_all_plotters() -> None:
     plotter_registry.register_plotter(
         name='image',
         title='Image',
-        description='Plot the data as a images.',
+        description='Plot image data.<br><br>'
+        'When using overlay-mode, select only a single source unless images represent '
+        'non-overlapping regions in the same plane. '
+        'Layout-mode plots multiple images in subplots. Note that this mode has '
+        'some limitations, e.g., for aspect settings and saving plots '
+        '- prefer setting up separate image plots in a grid of plots instead.',
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=ImagePlotter.from_params,
     )

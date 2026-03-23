@@ -14,7 +14,7 @@ from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
 from scippnexus import NXdetector
 
-from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
+from ..accumulators import make_no_copy_accumulator_pair
 
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
@@ -222,6 +222,7 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
+        cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
@@ -229,7 +230,7 @@ class DetectorViewFactory:
             target_keys=target_keys,
             window_outputs=window_outputs,
             accumulators={
-                AccumulatedHistogram[Cumulative]: NoCopyAccumulator(),
-                AccumulatedHistogram[Current]: NoCopyWindowAccumulator(),
+                AccumulatedHistogram[Cumulative]: cumulative,
+                AccumulatedHistogram[Current]: window,
             },
         )

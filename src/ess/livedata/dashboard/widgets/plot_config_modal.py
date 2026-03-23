@@ -40,6 +40,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
+from .styles import Colors
 from .wizard import Wizard, WizardStep
 
 logger = structlog.get_logger(__name__)
@@ -103,6 +104,61 @@ def _resolve_axis_source_titles(
                     title = f"{title} ({output_title})"
             result[field_name] = title
     return result
+
+
+@dataclass(frozen=True)
+class OutputDisplayHints:
+    """UI hints derived from inspecting a workflow output template.
+
+    Consolidates all output-template-dependent decisions for the plot
+    configuration modal so that the template is inspected in one place.
+    """
+
+    hidden_fields: frozenset[str]
+    preselect_all_sources: bool
+
+
+def _resolve_output_display_hints(
+    *,
+    is_static: bool,
+    workflow_spec: WorkflowSpec | None,
+    output_name: str,
+) -> OutputDisplayHints:
+    """Derive UI hints from the workflow output template.
+
+    Inspects the output template once and returns all decisions that depend
+    on its properties (dimensionality, coordinates, etc.).
+
+    Parameters
+    ----------
+    is_static:
+        Whether the plot uses a static overlay workflow.
+    workflow_spec:
+        Workflow specification for the selected output. May be ``None``
+        for static overlays.
+    output_name:
+        Name of the output field.
+
+    Returns
+    -------
+    :
+        Display hints for the configuration UI.
+    """
+    if is_static:
+        return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
+    from ess.livedata.dashboard.plotting_controller import output_has_time_coord
+
+    supports_windowing = output_has_time_coord(workflow_spec, output_name)
+    hidden = frozenset({'window'}) if not supports_windowing else frozenset()
+
+    template = (
+        workflow_spec.get_output_template(output_name)
+        if workflow_spec is not None
+        else None
+    )
+    preselect_all = template is None or template.ndim < 2
+
+    return OutputDisplayHints(hidden_fields=hidden, preselect_all_sources=preselect_all)
 
 
 def _inject_axis_source_titles(
@@ -257,13 +313,13 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._workflow_description = pn.pane.HTML(
             '',
             sizing_mode='stretch_width',
-            styles={'font-size': '12px', 'color': '#6c757d'},
+            styles={'font-size': '12px', 'color': Colors.TEXT_MUTED},
             visible=False,
         )
         self._output_description = pn.pane.HTML(
             '',
             sizing_mode='stretch_width',
-            styles={'font-size': '12px', 'color': '#6c757d'},
+            styles={'font-size': '12px', 'color': Colors.TEXT_MUTED},
             visible=False,
         )
         self._name_input = self._create_name_input()
@@ -985,6 +1041,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._last_axis_sources: dict[str, DataSourceConfig] | None = None
         # Store result from callback
         self._last_config_result: PlotConfig | None = None
+        self._supports_windowing: bool = True
 
     @property
     def name(self) -> str:
@@ -1131,6 +1188,18 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             if titles:
                 config_state = ConfigurationState(params={'bins': titles})
 
+        hints = _resolve_output_display_hints(
+            is_static=is_static,
+            workflow_spec=workflow_spec if not is_static else None,
+            output_name=self._plotter_selection.output_name,
+        )
+        self._supports_windowing = 'window' not in hints.hidden_fields
+
+        # For new plots, use display hints to decide source pre-selection.
+        # 2D+ outputs (images) default to empty so the user picks one source.
+        if initial_source_names is None and not hints.preselect_all_sources:
+            initial_source_names = []
+
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
             source_names=source_names,
@@ -1138,6 +1207,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state=config_state,
             initial_source_names=initial_source_names,
             instrument_config=self._instrument_config,
+            hidden_fields=hints.hidden_fields,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
@@ -1183,6 +1253,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             data_sources=data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
+            supports_windowing=self._supports_windowing,
         )
 
 

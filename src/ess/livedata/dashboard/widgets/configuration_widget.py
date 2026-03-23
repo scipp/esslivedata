@@ -12,6 +12,8 @@ from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
+from .param_widget import ParamWidget
+from .styles import ErrorBox, StatusColors
 
 
 class ConfigurationWidget:
@@ -104,6 +106,7 @@ class ConfigurationWidget:
                 initial_values=self._config.initial_parameter_values,
                 show_descriptions=True,
                 cards_collapsed=False,
+                hidden_fields=self._config.hidden_fields,
             )
 
     def _on_aux_source_changed(self, event) -> None:
@@ -199,11 +202,12 @@ class ConfigurationWidget:
 
         if has_error:
             self._source_selector.styles = {
-                'border': '2px solid #dc3545',
+                'border': f'2px solid {StatusColors.ERROR}',
                 'border-radius': '4px',
             }
             self._source_error_pane.object = (
-                "<p style='color: #dc3545; margin: 5px 0; font-size: 0.9em;'>"
+                f"<p style='color: {StatusColors.ERROR}; "
+                f"margin: 5px 0; font-size: 0.9em;'>"
                 "Please select at least one source name.</p>"
             )
         else:
@@ -305,11 +309,15 @@ class ConfigurationPanel:
     def _show_validation_errors(self, errors: list[str]) -> None:
         """Show validation errors inline."""
         error_html = (
-            "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; "
-            "border-radius: 4px; padding: 10px; margin: 10px 0;'>"
-            "<h6 style='color: #721c24; margin: 0 0 10px 0;'>"
-            "Please fix the following errors:</h6>"
-            "<ul style='color: #721c24; margin: 0; padding-left: 20px;'>"
+            f"<div style='background-color: {ErrorBox.BG}; "
+            f"border: 1px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; padding: 10px; "
+            f"margin: 10px 0;'>"
+            f"<h6 style='color: {ErrorBox.TEXT}; "
+            f"margin: 0 0 10px 0;'>"
+            f"Please fix the following errors:</h6>"
+            f"<ul style='color: {ErrorBox.TEXT}; "
+            f"margin: 0; padding-left: 20px;'>"
         )
         for error in errors:
             error_html += f"<li>{error}</li>"
@@ -320,9 +328,12 @@ class ConfigurationPanel:
     def _show_action_error(self, message: str) -> None:
         """Show action error inline."""
         error_html = (
-            "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; "
-            "border-radius: 4px; padding: 10px; margin: 10px 0;'>"
-            f"<p style='color: #721c24; margin: 0;'>{message}</p>"
+            f"<div style='background-color: {ErrorBox.BG}; "
+            f"border: 1px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; padding: 10px; "
+            f"margin: 10px 0;'>"
+            f"<p style='color: {ErrorBox.TEXT}; "
+            f"margin: 0;'>{message}</p>"
             "</div>"
         )
         self._error_pane.object = error_html
@@ -510,9 +521,11 @@ class ErrorWidget:
 
     def __init__(self, error_message: str):
         self.widget = pn.pane.HTML(
-            f"<div style='padding: 20px; text-align: center; color: #721c24; "
-            f"font-weight: bold; border: 2px solid #f5c6cb; border-radius: 4px; "
-            f"background-color: #f8d7da;'>"
+            f"<div style='padding: 20px; text-align: center; "
+            f"color: {ErrorBox.TEXT}; font-weight: bold; "
+            f"border: 2px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; "
+            f"background-color: {ErrorBox.BG};'>"
             f"Error: {error_message}"
             f"</div>",
             sizing_mode='stretch_width',

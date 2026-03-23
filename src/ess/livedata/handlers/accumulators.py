@@ -96,17 +96,47 @@ class NoCopyAccumulator(EternalAccumulator):
         return self._value
 
 
-class NoCopyWindowAccumulator(NoCopyAccumulator):
-    """
-    Window accumulator without deepcopy that clears after finalize.
+class _NoCopyWindowAccumulator(NoCopyAccumulator):
+    """Window accumulator without deepcopy that clears after finalize.
 
-    Combines the performance benefits of NoCopyAccumulator with window semantics
-    (clearing after each finalize cycle).
+    Skips the deepcopy on push that the base EternalAccumulator performs. This is
+    safe only when paired with exactly one NoCopyAccumulator consuming the same input:
+    the NoCopyAccumulator deepcopies on its first push, isolating its buffer, and
+    ``+=`` only mutates the left operand (``self._value``), never the right (the input).
+
+    Must not be constructed directly — use :func:`make_no_copy_accumulator_pair`.
     """
+
+    def _do_push(self, value: T) -> None:
+        if self._value is None:
+            self._value = value
+        else:
+            self._value += value
 
     def on_finalize(self) -> None:
         """Clear accumulated value after finalize retrieves it."""
         self.clear()
+
+
+def make_no_copy_accumulator_pair() -> tuple[
+    NoCopyAccumulator, _NoCopyWindowAccumulator
+]:
+    """Create a paired cumulative/window accumulator that skips redundant copies.
+
+    The two accumulators are designed to receive the same shared input. The cumulative
+    accumulator (NoCopyAccumulator) deepcopies on its first push, isolating its buffer.
+    The window accumulator (_NoCopyWindowAccumulator) stores a bare reference and clears
+    after each finalize cycle.
+
+    This pairing is what makes the no-copy optimization safe: because exactly one
+    NoCopyAccumulator always deepcopies, no consumer ever mutates the shared input.
+
+    Returns
+    -------
+    :
+        ``(cumulative, window)`` accumulator pair.
+    """
+    return NoCopyAccumulator(), _NoCopyWindowAccumulator()
 
 
 class LatestValue(streaming.Accumulator[T], Generic[T]):

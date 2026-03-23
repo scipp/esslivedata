@@ -160,6 +160,17 @@ class SansWorkflowParams(pydantic.BaseModel):
 # Detector names for LOKI
 detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 
+# f144 log streams for LOKI.
+# The detector carriage readback is the position dependency of loki_detector_0
+# (depends_on -> /entry/instrument/detector_carriage/value in the NeXus file).
+f144_log_streams = {
+    'detector_carriage': {
+        'source': 'LOKI-DtCar1:MC-LinX-01:Mtr.RBV',
+        'topic': 'loki_motion',
+        'units': 'mm',
+    },
+}
+
 # Create instrument
 instrument = Instrument(
     name='loki',
@@ -171,6 +182,9 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
+    f144_attribute_registry={
+        name: {'units': info['units']} for name, info in f144_log_streams.items()
+    },
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),
@@ -185,17 +199,21 @@ instrument = Instrument(
             title='Beam Monitor 0', description='Upstream, z = -16.8 m'
         ),
         'beam_monitor_m1': SourceMetadata(
-            title='Incident Monitor', description='Upstream, z = -8.4 m'
+            title='Beam Monitor 1', description='Upstream, z = -8.4 m'
         ),
         'beam_monitor_m2': SourceMetadata(
             title='Beam Monitor 2', description='Upstream, z = -2.04 m'
         ),
         'beam_monitor_m3': SourceMetadata(
-            title='Transmission Monitor', description='Downstream, z = +0.2 m'
+            title='Beam Monitor 3', description='Downstream, z = +0.2 m'
         ),
         'beam_monitor_m4': SourceMetadata(
             title='Beam Monitor 4',
             description='Downstream, movable (on detector carriage)',
+        ),
+        'detector_carriage': SourceMetadata(
+            title='Sample-Rear Distance',
+            description='Rear detector carriage position along the beam axis (z).',
         ),
     },
 )

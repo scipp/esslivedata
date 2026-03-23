@@ -26,6 +26,7 @@ class StreamKind(StrEnum):
     LIVEDATA_DATA = "livedata_data"
     LIVEDATA_ROI = "livedata_roi"
     LIVEDATA_STATUS = "livedata_status"
+    RUN_CONTROL = "run_control"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -37,6 +38,30 @@ class StreamId:
 COMMANDS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='')
 RESPONSES_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_RESPONSES, name='')
 STATUS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_STATUS, name='')
+RUN_CONTROL_STREAM_ID = StreamId(kind=StreamKind.RUN_CONTROL, name='')
+
+
+@dataclass(frozen=True, slots=True)
+class RunStart:
+    """Run start event from the ESS control system."""
+
+    run_name: str
+    start_time: int  # ns since epoch
+    stop_time: int | None = None  # ns since epoch, None when unset
+
+    def __str__(self) -> str:
+        return f"RunStart(run_name={self.run_name!r})"
+
+
+@dataclass(frozen=True, slots=True)
+class RunStop:
+    """Run stop event from the ESS control system."""
+
+    run_name: str
+    stop_time: int  # ns since epoch
+
+    def __str__(self) -> str:
+        return f"RunStop(run_name={self.run_name!r})"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -58,7 +83,7 @@ class Message(Generic[T]):
 
     timestamp: int = field(
         default_factory=lambda: int(
-            datetime.datetime.now(datetime.UTC).timestamp() * 1_000_000_000
+            datetime.datetime.now(datetime.timezone.utc).timestamp() * 1_000_000_000
         )
     )
     stream: StreamId

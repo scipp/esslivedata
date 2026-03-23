@@ -10,7 +10,10 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.plotting_controller import PlottingController
+from ess.livedata.dashboard.plotting_controller import (
+    PlottingController,
+    output_has_time_coord,
+)
 from ess.livedata.dashboard.stream_manager import StreamManager
 
 hv.extension('bokeh')
@@ -540,3 +543,63 @@ class TestOverlayPatterns:
             if key in OVERLAY_PATTERNS:
                 overlays = [p[1] for p in OVERLAY_PATTERNS[key]]
                 assert all('request' in name for name in overlays)
+
+
+class TestOutputHasTimeCoord:
+    def test_true_when_template_has_time_coord(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            current: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['time', 'x'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'time': sc.arange('time', 0, unit='s'),
+                        'x': sc.arange('x', 0, unit='m'),
+                    },
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+        )
+        assert output_has_time_coord(spec, 'current') is True
+
+    def test_false_when_template_has_no_time_coord(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0], unit='counts'),
+                    coords={'x': sc.arange('x', 0, unit='m')},
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+        )
+        assert output_has_time_coord(spec, 'cumulative') is False
+
+    def test_true_when_no_template_available(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            result: sc.DataArray = pydantic.Field(title='Result')
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+        )
+        assert output_has_time_coord(spec, 'result') is True

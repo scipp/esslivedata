@@ -13,6 +13,7 @@ from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_params import WindowMode
 from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
 from .icons import get_icon
+from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotConfig
@@ -44,8 +45,8 @@ def _create_add_button_or_menu(
     :
         Button widget or MenuButton with overlay options.
     """
-    button_color = '#28a745'
-    hover_color = 'rgba(40, 167, 69, 0.1)'
+    button_color = StatusColors.SUCCESS
+    hover_color = HoverColors.SUCCESS
 
     if not available_overlays or on_overlay_selected is None:
         # No overlays available - use simple button
@@ -156,7 +157,7 @@ def create_cell_toolbar(
     gear_button = create_tool_button(
         icon_name='settings',
         button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color='rgba(0, 123, 255, 0.1)',
+        hover_color=ButtonStyles.PRIMARY_HOVER,
         on_click_callback=on_gear_callback,
     )
 
@@ -171,7 +172,7 @@ def create_cell_toolbar(
     close_button = create_tool_button(
         icon_name='x',
         button_color=ButtonStyles.DANGER_RED,
-        hover_color='rgba(220, 53, 69, 0.1)',
+        hover_color=ButtonStyles.DANGER_HOVER,
         on_click_callback=on_close_callback,
     )
 
@@ -179,7 +180,7 @@ def create_cell_toolbar(
     left_items: list = []
     if title:
         title_html = pn.pane.HTML(
-            f'<span style="font-size: 12px; color: #495057;">{title}</span>',
+            f'<span style="font-size: 12px; color: {Colors.TEXT};">{title}</span>',
             sizing_mode='fixed',
             height=ButtonStyles.TOOL_BUTTON_SIZE,
             styles={
@@ -215,7 +216,7 @@ def create_cell_toolbar(
     # Add border when workflow is stopped
     styles = {}
     if stopped:
-        styles['border'] = '2px solid #495057'  # Dark grey border
+        styles['border'] = f'2px solid {Colors.TEXT}'
         styles['border-radius'] = '4px'
 
     return pn.Row(
@@ -272,7 +273,7 @@ def get_workflow_display_info(
     return workflow_title, output_title
 
 
-def _format_window_info(params) -> str:
+def _format_window_info(params, *, supports_windowing: bool = True) -> str:
     """
     Format window parameters into a human-readable string.
 
@@ -280,12 +281,17 @@ def _format_window_info(params) -> str:
     ----------
     params:
         Plotter params that may contain window settings.
+    supports_windowing:
+        Whether the output supports windowing. When ``False`` (e.g. for
+        cumulative outputs), an empty string is returned.
 
     Returns
     -------
     :
         Formatted string like "current" or "10s average".
     """
+    if not supports_windowing:
+        return ''
     window = getattr(params, 'window', None)
     if window is None:
         return ''
@@ -369,7 +375,9 @@ def get_plot_cell_display_info(
 
     # Build title: "Workflow → Output (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane
-    window_info = _format_window_info(config.params)
+    window_info = _format_window_info(
+        config.params, supports_windowing=config.supports_windowing
+    )
 
     # Helper to get display title for a source
     def _title(source_name: str) -> str:

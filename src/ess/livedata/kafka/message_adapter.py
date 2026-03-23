@@ -14,6 +14,8 @@ from streaming_data_types import (
     dataarray_da00,
     eventdata_ev44,
     logdata_f144,
+    run_start_pl72,
+    run_stop_6s4t,
 )
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
@@ -23,9 +25,12 @@ from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
+    RUN_CONTROL_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSource,
+    RunStart,
+    RunStop,
     StreamId,
     StreamKind,
 )
@@ -208,6 +213,41 @@ class X5f2ToStatusAdapter(
             stream=STATUS_STREAM_ID,
             value=x5f2_to_status(message.value()),
         )
+
+
+class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]]):
+    """Adapts Kafka messages from the filewriter topic to RunStart/RunStop events.
+
+    Converts timestamps from milliseconds (flatbuffer wire format) to nanoseconds
+    (domain convention) at the adapter boundary.
+    """
+
+    _MS_TO_NS = 1_000_000
+
+    def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
+        buf = message.value()
+        schema = streaming_data_types.utils.get_schema(buf)
+        timestamp = message.timestamp()[1]
+        if schema == 'pl72':
+            info = run_start_pl72.deserialise_pl72(buf)
+            stop_time = None if info.stop_time == 0 else info.stop_time * self._MS_TO_NS
+            value: RunStart | RunStop = RunStart(
+                run_name=info.run_name,
+                start_time=info.start_time * self._MS_TO_NS,
+                stop_time=stop_time,
+            )
+        elif schema == '6s4t':
+            info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
+            value = RunStop(
+                run_name=info.run_name,
+                stop_time=info.stop_time * self._MS_TO_NS,
+            )
+        else:
+            raise streaming_data_types.exceptions.WrongSchemaException(
+                f"Unexpected schema '{schema}' on filewriter topic. "
+                f"Expected 'pl72' (run start) or '6s4t' (run stop)."
+            )
+        return Message(timestamp=timestamp, stream=RUN_CONTROL_STREAM_ID, value=value)
 
 
 class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):

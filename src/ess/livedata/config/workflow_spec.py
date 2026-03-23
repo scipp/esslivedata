@@ -202,6 +202,14 @@ class WorkflowSpec(BaseModel):
             "and UI metadata."
         ),
     )
+    reset_on_run_transition: bool = Field(
+        default=True,
+        description=(
+            "Whether jobs of this workflow should reset when an instrument run "
+            "starts or stops. Set to False for workflows that accumulate across "
+            "runs (e.g., timeseries)."
+        ),
+    )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
     outputs: type[BaseModel] = Field(
         default=DefaultOutputs,

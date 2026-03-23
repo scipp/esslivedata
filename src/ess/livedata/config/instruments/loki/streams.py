@@ -8,6 +8,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .specs import f144_log_streams
 
 detector_fakes = {
     'loki_detector_0': (1, 802816),
@@ -23,8 +24,9 @@ detector_fakes = {
 
 
 # Monitor names use 0-based indices matching the NeXus beam monitor groups
-# (beam_monitor_mN). The underlying Kafka source names (cbm1 … cbm5) are
-# 1-based; the positional mapping is handled by ``_make_cbm_monitors``.
+# (beam_monitor_mN). The underlying Kafka source names are currently 0-based
+# (cbm0..4) during the commissioning period; cbm_start=0 is passed below.
+# Once producers rename to cbm1..5, revert cbm_start to 1 and close #806.
 # Ref: ``coda_loki_999999_00020680.hdf``
 monitor_names = [
     'beam_monitor_m0',
@@ -33,6 +35,14 @@ monitor_names = [
     'beam_monitor_m3',
     'beam_monitor_m4',
 ]
+
+
+def _make_loki_logs() -> StreamLUT:
+    """LOKI log data mapping (f144 streams)."""
+    return {
+        InputStreamKey(topic=info['topic'], source_name=info['source']): internal_name
+        for internal_name, info in f144_log_streams.items()
+    }
 
 
 def _make_loki_detectors() -> StreamLUT:
@@ -51,7 +61,7 @@ def _make_loki_detectors() -> StreamLUT:
 
 
 _common_prod = make_common_stream_mapping_inputs(
-    instrument='loki', monitor_names=monitor_names
+    instrument='loki', monitor_names=monitor_names, cbm_start=0
 )
 _common_prod['detectors'] = _make_loki_detectors()
 
@@ -60,6 +70,7 @@ stream_mapping = {
         'loki',
         detector_names=list(detector_fakes),
         monitor_names=monitor_names,
+        log_names=list(f144_log_streams.keys()),
     ),
-    StreamingEnv.PROD: StreamMapping(**_common_prod),
+    StreamingEnv.PROD: StreamMapping(**_common_prod, logs=_make_loki_logs()),
 }

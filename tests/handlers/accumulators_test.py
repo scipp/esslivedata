@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from ess.reduce import streaming
@@ -12,8 +13,8 @@ from ess.livedata.handlers.accumulators import (
     LatestValueHandler,
     LogData,
     NoCopyAccumulator,
-    NoCopyWindowAccumulator,
     NullAccumulator,
+    make_no_copy_accumulator_pair,
 )
 from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
 
@@ -225,71 +226,189 @@ class TestNoCopyAccumulator:
         assert accumulator.is_empty
 
 
-class TestNoCopyWindowAccumulator:
-    """Tests for NoCopyWindowAccumulator (clears on finalize)."""
+class TestNoCopyAccumulatorPair:
+    """Tests for the accumulator pair created by make_no_copy_accumulator_pair."""
 
-    def test_is_empty_initially(self) -> None:
-        acc = NoCopyWindowAccumulator()
-        assert acc.is_empty
+    @pytest.fixture
+    def pair(self):
+        return make_no_copy_accumulator_pair()
 
-    def test_push_makes_not_empty(self) -> None:
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
-        assert not acc.is_empty
+    def test_window_is_empty_initially(self, pair) -> None:
+        _, window = pair
+        assert window.is_empty
 
-    def test_value_returns_pushed_data(self) -> None:
-        acc = NoCopyWindowAccumulator()
+    def test_push_makes_window_not_empty(self, pair) -> None:
+        _, window = pair
+        window.push(sc.array(dims=['x'], values=[1.0, 2.0]))
+        assert not window.is_empty
+
+    def test_window_value_returns_pushed_data(self, pair) -> None:
+        _, window = pair
         data = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
-        acc.push(data)
-        result = acc.value
+        window.push(data)
+        result = window.value
         assert sc.identical(result, data)
 
-    def test_on_finalize_clears_accumulator(self) -> None:
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
-        assert not acc.is_empty
-        acc.on_finalize()
-        assert acc.is_empty
+    def test_on_finalize_clears_window(self, pair) -> None:
+        _, window = pair
+        window.push(sc.array(dims=['x'], values=[1.0, 2.0]))
+        assert not window.is_empty
+        window.on_finalize()
+        assert window.is_empty
 
-    def test_accumulates_values(self) -> None:
-        acc = NoCopyWindowAccumulator()
+    def test_window_accumulates_values(self, pair) -> None:
+        _, window = pair
         data1 = sc.array(dims=['x'], values=[1.0, 2.0])
         data2 = sc.array(dims=['x'], values=[3.0, 4.0])
-        acc.push(data1)
-        acc.push(data2)
-        result = acc.value
-        expected = data1 + data2
+        window.push(data1)
+        window.push(data2)
+        result = window.value
+        # data1 was mutated in-place by += (no deepcopy on first push)
+        expected = sc.array(dims=['x'], values=[4.0, 6.0])
         assert sc.identical(result, expected)
 
-    def test_value_after_on_finalize_raises(self) -> None:
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0]))
-        acc.on_finalize()
+    def test_window_value_after_on_finalize_raises(self, pair) -> None:
+        _, window = pair
+        window.push(sc.array(dims=['x'], values=[1.0]))
+        window.on_finalize()
         with pytest.raises(ValueError, match="empty"):
-            _ = acc.value
+            _ = window.value
 
-    def test_differs_from_eternal_accumulator_behavior(self) -> None:
-        """NoCopyWindowAccumulator clears after on_finalize.
+    def test_first_push_stores_reference_without_copy(self, pair) -> None:
+        """First push stores the value by reference, not by deepcopy.
+
+        This is safe because the paired Cumulative accumulator (NoCopyAccumulator)
+        deepcopies on its first push, isolating its buffer. Since += only mutates the
+        left operand, no consumer ever mutates the shared input.
+        """
+        _, window = pair
+        data = sc.array(dims=['x'], values=[1.0, 2.0])
+        window.push(data)
+        assert window.value is data
+
+    def test_first_push_after_finalize_stores_reference_without_copy(
+        self, pair
+    ) -> None:
+        _, window = pair
+        data1 = sc.array(dims=['x'], values=[1.0, 2.0])
+        window.push(data1)
+        window.on_finalize()
+
+        data2 = sc.array(dims=['x'], values=[3.0, 4.0])
+        window.push(data2)
+        assert window.value is data2
+
+    @pytest.mark.parametrize("cumulative_first", [True, False])
+    def test_safe_with_paired_cumulative_accumulator(
+        self, cumulative_first: bool
+    ) -> None:
+        """Pushing the same value to both accumulators does not cause corruption.
+
+        NoCopyAccumulator (Cumulative) deepcopies on first push, so its += never
+        mutates the shared input. The window accumulator stores a bare reference,
+        which is safe because no other consumer mutates the original.
+
+        Order of pushes must not matter.
+        """
+        cumulative, current = make_no_copy_accumulator_pair()
+        shared_hist = sc.array(dims=['x'], values=[1.0, 2.0])
+
+        accumulators = [cumulative, current]
+        if not cumulative_first:
+            accumulators.reverse()
+        for acc in accumulators:
+            acc.push(shared_hist)
+
+        # Cumulative's += on a subsequent push must not corrupt Current's reference
+        next_hist = sc.array(dims=['x'], values=[3.0, 4.0])
+        cumulative.push(next_hist)
+
+        # Current still sees the original, unmodified values
+        assert sc.identical(current.value, sc.array(dims=['x'], values=[1.0, 2.0]))
+        # Cumulative sees the sum
+        assert sc.identical(cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0]))
+
+    def test_safe_with_paired_cumulative_over_multiple_cycles(self) -> None:
+        """Simulate multiple push/finalize cycles with randomized push order.
+
+        Exercises the full lifecycle: both accumulators receive the same histogram
+        each cycle, Current finalizes (clears) while Cumulative keeps accumulating.
+        """
+        rng = np.random.default_rng(seed=42)
+        cumulative, current = make_no_copy_accumulator_pair()
+
+        expected_cumulative = sc.array(dims=['x'], values=[0.0, 0.0])
+        n_cycles = 20
+        for i in range(n_cycles):
+            shared_hist = sc.array(dims=['x'], values=[float(i), float(i + 1)])
+            expected_cumulative = expected_cumulative + shared_hist
+
+            accumulators: list[NoCopyAccumulator] = [cumulative, current]
+            if rng.random() > 0.5:
+                accumulators.reverse()
+            for acc in accumulators:
+                acc.push(shared_hist)
+
+            # Current should reflect this cycle's histogram
+            assert sc.identical(current.value, shared_hist)
+            current.on_finalize()
+
+        # Cumulative should have the sum of all cycles
+        assert sc.identical(cumulative.value, expected_cumulative)
+
+    def test_safe_with_multiple_pushes_per_window(self) -> None:
+        """Multiple pushes must not cause cross-accumulator corruption.
+
+        Varies the number of pushes per window (1-4) and randomizes push order.
+        Both accumulators must independently track correct sums.
+        """
+        rng = np.random.default_rng(seed=123)
+        cumulative, current = make_no_copy_accumulator_pair()
+
+        expected_cumulative = sc.array(dims=['x'], values=[0.0, 0.0])
+        n_windows = 10
+        for _ in range(n_windows):
+            n_pushes = int(rng.integers(1, 5))
+            expected_window = sc.array(dims=['x'], values=[0.0, 0.0])
+
+            for j in range(n_pushes):
+                shared_hist = sc.array(dims=['x'], values=[float(j), float(j + 1)])
+                expected_window = expected_window + shared_hist
+                expected_cumulative = expected_cumulative + shared_hist
+
+                accumulators: list[NoCopyAccumulator] = [cumulative, current]
+                if rng.random() > 0.5:
+                    accumulators.reverse()
+                for acc in accumulators:
+                    acc.push(shared_hist)
+
+            assert sc.identical(current.value, expected_window)
+            current.on_finalize()
+
+        assert sc.identical(cumulative.value, expected_cumulative)
+
+    def test_window_differs_from_eternal_accumulator_behavior(self) -> None:
+        """The window accumulator clears after on_finalize.
 
         Unlike EternalAccumulator which preserves its state.
         """
-        window_acc = NoCopyWindowAccumulator()
+        _, window = make_no_copy_accumulator_pair()
         eternal_acc = streaming.EternalAccumulator()
 
         data = sc.array(dims=['x'], values=[1.0, 2.0])
-        window_acc.push(data)
+        window.push(data)
         eternal_acc.push(data)
 
         # Both are non-empty before on_finalize
-        assert not window_acc.is_empty
+        assert not window.is_empty
         assert not eternal_acc.is_empty
 
         # Call on_finalize
-        window_acc.on_finalize()
+        window.on_finalize()
         eternal_acc.on_finalize()
 
-        # NoCopyWindowAccumulator is cleared, EternalAccumulator is not
-        assert window_acc.is_empty
+        # Window accumulator is cleared, EternalAccumulator is not
+        assert window.is_empty
         assert not eternal_acc.is_empty
 
 

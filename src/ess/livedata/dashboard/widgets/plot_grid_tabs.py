@@ -20,6 +20,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..data_roles import PRIMARY
 from ..format_utils import extract_error_summary
+from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -45,6 +46,7 @@ from .plot_widgets import (
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
+from .styles import Colors, StatusColors
 
 logger = structlog.get_logger(__name__)
 
@@ -600,10 +602,10 @@ class PlotGridTabs:
             )
             if has_error:
                 bg_color = '#ffe6e6'
-                border = '2px solid #dc3545'
+                border = f'2px solid {StatusColors.ERROR}'
             else:
-                bg_color = '#f8f9fa'
-                border = '2px dashed #dee2e6'
+                bg_color = Colors.BG_LIGHT
+                border = f'2px dashed {Colors.BORDER}'
 
         styles = {}
         if bg_color:
@@ -827,16 +829,16 @@ class PlotGridTabs:
                 case LayerState.ERROR:
                     error_text = state.error_message or "Unknown error"
                     status = f"Error: {extract_error_summary(error_text)}"
-                    text_color = '#dc3545'
+                    text_color = StatusColors.ERROR
                 case LayerState.STOPPED:
                     status = "Workflow ended"
-                    text_color = '#495057'
+                    text_color = Colors.TEXT
                 case LayerState.WAITING_FOR_DATA:
                     status = "Waiting for data..."
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
                 case LayerState.WAITING_FOR_JOB:
                     status = "Waiting for workflow..."
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
                 case LayerState.READY:
                     # Defensive: READY should have displayable plot and not
                     # reach placeholder. Log if this happens.
@@ -845,7 +847,7 @@ class PlotGridTabs:
                         layer.layer_id,
                     )
                     status = "Ready (loading...)"
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
 
             status_lines.append(
                 f"**{workflow_title} → {output_title}**: "
@@ -949,13 +951,21 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
-                if state.plotter is not None and isinstance(
-                    state.plotter.get_cached_state(), hv.Layout
+
+            dmap = session_layer.dmap
+            if dmap is not None:
+                # Check the DynamicMap's resolved type (set after Bokeh
+                # renders it) and the plotter's cached state.  Either
+                # being a Layout means hooks must be skipped.
+                if isinstance(dmap, hv.DynamicMap) and dmap.type is hv.Layout:
+                    has_layout = True
+                elif (
+                    state is not None
+                    and state.plotter is not None
+                    and isinstance(state.plotter.get_cached_state(), hv.Layout)
                 ):
                     has_layout = True
-
-            if session_layer.dmap is not None:
-                plots.append(session_layer.dmap)
+                plots.append(dmap)
 
         if not plots:
             return None
@@ -964,17 +974,30 @@ class PlotGridTabs:
         if len(plots) == 1:
             result = plots[0]
         else:
-            result = hv.Overlay(plots)
+            # Collate so hooks survive for any number of DynamicMap layers.
+            # Without collation, HoloViews drops overlay-level opts (including
+            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
+            # produces a single DynamicMap whose outputs are plain Overlays;
+            # opts applied afterwards land on the OverlayPlot and persist.
+            result = hv.Overlay(plots).collate()
 
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.
         if not has_layout:
+            hooks: list = []
             filename = build_save_filename_from_cell(
                 cell, self._workflow_registry, self._orchestrator.get_source_title
             )
             if filename is not None:
-                hook = make_save_filename_hook(filename)
-                result = result.opts(hooks=[hook])
+                hooks.append(make_save_filename_hook(filename))
+            if cell.layers:
+                params = cell.layers[0].config.params
+                if hasattr(params, 'plot_aspect'):
+                    aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
+                    if aspect_hook is not None:
+                        hooks.append(aspect_hook)
+            if hooks:
+                result = result.opts(hooks=hooks)
 
         return result
 
@@ -998,6 +1021,7 @@ class PlotGridTabs:
         acceptable for config UI updates.
         """
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
+        versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
         active_grid_id = self._get_active_grid_id()
 
@@ -1038,7 +1062,7 @@ class PlotGridTabs:
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
                             cells_to_rebuild[cell_id] = (cell, plot_grid)
-                            session_layer.last_seen_version = state.version
+                            versions_to_apply[layer_id] = state.version
 
         # Clean up orphaned session layers (removed from orchestrator)
         for layer_id in list(self._session_layers.keys()):
@@ -1058,6 +1082,13 @@ class PlotGridTabs:
                     g, w
                 )
             )
+            # Bump versions only after successful rebuild — if the rebuild
+            # raised, the version stays stale so the next poll retries.
+            for layer in cell.layers:
+                if layer.layer_id in versions_to_apply:
+                    sl = self._session_layers.get(layer.layer_id)
+                    if sl is not None:
+                        sl.last_seen_version = versions_to_apply[layer.layer_id]
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and clean up session state."""

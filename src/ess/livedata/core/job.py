@@ -93,7 +93,6 @@ class JobReply:
 class JobState(StrEnum):
     scheduled = "scheduled"
     active = "active"
-    paused = "paused"
     finishing = "finishing"
     error = "error"
     warning = "warning"
@@ -166,6 +165,7 @@ class Job:
         processor: Workflow,
         source_names: list[str],
         aux_source_names: dict[str, str] | None = None,
+        reset_on_run_transition: bool = True,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -183,6 +183,8 @@ class Job:
         aux_source_names:
             Mapping from field names to stream names for auxiliary data sources.
             None if no auxiliary sources are needed.
+        reset_on_run_transition:
+            Whether this job should be reset when a run transition occurs.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -190,6 +192,7 @@ class Job:
         self._start_time: int | None = None
         self._end_time: int | None = None
         self._source_names = source_names
+        self._reset_on_run_transition = reset_on_run_transition
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
 
         # Create reverse mapping: stream_name -> list of field_names
@@ -232,6 +235,10 @@ class Job:
         should use to route incoming data to this job.
         """
         return list(self._aux_source_mapping.values())
+
+    @property
+    def reset_on_run_transition(self) -> bool:
+        return self._reset_on_run_transition
 
     def add(self, data: JobData) -> JobReply:
         try:

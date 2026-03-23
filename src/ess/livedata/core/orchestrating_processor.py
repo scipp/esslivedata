@@ -16,10 +16,13 @@ from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
     COMMANDS_STREAM_ID,
+    RUN_CONTROL_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSink,
     MessageSource,
+    RunStart,
+    RunStop,
     StreamId,
     StreamKind,
     Tin,
@@ -57,6 +60,16 @@ class MessagePreprocessor(Generic[Tin, Tout]):
             accumulator.add(message.timestamp, message.value)
         # We assume the accumulator is cleared in `get`.
         return accumulator.get()
+
+    def release_buffers(self) -> None:
+        """Signal that preprocessed data from the last cycle is no longer in use.
+
+        Accumulators that use zero-copy buffer reuse require this call between
+        ``get()`` cycles so they can safely overwrite their internal buffers.
+        """
+        for accumulator in self._accumulators.values():
+            if hasattr(accumulator, 'release_buffers'):
+                accumulator.release_buffers()
 
     def preprocess_messages(self, batch: MessageBatch) -> WorkflowData:
         """
@@ -133,16 +146,27 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         messages = self._source.get_messages()
         self._messages_processed += len(messages)
         config_messages: list[Message[Tin]] = []
+        run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
 
         for msg in messages:
             if msg.stream == COMMANDS_STREAM_ID:
                 config_messages.append(msg)
+            elif msg.stream == RUN_CONTROL_STREAM_ID:
+                run_control_messages.append(msg)
             else:
                 data_messages.append(msg)
 
         # Handle config messages
         result_messages = self._config_processor.process_messages(config_messages)
+
+        # Handle run control messages (run start/stop from filewriter topic)
+        for msg in run_control_messages:
+            match msg.value:
+                case RunStart():
+                    self._job_manager.on_run_start(msg.value)
+                case RunStop():
+                    self._job_manager.on_run_stop(msg.value)
 
         self._report_status()
 
@@ -170,6 +194,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # When job_threads > 1, each job's accumulation and finalization run as
         # a single threaded task, avoiding two fan-out/fan-in cycles.
         job_replies, results = self._job_manager.process_jobs(workflow_data)
+        self._message_preprocessor.release_buffers()
 
         # Log any errors from data processing
         for reply in job_replies:

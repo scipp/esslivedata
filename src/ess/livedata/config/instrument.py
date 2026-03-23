@@ -308,6 +308,7 @@ class Instrument:
         params: type[Any] | None = None,
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
+        reset_on_run_transition: bool = True,
     ) -> SpecHandle:
         """
         Register workflow spec, return handle for later factory attachment.
@@ -361,6 +362,7 @@ class Instrument:
             params=params,
             aux_sources=aux_sources,
             outputs=outputs,
+            reset_on_run_transition=reset_on_run_transition,
         )
         return self.workflow_factory.register_spec(spec)
 

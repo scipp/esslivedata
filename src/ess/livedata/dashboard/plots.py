@@ -20,7 +20,6 @@ from .autoscaler import Autoscaler
 from .plot_params import (
     LayoutParams,
     PlotAspect,
-    PlotAspectType,
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
@@ -252,19 +251,11 @@ class Plotter:
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
-        self._sizing_opts: dict[str, Any]
-        match aspect_params.aspect_type:
-            case PlotAspectType.free:
-                self._sizing_opts = {}
-            case PlotAspectType.equal:
-                self._sizing_opts = {'aspect': 'equal'}
-            case PlotAspectType.square:
-                self._sizing_opts = {'aspect': 'square'}
-            case PlotAspectType.aspect:
-                self._sizing_opts = {'aspect': aspect_params.ratio}
-            case PlotAspectType.data_aspect:
-                self._sizing_opts = {'data_aspect': aspect_params.ratio}
-        self._sizing_opts['responsive'] = True
+        # All non-free aspect types are enforced by a JS hook
+        # (see frame_aspect.py) that adjusts the Bokeh figure dimensions.
+        # HoloViews' own aspect/data_aspect opts are not set — they conflict
+        # with responsive mode in Panel containers (upstream bug).
+        self._sizing_opts: dict[str, Any] = {'responsive': True}
 
     @staticmethod
     def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
