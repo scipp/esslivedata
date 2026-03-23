@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import structlog
+from confluent_kafka import KafkaException
 
 from ..core.message import MessageSource
 from .message_adapter import KafkaMessage
@@ -181,6 +182,18 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
             while not self._stop_event.is_set():
                 try:
                     messages = self._consumer.consume(self._num_messages, self._timeout)
+
+                    # Filter out error messages from the consumer
+                    data_messages = []
+                    for m in messages:
+                        if m.error() is not None:
+                            if m.error().fatal():
+                                raise KafkaException(m.error())
+                            logger.warning("kafka_consumer_error", error=m.error())
+                            continue
+                        data_messages.append(m)
+                    messages = data_messages
+
                     # Reset consecutive errors on successful consume
                     self._consecutive_errors = 0
                     self._last_successful_consume = time.monotonic()
@@ -209,6 +222,8 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                                 # Queue became empty between full check and get
                                 self._queue.put_nowait(messages)
                     self._maybe_log_metrics()
+                except KafkaException:
+                    raise
                 except Exception as e:
                     self._consecutive_errors += 1
                     logger.exception(

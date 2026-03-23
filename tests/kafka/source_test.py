@@ -565,6 +565,79 @@ class TestBackgroundMessageSource:
         captured = capsys.readouterr()
         assert "consecutive_errors" in captured.out
 
+    def test_nonfatal_error_messages_are_filtered_out(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that non-fatal error messages are skipped and not enqueued."""
+        consumer = ControllableKafkaConsumer()
+        error_msg = FakeErrorMessage(FakeKafkaError(is_fatal=False))
+        good_msg = FakeKafkaMessage(value=b'good', topic="topic1")
+        consumer.add_messages([error_msg, good_msg])
+
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            time.sleep(0.05)
+            messages = source.get_messages()
+
+        assert len(messages) == 1
+        assert messages[0].value() == b'good'
+        captured = capsys.readouterr()
+        assert "kafka_consumer_error" in captured.out
+
+    def test_fatal_error_messages_stop_consume_loop(self) -> None:
+        """Test that a fatal error message causes the consume loop to exit."""
+        consumer = ControllableKafkaConsumer()
+        fatal_msg = FakeErrorMessage(FakeKafkaError(is_fatal=True))
+        consumer.add_messages([fatal_msg])
+
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=10
+        ) as source:
+            # Wait for the fatal error to propagate through the circuit breaker
+            for _ in range(50):
+                status = source.get_health_status()
+                if not status.thread_alive:
+                    break
+                time.sleep(0.05)
+
+            assert not source.is_healthy()
+            assert source.get_health_status().failure_reason is not None
+
+
+class FakeKafkaError:
+    """Fake KafkaError for testing error message filtering."""
+
+    def __init__(self, *, is_fatal: bool = False, message: str = "test error"):
+        self._fatal = is_fatal
+        self._message = message
+
+    def fatal(self) -> bool:
+        return self._fatal
+
+    def __str__(self) -> str:
+        return self._message
+
+
+class FakeErrorMessage:
+    """A fake Kafka message that carries an error."""
+
+    def __init__(self, error: FakeKafkaError):
+        self._error = error
+
+    def error(self):
+        return self._error
+
+    def key(self) -> bytes:
+        return b''
+
+    def value(self) -> bytes:
+        return b''
+
+    def timestamp(self) -> tuple[int, int]:
+        return (0, 0)
+
+    def topic(self) -> str | None:
+        return None
+
 
 class FakeTopicPartition:
     """Fake TopicPartition for testing lag support."""
