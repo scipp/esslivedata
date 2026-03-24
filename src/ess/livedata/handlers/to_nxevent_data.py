@@ -128,6 +128,8 @@ class _WeightsBuffer:
 
 
 class ToNXevent_data(Accumulator[Events, sc.DataArray]):
+    is_context = False
+
     def __init__(self):
         self._chunks: list[Events] = []
         self._timestamps: list[int] = []

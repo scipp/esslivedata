@@ -2,7 +2,7 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from ..config.instrument import Instrument
 from .message import StreamId, Tin, Tout
@@ -18,7 +18,16 @@ class Accumulator(Protocol, Generic[T, U]):
 
     Accumulators are used as preprocessors in the message processing pipeline.
     They accumulate data from multiple messages before passing it to workflows.
+
+    The ``is_context`` class variable declares whether the accumulator holds
+    persistent context data (e.g., log values representing physical state).
+    Context accumulators are idempotent on ``get()`` — calling it multiple times
+    returns the same data without consuming or clearing it. This property is
+    used by ``MessagePreprocessor.get_context()`` to safely read current values
+    for seeding newly activated jobs.
     """
+
+    is_context: ClassVar[bool]
 
     def add(self, timestamp: int, data: T) -> None: ...
 

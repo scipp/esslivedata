@@ -30,6 +30,8 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
         Detector pixel numbers used for grouping.
     """
 
+    is_context = False
+
     def __init__(self, inner: ToNXevent_data, detector_number: sc.Variable) -> None:
         self._inner = inner
         # Always use flat 1D detector_number for grouping. The downstream
