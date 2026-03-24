@@ -16,7 +16,7 @@ class TestMakeWorkerKey:
             namespace="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -32,7 +32,7 @@ class TestServiceRegistry:
             namespace="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -50,7 +50,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -59,7 +59,7 @@ class TestServiceRegistry:
             namespace="ns2",
             worker_id="worker2",
             state=ServiceState.starting,
-            started_at=Timestamp(2000),
+            started_at=Timestamp.from_ns(2000),
             active_job_count=0,
             messages_processed=0,
         )
@@ -78,7 +78,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -87,7 +87,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=3,
             messages_processed=200,
         )
@@ -107,7 +107,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -125,7 +125,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -147,7 +147,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,  # Terminal state
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
             messages_processed=100,
         )
@@ -171,7 +171,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stale_worker",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -186,7 +186,7 @@ class TestServiceRegistry:
             namespace="ns2",
             worker_id="fresh_worker",
             state=ServiceState.running,
-            started_at=Timestamp(2000),
+            started_at=Timestamp.from_ns(2000),
             active_job_count=1,
             messages_processed=50,
         )
@@ -229,7 +229,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -254,7 +254,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
             messages_processed=100,
         )
@@ -277,7 +277,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
             messages_processed=100,
         )
@@ -291,7 +291,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
             messages_processed=50,
         )
@@ -306,7 +306,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
             messages_processed=50,
         )
@@ -321,7 +321,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stopped1",
             state=ServiceState.stopped,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
             messages_processed=100,
         )
@@ -330,7 +330,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stale1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
             messages_processed=50,
         )
@@ -344,7 +344,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="fresh1",
             state=ServiceState.running,
-            started_at=Timestamp(1000),
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
             messages_processed=10,
         )

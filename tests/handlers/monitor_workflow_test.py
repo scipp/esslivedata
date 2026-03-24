@@ -354,8 +354,8 @@ class TestMonitorWorkflowIntegration:
         # Accumulate data
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(0),
-            end_time=Timestamp(1000),
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
         )
 
         # Finalize to get results
@@ -377,8 +377,8 @@ class TestMonitorWorkflowIntegration:
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         results = workflow.finalize()
 
@@ -413,8 +413,8 @@ class TestMonitorWorkflowIntegration:
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         results = workflow.finalize()
 
@@ -430,18 +430,18 @@ class TestMonitorWorkflowIntegration:
         # Multiple accumulate calls before finalize
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(2000),
-            end_time=Timestamp(3000),
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
         )
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(3000),
-            end_time=Timestamp(4000),
+            start_time=Timestamp.from_ns(3000),
+            end_time=Timestamp.from_ns(4000),
         )
         results = workflow.finalize()
 
@@ -457,8 +457,8 @@ class TestMonitorWorkflowIntegration:
         # First cycle
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         results1 = workflow.finalize()
         assert results1['current'].coords['start_time'].value == 1000
@@ -467,8 +467,8 @@ class TestMonitorWorkflowIntegration:
         # Second cycle should have fresh time tracking
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(5000),
-            end_time=Timestamp(6000),
+            start_time=Timestamp.from_ns(5000),
+            end_time=Timestamp.from_ns(6000),
         )
         results2 = workflow.finalize()
         assert results2['current'].coords['start_time'].value == 5000
@@ -483,8 +483,8 @@ class TestMonitorWorkflowIntegration:
         # First cycle
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(0),
-            end_time=Timestamp(1000),
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
         )
         results1 = workflow.finalize()
         assert results1['cumulative'].sum().value == 5.0
@@ -493,8 +493,8 @@ class TestMonitorWorkflowIntegration:
         # Second cycle
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         results2 = workflow.finalize()
 
@@ -516,7 +516,9 @@ class TestMonitorWorkflowIntegration:
 
         # Accumulate data
         workflow.accumulate(
-            {'monitor_1': histogram}, start_time=Timestamp(0), end_time=Timestamp(1000)
+            {'monitor_1': histogram},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
         )
 
         # Finalize to get results
@@ -757,8 +759,8 @@ class TestMonitorWorkflowTofModeHistogramInput:
         # Accumulate data
         workflow.accumulate(
             {'monitor_cave': histogram},
-            start_time=Timestamp(0),
-            end_time=Timestamp(1000),
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
         )
 
         # Finalize to get results

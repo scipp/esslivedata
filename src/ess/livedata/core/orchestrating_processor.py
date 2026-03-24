@@ -384,7 +384,7 @@ def _job_result_to_message(result: JobResult) -> Message:
     identify the job in the frontend.
     """
     return Message(
-        timestamp=result.start_time or Timestamp(0),
+        timestamp=result.start_time or Timestamp.from_ns(0),
         stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
         value=result.data,
     )

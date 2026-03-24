@@ -126,9 +126,9 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
         # A fallback, useful in particular for testing so serialized data can be reused.
         if ev44.reference_time.size > 0:
-            timestamp = Timestamp(ev44.reference_time[-1])
+            timestamp = Timestamp.from_ns(ev44.reference_time[-1])
         else:
-            timestamp = Timestamp(message.timestamp()[1])
+            timestamp = Timestamp.from_ns(message.timestamp()[1])
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
@@ -144,7 +144,7 @@ def _extract_reference_time(
         if var.name == 'reference_time':
             data = np.asarray(var.data)
             if data.size > 0:
-                return Timestamp(int(data[-1]))
+                return Timestamp.from_ns(int(data[-1]))
     return None
 
 
@@ -156,7 +156,9 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         # Prefer reference_time from the data variables (mirroring ev44 behavior)
         # over the opaque top-level timestamp_ns whose semantics are unspecified.
         ref_time = _extract_reference_time(da00.data)
-        timestamp = ref_time if ref_time is not None else Timestamp(da00.timestamp_ns)
+        timestamp = (
+            ref_time if ref_time is not None else Timestamp.from_ns(da00.timestamp_ns)
+        )
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
@@ -169,7 +171,7 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
         key = self.get_stream_id(
             topic=message.topic(), source_name=log_data.source_name
         )
-        timestamp = Timestamp(log_data.timestamp_unix_ns)
+        timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 
@@ -226,7 +228,7 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
         schema = streaming_data_types.utils.get_schema(buf)
-        timestamp = Timestamp(message.timestamp()[1])
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
             stop_time = (
@@ -275,9 +277,9 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
 
         # A fallback, useful in particular for testing so serialized data can be reused.
         if reference_time.size > 0:
-            timestamp = Timestamp(reference_time[-1])
+            timestamp = Timestamp.from_ns(reference_time[-1])
         else:
-            timestamp = Timestamp(message.timestamp()[1])
+            timestamp = Timestamp.from_ns(message.timestamp()[1])
         return Message(
             timestamp=timestamp,
             stream=stream,
@@ -330,7 +332,7 @@ class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
         ad00 = area_detector_ad00.deserialise_ad00(message.value())
         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
-        timestamp = Timestamp(ad00.timestamp_ns)
+        timestamp = Timestamp.from_ns(ad00.timestamp_ns)
         return Message(timestamp=timestamp, stream=key, value=ad00)
 
 
@@ -357,7 +359,7 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
-        timestamp = Timestamp(message.timestamp()[1])
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         # Livedata configuration uses a compacted Kafka topic. The Kafka message key
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
@@ -368,7 +370,7 @@ class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgeme
     """Adapts Kafka messages from the livedata responses topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[CommandAcknowledgement]:
-        timestamp = Timestamp(message.timestamp()[1])
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         ack = CommandAcknowledgement.model_validate_json(message.value())
         return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 

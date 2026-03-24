@@ -33,7 +33,7 @@ def get_local_timezone_offset_ns() -> Duration:
     now_local = now_utc.astimezone()
     offset = now_local.utcoffset()
     if offset is None:
-        return Duration(0)
+        return Duration.from_ns(0)
     return Duration.from_seconds(offset.total_seconds())
 
 

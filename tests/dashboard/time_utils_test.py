@@ -44,19 +44,19 @@ class TestFormatTimeNsLocal:
 
     def test_format_returns_string(self):
         """Format returns a string."""
-        ns = Timestamp(int(1.733e18))
+        ns = Timestamp.from_ns(int(1.733e18))
         result = format_time_ns_local(ns)
         assert isinstance(result, str)
 
     def test_format_includes_decimal(self):
         """Format includes a decimal point for subsecond precision."""
-        ns = Timestamp(int(1.733e18))
+        ns = Timestamp.from_ns(int(1.733e18))
         result = format_time_ns_local(ns)
         assert '.' in result
 
     def test_format_matches_expected_pattern(self):
         """Format matches HH:MM:SS.d pattern."""
-        ns = Timestamp(int(1.733e18))
+        ns = Timestamp.from_ns(int(1.733e18))
         result = format_time_ns_local(ns)
         # Pattern: "HH:MM:SS.d" where d is 0-9
         parts = result.split(':')
@@ -86,6 +86,6 @@ class TestFormatTimeNsLocal:
         """Format handles zero subsecond precision correctly."""
         # Use a timestamp with exactly 0 microseconds
         # 1733000000.0 seconds since epoch
-        ns = Timestamp(1733000000 * 1_000_000_000)
+        ns = Timestamp.from_ns(1733000000 * 1_000_000_000)
         result = format_time_ns_local(ns)
         assert result.endswith('.0')

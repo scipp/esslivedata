@@ -40,8 +40,8 @@ class TestIntegrationWithStreamProcessor:
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 
@@ -82,8 +82,8 @@ class TestIntegrationWithStreamProcessor:
 
         workflow.accumulate(
             {'detector': RawDetector[SampleRun](events)},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
 
         # Finalize
@@ -112,8 +112,8 @@ class TestIntegrationWithStreamProcessor:
         )
         workflow.accumulate(
             {'detector': RawDetector[SampleRun](events1)},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result1 = workflow.finalize()
 
@@ -132,8 +132,8 @@ class TestIntegrationWithStreamProcessor:
         )
         workflow.accumulate(
             {'detector': RawDetector[SampleRun](events2)},
-            start_time=2000,
-            end_time=3000,
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
         )
         result2 = workflow.finalize()
 
@@ -168,8 +168,8 @@ class TestROISpectraIntegration:
         # First, accumulate events without ROI
         workflow.accumulate(
             {'detector': RawDetector[SampleRun](events)},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result1 = workflow.finalize()
 
@@ -228,8 +228,8 @@ class TestROISpectraIntegration:
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request_small,
             },
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result1 = workflow.finalize()
         small_roi_sum = result1['roi_spectra_cumulative'].sum().value
@@ -286,8 +286,8 @@ class TestROISpectraIntegration:
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result1 = workflow.finalize()
 
@@ -342,8 +342,8 @@ class TestROISpectraIntegration:
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 
@@ -387,8 +387,8 @@ class TestUnitHandling:
 
         workflow.accumulate(
             {'detector': RawDetector[SampleRun](events)},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 
@@ -422,8 +422,8 @@ class TestUnitHandling:
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 

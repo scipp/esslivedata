@@ -25,18 +25,43 @@ class Duration:
 
     __slots__ = ('_ns',)
 
-    def __init__(self, ns: int) -> None:
+    def __init__(self, *, ns: int) -> None:
         self._ns = int(ns)
+
+    @classmethod
+    def from_ns(cls, ns: int) -> Duration:
+        """Create a duration from a value in nanoseconds."""
+        return cls(ns=int(ns))
 
     @classmethod
     def from_seconds(cls, seconds: float) -> Duration:
         """Create a duration from a value in seconds."""
-        return cls(int(seconds * _NS_PER_S))
+        return cls(ns=int(seconds * _NS_PER_S))
 
     @classmethod
     def from_ms(cls, ms: int) -> Duration:
         """Create a duration from a value in milliseconds."""
-        return cls(ms * _NS_PER_MS)
+        return cls(ns=ms * _NS_PER_MS)
+
+    @classmethod
+    def from_scipp(cls, var: Any) -> Duration:
+        """Create a duration from a scipp scalar.
+
+        Parameters
+        ----------
+        var:
+            A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
+
+        Raises
+        ------
+        ValueError
+            If the unit is not a supported time unit.
+        """
+        return cls(ns=_scipp_to_ns(var))
+
+    def to_ns(self) -> int:
+        """Return the duration as an integer number of nanoseconds."""
+        return self._ns
 
     def to_seconds(self) -> float:
         """Convert to seconds."""
@@ -47,9 +72,6 @@ class Duration:
         import scipp as sc
 
         return sc.scalar(self._ns, unit='ns')
-
-    def __int__(self) -> int:
-        return self._ns
 
     def __bool__(self) -> bool:
         return self._ns != 0
@@ -68,18 +90,18 @@ class Duration:
         return hash(self._ns)
 
     def __repr__(self) -> str:
-        return f"Duration({self._ns})"
+        return f"Duration(ns={self._ns})"
 
     def __neg__(self) -> Duration:
-        return Duration(-self._ns)
+        return Duration(ns=-self._ns)
 
     # Duration + Duration -> Duration
     # Duration + Timestamp -> Timestamp  (commutative with Timestamp.__add__)
     def __add__(self, other: object) -> Duration | Timestamp:
         if isinstance(other, Timestamp):
-            return Timestamp(self._ns + other._ns)
+            return Timestamp(ns=self._ns + other._ns)
         if isinstance(other, Duration):
-            return Duration(self._ns + other._ns)
+            return Duration(ns=self._ns + other._ns)
         return NotImplemented
 
     __radd__ = __add__
@@ -87,13 +109,13 @@ class Duration:
     # Duration - Duration -> Duration
     def __sub__(self, other: object) -> Duration:
         if isinstance(other, Duration):
-            return Duration(self._ns - other._ns)
+            return Duration(ns=self._ns - other._ns)
         return NotImplemented
 
     # Duration * int -> Duration
     def __mul__(self, other: object) -> Duration:
         if isinstance(other, int) and not isinstance(other, (Timestamp, Duration)):
-            return Duration(self._ns * other)
+            return Duration(ns=self._ns * other)
         return NotImplemented
 
     __rmul__ = __mul__
@@ -104,7 +126,7 @@ class Duration:
         if isinstance(other, Duration):
             return self._ns // other._ns
         if isinstance(other, int) and not isinstance(other, (Timestamp, Duration)):
-            return Duration(self._ns // other)
+            return Duration(ns=self._ns // other)
         return NotImplemented
 
     # Duration / Duration -> float  (dimensionless ratio)
@@ -118,8 +140,10 @@ class Duration:
         from pydantic_core import core_schema
 
         return core_schema.no_info_plain_validator_function(
-            lambda v: cls(v) if not isinstance(v, cls) else v,
-            serialization=core_schema.plain_serializer_function_ser_schema(int),
+            lambda v: cls(ns=v) if not isinstance(v, cls) else v,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda d: d._ns
+            ),
         )
 
 
@@ -129,23 +153,48 @@ class Timestamp:
 
     __slots__ = ('_ns',)
 
-    def __init__(self, ns: int) -> None:
+    def __init__(self, *, ns: int) -> None:
         self._ns = int(ns)
+
+    @classmethod
+    def from_ns(cls, ns: int) -> Timestamp:
+        """Create a timestamp from a value in nanoseconds."""
+        return cls(ns=int(ns))
 
     @classmethod
     def now(cls) -> Timestamp:
         """Create a timestamp for the current time."""
-        return cls(time.time_ns())
+        return cls(ns=time.time_ns())
 
     @classmethod
     def from_seconds(cls, seconds: float) -> Timestamp:
         """Create a timestamp from seconds since the epoch."""
-        return cls(int(seconds * _NS_PER_S))
+        return cls(ns=int(seconds * _NS_PER_S))
 
     @classmethod
     def from_ms(cls, ms: int) -> Timestamp:
         """Create a timestamp from milliseconds since the epoch."""
-        return cls(ms * _NS_PER_MS)
+        return cls(ns=ms * _NS_PER_MS)
+
+    @classmethod
+    def from_scipp(cls, var: Any) -> Timestamp:
+        """Create a timestamp from a scipp scalar.
+
+        Parameters
+        ----------
+        var:
+            A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
+
+        Raises
+        ------
+        ValueError
+            If the unit is not a supported time unit.
+        """
+        return cls(ns=_scipp_to_ns(var))
+
+    def to_ns(self) -> int:
+        """Return the timestamp as an integer number of nanoseconds."""
+        return self._ns
 
     def to_seconds(self) -> float:
         """Convert to seconds since the epoch."""
@@ -172,16 +221,13 @@ class Timestamp:
 
     def quantize(self, period: Duration) -> Timestamp:
         """Round down to the nearest multiple of *period*."""
-        p = int(period)
-        return Timestamp(self._ns // p * p)
+        p = period.to_ns()
+        return Timestamp(ns=self._ns // p * p)
 
     def quantize_up(self, period: Duration) -> Timestamp:
         """Round up to the nearest multiple of *period*."""
-        p = int(period)
-        return Timestamp(-(-self._ns // p) * p)
-
-    def __int__(self) -> int:
-        return self._ns
+        p = period.to_ns()
+        return Timestamp(ns=-(-self._ns // p) * p)
 
     def __bool__(self) -> bool:
         return True
@@ -200,21 +246,21 @@ class Timestamp:
         return hash(self._ns)
 
     def __repr__(self) -> str:
-        return f"Timestamp({self._ns})"
+        return f"Timestamp(ns={self._ns})"
 
     # Timestamp - Timestamp -> Duration
     # Timestamp - Duration -> Timestamp
     def __sub__(self, other: object) -> Duration | Timestamp:
         if isinstance(other, Timestamp):
-            return Duration(self._ns - other._ns)
+            return Duration(ns=self._ns - other._ns)
         if isinstance(other, Duration):
-            return Timestamp(self._ns - other._ns)
+            return Timestamp(ns=self._ns - other._ns)
         return NotImplemented
 
     # Timestamp + Duration -> Timestamp
     def __add__(self, other: object) -> Timestamp:
         if isinstance(other, Duration):
-            return Timestamp(self._ns + other._ns)
+            return Timestamp(ns=self._ns + other._ns)
         return NotImplemented
 
     __radd__ = __add__
@@ -224,6 +270,37 @@ class Timestamp:
         from pydantic_core import core_schema
 
         return core_schema.no_info_plain_validator_function(
-            lambda v: cls(v) if not isinstance(v, cls) else v,
-            serialization=core_schema.plain_serializer_function_ser_schema(int),
+            lambda v: cls(ns=v) if not isinstance(v, cls) else v,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda ts: ts._ns
+            ),
         )
+
+
+def _scipp_to_ns(var: Any) -> int:
+    """Convert a scipp scalar to nanoseconds.
+
+    Parameters
+    ----------
+    var:
+        A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
+
+    Raises
+    ------
+    ValueError
+        If the unit is not a supported time unit.
+    """
+    unit = str(var.unit)
+    value = int(var.value)
+    if unit == 'ns':
+        return value
+    if unit == 'us':
+        return value * 1_000
+    if unit == 'ms':
+        return value * _NS_PER_MS
+    if unit == 's':
+        return value * _NS_PER_S
+    raise ValueError(
+        f"Cannot convert scipp variable with unit '{unit}' to nanoseconds. "
+        f"Supported units: ns, us, ms, s."
+    )

@@ -7,6 +7,7 @@ from ess.reduce import streaming
 from streaming_data_types import logdata_f144
 
 from ess.livedata.core.handler import Accumulator
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.accumulators import (
     Cumulative,
     LatestValue,
@@ -49,14 +50,14 @@ def test_accumulator_clears_when_data_sizes_changes(
         sc.array(dims=['x'], values=[1.0], unit='counts'),
         coords={'x': sc.arange('x', 2, unit='s')},
     )
-    cumulative.add(0, da)
-    cumulative.add(1, da)
+    cumulative.add(Timestamp.from_ns(0), da)
+    cumulative.add(Timestamp.from_ns(1), da)
     da2 = sc.DataArray(
         sc.array(dims=['y'], values=[1.0], unit='counts'),
         coords={'y': sc.arange('y', 2, unit='s')},
     )
-    cumulative.add(2, da2)
-    cumulative.add(3, da2)
+    cumulative.add(Timestamp.from_ns(2), da2)
+    cumulative.add(Timestamp.from_ns(3), da2)
     assert sc.identical(
         cumulative.get().data, sc.array(dims=['y'], values=[2.0], unit='counts')
     )
@@ -65,7 +66,7 @@ def test_accumulator_clears_when_data_sizes_changes(
 class TestNullAccumulator:
     def test_add_does_nothing(self) -> None:
         accumulator = NullAccumulator()
-        accumulator.add(0, "some data")
+        accumulator.add(Timestamp.from_ns(0), "some data")
         # Should not raise any exceptions
 
     def test_get_returns_none(self) -> None:
@@ -101,17 +102,17 @@ class TestLatestValueHandler:
             coords={'y': sc.array(dims=['y'], values=[0.0, 1.0], unit='s')},
         )
 
-        accumulator.add(0, da1)
+        accumulator.add(Timestamp.from_ns(0), da1)
         result = accumulator.get()
         assert sc.identical(result, da1)
 
         # Add second value - should replace first
-        accumulator.add(1, da2)
+        accumulator.add(Timestamp.from_ns(1), da2)
         result = accumulator.get()
         assert sc.identical(result, da2)
 
         # Add third value with different shape - should still replace
-        accumulator.add(2, da3)
+        accumulator.add(Timestamp.from_ns(2), da3)
         result = accumulator.get()
         assert sc.identical(result, da3)
 
@@ -122,7 +123,7 @@ class TestLatestValueHandler:
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
         )
 
-        accumulator.add(0, da)
+        accumulator.add(Timestamp.from_ns(0), da)
         # Modify original
         da.values[0] = 999.0
 
@@ -137,7 +138,7 @@ class TestLatestValueHandler:
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
         )
 
-        accumulator.add(0, da)
+        accumulator.add(Timestamp.from_ns(0), da)
         accumulator.clear()
 
         with pytest.raises(ValueError, match="No data has been added"):
@@ -151,7 +152,7 @@ class TestLatestValueHandler:
         )
 
         # Timestamp should not affect behavior
-        accumulator.add(12345, da)
+        accumulator.add(Timestamp.from_ns(12345), da)
         result = accumulator.get()
         assert sc.identical(result, da)
 
@@ -424,11 +425,11 @@ class TestCumulative:
             sc.array(dims=['x'], values=[1.0], unit='counts'),
             coords={'x': sc.arange('x', 2, unit='s')},
         )
-        cumulative.add(0, da)
+        cumulative.add(Timestamp.from_ns(0), da)
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['x'], values=[1.0], unit='counts')
         )
-        cumulative.add(1, da)
+        cumulative.add(Timestamp.from_ns(1), da)
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['x'], values=[2.0], unit='counts')
         )
@@ -439,11 +440,11 @@ class TestCumulative:
             sc.array(dims=['x'], values=[1.0], unit='counts'),
             coords={'x': sc.arange('x', 2, unit='s')},
         )
-        cumulative.add(0, da)
+        cumulative.add(Timestamp.from_ns(0), da)
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['x'], values=[1.0], unit='counts')
         )
-        cumulative.add(1, da)
+        cumulative.add(Timestamp.from_ns(1), da)
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['x'], values=[1.0], unit='counts')
         )
@@ -454,14 +455,14 @@ class TestCumulative:
             sc.array(dims=['x'], values=[1.0], unit='counts'),
             coords={'x': sc.arange('x', 2, unit='s')},
         )
-        cumulative.add(0, da)
-        cumulative.add(1, da)
+        cumulative.add(Timestamp.from_ns(0), da)
+        cumulative.add(Timestamp.from_ns(1), da)
         da2 = sc.DataArray(
             sc.array(dims=['y'], values=[1.0], unit='counts'),
             coords={'y': sc.arange('y', 2, unit='s')},
         )
-        cumulative.add(2, da2)
-        cumulative.add(3, da2)
+        cumulative.add(Timestamp.from_ns(2), da2)
+        cumulative.add(Timestamp.from_ns(3), da2)
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['y'], values=[2.0], unit='counts')
         )
@@ -476,8 +477,8 @@ class TestCumulative:
             sc.array(dims=['x'], values=[2.0], unit='counts'),
             coords={'x': sc.array(dims=['x'], values=[1.0], unit='s')},
         )
-        cumulative.add(0, da1)
-        cumulative.add(1, da2)
+        cumulative.add(Timestamp.from_ns(0), da1)
+        cumulative.add(Timestamp.from_ns(1), da2)
         # Should have cleared and only contain da2
         assert sc.identical(
             cumulative.get().data, sc.array(dims=['x'], values=[2.0], unit='counts')
@@ -489,7 +490,7 @@ class TestCumulative:
             sc.array(dims=['x'], values=[1.0], unit='counts'),
             coords={'x': sc.arange('x', 2, unit='s')},
         )
-        cumulative.add(0, da)
+        cumulative.add(Timestamp.from_ns(0), da)
         cumulative.clear()
         with pytest.raises(ValueError, match="No data has been added"):
             cumulative.get()
@@ -500,8 +501,8 @@ class TestCumulative:
         da = sc.DataArray(
             sc.array(dims=['y', 'x'], values=[[1, 2], [3, 4]], unit='counts'),
         )
-        cumulative.add(0, da)
-        cumulative.add(1, da)
+        cumulative.add(Timestamp.from_ns(0), da)
+        cumulative.add(Timestamp.from_ns(1), da)
         result = cumulative.get()
         expected = sc.array(dims=['y', 'x'], values=[[2, 4], [6, 8]], unit='counts')
         assert sc.identical(result.data, expected)
@@ -514,8 +515,8 @@ class TestCumulative:
         da2 = sc.DataArray(
             sc.array(dims=['y', 'x'], values=[[5, 6, 7], [8, 9, 10]], unit='counts'),
         )
-        cumulative.add(0, da1)
-        cumulative.add(1, da1)
-        cumulative.add(2, da2)  # Different shape, should reset
+        cumulative.add(Timestamp.from_ns(0), da1)
+        cumulative.add(Timestamp.from_ns(1), da1)
+        cumulative.add(Timestamp.from_ns(2), da2)  # Different shape, should reset
         result = cumulative.get()
         assert sc.identical(result.data, da2.data)

@@ -54,21 +54,21 @@ class TestRunControlAdapter:
         )
         assert isinstance(msg.value, RunStart)
         assert msg.value.run_name == 'test_run'
-        assert msg.value.start_time == Timestamp(500 * _MS_TO_NS)
+        assert msg.value.start_time == Timestamp.from_ns(500 * _MS_TO_NS)
 
     def test_adapts_run_stop_to_RunStop(self):
         adapter = RunControlAdapter()
         msg = adapter.adapt(_make_run_stop_message(run_name='test_run', stop_time=900))
         assert isinstance(msg.value, RunStop)
         assert msg.value.run_name == 'test_run'
-        assert msg.value.stop_time == Timestamp(900 * _MS_TO_NS)
+        assert msg.value.stop_time == Timestamp.from_ns(900 * _MS_TO_NS)
 
     def test_run_start_with_stop_time(self):
         adapter = RunControlAdapter()
         msg = adapter.adapt(_make_run_start_message(start_time=1000, stop_time=5000))
         assert isinstance(msg.value, RunStart)
-        assert msg.value.start_time == Timestamp(1000 * _MS_TO_NS)
-        assert msg.value.stop_time == Timestamp(5000 * _MS_TO_NS)
+        assert msg.value.start_time == Timestamp.from_ns(1000 * _MS_TO_NS)
+        assert msg.value.stop_time == Timestamp.from_ns(5000 * _MS_TO_NS)
 
     def test_run_start_without_stop_time_is_none(self):
         adapter = RunControlAdapter()

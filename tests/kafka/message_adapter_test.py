@@ -128,7 +128,7 @@ class TestKafkaToMonitorEventsAdapter:
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "monitor_0"
         assert result.value.time_of_arrival == [123456]
-        assert result.timestamp == Timestamp(1234)
+        assert result.timestamp == Timestamp.from_ns(1234)
 
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
@@ -152,7 +152,7 @@ class TestKafkaToMonitorEventsAdapter:
         )
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp(9999)
+        assert result.timestamp == Timestamp.from_ns(9999)
 
     def test_wrong_schema_raises_exception(self, monkeypatch) -> None:
         """Test that providing wrong schema raises exception."""
@@ -182,7 +182,7 @@ class TestKafkaToF144Adapter:
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "temperature1"
         assert result.value.value == 123.45
-        assert result.timestamp == Timestamp(9876543210)
+        assert result.timestamp == Timestamp.from_ns(9876543210)
 
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_f144(), topic="sensors")
@@ -212,7 +212,7 @@ class TestF144ToLogDataAdapter:
         assert result.stream.name == "temperature1"
         assert result.value.value == 123.45
         assert result.value.time == 9876543210
-        assert result.timestamp == Timestamp(9876543210)
+        assert result.timestamp == Timestamp.from_ns(9876543210)
 
 
 class TestKafkaToDa00Adapter:
@@ -223,7 +223,7 @@ class TestKafkaToDa00Adapter:
 
         assert result.stream.kind == StreamKind.MONITOR_COUNTS
         assert result.stream.name == "instrument"
-        assert result.timestamp == Timestamp(5678)
+        assert result.timestamp == Timestamp.from_ns(5678)
         assert len(result.value) == 2  # signal and temperature
         assert {var.name for var in result.value} == {"signal", "temperature"}
 
@@ -247,7 +247,7 @@ class TestKafkaToDa00Adapter:
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp(3000)
+        assert result.timestamp == Timestamp.from_ns(3000)
 
     def test_uses_timestamp_ns_when_reference_time_is_empty(self) -> None:
         da00_with_empty_ref_time = dataarray_da00.serialise_da00(
@@ -269,7 +269,7 @@ class TestKafkaToDa00Adapter:
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp(5678)
+        assert result.timestamp == Timestamp.from_ns(5678)
 
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
@@ -312,7 +312,7 @@ class TestKafkaToAd00Adapter:
 
         assert result.stream.kind == StreamKind.AREA_DETECTOR
         assert result.stream.name == "area_detector"
-        assert result.timestamp == Timestamp(9876)
+        assert result.timestamp == Timestamp.from_ns(9876)
         assert result.value.unique_id == 42
         np.testing.assert_array_equal(
             result.value.data.reshape(result.value.dimensions),
@@ -355,7 +355,7 @@ class TestAd00ToScippAdapter:
 class TestEv44ToDetectorEventsAdapter:
     def test_adapter(self) -> None:
         ev44_message = Message(
-            timestamp=Timestamp(1234),
+            timestamp=Timestamp.from_ns(1234),
             stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector1"),
             value=eventdata_ev44.EventData(
                 source_name="detector1",
@@ -369,7 +369,7 @@ class TestEv44ToDetectorEventsAdapter:
         adapter = Ev44ToDetectorEventsAdapter()
         result = adapter.adapt(ev44_message)
 
-        assert result.timestamp == Timestamp(1234)
+        assert result.timestamp == Timestamp.from_ns(1234)
         assert result.stream.kind == StreamKind.DETECTOR_EVENTS
         assert result.stream.name == "detector1"
         assert isinstance(result.value, DetectorEvents)
@@ -378,7 +378,7 @@ class TestEv44ToDetectorEventsAdapter:
 
     def test_adapter_merge_detectors(self) -> None:
         ev44_message = Message(
-            timestamp=Timestamp(1234),
+            timestamp=Timestamp.from_ns(1234),
             stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector2"),
             value=eventdata_ev44.EventData(
                 source_name="detector2",
@@ -482,7 +482,7 @@ class TestKafkaToEv44Adapter:
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "mapped_monitor1"
         assert result.value.time_of_flight == [123456]
-        assert result.timestamp == Timestamp(1234)
+        assert result.timestamp == Timestamp.from_ns(1234)
 
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
@@ -502,7 +502,7 @@ class TestKafkaToEv44Adapter:
         adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp(9999)
+        assert result.timestamp == Timestamp.from_ns(9999)
 
 
 class TestAdaptingMessageSource:
@@ -519,7 +519,7 @@ class TestAdaptingMessageSource:
         assert messages[0].stream.kind == StreamKind.MONITOR_EVENTS
         assert messages[0].stream.name == "monitor1"
         assert messages[0].value.time_of_arrival == [123456]
-        assert messages[0].timestamp == Timestamp(1234)
+        assert messages[0].timestamp == Timestamp.from_ns(1234)
 
     def test_unknown_schema_is_logged_and_skipped(self) -> None:
         from structlog.testing import capture_logs
@@ -572,7 +572,7 @@ class TestAdaptingMessageSource:
 
 def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
     return Message(
-        timestamp=Timestamp(1234), stream=StreamId(name="dummy"), value=value
+        timestamp=Timestamp.from_ns(1234), stream=StreamId(name="dummy"), value=value
     )
 
 

@@ -189,11 +189,11 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
 
     for da in data.values():
         if 'start_time' in da.coords:
-            start_ns = Timestamp(da.coords['start_time'].value)
+            start_ns = Timestamp.from_scipp(da.coords['start_time'])
             if min_start is None or start_ns < min_start:
                 min_start = start_ns
         if 'end_time' in da.coords:
-            end_ns = Timestamp(da.coords['end_time'].value)
+            end_ns = Timestamp.from_scipp(da.coords['end_time'])
             if min_end is None or end_ns < min_end:
                 min_end = end_ns
             if max_end is None or end_ns > max_end:

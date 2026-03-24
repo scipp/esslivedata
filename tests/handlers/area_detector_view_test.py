@@ -29,8 +29,8 @@ class TestAreaDetectorViewFactory:
         frame = sc.DataArray(sc.ones(dims=['dim_0', 'dim_1'], shape=[8, 8]))
         workflow.accumulate(
             {'detector': frame},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 
@@ -49,8 +49,8 @@ class TestAreaDetectorView:
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         workflow.accumulate(
             {'detector': frame},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
 
         result = workflow.finalize()
@@ -72,15 +72,15 @@ class TestAreaDetectorView:
 
         workflow.accumulate(
             {'detector': frame1},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         workflow.finalize()
 
         workflow.accumulate(
             {'detector': frame2},
-            start_time=Timestamp(2000),
-            end_time=Timestamp(3000),
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
         )
         result2 = workflow.finalize()
 
@@ -98,8 +98,8 @@ class TestAreaDetectorView:
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         workflow.accumulate(
             {'detector': frame},
-            start_time=Timestamp(1000),
-            end_time=Timestamp(2000),
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         workflow.finalize()
 

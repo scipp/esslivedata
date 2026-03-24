@@ -3,6 +3,7 @@
 import numpy as np
 import scipp as sc
 
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.group_by_pixel import GroupByPixel
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents, ToNXevent_data
 
@@ -29,7 +30,7 @@ class TestGroupByPixel:
             pixel_ids=[1, 2, 3, 1, 3],
             toa=[100, 200, 300, 400, 500],
         )
-        acc.add(timestamp=1000, data=events)
+        acc.add(timestamp=Timestamp.from_ns(1000), data=events)
         result = acc.get()
 
         assert result.dims == ('detector_number',)
@@ -47,8 +48,12 @@ class TestGroupByPixel:
         detector_number = _make_detector_number(2)
         acc = GroupByPixel(ToNXevent_data(), detector_number)
 
-        acc.add(timestamp=1000, data=_make_events([1, 2], [100, 200]))
-        acc.add(timestamp=2000, data=_make_events([1, 1], [300, 400]))
+        acc.add(
+            timestamp=Timestamp.from_ns(1000), data=_make_events([1, 2], [100, 200])
+        )
+        acc.add(
+            timestamp=Timestamp.from_ns(2000), data=_make_events([1, 1], [300, 400])
+        )
         result = acc.get()
 
         # Pixel 1 has 3 events total (1 from first + 2 from second)
@@ -61,13 +66,15 @@ class TestGroupByPixel:
         detector_number = _make_detector_number(2)
         acc = GroupByPixel(ToNXevent_data(), detector_number)
 
-        acc.add(timestamp=1000, data=_make_events([1, 2], [100, 200]))
+        acc.add(
+            timestamp=Timestamp.from_ns(1000), data=_make_events([1, 2], [100, 200])
+        )
         acc.clear()
 
         # After clear, inner accumulator has no data
         # get() on inner ToNXevent_data raises when empty
         inner_acc = GroupByPixel(ToNXevent_data(), detector_number)
-        inner_acc.add(timestamp=3000, data=_make_events([1], [500]))
+        inner_acc.add(timestamp=Timestamp.from_ns(3000), data=_make_events([1], [500]))
         result = inner_acc.get()
         assert result.bins.size().sum().value == 1
 
@@ -76,11 +83,11 @@ class TestGroupByPixel:
         detector_number = _make_detector_number(2)
         acc = GroupByPixel(ToNXevent_data(), detector_number)
 
-        acc.add(timestamp=1000, data=_make_events([1], [100]))
+        acc.add(timestamp=Timestamp.from_ns(1000), data=_make_events([1], [100]))
         acc.get()
 
         # After get(), adding new data and getting again should work
-        acc.add(timestamp=2000, data=_make_events([2], [200]))
+        acc.add(timestamp=Timestamp.from_ns(2000), data=_make_events([2], [200]))
         result = acc.get()
         assert result.bins.size().values[0] == 0  # pixel 1: no events
         assert result.bins.size().values[1] == 1  # pixel 2: 1 event
@@ -89,7 +96,9 @@ class TestGroupByPixel:
         detector_number = _make_detector_number(2)
         acc = GroupByPixel(ToNXevent_data(), detector_number)
 
-        acc.add(timestamp=1000, data=_make_events([1, 2], [100, 200]))
+        acc.add(
+            timestamp=Timestamp.from_ns(1000), data=_make_events([1, 2], [100, 200])
+        )
         result = acc.get()
 
         event_data = result.bins.constituents['data']
