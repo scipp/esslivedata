@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
 from collections.abc import Callable
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Any, Generic, NoReturn, TypeVar
 
 import structlog
@@ -190,6 +192,52 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         )
 
 
+def _start_profiler(*, profile_dir: str, clock_type: str) -> None:
+    """Start yappi profiler and register an atexit handler to dump results."""
+    try:
+        import yappi
+    except ImportError as err:
+        raise SystemExit(
+            "yappi is not installed. Install it with: pip install yappi"
+        ) from err
+
+    yappi.set_clock_type(clock_type)
+    yappi.start(builtins=True)
+    atexit.register(_dump_yappi_profile, profile_dir)
+    logger.info("yappi_profiler_started", clock=clock_type, output_dir=profile_dir)
+
+
+def _dump_yappi_profile(profile_dir: str) -> None:
+    """Stop yappi and write per-thread profiles to the given directory."""
+    import yappi
+
+    yappi.stop()
+    out = Path(profile_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Thread summary
+    thread_stats = yappi.get_thread_stats()
+    with open(out / 'threads.txt', 'w') as f:
+        thread_stats.print_all(out=f)
+    logger.info("yappi_thread_summary")
+    thread_stats.print_all()
+
+    # Combined profile
+    func_stats = yappi.get_func_stats()
+    func_stats.save(str(out / 'all_threads.pstats'), type='pstat')
+
+    # Per-thread profiles
+    for thread in thread_stats:
+        safe_name = thread.name.replace(' ', '_').replace('/', '_')
+        fname = f'thread_{safe_name}_{thread.id}.pstats'
+        stats = yappi.get_func_stats(ctx_id=thread.id)
+        if stats.empty():
+            continue
+        stats.save(str(out / fname), type='pstat')
+
+    logger.info("yappi_profiles_saved", output_dir=profile_dir)
+
+
 class DataServiceRunner:
     def __init__(
         self,
@@ -217,6 +265,19 @@ class DataServiceRunner:
             choices=['kafka', 'png'],
             default='kafka',
             help='Select sink type: kafka or png',
+        )
+        self._parser.add_argument(
+            '--profile',
+            type=str,
+            default=None,
+            metavar='DIR',
+            help='Enable yappi profiler, dump results to DIR on shutdown',
+        )
+        self._parser.add_argument(
+            '--profile-clock',
+            choices=['wall', 'cpu'],
+            default='wall',
+            help='Profiler clock type: wall (default, includes I/O) or cpu',
         )
 
     @property
@@ -250,6 +311,11 @@ class DataServiceRunner:
             json_file=log_json_file,
             disable_stdout=no_stdout_log,
         )
+
+        profile_dir = args.pop('profile')
+        profile_clock = args.pop('profile_clock')
+        if profile_dir is not None:
+            _start_profiler(profile_dir=profile_dir, clock_type=profile_clock)
 
         logger.info("service_starting", **args)
         consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
