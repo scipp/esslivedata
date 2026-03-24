@@ -2,9 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
 
+from ess.livedata.core.timestamp import Duration, Timestamp
 from ess.livedata.dashboard.time_utils import (
     format_time_ns_local,
     get_local_timezone_offset_ns,
@@ -14,21 +14,21 @@ from ess.livedata.dashboard.time_utils import (
 class TestGetLocalTimezoneOffsetNs:
     """Tests for get_local_timezone_offset_ns."""
 
-    def test_returns_integer(self):
-        """Timezone offset is returned as an integer."""
+    def test_returns_duration(self):
+        """Timezone offset is returned as a Duration."""
         offset = get_local_timezone_offset_ns()
-        assert isinstance(offset, int)
+        assert isinstance(offset, Duration)
 
     def test_offset_in_reasonable_range(self):
         """Timezone offset should be within +/- 14 hours of UTC."""
         offset = get_local_timezone_offset_ns()
-        max_offset_ns = 14 * 60 * 60 * 1_000_000_000  # 14 hours in ns
-        assert -max_offset_ns <= offset <= max_offset_ns
+        max_offset = Duration.from_seconds(14 * 60 * 60)
+        assert -max_offset <= offset <= max_offset
 
     def test_offset_matches_python_datetime(self):
         """Offset should match what Python's datetime returns."""
         offset_ns = get_local_timezone_offset_ns()
-        offset_s = offset_ns / 1_000_000_000
+        offset_s = offset_ns.to_seconds()
 
         now_utc = datetime.now(tz=UTC)
         now_local = now_utc.astimezone()
@@ -44,19 +44,19 @@ class TestFormatTimeNsLocal:
 
     def test_format_returns_string(self):
         """Format returns a string."""
-        ns = int(1.733e18)
+        ns = Timestamp(int(1.733e18))
         result = format_time_ns_local(ns)
         assert isinstance(result, str)
 
     def test_format_includes_decimal(self):
         """Format includes a decimal point for subsecond precision."""
-        ns = int(1.733e18)
+        ns = Timestamp(int(1.733e18))
         result = format_time_ns_local(ns)
         assert '.' in result
 
     def test_format_matches_expected_pattern(self):
         """Format matches HH:MM:SS.d pattern."""
-        ns = int(1.733e18)
+        ns = Timestamp(int(1.733e18))
         result = format_time_ns_local(ns)
         # Pattern: "HH:MM:SS.d" where d is 0-9
         parts = result.split(':')
@@ -67,11 +67,11 @@ class TestFormatTimeNsLocal:
 
     def test_format_uses_local_time(self):
         """Format uses local time, not UTC."""
-        ns = time.time_ns()
+        ns = Timestamp.now()
         result = format_time_ns_local(ns)
 
         # Compare with what Python datetime returns
-        dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
+        dt = ns.to_datetime().astimezone()
         expected_hour = f"{dt.hour:02d}"
         expected_minute = f"{dt.minute:02d}"
         expected_second = f"{dt.second:02d}"
@@ -86,6 +86,6 @@ class TestFormatTimeNsLocal:
         """Format handles zero subsecond precision correctly."""
         # Use a timestamp with exactly 0 microseconds
         # 1733000000.0 seconds since epoch
-        ns = 1733000000 * 1_000_000_000
+        ns = Timestamp(1733000000 * 1_000_000_000)
         result = format_time_ns_local(ns)
         assert result.endswith('.0')

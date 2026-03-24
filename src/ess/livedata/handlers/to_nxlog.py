@@ -4,6 +4,7 @@ import numpy as np
 import scipp as sc
 
 from ess.livedata.core.handler import Accumulator
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.accumulators import LogData
 
 
@@ -67,7 +68,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                 [self._timeseries, self._timeseries], dim='time'
             )
 
-    def add(self, timestamp: int, data: LogData) -> None:
+    def add(self, timestamp: Timestamp, data: LogData) -> None:
         self._ensure_capacity(data)
         self._timeseries.coords['time'].values[self._end] = data.time
         self._timeseries.data.values[self._end] = data.value

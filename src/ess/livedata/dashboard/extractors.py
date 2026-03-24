@@ -128,8 +128,8 @@ class FullHistoryExtractor(UpdateExtractor):
         coord = data.coords[dim]
         if coord.dtype != sc.DType.int64 or coord.unit not in ('ns', 'us', 'ms', 's'):
             return data
-        tz_offset = sc.scalar(get_local_timezone_offset_ns(), unit='ns').to(
-            unit=coord.unit, dtype='int64'
+        tz_offset = (
+            get_local_timezone_offset_ns().to_scipp().to(unit=coord.unit, dtype='int64')
         )
         self._time_origin = sc.epoch(unit=coord.unit) + tz_offset
         return data.assign_coords({dim: self._time_origin + coord})
