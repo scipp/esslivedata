@@ -37,8 +37,6 @@ class LogData:
 
 
 class NullAccumulator(Accumulator[Any, None]):
-    is_context = False
-
     def add(self, timestamp: int, data: Any) -> None:
         pass
 
@@ -221,8 +219,6 @@ class _CumulativeAccumulationMixin:
 
 
 class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.DataArray]):
-    is_context = False
-
     def __init__(self, config: dict | None = None, clear_on_get: bool = False):
         super().__init__(clear_on_get=clear_on_get)
         self._config = config or {}

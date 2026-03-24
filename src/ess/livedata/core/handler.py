@@ -27,7 +27,7 @@ class Accumulator(Protocol, Generic[T, U]):
     for seeding newly activated jobs.
     """
 
-    is_context: ClassVar[bool]
+    is_context: ClassVar[bool] = False
 
     def add(self, timestamp: int, data: T) -> None: ...
 
