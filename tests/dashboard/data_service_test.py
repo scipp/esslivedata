@@ -955,6 +955,113 @@ class TestDataServiceUpdatingSubscribers:
 
 
 # Tests for extractor-based subscription
+class TestNotifySubscriberErrorIsolation:
+    """Test that a failing subscriber does not block other subscribers."""
+
+    def test_failing_trigger_does_not_block_subsequent_subscribers(self):
+        service = DataService[str, int]()
+
+        class FailingSubscriber(DataServiceSubscriber[str]):
+            def __init__(self) -> None:
+                self._extractors = {"key1": LatestValueExtractor()}
+                self._armed = False
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                if self._armed:
+                    raise RuntimeError("subscriber failed")
+
+        failing = FailingSubscriber()
+        good, get_pipe = create_test_subscriber({"key1"})
+
+        service.register_subscriber(failing)
+        service.register_subscriber(good)
+        failing._armed = True
+
+        service["key1"] = make_test_data(42)
+
+        pipe = get_pipe()
+        assert len(pipe.sent_data) == 1
+        assert pipe.sent_data[0]["key1"].value == 42
+
+    def test_failing_extractor_does_not_block_subsequent_subscribers(self):
+        service = DataService[str, int]()
+
+        class BrokenExtractor:
+            def __init__(self) -> None:
+                self._armed = False
+
+            @property
+            def buffer_size(self) -> int:
+                return 1
+
+            def get_required_timespan(self) -> float:
+                return 0.0
+
+            def extract(self, buffered_data):
+                if self._armed:
+                    raise ValueError("extractor failed")
+                return None
+
+        class FailingExtractorSubscriber(DataServiceSubscriber[str]):
+            def __init__(self, extractor: BrokenExtractor) -> None:
+                self._extractors: dict = {"key1": extractor}
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                pass
+
+        extractor = BrokenExtractor()
+        failing = FailingExtractorSubscriber(extractor)
+        good, get_pipe = create_test_subscriber({"key1"})
+
+        service.register_subscriber(failing)
+        service.register_subscriber(good)
+        extractor._armed = True
+
+        service["key1"] = make_test_data(42)
+
+        pipe = get_pipe()
+        assert len(pipe.sent_data) == 1
+        assert pipe.sent_data[0]["key1"].value == 42
+
+    def test_failing_subscriber_is_logged(self, caplog):
+        import logging
+
+        service = DataService[str, int]()
+
+        class FailingSubscriber(DataServiceSubscriber[str]):
+            def __init__(self) -> None:
+                self._extractors = {"key1": LatestValueExtractor()}
+                self._armed = False
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                if self._armed:
+                    raise RuntimeError("boom")
+
+        failing = FailingSubscriber()
+        service.register_subscriber(failing)
+        failing._armed = True
+
+        with caplog.at_level(logging.ERROR):
+            service["key1"] = make_test_data(42)
+
+        assert "boom" in caplog.text
+
+
 class TestExtractorBasedSubscription:
     """Tests for extractor-based subscription with dynamic buffer sizing."""
 
