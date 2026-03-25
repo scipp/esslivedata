@@ -45,19 +45,8 @@ class Duration:
 
     @classmethod
     def from_scipp(cls, var: Any) -> Duration:
-        """Create a duration from a scipp scalar.
-
-        Parameters
-        ----------
-        var:
-            A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
-
-        Raises
-        ------
-        ValueError
-            If the unit is not a supported time unit.
-        """
-        return cls(ns=_scipp_to_ns(var))
+        """Create a duration from a scipp scalar with a time unit."""
+        return cls(ns=int(var.to(unit='ns', copy=False).value))
 
     def to_ns(self) -> int:
         """Return the duration as an integer number of nanoseconds."""
@@ -178,19 +167,8 @@ class Timestamp:
 
     @classmethod
     def from_scipp(cls, var: Any) -> Timestamp:
-        """Create a timestamp from a scipp scalar.
-
-        Parameters
-        ----------
-        var:
-            A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
-
-        Raises
-        ------
-        ValueError
-            If the unit is not a supported time unit.
-        """
-        return cls(ns=_scipp_to_ns(var))
+        """Create a timestamp from a scipp scalar with a time unit."""
+        return cls(ns=int(var.to(unit='ns', copy=False).value))
 
     def to_ns(self) -> int:
         """Return the timestamp as an integer number of nanoseconds."""
@@ -275,32 +253,3 @@ class Timestamp:
                 lambda ts: ts._ns
             ),
         )
-
-
-def _scipp_to_ns(var: Any) -> int:
-    """Convert a scipp scalar to nanoseconds.
-
-    Parameters
-    ----------
-    var:
-        A scipp scalar with a time unit (``ns``, ``us``, ``ms``, or ``s``).
-
-    Raises
-    ------
-    ValueError
-        If the unit is not a supported time unit.
-    """
-    unit = str(var.unit)
-    value = int(var.value)
-    if unit == 'ns':
-        return value
-    if unit == 'us':
-        return value * 1_000
-    if unit == 'ms':
-        return value * _NS_PER_MS
-    if unit == 's':
-        return value * _NS_PER_S
-    raise ValueError(
-        f"Cannot convert scipp variable with unit '{unit}' to nanoseconds. "
-        f"Supported units: ns, us, ms, s."
-    )
