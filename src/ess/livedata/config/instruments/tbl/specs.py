@@ -29,6 +29,12 @@ instrument = Instrument(
     detector_names=detector_names,
     monitors=monitor_names,
     source_metadata={
+        'timepix3_detector': SourceMetadata(title='Timepix3'),
+        'multiblade_detector': SourceMetadata(title='Multiblade'),
+        'he3_detector_bank0': SourceMetadata(title='He3 Bank 0'),
+        'he3_detector_bank1': SourceMetadata(title='He3 Bank 1'),
+        'ngem_detector': SourceMetadata(title='nGEM'),
+        'orca_detector': SourceMetadata(title='ORCA'),
         'monitor_1': SourceMetadata(title='Beam Monitor'),
     },
 )
