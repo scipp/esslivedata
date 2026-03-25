@@ -4,7 +4,7 @@
 TBL workflow spec registration.
 """
 
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -25,7 +25,12 @@ detector_names = [
 monitor_names = ['monitor_1']
 
 instrument = Instrument(
-    name='tbl', detector_names=detector_names, monitors=monitor_names
+    name='tbl',
+    detector_names=detector_names,
+    monitors=monitor_names,
+    source_metadata={
+        'monitor_1': SourceMetadata(title='Beam Monitor'),
+    },
 )
 
 instrument_registry.register(instrument)
