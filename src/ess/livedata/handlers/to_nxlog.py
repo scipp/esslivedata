@@ -72,7 +72,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                 [self._timeseries, self._timeseries], dim='time'
             )
 
-    def add(self, timestamp: int, data: LogData) -> None:
+    def add(self, timestamp: int, data: LogData) -> bool:
         if self._last_time is not None:
             if data.time < self._last_time:
                 logger.warning(
@@ -80,7 +80,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                     source_time=data.time,
                     last_time=self._last_time,
                 )
-                return
+                return False
             if data.time == self._last_time:
                 last_value = self._timeseries.data.values[self._end - 1]
                 if not np.array_equal(data.value, last_value):
@@ -88,7 +88,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                         "duplicate_timestamp_value_mismatch",
                         source_time=data.time,
                     )
-                return
+                return False
 
         self._ensure_capacity(data)
         self._timeseries.coords['time'].values[self._end] = data.time
@@ -97,6 +97,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
             self._timeseries.data.variances[self._end] = data.variances
         self._end += 1
         self._last_time = data.time
+        return True
 
     def get(self) -> sc.DataArray:
         if self._timeseries is None:

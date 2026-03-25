@@ -37,8 +37,8 @@ class LogData:
 
 
 class NullAccumulator(Accumulator[Any, None]):
-    def add(self, timestamp: int, data: Any) -> None:
-        pass
+    def add(self, timestamp: int, data: Any) -> bool:
+        return True
 
     def get(self) -> None:
         return None
@@ -62,9 +62,10 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
     def __init__(self):
         self._latest: sc.DataArray | None = None
 
-    def add(self, timestamp: int, data: sc.DataArray) -> None:
+    def add(self, timestamp: int, data: sc.DataArray) -> bool:
         _ = timestamp
         self._latest = data.copy()
+        return True
 
     def get(self) -> sc.DataArray:
         if self._latest is None:
@@ -221,6 +222,7 @@ class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.Data
         super().__init__(clear_on_get=clear_on_get)
         self._config = config or {}
 
-    def add(self, timestamp: int, data: sc.DataArray) -> None:
+    def add(self, timestamp: int, data: sc.DataArray) -> bool:
         _ = timestamp
         self._add_cumulative(data)
+        return True

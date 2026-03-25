@@ -20,7 +20,15 @@ class Accumulator(Protocol, Generic[T, U]):
     They accumulate data from multiple messages before passing it to workflows.
     """
 
-    def add(self, timestamp: int, data: T) -> None: ...
+    def add(self, timestamp: int, data: T) -> bool:
+        """Add data to the accumulator.
+
+        Returns
+        -------
+        :
+            True if the data was accepted, False if it was skipped (e.g., duplicate).
+        """
+        ...
 
     def get(self) -> U: ...
 
