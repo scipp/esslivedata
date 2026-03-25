@@ -404,6 +404,79 @@ class TestJob:
         assert cumulative.coords["start_time"].value == 1000
         assert cumulative.coords["end_time"].value == 2000
 
+    def test_get_does_not_add_time_coords_to_data_with_time_coordinate(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Data with a 'time' coordinate already carries its own timestamps.
+
+        Adding start_time/end_time would be redundant and causes structural
+        issues in TemporalBuffer (scalar coord vs multi-element time dim).
+        """
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        # Timeseries-like output: data indexed by wall-clock timestamps
+        fake_processor.data = {
+            "delta": sc.DataArray(
+                data=sc.array(dims=["time"], values=[1.0, 2.0, 3.0]),
+                coords={
+                    "time": sc.array(dims=["time"], values=[100, 200, 300], unit="ns")
+                },
+            ),
+        }
+
+        data = JobData(
+            start_time=1000,
+            end_time=2000,
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        result = job.get()
+        output = result.data["delta"]
+
+        assert "start_time" not in output.coords
+        assert "end_time" not in output.coords
+
+    def test_get_does_not_add_time_coords_to_data_with_scalar_time_coordinate(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Even a scalar 'time' coordinate signals timestamped data."""
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        fake_processor.data = {
+            "delta": sc.DataArray(
+                data=sc.scalar(1.0),
+                coords={"time": sc.scalar(100, unit="ns")},
+            ),
+        }
+
+        data = JobData(
+            start_time=1000,
+            end_time=2000,
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        result = job.get()
+        output = result.data["delta"]
+
+        assert "start_time" not in output.coords
+        assert "end_time" not in output.coords
+
     def test_get_does_not_add_time_coords_when_no_data_added(
         self, fake_processor, sample_workflow_id
     ):
