@@ -131,10 +131,17 @@ def _add_time_coords(
     These coordinates provide temporal provenance for each output, enabling lag
     calculation in the dashboard (lag = current_time - end_time).
 
-    DataArrays that already have start_time or end_time coordinates are skipped.
-    This allows workflows to set their own time coords for outputs that represent
-    different time ranges (e.g., "current" outputs that only cover the period
-    since the last finalize, not the entire job duration).
+    DataArrays are skipped in two cases:
+
+    - Already have start_time or end_time coordinates. This allows workflows to
+      set their own time coords for outputs that represent different time ranges
+      (e.g., "current" outputs that only cover the period since the last finalize,
+      not the entire job duration).
+    - Have a 'time' coordinate. A 'time' coordinate means the data carries its
+      own timestamps (e.g., timeseries log data), making start_time/end_time
+      redundant. Adding scalar start_time/end_time to such data would also cause
+      a dimension mismatch in TemporalBuffer, which accumulates data along the
+      'time' dimension.
     """
     if start_time is None or end_time is None:
         return data
@@ -145,6 +152,11 @@ def _add_time_coords(
         # Skip if workflow already set time coords - we have no idea what they
         # mean, and adding our own would create an inconsistent pair.
         if 'start_time' in val.coords or 'end_time' in val.coords:
+            return val
+        # Skip if data carries a 'time' coordinate. A 'time' coordinate means
+        # the data has its own timestamps (e.g., timeseries log data), making
+        # start_time/end_time redundant.
+        if 'time' in val.coords:
             return val
         return val.assign_coords(start_time=start_coord, end_time=end_coord)
 
