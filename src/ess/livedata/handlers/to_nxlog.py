@@ -2,9 +2,12 @@ from typing import Any
 
 import numpy as np
 import scipp as sc
+import structlog
 
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.handlers.accumulators import LogData
+
+logger = structlog.get_logger(__name__)
 
 
 class ToNXlog(Accumulator[LogData, sc.DataArray]):
@@ -14,6 +17,9 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     Accumulates LogData objects and returns a single DataArray as it would be read from
     an NXlog in a NeXus file. The DataArray grows as data is added and is not cleared
     until explicitly requested.
+
+    Timestamps must be monotonically increasing. Messages with duplicate or out-of-order
+    timestamps are skipped to prevent unbounded buffer growth from upstream re-sends.
     """
 
     def __init__(
@@ -33,6 +39,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         # Initialize with None, will be created on first add
         self._timeseries: sc.DataArray | None = None
         self._end = 0
+        self._last_time: int | None = None
         self._data_dims = data_dims
 
     @property
@@ -66,21 +73,39 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
             )
 
     def add(self, timestamp: int, data: LogData) -> None:
+        if self._last_time is not None:
+            if data.time < self._last_time:
+                logger.warning(
+                    "out_of_order_timestamp_skipped",
+                    source_time=data.time,
+                    last_time=self._last_time,
+                )
+                return
+            if data.time == self._last_time:
+                last_value = self._timeseries.data.values[self._end - 1]
+                if not np.array_equal(data.value, last_value):
+                    logger.warning(
+                        "duplicate_timestamp_value_mismatch",
+                        source_time=data.time,
+                    )
+                return
+
         self._ensure_capacity(data)
         self._timeseries.coords['time'].values[self._end] = data.time
         self._timeseries.data.values[self._end] = data.value
         if data.variances is not None and self._timeseries.data.variances is not None:
             self._timeseries.data.variances[self._end] = data.variances
         self._end += 1
+        self._last_time = data.time
 
     def get(self) -> sc.DataArray:
         if self._timeseries is None:
             raise RuntimeError("No data has been added yet.")
 
-        # Return only the filled part and sort by time
-        result = self._timeseries['time', : self._end]
-        return sc.sort(result, 'time') if self._end > 1 else result
+        # Monotonic timestamps are enforced by add(), no sorting needed
+        return self._timeseries['time', : self._end]
 
     def clear(self) -> None:
         self._end = 0
+        self._last_time = None
         # Keep the allocated array to avoid reallocations
