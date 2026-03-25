@@ -821,7 +821,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             if not has_metadata:
                 self._content_container.append(
                     pn.pane.Markdown(
-                        "**⚠️ Could not determine output properties. "
+                        "**Warning: Could not determine output properties. "
                         "Some of these plotters may not work with the actual data.**",
                         styles={'color': '#ff6b35', 'margin-bottom': '10px'},
                     )

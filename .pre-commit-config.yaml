@@ -57,4 +57,4 @@ repos:
     rev: v1.8.1
     hooks:
       - id: anti-trojan-source
-        args: ["--verbose"]
+        exclude: '^docs/_static/favicon\.ico$'
