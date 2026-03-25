@@ -6,6 +6,10 @@ TBL workflow spec registration.
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 from .views import fold_image, get_he3_detector_view, get_multiblade_view, identity
 
@@ -18,9 +22,17 @@ detector_names = [
     # not listing orca since it does not have (and does not need) detector numbers
 ]
 
-instrument = Instrument(name='tbl', detector_names=detector_names)
+monitor_names = ['monitor_1']
+
+instrument = Instrument(
+    name='tbl', detector_names=detector_names, monitors=monitor_names
+)
 
 instrument_registry.register(instrument)
+
+monitor_handle = register_monitor_workflow_specs(
+    instrument, monitor_names, params=TOAOnlyMonitorDataParams
+)
 
 instrument.add_logical_view(
     name='tbl_detector_timepix3',

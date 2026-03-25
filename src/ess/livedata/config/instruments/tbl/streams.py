@@ -8,6 +8,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .specs import monitor_names
 
 # Note: Panel size is fake and does not correspond to production setting
 detector_fakes = {
@@ -63,9 +64,12 @@ stream_mapping = {
         'tbl',
         detector_names=list(detector_fakes),
         area_detector_names=list(area_detector_fakes),
+        monitor_names=monitor_names,
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='tbl'),
+        **make_common_stream_mapping_inputs(
+            instrument='tbl', monitor_names=monitor_names
+        ),
         detectors=_make_tbl_detectors(),
         area_detectors=_make_tbl_area_detectors(),
     ),
