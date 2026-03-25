@@ -13,7 +13,15 @@ from ..handlers.workflow_factory import SpecHandle
 
 
 class TimeseriesOutputs(WorkflowOutputsBase):
-    """Outputs for the timeseries workflow."""
+    """Outputs for the timeseries workflow.
+
+    The template defines a 0-D DataArray with a scalar ``time`` coordinate.
+    Conceptually, each timeseries value is a timestamped scalar. In practice,
+    ``TimeseriesStreamProcessor.finalize()`` returns batches (1-D along ``time``)
+    for efficiency, but the ``time`` coordinate remains the defining property:
+    it signals that the data carries its own wall-clock timestamps, so
+    ``_add_time_coords`` will not attach ``start_time``/``end_time``.
+    """
 
     delta: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
