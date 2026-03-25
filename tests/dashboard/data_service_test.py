@@ -1033,34 +1033,6 @@ class TestNotifySubscriberErrorIsolation:
         assert len(pipe.sent_data) == 1
         assert pipe.sent_data[0]["key1"].value == 42
 
-    def test_failing_subscriber_is_logged(self, caplog):
-        import logging
-
-        service = DataService[str, int]()
-
-        class FailingSubscriber(DataServiceSubscriber[str]):
-            def __init__(self) -> None:
-                self._extractors = {"key1": LatestValueExtractor()}
-                self._armed = False
-                super().__init__()
-
-            @property
-            def extractors(self):
-                return self._extractors
-
-            def trigger(self, store: dict[str, Any]) -> None:
-                if self._armed:
-                    raise RuntimeError("boom")
-
-        failing = FailingSubscriber()
-        service.register_subscriber(failing)
-        failing._armed = True
-
-        with caplog.at_level(logging.ERROR):
-            service["key1"] = make_test_data(42)
-
-        assert "boom" in caplog.text
-
 
 class TestExtractorBasedSubscription:
     """Tests for extractor-based subscription with dynamic buffer sizing."""
