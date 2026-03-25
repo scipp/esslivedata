@@ -356,8 +356,8 @@ class JobSchedule:
     of the raw data being processed (as opposed to when it should be processed).
     """
 
-    start_time: Timestamp | None = None
-    end_time: Timestamp | None = None
+    start_time: Timestamp | None = None  # When job should start processing
+    end_time: Timestamp | None = None  # When job should stop (None = no limit)
 
     def __post_init__(self) -> None:
         """Validate the schedule configuration."""
