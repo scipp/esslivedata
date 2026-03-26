@@ -32,6 +32,7 @@ def setup_factories(instrument: Instrument) -> None:
         Filename,
         Incident,
         IntensityQ,
+        NeXusMonitorName,
         Numerator,
         ReducedQ,
         ReturnEvents,
@@ -182,10 +183,14 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.i_of_q_handle.attach_factory()
     def _i_of_q_factory(
-        source_name: str, params: SansWorkflowParams
+        source_name: str,
+        params: SansWorkflowParams,
+        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         wf = _make_base_workflow()
         wf[NeXusDetectorName] = source_name
+        wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor']
+        wf[NeXusMonitorName[Transmission]] = aux_source_names['transmission_monitor']
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()

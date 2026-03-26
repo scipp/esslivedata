@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from enum import StrEnum
-
 import pytest
 import scipp as sc
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from ess.livedata.config.workflow_spec import (
-    AuxSourcesBase,
+    AuxInput,
+    AuxSources,
     JobId,
     WorkflowConfig,
     WorkflowId,
@@ -57,18 +56,17 @@ class TestWorkflowSpecAuxSources:
         assert spec.aux_sources is None
 
     def test_workflow_spec_with_aux_sources_model(self) -> None:
-        """Test WorkflowSpec with aux_sources as a Pydantic model."""
-
-        class MonitorChoice(StrEnum):
-            MONITOR1 = "monitor1"
-            MONITOR2 = "monitor2"
-
-        class AuxSources(BaseModel):
-            monitor: MonitorChoice = Field(
-                default=MonitorChoice.MONITOR1,
-                title="Monitor",
-                description="Select which monitor to use",
-            )
+        """Test WorkflowSpec with aux_sources as an AuxSources instance."""
+        aux = AuxSources(
+            {
+                'monitor': AuxInput(
+                    choices=('monitor1', 'monitor2'),
+                    default='monitor1',
+                    title='Monitor',
+                    description='Select which monitor to use',
+                )
+            }
+        )
 
         spec = WorkflowSpec(
             instrument="test",
@@ -77,35 +75,11 @@ class TestWorkflowSpecAuxSources:
             title="Test Workflow",
             description="A test workflow",
             params=None,
-            aux_sources=AuxSources,
+            aux_sources=aux,
             outputs=SimpleTestOutputs,
         )
-        assert spec.aux_sources is AuxSources
-
-    def test_workflow_spec_serialization_with_aux_sources(self) -> None:
-        """Test WorkflowSpec with aux_sources serialization."""
-
-        class AuxSources(BaseModel):
-            rotation: str = Field(title="Rotation", description="Select rotation")
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            aux_sources=AuxSources,
-            outputs=SimpleTestOutputs,
-        )
-
-        # Serialize and deserialize
-        dumped = spec.model_dump()
-        loaded = WorkflowSpec.model_validate(dumped)
-
-        assert loaded.aux_sources is not None
-        # Both should be the same class (not just equal instances)
-        assert loaded.aux_sources.__name__ == spec.aux_sources.__name__
+        assert spec.aux_sources is not None
+        assert isinstance(spec.aux_sources, AuxSources)
 
 
 class TestWorkflowSpecOutputs:
@@ -444,76 +418,162 @@ class TestWorkflowConfigFromParams:
         assert config.params == {"nested_value": 10, "string_list": ["x", "y", "z"]}
 
 
-class TestAuxSourcesBase:
-    """Tests for AuxSourcesBase render() method."""
+class TestAuxSourcesConstruction:
+    """Tests for AuxSources construction and get_defaults()."""
 
-    def test_default_render_returns_model_dump(self) -> None:
-        """Test that default render() returns model_dump(mode='json')."""
-        from typing import Literal
+    def test_string_shorthand_creates_single_fixed_choice(self) -> None:
+        aux = AuxSources({'rotation': 'det_rotation'})
+        inp = aux.inputs['rotation']
+        assert inp.choices == ('det_rotation',)
+        assert inp.default == 'det_rotation'
 
-        class SimpleAuxSources(AuxSourcesBase):
-            monitor: Literal['monitor1'] = 'monitor1'
+    def test_string_shorthand_leaves_title_empty(self) -> None:
+        aux = AuxSources({'rotation': 'det_rotation'})
+        assert aux.inputs['rotation'].title == ''
 
-        aux_sources = SimpleAuxSources()
+    def test_aux_input_preserves_metadata(self) -> None:
+        aux = AuxSources(
+            {
+                'monitor': AuxInput(
+                    choices=('mon1', 'mon2'),
+                    default='mon1',
+                    title='Monitor',
+                    description='Select monitor',
+                ),
+            }
+        )
+        inp = aux.inputs['monitor']
+        assert inp.choices == ('mon1', 'mon2')
+        assert inp.default == 'mon1'
+        assert inp.title == 'Monitor'
+        assert inp.description == 'Select monitor'
+
+    def test_get_defaults_single_input(self) -> None:
+        aux = AuxSources({'monitor': 'mon1'})
+        assert aux.get_defaults() == {'monitor': 'mon1'}
+
+    def test_get_defaults_multiple_inputs(self) -> None:
+        aux = AuxSources(
+            {
+                'incident': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
+                'transmission': AuxInput(choices=('mon3', 'mon4'), default='mon4'),
+            }
+        )
+        assert aux.get_defaults() == {'incident': 'mon1', 'transmission': 'mon4'}
+
+    def test_inputs_returns_copy(self) -> None:
+        aux = AuxSources({'a': 'x'})
+        inputs1 = aux.inputs
+        inputs2 = aux.inputs
+        assert inputs1 is not inputs2
+        assert inputs1 == inputs2
+
+
+class TestAuxSourcesRender:
+    """Tests for AuxSources render() method."""
+
+    def test_default_render_returns_fixed_values(self) -> None:
+        aux_sources = AuxSources({'monitor': 'monitor1'})
         job_id = JobId(source_name='detector1', job_number='test-uuid-123')
 
         rendered = aux_sources.render(job_id)
 
-        # Default implementation should return the model dump unchanged
         assert rendered == {'monitor': 'monitor1'}
-        assert rendered == aux_sources.model_dump(mode='json')
+
+    def test_render_with_selections_overrides_defaults(self) -> None:
+        aux_sources = AuxSources(
+            {
+                'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
+            }
+        )
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(job_id, selections={'monitor': 'mon2'})
+
+        assert rendered == {'monitor': 'mon2'}
+
+    def test_render_with_partial_selections(self) -> None:
+        aux_sources = AuxSources(
+            {
+                'a': AuxInput(choices=('x', 'y'), default='x'),
+                'b': AuxInput(choices=('p', 'q'), default='p'),
+            }
+        )
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(job_id, selections={'a': 'y'})
+
+        assert rendered == {'a': 'y', 'b': 'p'}
+
+    def test_render_ignores_unknown_selection_keys(self) -> None:
+        aux_sources = AuxSources({'monitor': 'mon1'})
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(
+            job_id, selections={'monitor': 'mon1', 'unknown': 'ignored'}
+        )
+
+        assert rendered == {'monitor': 'mon1'}
+
+    def test_render_with_none_selections_uses_defaults(self) -> None:
+        aux_sources = AuxSources({'monitor': 'mon1'})
+        job_id = JobId(source_name='det1', job_number='id-1')
+
+        rendered = aux_sources.render(job_id, selections=None)
+
+        assert rendered == {'monitor': 'mon1'}
 
     def test_custom_render_transforms_stream_names(self) -> None:
-        """Test that custom render() can transform stream names."""
-        from typing import Literal
-
-        class RoiAuxSources(AuxSourcesBase):
-            roi: Literal['roi_rectangle', 'roi_polygon'] = 'roi_rectangle'
-
-            def render(self, job_id: JobId) -> dict[str, str]:
-                base = self.model_dump(mode='json')
+        class RoiAuxSources(AuxSources):
+            def render(
+                self, job_id: JobId, selections: dict[str, str] | None = None
+            ) -> dict[str, str]:
+                base = super().render(job_id, selections)
                 return {
                     field: f"{job_id.job_number}/{stream}"
                     for field, stream in base.items()
                 }
 
-        aux_sources = RoiAuxSources(roi='roi_polygon')
+        aux_sources = RoiAuxSources(
+            {
+                'roi': AuxInput(
+                    choices=('roi_rectangle', 'roi_polygon'), default='roi_rectangle'
+                )
+            }
+        )
         job_id = JobId(source_name='detector1', job_number='abc-123')
 
-        rendered = aux_sources.render(job_id)
+        rendered = aux_sources.render(job_id, selections={'roi': 'roi_polygon'})
 
         assert rendered == {'roi': 'abc-123/roi_polygon'}
 
     def test_custom_render_with_source_name_prefix(self) -> None:
-        """Test custom render() that uses source_name for prefixing."""
-        from typing import Literal
-
-        class SourcePrefixedAuxSources(AuxSourcesBase):
-            monitor: Literal['monitor1', 'monitor2'] = 'monitor1'
-
-            def render(self, job_id: JobId) -> dict[str, str]:
-                base = self.model_dump(mode='json')
+        class SourcePrefixedAuxSources(AuxSources):
+            def render(
+                self, job_id: JobId, selections: dict[str, str] | None = None
+            ) -> dict[str, str]:
+                base = super().render(job_id, selections)
                 return {
                     field: f"{job_id.source_name}/{stream}"
                     for field, stream in base.items()
                 }
 
-        aux_sources = SourcePrefixedAuxSources(monitor='monitor2')
+        aux_sources = SourcePrefixedAuxSources(
+            {'monitor': AuxInput(choices=('monitor1', 'monitor2'), default='monitor1')}
+        )
         job_id = JobId(source_name='detector1', job_number='uuid-456')
 
-        rendered = aux_sources.render(job_id)
+        rendered = aux_sources.render(job_id, selections={'monitor': 'monitor2'})
 
         assert rendered == {'monitor': 'detector1/monitor2'}
 
     def test_render_with_multiple_fields(self) -> None:
-        """Test render() with multiple aux source fields."""
-        from typing import Literal
-
-        class MultiAuxSources(AuxSourcesBase):
-            incident_monitor: Literal['monitor1'] = 'monitor1'
-            transmission_monitor: Literal['monitor2'] = 'monitor2'
-
-        aux_sources = MultiAuxSources()
+        aux_sources = AuxSources(
+            {
+                'incident_monitor': 'monitor1',
+                'transmission_monitor': 'monitor2',
+            }
+        )
         job_id = JobId(source_name='detector1', job_number='test-id')
 
         rendered = aux_sources.render(job_id)

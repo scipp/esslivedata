@@ -169,6 +169,7 @@ def create_monitor_workflow(
     coordinate_mode: Literal['toa', 'tof'] = 'toa',
     geometry_filename: str | None = None,
     tof_lookup_table_filename: str | None = None,
+    context_keys: dict[str, type] | None = None,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -189,6 +190,10 @@ def create_monitor_workflow(
         (needed for Ltotal computation). Optional for 'toa' mode.
     tof_lookup_table_filename:
         Path to TOF lookup table file. Required for 'tof' mode.
+    context_keys:
+        Optional mapping from aux source stream names to sciline pipeline keys.
+        Used to inject dynamic data (e.g., position streams) into the workflow
+        via StreamProcessorWorkflow's context mechanism.
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
@@ -235,6 +240,7 @@ def create_monitor_workflow(
         # providers will assemble monitor data to produce RawMonitor.
         # For TOF mode, GenericTofWorkflow providers convert RawMonitor to TofMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
+        context_keys=context_keys,
         target_keys={
             'cumulative': CumulativeMonitorHistogram,
             'current': WindowMonitorHistogram,

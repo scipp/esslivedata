@@ -166,6 +166,9 @@ def setup_factories(instrument: Instrument) -> None:
     def _make_cut_stream_processor(
         workflow: sciline.Pipeline,
     ) -> StreamProcessorWorkflow:
+        # Bifrost aux sources (rotation angles) are raw f144 scalar values routed
+        # via context_keys, not NeXus components loaded by name. Unlike LOKI/DREAM
+        # factories, there is no NeXusName parameter to set from aux_source_names.
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},

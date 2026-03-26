@@ -5,14 +5,13 @@ DREAM instrument spec registration.
 """
 
 from enum import StrEnum
-from typing import Literal
 
 import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
@@ -184,19 +183,22 @@ projection_handle = instrument.register_spec(
         'Uses the appropriate projection for each detector.'
     ),
     source_names=list(_projections.keys()),
-    aux_sources=DetectorROIAuxSources,
+    aux_sources=DetectorROIAuxSources(),
     params=DreamDetectorViewParams,
     outputs=DetectorViewOutputs,
 )
 
 
-class DreamAuxSources(AuxSourcesBase):
-    """Auxiliary source names for DREAM powder workflows."""
-
-    cave_monitor: Literal['monitor_cave'] = pydantic.Field(
-        default='monitor_cave',
-        description='Cave monitor for normalization.',
-    )
+dream_aux_sources = AuxSources(
+    {
+        'cave_monitor': AuxInput(
+            choices=('monitor_cave',),
+            default='monitor_cave',
+            title='Cave Monitor',
+            description='Normalization monitor in the instrument cave.',
+        ),
+    }
+)
 
 
 class PowderWorkflowParams(pydantic.BaseModel):
@@ -318,7 +320,7 @@ powder_reduction_handle = instrument.register_spec(
     title='Powder reduction',
     description='Powder reduction without vanadium normalization.',
     source_names=_powder_detector_names,
-    aux_sources=DreamAuxSources,
+    aux_sources=dream_aux_sources,
     outputs=PowderReductionOutputs,
     params=PowderWorkflowParams,
 )
@@ -329,7 +331,7 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
     title='Powder reduction (with vanadium)',
     description='Powder reduction with vanadium normalization.',
     source_names=_powder_detector_names,
-    aux_sources=DreamAuxSources,
+    aux_sources=dream_aux_sources,
     outputs=PowderReductionWithVanadiumOutputs,
     params=PowderWorkflowParams,
 )

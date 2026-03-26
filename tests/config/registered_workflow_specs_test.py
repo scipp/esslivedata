@@ -66,22 +66,24 @@ def test_workflow_spec_params_validation(instrument_name: str, workflow_id: Work
 def test_workflow_spec_aux_sources_validation(
     instrument_name: str, workflow_id: WorkflowId
 ):
-    """Test that spec.aux_sources is None or a valid Pydantic BaseModel class.
+    """Test that spec.aux_sources is None or a valid AuxSources instance.
 
-    Since aux_sources are now explicitly registered (not inferred from factory),
-    this validates they're properly set in the spec.
+    Validates that aux_sources are properly set in the spec and that
+    get_defaults() returns a dict of string values.
     """
+    from ess.livedata.config.workflow_spec import AuxSources
+
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
 
     if spec.aux_sources is not None:
-        assert issubclass(spec.aux_sources, pydantic.BaseModel), (
-            f"spec.aux_sources for {workflow_id} should be a "
-            f"Pydantic BaseModel subclass, got {spec.aux_sources}"
+        assert isinstance(spec.aux_sources, AuxSources), (
+            f"spec.aux_sources for {workflow_id} should be an "
+            f"AuxSources instance, got {type(spec.aux_sources)}"
         )
-        # Verify we can instantiate with defaults
-        instance = spec.aux_sources()
-        assert isinstance(instance, pydantic.BaseModel)
+        defaults = spec.aux_sources.get_defaults()
+        assert isinstance(defaults, dict)
+        assert all(isinstance(v, str) for v in defaults.values())
 
 
 @pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
@@ -148,12 +150,12 @@ def test_workflow_params_serialization_roundtrip(
 def test_workflow_aux_sources_serialization_roundtrip(
     instrument_name: str, workflow_id: WorkflowId
 ):
-    """Test that aux_sources can be serialized and deserialized without loss.
+    """Test that aux_sources defaults survive the frontend→backend cycle.
 
-    This simulates the frontend→backend cycle for auxiliary sources:
-    - Frontend creates aux_sources model with defaults
+    The cycle is:
+    - Frontend reads defaults via get_defaults()
     - WorkflowConfig.from_params stores as dict
-    - Backend deserializes from dict (model.model_validate(dict))
+    - Backend renders via render()
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
@@ -161,21 +163,16 @@ def test_workflow_aux_sources_serialization_roundtrip(
     if spec.aux_sources is None:
         pytest.skip("Workflow has no auxiliary sources")
 
-    # Create instance with defaults
-    original = spec.aux_sources()
+    defaults = spec.aux_sources.get_defaults()
 
     # Simulate WorkflowConfig.from_params storing aux sources
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
-        aux_source_names=original.model_dump(),
+        aux_source_names=defaults,
     )
     serialized = workflow_config.aux_source_names
 
-    # Simulate backend deserialization (WorkflowFactory.create)
-    deserialized = spec.aux_sources.model_validate(serialized)
-
-    # Should be identical after roundtrip
-    assert deserialized.model_dump() == original.model_dump()
+    assert serialized == defaults
 
 
 @pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
@@ -204,9 +201,9 @@ def test_workflow_config_widget_adapter_compatibility(
     assert adapter.aux_sources == spec.aux_sources
 
     # Verify we can get the model class
-    # First set aux sources (instantiate if available, otherwise None)
-    aux_sources_model = adapter.aux_sources() if adapter.aux_sources else None
-    model_class = adapter.set_aux_sources(aux_sources_model)
+    # First set aux sources (get defaults if available, otherwise None)
+    aux_dict = adapter.aux_sources.get_defaults() if adapter.aux_sources else None
+    model_class = adapter.set_aux_sources(aux_dict)
     if spec.params is not None:
         assert model_class == spec.params
         # Verify we can instantiate with defaults
@@ -214,11 +211,6 @@ def test_workflow_config_widget_adapter_compatibility(
         assert isinstance(instance, pydantic.BaseModel)
     else:
         assert model_class is None
-
-    # Verify aux_sources can be instantiated
-    if spec.aux_sources is not None:
-        aux_instance = spec.aux_sources()
-        assert isinstance(aux_instance, pydantic.BaseModel)
 
 
 def _collect_workflow_outputs():

@@ -5,7 +5,13 @@ import sciline
 from ess.reduce.streaming import StreamProcessor
 from pydantic import BaseModel, ValidationError
 
-from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    AuxInput,
+    AuxSources,
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowSpec,
+)
 from ess.livedata.handlers.workflow_factory import WorkflowFactory
 
 
@@ -14,9 +20,12 @@ class MyParams(BaseModel):
     name: str = "test"
 
 
-class MyAuxSources(BaseModel):
-    monitor: str
-    rotation: str
+my_aux_sources = AuxSources(
+    {
+        'monitor': AuxInput(choices=('monitor1', 'monitor2'), default='monitor1'),
+        'rotation': AuxInput(choices=('rotation1', 'rotation2'), default='rotation1'),
+    }
+)
 
 
 @pytest.fixture
@@ -504,7 +513,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
-            aux_sources=MyAuxSources,
+            aux_sources=my_aux_sources,
         )
 
         handle = factory.register_spec(spec)
@@ -585,41 +594,6 @@ class TestWorkflowFactory:
         ):
             factory.create(source_name="any-source", config=config)
 
-    def test_create_with_invalid_aux_sources_raises_pydantic_error(self):
-        """Test that invalid aux_sources data raises a Pydantic validation error."""
-        factory = WorkflowFactory()
-        workflow_id = WorkflowId(
-            instrument="test-instrument",
-            namespace="test-namespace",
-            name="test-workflow",
-            version=1,
-        )
-        spec = WorkflowSpec(
-            instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
-            name=workflow_id.name,
-            version=workflow_id.version,
-            title="test-workflow",
-            description="Test",
-            params=None,
-            aux_sources=MyAuxSources,
-        )
-
-        handle = factory.register_spec(spec)
-
-        @handle.attach_factory()
-        def factory_func():
-            return make_dummy_workflow_with_aux_sources()
-
-        # Missing required field 'rotation'
-        config = WorkflowConfig(
-            identifier=workflow_id,
-            aux_source_names={"monitor": "monitor1"},
-        )
-
-        with pytest.raises(ValidationError):
-            factory.create(source_name="any-source", config=config)
-
     def test_register_sets_aux_sources_type_explicitly(self):
         """Test that the register decorator sets aux_sources type explicitly in spec."""
         factory = WorkflowFactory()
@@ -637,7 +611,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
-            aux_sources=MyAuxSources,
+            aux_sources=my_aux_sources,
         )
 
         handle = factory.register_spec(spec)
@@ -646,9 +620,9 @@ class TestWorkflowFactory:
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
-        # Check that aux_sources type was set in spec
+        # Check that aux_sources was set in spec
         stored_spec = factory[workflow_id]
-        assert stored_spec.aux_sources is MyAuxSources
+        assert stored_spec.aux_sources is my_aux_sources
 
 
 class TestTwoPhaseRegistration:

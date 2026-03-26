@@ -1456,18 +1456,17 @@ class TestJobFactoryRender:
 
     def test_job_factory_calls_render_on_aux_sources(self) -> None:
         """Test that JobFactory calls render() when creating a job."""
-        from typing import Literal
-
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.config.workflow_spec import AuxSources
 
         # Create a custom aux sources model with render spy
-        class TestAuxSources(AuxSourcesBase):
-            monitor: Literal['monitor1'] = 'monitor1'
+        class TestAuxSources(AuxSources):
+            def __init__(self):
+                super().__init__({'monitor': 'monitor1'})
 
-            def render(self, job_id: JobId) -> dict[str, str]:
+            def render(self, job_id, selections=None):
                 # Append job_number to stream name
-                base = self.model_dump(mode='json')
+                base = self.get_defaults()
                 return {
                     field: f"{job_id.job_number}/{stream}"
                     for field, stream in base.items()
@@ -1483,7 +1482,7 @@ class TestJobFactoryRender:
             title='Test',
             description='Test',
             source_names=['detector1'],
-            aux_sources=TestAuxSources,
+            aux_sources=TestAuxSources(),
             outputs=SimpleTestOutputs,
         )
 
@@ -1514,14 +1513,12 @@ class TestJobFactoryRender:
 
     def test_job_factory_default_render_preserves_names(self) -> None:
         """Test JobFactory with default render() behavior."""
-        from typing import Literal
-
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.config.workflow_spec import AuxSources
 
-        class DefaultAuxSources(AuxSourcesBase):
-            incident_monitor: Literal['monitor1'] = 'monitor1'
-            transmission_monitor: Literal['monitor2'] = 'monitor2'
+        aux_sources = AuxSources(
+            {'incident_monitor': 'monitor1', 'transmission_monitor': 'monitor2'}
+        )
 
         # Setup
         instrument = Instrument(name='test')
@@ -1533,7 +1530,7 @@ class TestJobFactoryRender:
             title='Default',
             description='Default',
             source_names=['detector1'],
-            aux_sources=DefaultAuxSources,
+            aux_sources=aux_sources,
             outputs=SimpleTestOutputs,
         )
 
@@ -1603,13 +1600,8 @@ class TestJobFactoryRender:
 
     def test_job_factory_with_empty_aux_source_names(self) -> None:
         """Test JobFactory when config has empty aux_source_names dict with defaults."""
-        from typing import Literal
-
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
-
-        class OptionalAuxSources(AuxSourcesBase):
-            monitor: Literal['monitor1'] = 'monitor1'
+        from ess.livedata.config.workflow_spec import AuxSources
 
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
@@ -1620,7 +1612,7 @@ class TestJobFactoryRender:
             title='Optional Aux',
             description='Optional',
             source_names=['detector1'],
-            aux_sources=OptionalAuxSources,
+            aux_sources=AuxSources({'monitor': 'monitor1'}),
             outputs=SimpleTestOutputs,
         )
 
@@ -1647,16 +1639,15 @@ class TestJobFactoryRender:
 
     def test_job_factory_render_uses_source_name(self) -> None:
         """Test that render() can use source_name from JobId."""
-        from typing import Literal
-
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.config.workflow_spec import AuxSources
 
-        class SourcePrefixedAuxSources(AuxSourcesBase):
-            roi: Literal['roi_rectangle'] = 'roi_rectangle'
+        class SourcePrefixedAuxSources(AuxSources):
+            def __init__(self):
+                super().__init__({'roi': 'roi_rectangle'})
 
-            def render(self, job_id: JobId) -> dict[str, str]:
-                base = self.model_dump(mode='json')
+            def render(self, job_id, selections=None):
+                base = self.get_defaults()
                 return {
                     field: f"{job_id.source_name}/{stream}"
                     for field, stream in base.items()
@@ -1671,7 +1662,7 @@ class TestJobFactoryRender:
             title='Source Prefix',
             description='Source prefix',
             source_names=['detector1', 'detector2'],
-            aux_sources=SourcePrefixedAuxSources,
+            aux_sources=SourcePrefixedAuxSources(),
             outputs=SimpleTestOutputs,
         )
 
@@ -1706,16 +1697,21 @@ class TestJobFactoryRender:
 
     def test_job_factory_render_with_empty_dict_uses_defaults(self) -> None:
         """Test that empty aux_source_names dict triggers model defaults and render."""
-        from typing import Literal
-
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
 
-        class DefaultedAuxSources(AuxSourcesBase):
-            monitor: Literal['monitor1', 'monitor2'] = 'monitor1'  # Has default
+        class DefaultedAuxSources(AuxSources):
+            def __init__(self):
+                super().__init__(
+                    {
+                        'monitor': AuxInput(
+                            choices=('monitor1', 'monitor2'), default='monitor1'
+                        )
+                    }
+                )
 
-            def render(self, job_id: JobId) -> dict[str, str]:
-                base = self.model_dump(mode='json')
+            def render(self, job_id, selections=None):
+                base = self.get_defaults()
                 return {
                     field: f"{job_id.source_name}/{stream}"
                     for field, stream in base.items()
@@ -1730,7 +1726,7 @@ class TestJobFactoryRender:
             title='Defaulted Aux',
             description='Defaulted',
             source_names=['detector1'],
-            aux_sources=DefaultedAuxSources,
+            aux_sources=DefaultedAuxSources(),
             outputs=SimpleTestOutputs,
         )
 
