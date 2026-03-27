@@ -120,6 +120,7 @@ class ServiceStatus:
     active_job_count: int
     messages_processed: int
     error: str | None = None
+    batch_interval_s: float = 1.0
 
 
 def _add_time_coords(

@@ -141,6 +141,7 @@ pydocstyle.convention = "numpy"
 # those files have an increased risk of relying on import order
 "tests/*" = [
     "S101",  # asserts are fine in tests
+    "S311",  # deterministic seeded RNG is fine for test simulations
     "B018",  # 'useless expressions' are ok because some tests just check for exceptions
     "TID251",  # tests can use stdlib logging
 ]
