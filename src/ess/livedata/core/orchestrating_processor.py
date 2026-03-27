@@ -9,6 +9,8 @@ from typing import Any, Generic
 
 import structlog
 
+from ess.livedata import __version__
+
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
 from .job import JobResult, JobStatus, ServiceState, ServiceStatus
@@ -291,6 +293,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             started_at=self._started_at,
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
+            version=__version__,
             error=self._service_error,
         )
 

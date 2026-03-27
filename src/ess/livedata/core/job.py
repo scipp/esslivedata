@@ -119,6 +119,7 @@ class ServiceStatus:
     started_at: int  # Nanoseconds since epoch
     active_job_count: int
     messages_processed: int
+    version: str = '0.0.0'
     error: str | None = None
 
 

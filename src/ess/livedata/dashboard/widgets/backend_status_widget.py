@@ -34,6 +34,7 @@ class WorkerUIConstants:
     NAMESPACE_WIDTH = 200
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
+    VERSION_WIDTH = 200
     UPTIME_WIDTH = 120
     STATS_WIDTH = 180
     ROW_HEIGHT = 35
@@ -104,6 +105,11 @@ class WorkerStatusRow:
             height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
+        self._version_pane = pn.pane.HTML(
+            width=WorkerUIConstants.VERSION_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
         self._uptime_pane = pn.pane.HTML(
             width=WorkerUIConstants.UPTIME_WIDTH,
             height=WorkerUIConstants.ROW_HEIGHT,
@@ -119,6 +125,7 @@ class WorkerStatusRow:
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
+            self._version_pane,
             self._uptime_pane,
             self._stats_pane,
             styles={"border-bottom": f"1px solid {Colors.BORDER}"},
@@ -172,6 +179,9 @@ class WorkerStatusRow:
             status_text = status.state.value.upper()
         status_style = self._create_status_style(status_color)
         self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
+
+        # Version
+        self._version_pane.object = f"<code>{status.version}</code>"
 
         # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
         show_last_seen = is_stale or status.state in (
@@ -262,6 +272,11 @@ class BackendStatusWidget:
             pn.pane.HTML(
                 f'<span style="{header_style}">Status</span>',
                 width=WorkerUIConstants.STATUS_WIDTH,
+                margin=WorkerUIConstants.STANDARD_MARGIN,
+            ),
+            pn.pane.HTML(
+                f'<span style="{header_style}">Version</span>',
+                width=WorkerUIConstants.VERSION_WIDTH,
                 margin=WorkerUIConstants.STANDARD_MARGIN,
             ),
             pn.pane.HTML(
