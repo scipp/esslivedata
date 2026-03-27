@@ -121,6 +121,7 @@ class ServiceStatus:
     messages_processed: int
     version: str = '0.0.0'
     error: str | None = None
+    batch_interval_s: float = 1.0
 
 
 def _add_time_coords(

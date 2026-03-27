@@ -193,6 +193,9 @@ class ServiceStatusPayload(pydantic.BaseModel):
         description="Total messages processed since startup"
     )
     error: str | None = pydantic.Field(default=None, description="Error message if any")
+    batch_interval_s: float = pydantic.Field(
+        default=1.0, description="Current batch interval in seconds"
+    )
 
 
 class ServiceStatusJSON(pydantic.BaseModel):
@@ -278,6 +281,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
                     active_job_count=status.active_job_count,
                     messages_processed=status.messages_processed,
                     error=status.error,
+                    batch_interval_s=status.batch_interval_s,
                 ),
             ),
         )
@@ -295,6 +299,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
             messages_processed=message.messages_processed,
             version=self.software_version,
             error=message.error,
+            batch_interval_s=message.batch_interval_s,
         )
 
 
