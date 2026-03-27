@@ -363,6 +363,7 @@ def register_detector_view_spec(
     instrument: Instrument,
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
+    aux_sources: AuxSources | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -382,6 +383,10 @@ def register_detector_view_spec(
     source_names:
         List of detector source names. Required when projection is a single type.
         When projection is a dict, defaults to the dict keys if not specified.
+    aux_sources:
+        Optional auxiliary source specification. If None (default), uses
+        DetectorROIAuxSources for ROI geometry streams. Instruments that need
+        both ROI and position streams can subclass DetectorROIAuxSources.
 
     Returns
     -------
@@ -447,7 +452,7 @@ def register_detector_view_spec(
         title=title,
         description=description,
         source_names=source_names,
-        aux_sources=DetectorROIAuxSources(),
+        aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
         params=DetectorViewParams,
         outputs=DetectorViewOutputs,
     )

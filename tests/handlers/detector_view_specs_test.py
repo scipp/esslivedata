@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from ess.livedata.config.instrument import Instrument
-from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.config.workflow_spec import AuxSources, JobId
 from ess.livedata.handlers.detector_view_specs import (
     CoordinateModeSettings,
     DetectorROIAuxSources,
@@ -188,6 +188,38 @@ class TestRegisterDetectorViewSpecs:
         assert 'ess.reduce' not in sys.modules
         assert 'ess.reduce.live' not in sys.modules
         assert 'ess.reduce.live.raw' not in sys.modules
+
+    def test_default_uses_detector_roi_aux_sources(self):
+        """Test that not passing aux_sources defaults to DetectorROIAuxSources."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
+
+    def test_custom_aux_sources_overrides_default(self):
+        """Test that passing aux_sources uses the provided spec."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        custom_aux = AuxSources({'position': 'trans_20'})
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+            aux_sources=custom_aux,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.aux_sources is custom_aux
 
 
 class TestDetectorROIAuxSources:
