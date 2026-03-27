@@ -12,6 +12,7 @@ import yaml
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    AuxSources,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -36,10 +37,7 @@ class WorkflowParams(pydantic.BaseModel):
     mode: str = "default"
 
 
-class AuxSources(pydantic.BaseModel):
-    """Test aux sources model with defaults."""
-
-    monitor: str = "monitor_1"
+test_aux_sources = AuxSources({'monitor': 'monitor_1'})
 
 
 class ParamsWithRequiredFields(pydantic.BaseModel):
@@ -96,7 +94,7 @@ def workflow_with_params_and_aux() -> WorkflowSpec:
         description="Test workflow with params and aux sources",
         source_names=["det_1"],
         params=WorkflowParams,
-        aux_sources=AuxSources,
+        aux_sources=test_aux_sources,
         outputs=SimpleTestOutputs,
     )
 

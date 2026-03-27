@@ -137,19 +137,21 @@ class JobFactory:
         if workflow_spec is None:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
 
-        # Render aux source names using the model's render() method if applicable
+        # Render aux source names using the spec's render() method if applicable
         if workflow_spec.aux_sources is not None:
-            # Reconstruct the Pydantic model from the dict to call render()
-            # Empty dict will trigger Pydantic defaults if defined in the model
-            aux_model = workflow_spec.aux_sources.model_validate(
-                config.aux_source_names
+            rendered_aux_names = workflow_spec.aux_sources.render(
+                job_id=job_id,
+                selections=config.aux_source_names if config.aux_source_names else None,
             )
-            rendered_aux_names = aux_model.render(job_id=job_id)
         else:
             rendered_aux_names = config.aux_source_names
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
-        stream_processor = factory.create(source_name=job_id.source_name, config=config)
+        stream_processor = factory.create(
+            source_name=job_id.source_name,
+            config=config,
+            aux_source_names=rendered_aux_names,
+        )
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
@@ -349,8 +351,25 @@ class JobManager:
             if job.reset_on_run_transition:
                 self.reset_job(job.job_id)
 
+    def peek_pending_aux_streams(self, start_time: int) -> set[str]:
+        """Return aux stream names needed by jobs that would activate at start_time.
+
+        This is a read-only query with no side effects. It does not activate
+        jobs or mutate any state.
+        """
+        names: set[str] = set()
+        for job_id, job in self._scheduled_jobs.items():
+            if self._job_schedules[job_id].should_start(start_time):
+                names.update(job.aux_source_names)
+        return names
+
     def push_data(self, data: WorkflowData) -> list[JobReply]:
-        """Push data into the active jobs and return status for each job."""
+        """Push data into the active jobs and return status for each job.
+
+        Unlike ``process_jobs`` called via ``OrchestratingProcessor.process``,
+        this method does not seed context data for newly activated jobs.
+        Callers are responsible for providing complete ``WorkflowData``.
+        """
         self._advance_to_time(data.start_time, data.end_time)
         replies = []
         for job in self.active_jobs:

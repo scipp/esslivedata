@@ -14,7 +14,7 @@ from ess.livedata.dashboard.notification_queue import (
     NotificationType,
 )
 
-from .styles import StatusColors
+from .styles import Colors, StatusColors
 
 _BADGE_COLORS: dict[NotificationType, str] = {
     NotificationType.ERROR: StatusColors.ERROR,
@@ -80,15 +80,16 @@ class NotificationLogWidget:
                 f'font-size: 12px; line-height: 1.4;">{event.message}</pre>'
             )
             rows.append(
-                f'<div style="padding: 6px 8px; border-bottom: 1px solid #dee2e6;">'
-                f'<span style="color: #6c757d; font-size: 11px; '
+                f'<div style="padding: 6px 8px; '
+                f'border-bottom: 1px solid {Colors.BORDER};">'
+                f'<span style="color: {Colors.TEXT_MUTED}; font-size: 11px; '
                 f'margin-right: 8px;">{time_str}</span>'
                 f'{badge} {message_html}</div>'
             )
 
         self._content_pane.object = (
             f'<div style="max-height: 400px; overflow-y: auto; '
-            f'border: 1px solid #dee2e6; border-radius: 4px;">'
+            f'border: 1px solid {Colors.BORDER}; border-radius: 4px;">'
             f'{"".join(rows)}</div>'
         )
 

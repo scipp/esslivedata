@@ -40,6 +40,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
+from .styles import Colors
 from .wizard import Wizard, WizardStep
 
 logger = structlog.get_logger(__name__)
@@ -312,13 +313,13 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._workflow_description = pn.pane.HTML(
             '',
             sizing_mode='stretch_width',
-            styles={'font-size': '12px', 'color': '#6c757d'},
+            styles={'font-size': '12px', 'color': Colors.TEXT_MUTED},
             visible=False,
         )
         self._output_description = pn.pane.HTML(
             '',
             sizing_mode='stretch_width',
-            styles={'font-size': '12px', 'color': '#6c757d'},
+            styles={'font-size': '12px', 'color': Colors.TEXT_MUTED},
             visible=False,
         )
         self._name_input = self._create_name_input()

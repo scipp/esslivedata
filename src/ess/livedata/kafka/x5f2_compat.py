@@ -105,8 +105,6 @@ def job_state_to_nicos_status_constant(state: JobState) -> NicosStatus:
             return NicosStatus.ERROR
         case JobState.finishing:
             return NicosStatus.OK
-        case JobState.paused:
-            return NicosStatus.DISABLED
         case JobState.scheduled:
             return NicosStatus.DISABLED
         case JobState.warning:

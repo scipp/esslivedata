@@ -4,8 +4,12 @@
 TBL workflow spec registration.
 """
 
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 from .views import fold_image, get_he3_detector_view, get_multiblade_view, identity
 
@@ -18,9 +22,28 @@ detector_names = [
     # not listing orca since it does not have (and does not need) detector numbers
 ]
 
-instrument = Instrument(name='tbl', detector_names=detector_names)
+monitor_names = ['monitor_1']
+
+instrument = Instrument(
+    name='tbl',
+    detector_names=detector_names,
+    monitors=monitor_names,
+    source_metadata={
+        'timepix3_detector': SourceMetadata(title='Timepix3'),
+        'multiblade_detector': SourceMetadata(title='Multiblade'),
+        'he3_detector_bank0': SourceMetadata(title='He3 Bank 0'),
+        'he3_detector_bank1': SourceMetadata(title='He3 Bank 1'),
+        'ngem_detector': SourceMetadata(title='nGEM'),
+        'orca_detector': SourceMetadata(title='ORCA'),
+        'monitor_1': SourceMetadata(title='Beam Monitor'),
+    },
+)
 
 instrument_registry.register(instrument)
+
+monitor_handle = register_monitor_workflow_specs(
+    instrument, monitor_names, params=TOAOnlyMonitorDataParams
+)
 
 instrument.add_logical_view(
     name='tbl_detector_timepix3',

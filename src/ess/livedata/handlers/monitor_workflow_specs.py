@@ -9,7 +9,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import WorkflowOutputsBase
+from ..config.workflow_spec import AuxSources, WorkflowOutputsBase
 from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
@@ -214,6 +214,7 @@ def register_monitor_workflow_specs(
     instrument: Instrument,
     source_names: list[str],
     params: type[MonitorDataParams] = MonitorDataParams,
+    aux_sources: AuxSources | None = None,
 ) -> SpecHandle | None:
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
@@ -229,6 +230,10 @@ def register_monitor_workflow_specs(
         Parameter model class for the workflow. Defaults to MonitorDataParams.
         Instruments can provide a subclass with additional fields (e.g., for
         instrument-specific configuration like chopper mode selection).
+    aux_sources
+        Optional auxiliary source specification for position or other dynamic data
+        streams. Instruments with movable monitors can provide an AuxSources spec
+        that maps logical names to f144 position streams.
 
     Returns
     -------
@@ -245,6 +250,7 @@ def register_monitor_workflow_specs(
         description="Histogrammed and time-integrated beam monitor data. The monitor "
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
+        aux_sources=aux_sources,
         params=params,
         outputs=MonitorHistogramOutputs,
     )

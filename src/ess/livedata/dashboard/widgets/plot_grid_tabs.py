@@ -46,6 +46,7 @@ from .plot_widgets import (
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
+from .styles import Colors, StatusColors
 
 logger = structlog.get_logger(__name__)
 
@@ -601,10 +602,10 @@ class PlotGridTabs:
             )
             if has_error:
                 bg_color = '#ffe6e6'
-                border = '2px solid #dc3545'
+                border = f'2px solid {StatusColors.ERROR}'
             else:
-                bg_color = '#f8f9fa'
-                border = '2px dashed #dee2e6'
+                bg_color = Colors.BG_LIGHT
+                border = f'2px dashed {Colors.BORDER}'
 
         styles = {}
         if bg_color:
@@ -828,16 +829,16 @@ class PlotGridTabs:
                 case LayerState.ERROR:
                     error_text = state.error_message or "Unknown error"
                     status = f"Error: {extract_error_summary(error_text)}"
-                    text_color = '#dc3545'
+                    text_color = StatusColors.ERROR
                 case LayerState.STOPPED:
                     status = "Workflow ended"
-                    text_color = '#495057'
+                    text_color = Colors.TEXT
                 case LayerState.WAITING_FOR_DATA:
                     status = "Waiting for data..."
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
                 case LayerState.WAITING_FOR_JOB:
                     status = "Waiting for workflow..."
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
                 case LayerState.READY:
                     # Defensive: READY should have displayable plot and not
                     # reach placeholder. Log if this happens.
@@ -846,7 +847,7 @@ class PlotGridTabs:
                         layer.layer_id,
                     )
                     status = "Ready (loading...)"
-                    text_color = '#6c757d'
+                    text_color = Colors.TEXT_MUTED
 
             status_lines.append(
                 f"**{workflow_title} → {output_title}**: "

@@ -13,6 +13,7 @@ from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
 from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
+from .to_nxlog import ToNXlog
 
 _GEOMETRY_RELEASE_URL = (
     'https://github.com/scipp/esslivedata/releases/download/geometry-v0/'
@@ -51,6 +52,11 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
                 return LatestValueHandler()
+            case StreamKind.LOG:
+                attrs = self._instrument.f144_attribute_registry.get(key.name)
+                if attrs is None:
+                    return None
+                return ToNXlog(attrs=attrs)
             case _:
                 return None
 

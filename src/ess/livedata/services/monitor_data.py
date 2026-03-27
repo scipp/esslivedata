@@ -17,6 +17,7 @@ def make_monitor_service_builder(
     adapter = (
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_beam_monitor_route()
+        .with_logdata_route()
         .with_livedata_commands_route()
         .with_run_control_route()
         .build()

@@ -7,6 +7,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
+from ess.livedata.config.workflow_spec import AuxSources
+
 Model = TypeVar('Model')
 
 
@@ -74,50 +76,37 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         return frozenset()
 
     @property
-    def aux_sources(self) -> type[BaseModel] | None:
-        """
-        Pydantic model class for auxiliary sources.
-
-        Returns None if the workflow does not use auxiliary sources.
-        Field names define the aux source identifiers, and field types (typically
-        Literal or Enum) define the available stream choices.
-        """
-        return None
+    def aux_sources(self) -> AuxSources | None:
+        """Auxiliary source specification, or None if the workflow has none."""
 
     @property
     def initial_aux_source_names(self) -> dict[str, str]:
-        """
-        Initially selected auxiliary source names.
+        """Initially selected auxiliary source names.
 
-        Returns a mapping from field name (as defined in aux_sources model) to
-        the selected stream name. Filters persisted aux sources to only include
-        valid field names from the current aux_sources model.
+        Returns a mapping from input name to the selected stream name. Filters
+        persisted aux sources to only include valid input names and valid
+        choices for each input.
         """
         if not self.aux_sources:
             return {}
         if self._config_state is None:
             return {}
-        # Filter to only include valid field names
-        valid_fields = set(self.aux_sources.model_fields.keys())
+        inputs = self.aux_sources.inputs
         return {
             k: v
             for k, v in self._config_state.aux_source_names.items()
-            if k in valid_fields
+            if k in inputs and v in inputs[k].choices
         }
 
-    def set_aux_sources(self, aux_source_names: BaseModel | None) -> type[Model] | None:
-        """
-        Set auxiliary sources and return the parameter model class.
-
-        This method stores the aux sources internally and returns the model class
-        for parameters. Implementations can access the stored aux sources via
-        self._cached_aux_sources.
+    def set_aux_sources(
+        self, aux_source_names: dict[str, str] | None
+    ) -> type[Model] | None:
+        """Set auxiliary sources and return the parameter model class.
 
         Parameters
         ----------
         aux_source_names
-            Selected auxiliary sources as a Pydantic model instance, or None if no
-            aux sources are selected.
+            Selected auxiliary source names as a dict, or None.
 
         Returns
         -------

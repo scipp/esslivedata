@@ -8,10 +8,11 @@ import panel as pn
 import pydantic
 import structlog
 
+from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
-from .param_widget import ParamWidget
+from .styles import ErrorBox, StatusColors
 
 
 class ConfigurationWidget:
@@ -64,36 +65,30 @@ class ConfigurationWidget:
             margin=(0, 0, 0, 0),
         )
 
-    def _create_aux_sources_widget(self) -> ParamWidget | None:
-        """Create auxiliary sources widget using ParamWidget."""
-        aux_sources_model = self._config.aux_sources
-        if aux_sources_model is None:
+    def _create_aux_sources_widget(self) -> AuxSourcesWidget | None:
+        """Create auxiliary sources widget."""
+        aux_sources = self._config.aux_sources
+        if aux_sources is None:
             return None
 
-        # Create ParamWidget for the aux_sources model
-        aux_widget = ParamWidget(aux_sources_model)
-
-        # Set initial values if available
         initial_values = self._config.initial_aux_source_names
-        if initial_values:
-            aux_widget.set_values(initial_values)
+
+        widget = AuxSourcesWidget(
+            aux_sources,
+            initial_values=initial_values,
+            get_source_title=self._config.get_source_title,
+        )
 
         # Watch for changes to trigger model_widget recreation
-        for widget in aux_widget.widgets.values():
-            # Handle both wrapped (bool) and unwrapped widgets
-            actual_widget = widget[0] if isinstance(widget, pn.Row) else widget
-            actual_widget.param.watch(self._on_aux_source_changed, 'value')
+        for select in widget.select_widgets.values():
+            select.param.watch(self._on_aux_source_changed, 'value')
 
-        return aux_widget
+        return widget
 
     def _create_model_widget(self) -> ModelWidget | NoParamsWidget | ErrorWidget:
         """Create model widget based on current aux source selections."""
-        # Get aux source selections as a model instance
         if self._aux_sources_widget is not None:
-            try:
-                aux_selections = self._aux_sources_widget.create_model()
-            except Exception as e:
-                return ErrorWidget(f"Invalid aux source selection: {e}")
+            aux_selections = self._aux_sources_widget.get_values()
         else:
             aux_selections = None
 
@@ -150,7 +145,7 @@ class ConfigurationWidget:
 
         # Add auxiliary sources widget if it exists
         if self._aux_sources_widget is not None:
-            components.append(self._aux_sources_widget.panel())
+            components.append(self._aux_sources_widget.panel)
 
         components.append(self._model_widget.widget)
 
@@ -206,11 +201,12 @@ class ConfigurationWidget:
 
         if has_error:
             self._source_selector.styles = {
-                'border': '2px solid #dc3545',
+                'border': f'2px solid {StatusColors.ERROR}',
                 'border-radius': '4px',
             }
             self._source_error_pane.object = (
-                "<p style='color: #dc3545; margin: 5px 0; font-size: 0.9em;'>"
+                f"<p style='color: {StatusColors.ERROR}; "
+                f"margin: 5px 0; font-size: 0.9em;'>"
                 "Please select at least one source name.</p>"
             )
         else:
@@ -312,11 +308,15 @@ class ConfigurationPanel:
     def _show_validation_errors(self, errors: list[str]) -> None:
         """Show validation errors inline."""
         error_html = (
-            "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; "
-            "border-radius: 4px; padding: 10px; margin: 10px 0;'>"
-            "<h6 style='color: #721c24; margin: 0 0 10px 0;'>"
-            "Please fix the following errors:</h6>"
-            "<ul style='color: #721c24; margin: 0; padding-left: 20px;'>"
+            f"<div style='background-color: {ErrorBox.BG}; "
+            f"border: 1px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; padding: 10px; "
+            f"margin: 10px 0;'>"
+            f"<h6 style='color: {ErrorBox.TEXT}; "
+            f"margin: 0 0 10px 0;'>"
+            f"Please fix the following errors:</h6>"
+            f"<ul style='color: {ErrorBox.TEXT}; "
+            f"margin: 0; padding-left: 20px;'>"
         )
         for error in errors:
             error_html += f"<li>{error}</li>"
@@ -327,9 +327,12 @@ class ConfigurationPanel:
     def _show_action_error(self, message: str) -> None:
         """Show action error inline."""
         error_html = (
-            "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; "
-            "border-radius: 4px; padding: 10px; margin: 10px 0;'>"
-            f"<p style='color: #721c24; margin: 0;'>{message}</p>"
+            f"<div style='background-color: {ErrorBox.BG}; "
+            f"border: 1px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; padding: 10px; "
+            f"margin: 10px 0;'>"
+            f"<p style='color: {ErrorBox.TEXT}; "
+            f"margin: 0;'>{message}</p>"
             "</div>"
         )
         self._error_pane.object = error_html
@@ -441,6 +444,51 @@ class ConfigurationModal:
         return self._modal
 
 
+class AuxSourcesWidget:
+    """Widget for selecting auxiliary data sources from an AuxSources spec."""
+
+    def __init__(
+        self,
+        aux_sources: AuxSources,
+        initial_values: dict[str, str] | None = None,
+        get_source_title: Callable[[str], str] | None = None,
+    ) -> None:
+        self._aux_sources = aux_sources
+        self._get_source_title = get_source_title or (lambda x: x)
+        self._select_widgets: dict[str, pn.widgets.Select] = {}
+
+        for name, inp in aux_sources.inputs.items():
+            # Build options: {display_title: stream_name}
+            options = {self._get_source_title(c): c for c in inp.choices}
+            initial = (
+                initial_values.get(name, inp.default) if initial_values else inp.default
+            )
+            self._select_widgets[name] = pn.widgets.Select(
+                name=inp.title or name,
+                options=options,
+                value=initial,
+                sizing_mode='stretch_width',
+            )
+
+        self._panel = pn.Column(
+            *self._select_widgets.values(), sizing_mode='stretch_width'
+        )
+
+    @property
+    def select_widgets(self) -> dict[str, pn.widgets.Select]:
+        """Exposed for watching changes."""
+        return self._select_widgets
+
+    @property
+    def panel(self) -> pn.Column:
+        """Panel widget for display."""
+        return self._panel
+
+    def get_values(self) -> dict[str, str]:
+        """Return current selections as {input_name: stream_name}."""
+        return {name: w.value for name, w in self._select_widgets.items()}
+
+
 class NoParamsWidget:
     class EmptyModel(pydantic.BaseModel): ...
 
@@ -472,9 +520,11 @@ class ErrorWidget:
 
     def __init__(self, error_message: str):
         self.widget = pn.pane.HTML(
-            f"<div style='padding: 20px; text-align: center; color: #721c24; "
-            f"font-weight: bold; border: 2px solid #f5c6cb; border-radius: 4px; "
-            f"background-color: #f8d7da;'>"
+            f"<div style='padding: 20px; text-align: center; "
+            f"color: {ErrorBox.TEXT}; font-weight: bold; "
+            f"border: 2px solid {ErrorBox.BORDER}; "
+            f"border-radius: 4px; "
+            f"background-color: {ErrorBox.BG};'>"
             f"Error: {error_message}"
             f"</div>",
             sizing_mode='stretch_width',

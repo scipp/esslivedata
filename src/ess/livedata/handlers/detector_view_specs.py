@@ -21,7 +21,7 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSourcesBase, JobId, WorkflowOutputsBase
+from ..config.workflow_spec import AuxSources, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'tof', 'wavelength']
@@ -311,23 +311,35 @@ def make_detector_view_outputs(
     return CustomDetectorViewOutputs
 
 
-class DetectorROIAuxSources(AuxSourcesBase):
-    """
-    Auxiliary source model for ROI configuration in detector workflows.
+class DetectorROIAuxSources(AuxSources):
+    """Auxiliary source spec for ROI configuration in detector workflows.
 
     Subscribes to all supported ROI geometry streams (rectangle, polygon).
     The render() method prefixes stream names with the job_id to create job-specific
     ROI configuration streams, since each job instance needs its own ROIs.
     """
 
-    def render(self, job_id: JobId) -> dict[str, str]:
-        """
-        Render ROI stream names with job-specific prefix.
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                'roi_rectangle': 'roi_rectangle',
+                'roi_polygon': 'roi_polygon',
+            }
+        )
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Render ROI stream names with job-specific prefix.
 
         Parameters
         ----------
         job_id:
             Job identifier containing source_name and job_number.
+        selections:
+            Ignored — ROI streams are always job-specific.
 
         Returns
         -------
@@ -351,6 +363,7 @@ def register_detector_view_spec(
     instrument: Instrument,
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
+    aux_sources: AuxSources | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -370,6 +383,10 @@ def register_detector_view_spec(
     source_names:
         List of detector source names. Required when projection is a single type.
         When projection is a dict, defaults to the dict keys if not specified.
+    aux_sources:
+        Optional auxiliary source specification. If None (default), uses
+        DetectorROIAuxSources for ROI geometry streams. Instruments that need
+        both ROI and position streams can subclass DetectorROIAuxSources.
 
     Returns
     -------
@@ -435,7 +452,7 @@ def register_detector_view_spec(
         title=title,
         description=description,
         source_names=source_names,
-        aux_sources=DetectorROIAuxSources,
+        aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
         params=DetectorViewParams,
         outputs=DetectorViewOutputs,
     )

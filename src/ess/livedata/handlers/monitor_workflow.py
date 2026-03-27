@@ -169,6 +169,7 @@ def create_monitor_workflow(
     coordinate_mode: Literal['toa', 'tof'] = 'toa',
     geometry_filename: str | None = None,
     tof_lookup_table_filename: str | None = None,
+    context_keys: dict[str, type] | None = None,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -189,8 +190,12 @@ def create_monitor_workflow(
         (needed for Ltotal computation). Optional for 'toa' mode.
     tof_lookup_table_filename:
         Path to TOF lookup table file. Required for 'tof' mode.
+    context_keys:
+        Optional mapping from aux source stream names to sciline pipeline keys.
+        Used to inject dynamic data (e.g., position streams) into the workflow
+        via StreamProcessorWorkflow's context mechanism.
     """
-    from .accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
+    from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
 
     # Validate TOF mode requirements
@@ -228,12 +233,14 @@ def create_monitor_workflow(
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
     # WindowMonitorHistogram during finalize, not accumulated separately.
+    cumulative, window = make_no_copy_accumulator_pair()
     return StreamProcessorWorkflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
         # providers will assemble monitor data to produce RawMonitor.
         # For TOF mode, GenericTofWorkflow providers convert RawMonitor to TofMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
+        context_keys=context_keys,
         target_keys={
             'cumulative': CumulativeMonitorHistogram,
             'current': WindowMonitorHistogram,
@@ -241,8 +248,8 @@ def create_monitor_workflow(
             'counts_in_toa_range': MonitorCountsInRange,
         },
         accumulators={
-            CumulativeMonitorHistogram: NoCopyAccumulator(),
-            WindowMonitorHistogram: NoCopyWindowAccumulator(),
+            CumulativeMonitorHistogram: cumulative,
+            WindowMonitorHistogram: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

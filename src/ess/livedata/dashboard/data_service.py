@@ -7,8 +7,12 @@ from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
+import structlog
+
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffer_manager import TemporalBufferManager
+
+logger = structlog.get_logger(__name__)
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -195,8 +199,11 @@ class DataService(MutableMapping[K, V]):
         """
         for subscriber in self._subscribers:
             if updated_keys & subscriber.keys:
-                subscriber_data = self._build_subscriber_data(subscriber)
-                subscriber.trigger(subscriber_data)
+                try:
+                    subscriber_data = self._build_subscriber_data(subscriber)
+                    subscriber.trigger(subscriber_data)
+                except Exception:
+                    logger.exception("Failed to notify subscriber %s", subscriber)
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""

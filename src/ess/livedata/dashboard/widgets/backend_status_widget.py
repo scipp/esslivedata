@@ -13,7 +13,7 @@ from ess.livedata.core.job import ServiceState, ServiceStatus
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
-from .styles import StatusColors
+from .styles import Colors, StatusColors
 
 
 class WorkerUIConstants:
@@ -121,7 +121,7 @@ class WorkerStatusRow:
             self._status_pane,
             self._uptime_pane,
             self._stats_pane,
-            styles={"border-bottom": "1px solid #dee2e6"},
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
         )
 
@@ -221,7 +221,7 @@ class BackendStatusWidget:
         self._clear_button = create_tool_button(
             icon_name='trash',
             button_color=ButtonStyles.DANGER_RED,
-            hover_color='rgba(220, 53, 69, 0.1)',
+            hover_color=ButtonStyles.DANGER_HOVER,
             on_click_callback=self._on_clear_stopped,
         )
         self._clear_button.disabled = True
@@ -249,7 +249,7 @@ class BackendStatusWidget:
         # Table header
         header_style = (
             "font-weight: bold; font-size: 12px; "
-            "background-color: #f8f9fa; padding: 5px 0;"
+            f"background-color: {Colors.BG_LIGHT}; padding: 5px 0;"
         )
         self._table_header = pn.Row(
             pn.pane.HTML(
@@ -277,7 +277,7 @@ class BackendStatusWidget:
                 width=WorkerUIConstants.STATS_WIDTH,
                 margin=WorkerUIConstants.STANDARD_MARGIN,
             ),
-            styles={"border-bottom": "2px solid #dee2e6"},
+            styles={"border-bottom": f"2px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
             margin=(0, 10),
         )
