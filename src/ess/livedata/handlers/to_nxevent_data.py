@@ -13,12 +13,6 @@ from streaming_data_types import eventdata_ev44
 from ess.livedata.core.handler import Accumulator
 
 
-def _require_single_pulse(ev44: eventdata_ev44.EventData) -> None:
-    index = ev44.reference_time_index
-    if len(index) > 1 or index[0] != 0 or len(ev44.reference_time) > 1:
-        raise NotImplementedError("Processing multi-pulse messages is not supported.")
-
-
 @dataclass
 class MonitorEvents:
     """
@@ -35,9 +29,34 @@ class MonitorEvents:
     unit: str
 
     @staticmethod
-    def from_ev44(ev44: eventdata_ev44.EventData) -> MonitorEvents:
-        _require_single_pulse(ev44)
-        return MonitorEvents(time_of_arrival=ev44.time_of_flight, unit='ns')
+    def from_ev44(
+        ev44: eventdata_ev44.EventData,
+    ) -> list[tuple[int | None, MonitorEvents]]:
+        """Split an ev44 message into per-pulse MonitorEvents.
+
+        Returns a list of (timestamp, MonitorEvents) tuples, one per pulse.
+        If ``reference_time`` is empty, returns a single element with
+        ``None`` as timestamp so the caller can fall back to the message
+        timestamp.
+        """
+        ref_time = ev44.reference_time
+        ref_index = ev44.reference_time_index
+        tof = ev44.time_of_flight
+
+        if len(ref_time) == 0:
+            return [(None, MonitorEvents(time_of_arrival=tof, unit='ns'))]
+
+        results: list[tuple[int | None, MonitorEvents]] = []
+        for i in range(len(ref_time)):
+            start = ref_index[i]
+            end = ref_index[i + 1] if i + 1 < len(ref_index) else len(tof)
+            results.append(
+                (
+                    int(ref_time[i]),
+                    MonitorEvents(time_of_arrival=tof[start:end], unit='ns'),
+                )
+            )
+        return results
 
 
 @dataclass
@@ -62,11 +81,44 @@ class DetectorEvents(MonitorEvents):
             )
 
     @staticmethod
-    def from_ev44(ev44: eventdata_ev44.EventData) -> DetectorEvents:
-        _require_single_pulse(ev44)
-        return DetectorEvents(
-            pixel_id=ev44.pixel_id, time_of_arrival=ev44.time_of_flight, unit='ns'
-        )
+    def from_ev44(
+        ev44: eventdata_ev44.EventData,
+    ) -> list[tuple[int | None, DetectorEvents]]:
+        """Split an ev44 message into per-pulse DetectorEvents.
+
+        Returns a list of (timestamp, DetectorEvents) tuples, one per pulse.
+        If ``reference_time`` is empty, returns a single element with
+        ``None`` as timestamp so the caller can fall back to the message
+        timestamp.
+        """
+        ref_time = ev44.reference_time
+        ref_index = ev44.reference_time_index
+        tof = ev44.time_of_flight
+        pixel_id = ev44.pixel_id
+
+        if len(ref_time) == 0:
+            return [
+                (
+                    None,
+                    DetectorEvents(pixel_id=pixel_id, time_of_arrival=tof, unit='ns'),
+                )
+            ]
+
+        results: list[tuple[int | None, DetectorEvents]] = []
+        for i in range(len(ref_time)):
+            start = ref_index[i]
+            end = ref_index[i + 1] if i + 1 < len(ref_index) else len(tof)
+            results.append(
+                (
+                    int(ref_time[i]),
+                    DetectorEvents(
+                        pixel_id=pixel_id[start:end],
+                        time_of_arrival=tof[start:end],
+                        unit='ns',
+                    ),
+                )
+            )
+        return results
 
 
 Events = TypeVar('Events', DetectorEvents, MonitorEvents)
