@@ -111,7 +111,6 @@ class RoutingAdapterBuilder:
         self._routes[self._stream_mapping.livedata_data_topic] = ChainedAdapter(
             first=KafkaToDa00Adapter(
                 stream_kind=StreamKind.LIVEDATA_DATA,
-                stream_counter=self._stream_counter,
             ),
             second=Da00ToScippAdapter(),
         )
@@ -132,7 +131,6 @@ class RoutingAdapterBuilder:
         self._routes[self._stream_mapping.livedata_roi_topic] = ChainedAdapter(
             first=KafkaToDa00Adapter(
                 stream_kind=StreamKind.LIVEDATA_ROI,
-                stream_counter=self._stream_counter,
             ),
             second=Da00ToScippAdapter(),
         )
