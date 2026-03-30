@@ -13,12 +13,11 @@ from ess.livedata.handlers.detector_view.types import LogicalViewConfig
 def make_fake_nexus_detector_data(
     *, y_size: int = 4, x_size: int = 4, n_events_per_pixel: int = 10
 ) -> sc.DataArray:
-    """Create fake detector data similar to what GenericNeXusWorkflow produces.
+    """Create fake detector data in NXevent_data format.
 
-    GenericNeXusWorkflow produces binned event data grouped by detector_number,
-    with events containing event_time_offset coordinates.
-
-    This format is used by tests that work with RawDetector (already grouped).
+    Events are binned by detector_number with event_time_offset and event_id
+    coordinates. The event_id allows GenericNeXusWorkflow's assemble_detector_data
+    to regroup events by detector pixel.
     """
     rng = np.random.default_rng(42)
 
@@ -28,12 +27,17 @@ def make_fake_nexus_detector_data(
     # Create event_time_offset values in nanoseconds (0-71ms range)
     eto_values = rng.uniform(0, 71_000_000, total_events)
 
+    # Create event_id for each event (detector_number of the pixel it belongs to).
+    # Required by GenericNeXusWorkflow's assemble_detector_data / group_event_data.
+    event_ids = np.repeat(np.arange(1, total_pixels + 1), n_events_per_pixel)
+
     # Create event table with event_time_offset as coordinate
     # Data values are weights (typically 1.0 for each event)
     events = sc.DataArray(
         data=sc.ones(dims=['event'], shape=[total_events]),
         coords={
             'event_time_offset': sc.array(dims=['event'], values=eto_values, unit='ns'),
+            'event_id': sc.array(dims=['event'], values=event_ids, unit=None),
         },
     )
 
