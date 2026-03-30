@@ -76,21 +76,61 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
-def _format_stream_stats(stats: StreamStats | None) -> str:
-    """Format stream stats for the worker status row."""
+def _format_stream_stats_summary(stats: StreamStats | None) -> str:
+    """Format compact stream stats summary for the worker status row."""
     if stats is None:
-        return "Streams: -"
+        return "Msgs: -"
     total = sum(s.count for s in stats.streams)
-    n_streams = len(stats.streams)
-    unmapped = sum(1 for s in stats.streams if s.stream is None)
     window = f"{stats.window_seconds:.0f}s"
-    text = f"{_format_messages(total)}/{window} ({n_streams} streams"
-    if unmapped:
-        text += (
-            f', <span style="color: {StatusColors.ERROR}">{unmapped} unmapped</span>'
+    return f"Msgs: {_format_messages(total)}/{window}"
+
+
+def _format_stream_stats_details(stats: StreamStats | None) -> str:
+    """Format expandable per-stream details table."""
+    if stats is None:
+        return ""
+    if not stats.streams:
+        return (
+            '<details style="margin: 2px 10px 5px; font-size: 11px;">'
+            f"<summary>Streams ({stats.window_seconds:.0f}s window)</summary>"
+            "<i>No streams received</i>"
+            "</details>"
         )
-    text += ")"
-    return text
+    unmapped_count = sum(1 for s in stats.streams if s.stream is None)
+    summary_extra = ""
+    if unmapped_count:
+        summary_extra = (
+            f' — <span style="color: {StatusColors.ERROR}">'
+            f"{unmapped_count} unmapped</span>"
+        )
+    rows = []
+    for s in stats.streams:
+        stream_cell = s.stream or (
+            f'<span style="color: {StatusColors.ERROR}">unmapped</span>'
+        )
+        rows.append(
+            f"<tr><td>{s.topic}</td><td>{s.source_name}</td>"
+            f"<td>{stream_cell}</td><td style='text-align:right'>"
+            f"{_format_messages(s.count)}</td></tr>"
+        )
+    header_style = f"text-align:left; border-bottom:1px solid {Colors.BORDER}"
+    count_style = f"text-align:right; border-bottom:1px solid {Colors.BORDER}"
+    table = (
+        '<table style="width:100%; border-collapse:collapse; font-size:11px;">'
+        "<tr>"
+        f'<th style="{header_style}">Topic</th>'
+        f'<th style="{header_style}">Source</th>'
+        f'<th style="{header_style}">Stream</th>'
+        f'<th style="{count_style}">Count</th>'
+        "</tr>" + "".join(rows) + "</table>"
+    )
+    return (
+        '<details style="margin: 2px 10px 5px; font-size: 11px;">'
+        f"<summary>{len(stats.streams)} streams / "
+        f"{stats.window_seconds:.0f}s window{summary_extra}</summary>"
+        f"{table}"
+        "</details>"
+    )
 
 
 class WorkerStatusRow:
@@ -132,14 +172,25 @@ class WorkerStatusRow:
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
 
-        self._panel = pn.Row(
+        self._row = pn.Row(
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
             self._uptime_pane,
             self._stats_pane,
+            sizing_mode="stretch_width",
+        )
+        self._details_pane = pn.pane.HTML(
+            "",
+            sizing_mode="stretch_width",
+            margin=(0, 5),
+        )
+        self._panel = pn.Column(
+            self._row,
+            self._details_pane,
             styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
+            margin=0,
         )
 
         self._last_stream_stats: StreamStats | None = None
@@ -213,9 +264,14 @@ class WorkerStatusRow:
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
         batch_text = f"Batch: {status.batch_interval_s:.0f}s"
-        streams_text = _format_stream_stats(self._last_stream_stats)
+        msgs_text = _format_stream_stats_summary(self._last_stream_stats)
         self._stats_pane.object = (
-            f"<span>{jobs_text} | {streams_text} | {batch_text}</span>"
+            f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
+        )
+
+        # Expandable stream details
+        self._details_pane.object = _format_stream_stats_details(
+            self._last_stream_stats
         )
 
     def _calculate_uptime(self, started_at_ns: int) -> float:
@@ -225,7 +281,7 @@ class WorkerStatusRow:
         return uptime_ns / 1_000_000_000
 
     @property
-    def panel(self) -> pn.Row:
+    def panel(self) -> pn.Column:
         """Get the panel for this widget."""
         return self._panel
 
