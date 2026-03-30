@@ -69,13 +69,12 @@ class NaiveMessageBatcher(MessageBatcher):
         self, batch_length_s: float = 1.0, pulse_length_s: float = 1.0 / 14
     ) -> None:
         # Batch length is currently ignored.
-        self._batch_length_s = batch_length_s
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._pulse_length = Duration.from_seconds(pulse_length_s)
 
     @property
     def batch_length_s(self) -> float:
-        return self._batch_length_s
+        return self._batch_length.to_seconds()
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
@@ -114,14 +113,13 @@ class SimpleMessageBatcher(MessageBatcher):
     """
 
     def __init__(self, batch_length_s: float = 1.0) -> None:
-        self._batch_length_s_value = batch_length_s
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._active_batch: MessageBatch | None = None
         self._future_messages: list[Message[Any]] = []
 
     @property
     def batch_length_s(self) -> float:
-        return self._batch_length_s_value
+        return self._batch_length.to_seconds()
 
     def set_batch_length(self, batch_length_s: float) -> None:
         """Update the batch length for future batches.
@@ -129,7 +127,6 @@ class SimpleMessageBatcher(MessageBatcher):
         The current active batch keeps its boundaries and completes normally.
         Only the next batch boundary will use the new length.
         """
-        self._batch_length_s_value = batch_length_s
         self._batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
