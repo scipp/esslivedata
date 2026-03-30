@@ -35,11 +35,10 @@ class WorkerUIConstants:
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
     UPTIME_WIDTH = 120
-    STATS_WIDTH = 180
-    ROW_HEIGHT = 35
+    STATS_WIDTH = 240
 
     # Margins
-    STANDARD_MARGIN = (5, 5)
+    STANDARD_MARGIN = (2, 5)
     HEADER_MARGIN = (10, 10, 5, 10)
 
 
@@ -86,12 +85,19 @@ def _format_stream_stats_summary(stats: StreamStats | None) -> str:
 
 
 def _format_stream_stats_details(stats: StreamStats | None) -> str:
-    """Format expandable per-stream details table."""
+    """Format expandable per-stream details table.
+
+    Always returns visible content so the row height stays consistent
+    regardless of whether stream data has arrived yet.
+    """
+    style = "margin: 0; font-size: 11px;"
     if stats is None:
-        return ""
+        return (
+            f'<span style="{style}; color: {Colors.TEXT_MUTED}">No stream data</span>'
+        )
     if not stats.streams:
         return (
-            '<details style="margin: 2px 10px 5px; font-size: 11px;">'
+            f'<details style="{style}">'
             f"<summary>Streams ({stats.window_seconds:.0f}s window)</summary>"
             "<i>No streams received</i>"
             "</details>"
@@ -125,7 +131,7 @@ def _format_stream_stats_details(stats: StreamStats | None) -> str:
         "</tr>" + "".join(rows) + "</table>"
     )
     return (
-        '<details style="margin: 2px 10px 5px; font-size: 11px;">'
+        f'<details style="{style}">'
         f"<summary>{len(stats.streams)} streams / "
         f"{stats.window_seconds:.0f}s window{summary_extra}</summary>"
         f"{table}"
@@ -148,48 +154,44 @@ class WorkerStatusRow:
         # Create stable pane references
         self._namespace_pane = pn.pane.HTML(
             width=WorkerUIConstants.NAMESPACE_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._worker_id_pane = pn.pane.HTML(
             width=WorkerUIConstants.WORKER_ID_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._status_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATUS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._uptime_pane = pn.pane.HTML(
             width=WorkerUIConstants.UPTIME_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._stats_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
 
-        self._row = pn.Row(
+        row = pn.Row(
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
             self._uptime_pane,
             self._stats_pane,
             sizing_mode="stretch_width",
+            margin=0,
         )
         self._details_pane = pn.pane.HTML(
             "",
             sizing_mode="stretch_width",
-            margin=(0, 5),
+            margin=(0, 10, 2, 10),
         )
         self._panel = pn.Column(
-            self._row,
+            row,
             self._details_pane,
-            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             margin=0,
         )
 
@@ -269,7 +271,7 @@ class WorkerStatusRow:
             f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
         )
 
-        # Expandable stream details
+        # Full-width expandable stream details
         self._details_pane.object = _format_stream_stats_details(
             self._last_stream_stats
         )
