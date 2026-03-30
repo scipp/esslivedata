@@ -444,8 +444,8 @@ class TestJob:
         }
 
         data = JobData(
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -477,8 +477,8 @@ class TestJob:
         }
 
         data = JobData(
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
