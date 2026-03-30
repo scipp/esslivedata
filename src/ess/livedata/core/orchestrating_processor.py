@@ -60,11 +60,18 @@ class MessagePreprocessor(Generic[Tin, Tout]):
 
     def _preprocess_stream(
         self, messages: list[Message[Tin]], accumulator: Accumulator[Tin, Tout]
-    ) -> Tout:
-        """Preprocess messages for a single stream using the given accumulator."""
+    ) -> Tout | None:
+        """Preprocess messages for a single stream using the given accumulator.
+
+        Returns None if no messages were accepted by the accumulator (e.g., all
+        duplicates), signalling that the stream should be excluded from workflow data.
+        """
+        any_accepted = False
         for message in messages:
-            accumulator.add(message.timestamp, message.value)
-        # We assume the accumulator is cleared in `get`.
+            if accumulator.add(message.timestamp, message.value) is not False:
+                any_accepted = True
+        if not any_accepted:
+            return None
         return accumulator.get()
 
     def release_buffers(self) -> None:
@@ -115,7 +122,9 @@ class MessagePreprocessor(Generic[Tin, Tout]):
                 logger.debug('no_preprocessor', stream_id=str(key))
                 continue
             try:
-                data[key] = self._preprocess_stream(messages, accumulator)
+                result = self._preprocess_stream(messages, accumulator)
+                if result is not None:
+                    data[key] = result
             except Exception:
                 logger.exception('preprocessing_error', stream_id=str(key))
         return WorkflowData(
