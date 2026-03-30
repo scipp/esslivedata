@@ -11,7 +11,14 @@ import structlog
 
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
-from .job import JobResult, JobStatus, ServiceState, ServiceStatus
+from .job import (
+    JobResult,
+    JobStatus,
+    ServiceState,
+    ServiceStatus,
+    StreamStats,
+    StreamStatsProvider,
+)
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
@@ -130,6 +137,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
+        stream_stats_provider: StreamStatsProvider | None = None,
     ) -> None:
         self._source = source
         self._sink = sink
@@ -151,17 +159,18 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._namespace = instrument.active_namespace or "unknown"
         self._worker_id = str(uuid.uuid4())
         self._started_at = time.time_ns()
-        self._messages_processed = 0
         self._service_state = ServiceState.starting
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
-        # Metrics tracking
+        # Metrics and stream stats tracking
         self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
         self._last_metrics_time: int | None = None
         self._batches_processed = 0
         self._empty_batches = 0
         self._errors_since_last_metrics = 0
+        self._stream_stats_provider = stream_stats_provider
+        self._pending_stream_stats: StreamStats | None = None
 
     def process(self) -> None:
         # Transition from starting to running on first process cycle
@@ -171,7 +180,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             logger.info('service_running')
 
         messages = self._source.get_messages()
-        self._messages_processed += len(messages)
         config_messages: list[Message[Tin]] = []
         run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
@@ -294,6 +302,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
+        stream_stats = self._pending_stream_stats
+        self._pending_stream_stats = None
         return ServiceStatus(
             instrument=self._instrument,
             namespace=self._namespace,
@@ -301,9 +311,9 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             state=self._service_state,
             started_at=self._started_at,
             active_job_count=len(job_statuses),
-            messages_processed=self._messages_processed,
             error=self._service_error,
             batch_interval_s=self._message_batcher.batch_length_s,
+            stream_stats=stream_stats,
         )
 
     def _maybe_log_metrics(self) -> None:
@@ -314,17 +324,24 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             return
 
         if timestamp - self._last_metrics_time >= self._metrics_interval:
+            window_seconds = (timestamp - self._last_metrics_time) / 1e9
             active_jobs = len(self._job_manager.active_jobs)
+
+            # Drain stream stats from the counter
+            if self._stream_stats_provider is not None:
+                self._pending_stream_stats = self._stream_stats_provider.drain(
+                    window_seconds
+                )
+
             logger.info(
                 'processor_metrics',
-                messages=self._messages_processed,
                 batches=self._batches_processed,
                 empty_batches=self._empty_batches,
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
-                interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
+                interval_seconds=window_seconds,
+                stream_stats=self._pending_stream_stats,
             )
-            # Reset counters (except messages_processed which is cumulative for service)
             self._batches_processed = 0
             self._empty_batches = 0
             self._errors_since_last_metrics = 0

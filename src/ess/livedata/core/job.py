@@ -5,7 +5,7 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import scipp as sc
 
@@ -108,6 +108,33 @@ class ServiceState(StrEnum):
     error = auto()  # Service encountered fatal error
 
 
+@dataclass(frozen=True, slots=True)
+class StreamStat:
+    """Message count for a single (topic, source_name) combination."""
+
+    topic: str
+    source_name: str
+    stream: str | None  # Resolved stream name, or None if unmapped
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StreamStats:
+    """Per-stream message counts collected over a time window."""
+
+    window_seconds: float
+    streams: tuple[StreamStat, ...]
+
+
+@runtime_checkable
+class StreamStatsProvider(Protocol):
+    """Provides accumulated per-stream message counts."""
+
+    def drain(self, window_seconds: float) -> StreamStats:
+        """Return accumulated stats and reset counters."""
+        ...
+
+
 @dataclass
 class ServiceStatus:
     """Complete status information for a backend service worker."""
@@ -118,9 +145,9 @@ class ServiceStatus:
     state: ServiceState
     started_at: int  # Nanoseconds since epoch
     active_job_count: int
-    messages_processed: int
     error: str | None = None
     batch_interval_s: float = 1.0
+    stream_stats: StreamStats | None = None
 
 
 def _add_time_coords(

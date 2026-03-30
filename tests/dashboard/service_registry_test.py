@@ -17,7 +17,6 @@ class TestMakeWorkerKey:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
         key = make_worker_key(status)
         assert key == "dream:test_namespace:abc123"
@@ -33,7 +32,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -51,7 +49,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
         status2 = ServiceStatus(
             instrument="dream",
@@ -60,7 +57,6 @@ class TestServiceRegistry:
             state=ServiceState.starting,
             started_at=2000,
             active_job_count=0,
-            messages_processed=0,
         )
 
         registry.status_updated(status1)
@@ -79,7 +75,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
         status_new = ServiceStatus(
             instrument="dream",
@@ -88,7 +83,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=3,
-            messages_processed=200,
         )
 
         registry.status_updated(status_old)
@@ -96,7 +90,6 @@ class TestServiceRegistry:
 
         assert len(registry.worker_statuses) == 1
         stored = registry.worker_statuses[make_worker_key(status_new)]
-        assert stored.messages_processed == 200
         assert stored.active_job_count == 3
 
     def test_is_status_stale_returns_false_for_recent_status(self) -> None:
@@ -108,7 +101,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -126,7 +118,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -148,7 +139,6 @@ class TestServiceRegistry:
             state=ServiceState.stopped,  # Terminal state
             started_at=1000,
             active_job_count=0,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -172,7 +162,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
         registry.status_updated(status_stale)
 
@@ -187,7 +176,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=2000,
             active_job_count=1,
-            messages_processed=50,
         )
         registry.status_updated(status_fresh)
 
@@ -206,7 +194,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=started_at_ns,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -230,7 +217,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -255,7 +241,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         registry.status_updated(status)
@@ -278,7 +263,6 @@ class TestServiceRegistry:
             state=ServiceState.stopped,
             started_at=1000,
             active_job_count=0,
-            messages_processed=100,
         )
         registry.status_updated(status)
         assert make_worker_key(status) in registry.get_inactive_worker_keys()
@@ -292,7 +276,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=1,
-            messages_processed=50,
         )
         registry.status_updated(status)
         time.sleep(0.01)
@@ -307,7 +290,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=1,
-            messages_processed=50,
         )
         registry.status_updated(status)
         assert registry.get_inactive_worker_keys() == []
@@ -322,7 +304,6 @@ class TestServiceRegistry:
             state=ServiceState.stopped,
             started_at=1000,
             active_job_count=0,
-            messages_processed=100,
         )
         stale = ServiceStatus(
             instrument="dream",
@@ -331,7 +312,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=1,
-            messages_processed=50,
         )
         registry.status_updated(stopped)
         registry.status_updated(stale)
@@ -345,7 +325,6 @@ class TestServiceRegistry:
             state=ServiceState.running,
             started_at=1000,
             active_job_count=1,
-            messages_processed=10,
         )
         registry.status_updated(fresh)
 
