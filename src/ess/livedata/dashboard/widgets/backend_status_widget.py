@@ -9,7 +9,7 @@ from typing import ClassVar
 
 import panel as pn
 
-from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStats
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
@@ -76,6 +76,23 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
+def _format_stream_stats(stats: StreamStats | None) -> str:
+    """Format stream stats for the worker status row."""
+    if stats is None:
+        return "Streams: -"
+    total = sum(s.count for s in stats.streams)
+    n_streams = len(stats.streams)
+    unmapped = sum(1 for s in stats.streams if s.stream is None)
+    window = f"{stats.window_seconds:.0f}s"
+    text = f"{_format_messages(total)}/{window} ({n_streams} streams"
+    if unmapped:
+        text += (
+            f', <span style="color: {StatusColors.ERROR}">{unmapped} unmapped</span>'
+        )
+    text += ")"
+    return text
+
+
 class WorkerStatusRow:
     """Widget to display the status of a single backend worker.
 
@@ -124,6 +141,8 @@ class WorkerStatusRow:
             styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
         )
+
+        self._last_stream_stats: StreamStats | None = None
 
         # Set initial content
         self.update(status, is_stale, last_seen_seconds_ago)
@@ -187,12 +206,16 @@ class WorkerStatusRow:
             time_text = f"Up: {_format_duration(uptime)}"
         self._uptime_pane.object = f"<span>{time_text}</span>"
 
+        # Cache stream stats when a new snapshot arrives
+        if status.stream_stats is not None:
+            self._last_stream_stats = status.stream_stats
+
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
-        msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
         batch_text = f"Batch: {status.batch_interval_s:.0f}s"
+        streams_text = _format_stream_stats(self._last_stream_stats)
         self._stats_pane.object = (
-            f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
+            f"<span>{jobs_text} | {streams_text} | {batch_text}</span>"
         )
 
     def _calculate_uptime(self, started_at_ns: int) -> float:

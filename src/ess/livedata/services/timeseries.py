@@ -13,6 +13,7 @@ from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
 from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -24,8 +25,11 @@ def make_timeseries_service_builder(
     attribute_registry: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    stream_counter = StreamCounter()
     adapter = (
-        RoutingAdapterBuilder(stream_mapping=stream_mapping)
+        RoutingAdapterBuilder(
+            stream_mapping=stream_mapping, stream_counter=stream_counter
+        )
         .with_logdata_route()
         .with_livedata_commands_route()
         .with_run_control_route()
@@ -54,6 +58,7 @@ def make_timeseries_service_builder(
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
         processor_cls=processor,  # type: ignore[arg-type]
+        stream_counter=stream_counter,
     )
 
 

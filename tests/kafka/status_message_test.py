@@ -8,7 +8,14 @@ import pytest
 from streaming_data_types import deserialise_x5f2, serialise_x5f2
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
-from ess.livedata.core.job import JobState, JobStatus, ServiceState, ServiceStatus
+from ess.livedata.core.job import (
+    JobState,
+    JobStatus,
+    ServiceState,
+    ServiceStatus,
+    StreamStat,
+    StreamStats,
+)
 from ess.livedata.kafka.x5f2_compat import (
     JobStatusJSON,
     JobStatusMessage,
@@ -57,7 +64,6 @@ def make_service_status(**overrides) -> ServiceStatus:
         "state": ServiceState.running,
         "started_at": 1000000000,
         "active_job_count": 3,
-        "messages_processed": 5000,
         "error": None,
     }
     defaults.update(overrides)
@@ -658,7 +664,6 @@ class TestServiceServiceId:
             state=ServiceState.running,
             started_at=1000000000,
             active_job_count=3,
-            messages_processed=1000,
         )
         service_id = ServiceServiceId.from_service_status(status)
 
@@ -707,7 +712,6 @@ class TestServiceStatusPayload:
             state=ServiceState.running,
             started_at=1000000000,
             active_job_count=5,
-            messages_processed=10000,
             error=None,
         )
 
@@ -727,7 +731,6 @@ class TestServiceStatusPayload:
             state=ServiceState.error,
             started_at=1000000000,
             active_job_count=0,
-            messages_processed=5000,
             error="Connection lost to Kafka",
         )
 
@@ -776,7 +779,6 @@ class TestServiceStatusMessage:
         assert converted.state == original.state
         assert converted.started_at == original.started_at
         assert converted.active_job_count == original.active_job_count
-        assert converted.messages_processed == original.messages_processed
 
 
 class TestServiceStatusX5F2Integration:
@@ -802,7 +804,7 @@ class TestServiceStatusX5F2Integration:
         assert converted.state == original.state
         assert converted.started_at == original.started_at
         assert converted.active_job_count == original.active_job_count
-        assert converted.messages_processed == original.messages_processed
+
         assert converted.error == original.error
 
     def test_service_status_x5f2_with_error(self):
@@ -962,7 +964,6 @@ class TestX5f2ToStatusDiscriminator:
             state=ServiceState.running,
             started_at=1000000000,
             active_job_count=3,
-            messages_processed=5000,
         )
 
         x5f2_data = service_status_to_x5f2(service_status)
@@ -973,3 +974,61 @@ class TestX5f2ToStatusDiscriminator:
         assert result.namespace == service_status.namespace
         assert result.worker_id == service_status.worker_id
         assert result.state == service_status.state
+
+
+class TestStreamStatsX5F2RoundTrip:
+    """Test stream_stats field serialization through x5f2."""
+
+    def test_round_trip_with_no_stream_stats(self):
+        """ServiceStatus without stream_stats round-trips with None."""
+        original = make_service_status()
+        assert original.stream_stats is None
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.stream_stats is None
+
+    def test_round_trip_with_stream_stats(self):
+        """ServiceStatus with stream_stats survives x5f2 round-trip."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(topic="t1", source_name="s1", stream="mapped_1", count=100),
+                StreamStat(topic="t2", source_name="s2", stream=None, count=5),
+            ),
+        )
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.window_seconds == 30.0
+        assert len(converted.stream_stats.streams) == 2
+        assert converted.stream_stats.streams[0] == stats.streams[0]
+        assert converted.stream_stats.streams[1] == stats.streams[1]
+
+    def test_round_trip_empty_streams(self):
+        """StreamStats with empty streams list round-trips correctly."""
+        stats = StreamStats(window_seconds=30.0, streams=())
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.streams == ()
+
+    def test_discriminator_preserves_stream_stats(self):
+        """x5f2_to_status discriminator preserves stream_stats on ServiceStatus."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t1", source_name="s1", stream="s1", count=42),),
+        )
+        original = make_service_status(stream_stats=stats)
+        x5f2_data = service_status_to_x5f2(original)
+        result = x5f2_to_status(x5f2_data)
+
+        assert isinstance(result, ServiceStatus)
+        assert result.stream_stats is not None
+        assert result.stream_stats.streams[0].count == 42
