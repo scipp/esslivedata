@@ -351,8 +351,25 @@ class JobManager:
             if job.reset_on_run_transition:
                 self.reset_job(job.job_id)
 
+    def peek_pending_aux_streams(self, start_time: int) -> set[str]:
+        """Return aux stream names needed by jobs that would activate at start_time.
+
+        This is a read-only query with no side effects. It does not activate
+        jobs or mutate any state.
+        """
+        names: set[str] = set()
+        for job_id, job in self._scheduled_jobs.items():
+            if self._job_schedules[job_id].should_start(start_time):
+                names.update(job.aux_source_names)
+        return names
+
     def push_data(self, data: WorkflowData) -> list[JobReply]:
-        """Push data into the active jobs and return status for each job."""
+        """Push data into the active jobs and return status for each job.
+
+        Unlike ``process_jobs`` called via ``OrchestratingProcessor.process``,
+        this method does not seed context data for newly activated jobs.
+        Callers are responsible for providing complete ``WorkflowData``.
+        """
         self._advance_to_time(data.start_time, data.end_time)
         replies = []
         for job in self.active_jobs:

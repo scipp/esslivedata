@@ -1932,3 +1932,88 @@ class TestJobManagerThreading:
         manager, _, _ = self._setup_threaded_manager(n_jobs=1, job_threads=1)
         assert manager._executor is None
         manager.shutdown()  # Should not raise
+
+
+class TestPeekPendingAuxStreams:
+    def test_returns_empty_when_no_scheduled_jobs(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        assert manager.peek_pending_aux_streams(start_time=100) == set()
+
+    def test_returns_aux_streams_for_job_ready_to_activate(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        config = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="wf",
+                version=1,
+            ),
+            schedule=JobSchedule(start_time=100),
+            aux_source_names={"temperature": "temp_stream", "speed": "speed_stream"},
+        )
+        manager.schedule_job("src", config)
+
+        assert manager.peek_pending_aux_streams(start_time=50) == set()
+        assert manager.peek_pending_aux_streams(start_time=100) == {
+            "temp_stream",
+            "speed_stream",
+        }
+
+    def test_is_idempotent(self, fake_job_factory):
+        """Calling peek multiple times returns the same result (no state mutation)."""
+        manager = JobManager(fake_job_factory)
+        config = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="wf",
+                version=1,
+            ),
+            schedule=JobSchedule(start_time=100),
+            aux_source_names={"field": "stream_a"},
+        )
+        manager.schedule_job("src", config)
+
+        result1 = manager.peek_pending_aux_streams(start_time=100)
+        result2 = manager.peek_pending_aux_streams(start_time=100)
+        assert result1 == result2 == {"stream_a"}
+
+    def test_returns_union_of_multiple_jobs(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        config_a = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="wf_a",
+                version=1,
+            ),
+            aux_source_names={"temp": "temperature", "speed": "chopper_speed"},
+        )
+        config_b = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="wf_b",
+                version=1,
+            ),
+            aux_source_names={"temp": "temperature", "pressure": "pressure"},
+        )
+        manager.schedule_job("src_a", config_a)
+        manager.schedule_job("src_b", config_b)
+
+        result = manager.peek_pending_aux_streams(start_time=100)
+        assert result == {"temperature", "chopper_speed", "pressure"}
+
+    def test_returns_empty_for_jobs_without_aux_sources(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        config = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="wf",
+                version=1,
+            ),
+        )
+        manager.schedule_job("src", config)
+
+        assert manager.peek_pending_aux_streams(start_time=100) == set()

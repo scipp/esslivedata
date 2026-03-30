@@ -22,6 +22,8 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     timestamps are skipped to prevent unbounded buffer growth from upstream re-sends.
     """
 
+    is_context = True
+
     def __init__(
         self, *, attrs: dict[str, Any], data_dims: tuple[str, ...] = ()
     ) -> None:

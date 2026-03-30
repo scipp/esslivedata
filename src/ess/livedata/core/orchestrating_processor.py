@@ -28,7 +28,11 @@ from .message import (
     Tin,
     Tout,
 )
-from .message_batcher import MessageBatch, MessageBatcher, SimpleMessageBatcher
+from .message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatch,
+    MessageBatcher,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -78,6 +82,29 @@ class MessagePreprocessor(Generic[Tin, Tout]):
             if hasattr(accumulator, 'release_buffers'):
                 accumulator.release_buffers()
 
+    def get_context(self, names: set[str]) -> dict[StreamId, Any]:
+        """Read current values from context accumulators for the given stream names.
+
+        Only reads from accumulators that have ``is_context = True`` and that
+        have received at least one message. Accumulators that have no data yet
+        are silently skipped — this is a normal startup condition (stream
+        mapping registered the accumulator before any message arrived).
+
+        Must be called before ``process_jobs`` to ensure no concurrent access
+        to preprocessor-level accumulators from worker threads.
+        """
+        result: dict[StreamId, Any] = {}
+        for stream_id, accumulator in self._accumulators.items():
+            if accumulator.is_context and stream_id.name in names:
+                try:
+                    result[stream_id] = accumulator.get()
+                except (RuntimeError, ValueError):
+                    logger.debug(
+                        'context_accumulator_empty',
+                        stream_id=str(stream_id),
+                    )
+        return result
+
     def preprocess_messages(self, batch: MessageBatch) -> WorkflowData:
         """
         Preprocess messages before they are sent to the accumulators.
@@ -121,7 +148,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             job_factory=JobFactory(instrument=instrument), job_threads=job_threads
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
-        self._message_batcher = message_batcher or SimpleMessageBatcher()
+        self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
@@ -181,6 +208,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
+            self._message_batcher.report_batch(None, processing_time_s=0.0)
             self._empty_batches += 1
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
@@ -191,8 +219,20 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 time.sleep(0.1)
             return
 
+        batch_start = time.monotonic()
+
         # Pre-process message batch
         workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
+
+        # Seed context data for jobs about to activate.
+        # peek uses the batch start_time to predict which jobs will activate
+        # in the upcoming process_jobs call (which uses the same start_time).
+        needed = self._job_manager.peek_pending_aux_streams(workflow_data.start_time)
+        if needed:
+            missing = needed - {s.name for s in workflow_data.data}
+            if missing:
+                context = self._message_preprocessor.get_context(missing)
+                workflow_data.data.update(context)
 
         # Push data into jobs and compute results in a single pass.
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -229,6 +269,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             else:
                 valid_results.append(result)
 
+        processing_time_s = time.monotonic() - batch_start
+        self._message_batcher.report_batch(
+            len(message_batch.messages), processing_time_s=processing_time_s
+        )
         self._batches_processed += 1
         self._maybe_log_metrics()
 
@@ -268,6 +312,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
             error=self._service_error,
+            batch_interval_s=self._message_batcher.batch_length_s,
         )
 
     def _maybe_log_metrics(self) -> None:

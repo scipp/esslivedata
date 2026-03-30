@@ -59,6 +59,8 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
     where only the current state matters.
     """
 
+    is_context = True
+
     def __init__(self):
         self._latest: sc.DataArray | None = None
 

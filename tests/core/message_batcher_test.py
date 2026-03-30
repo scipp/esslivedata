@@ -1,7 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import pytest
+
 from ess.livedata.core.message import Message, StreamId, StreamKind
-from ess.livedata.core.message_batcher import SimpleMessageBatcher
+from ess.livedata.core.message_batcher import (
+    DEESCALATION_HEADROOM_RATIO,
+    DEESCALATION_IDLE_WINDOWS,
+    DEESCALATION_UNDERLOAD_THRESHOLD,
+    ESCALATION_OVERLOAD_THRESHOLD,
+    AdaptiveMessageBatcher,
+    SimpleMessageBatcher,
+)
 
 
 def make_message(timestamp_ns: int, value: str = "test") -> Message[str]:
@@ -385,3 +394,368 @@ class TestSimpleMessageBatcher:
         assert next_batch.start_time == 1000 + batch_length_ns
         assert next_batch.end_time == 1000 + 2 * batch_length_ns
         assert len(next_batch.messages) == 0
+
+
+class FakeClock:
+    """Fake monotonic clock for testing time-based de-escalation."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _escalate_to_level(batcher: AdaptiveMessageBatcher, level: int) -> None:
+    """Drive the batcher to the given level by reporting overloaded batches."""
+    while batcher.state.level < level:
+        window = batcher.batch_length_s
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=window * 1.5)
+
+
+class TestAdaptiveMessageBatcher:
+    def test_initial_state_is_level_zero(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+        assert batcher.state.level == 0
+        assert batcher.state.batch_length_s == 1.0
+
+    def test_delegates_to_inner_batcher(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0)
+        msg = make_message(1000)
+        batch = batcher.batch([msg])
+        assert batch is not None
+        assert batch.messages == [msg]
+
+    def test_escalates_after_consecutive_overloaded_batches(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.5)
+
+        assert batcher.state.level == 2
+        assert batcher.state.batch_length_s == pytest.approx(2.0, rel=1e-5)
+
+    def test_does_not_escalate_before_threshold(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+
+        assert batcher.state.level == 0
+
+    def test_does_not_escalate_when_processing_fits(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(20):
+            batcher.report_batch(100, processing_time_s=0.8)
+
+        assert batcher.state.level == 0
+
+    def test_escalation_capped_at_max_level(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        _escalate_to_level(batcher, 4)
+        assert batcher.state.level == 4
+        assert batcher.state.batch_length_s == pytest.approx(4.0, rel=1e-5)
+
+        # Further overloaded batches should not exceed max
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD * 2):
+            batcher.report_batch(100, processing_time_s=10.0)
+        assert batcher.state.level == 4
+
+    def test_deescalates_after_idle_duration(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=2, clock=clock
+        )
+
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.level == 2
+
+        # Idle for just under the threshold — no de-escalation
+        clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+        batcher.report_batch(None)
+        assert batcher.state.level == 2
+
+        # Cross the threshold
+        clock.advance(0.2)
+        batcher.report_batch(None)
+        assert batcher.state.level == 1
+
+    def test_does_not_deescalate_below_zero(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=2, clock=clock
+        )
+
+        clock.advance(100.0)
+        batcher.report_batch(None)
+        assert batcher.state.level == 0
+
+    def test_underloaded_batch_resets_overload_counter(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Almost reach escalation threshold
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+
+        # One underloaded batch resets the overload counter
+        batcher.report_batch(100, processing_time_s=0.3)
+
+        # Need full threshold again
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 0
+
+    def test_idle_cycles_do_not_reset_overload_counter(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Almost reach escalation threshold
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+
+        # Idle cycles (polling between batches) do not reset counters
+        batcher.report_batch(None)
+
+        # One more overloaded batch completes the threshold
+        batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+    def test_non_empty_batch_resets_idle_timer(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=2, clock=clock
+        )
+
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.level == 2
+
+        # Almost reach de-escalation time
+        clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+        batcher.report_batch(None)
+        assert batcher.state.level == 2
+
+        # A non-empty batch resets the idle timer
+        batcher.report_batch(100, processing_time_s=1.5)
+
+        # Now need the full idle duration again
+        clock.advance(DEESCALATION_IDLE_WINDOWS * 2.0 - 0.1)
+        batcher.report_batch(None)
+        assert batcher.state.level == 2
+
+    def test_empty_batches_excluded_from_counters(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        # Interleave empty batches with overloaded — should not reset counter
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=1.5)
+            batcher.report_batch(0)
+
+        batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+    def test_empty_batches_do_not_contribute_to_escalation(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD * 3):
+            batcher.report_batch(0)
+        assert batcher.state.level == 0
+
+    def test_deescalates_under_sustained_light_load(self):
+        """De-escalation via underload: processing uses less than headroom ratio."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.level == 2
+
+        # Report underloaded batches (processing < 75% of 4s window)
+        underloaded_time = batcher.batch_length_s * DEESCALATION_HEADROOM_RATIO - 0.1
+        for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=underloaded_time)
+
+        assert batcher.state.level == 1
+
+    def test_does_not_deescalate_without_enough_headroom(self):
+        """No de-escalation when processing uses most of the window."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.level == 2
+        window = batcher.batch_length_s
+
+        # Processing at 80% of window — above headroom threshold (75%)
+        for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD * 3):
+            batcher.report_batch(100, processing_time_s=window * 0.8)
+
+        assert batcher.state.level == 2
+
+    def test_multi_level_escalation_and_deescalation(self):
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=3, clock=clock
+        )
+
+        _escalate_to_level(batcher, 4)
+        assert batcher.state.level == 4
+        current_length = batcher.batch_length_s
+        assert current_length == pytest.approx(4.0, rel=1e-5)
+
+        # De-escalate via idle — one half-step at a time
+        # Report idle with enough elapsed time to trigger de-escalation
+        # Add small epsilon to avoid floating-point comparison issues
+        clock.advance(DEESCALATION_IDLE_WINDOWS * current_length + 0.01)
+        batcher.report_batch(None)
+        assert batcher.state.level == 3
+        # _last_nonempty_batch_time was reset when we de-escalated above,
+        # so we can measure the next idle period from here
+
+        current_length = batcher.batch_length_s
+        assert current_length == pytest.approx(2.828, rel=1e-2)
+
+        # Report idle again to trigger the next de-escalation
+        clock.advance(DEESCALATION_IDLE_WINDOWS * current_length + 0.01)
+        batcher.report_batch(None)
+        assert batcher.state.level == 2
+        assert batcher.state.batch_length_s == pytest.approx(2.0, rel=1e-5)
+
+    def test_state_reflects_custom_base_length(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=0.5, max_level=2)
+        assert batcher.state.batch_length_s == pytest.approx(0.5, rel=1e-5)
+
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.batch_length_s == pytest.approx(1.0, rel=1e-5)
+
+        _escalate_to_level(batcher, 4)
+        assert batcher.state.batch_length_s == pytest.approx(2.0, rel=1e-5)
+
+    def test_no_oscillation_when_barely_keeping_up(self):
+        """At 8s window, rapid idle cycles between batches should not de-escalate."""
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=3, clock=clock
+        )
+
+        _escalate_to_level(batcher, 6)
+        assert batcher.state.level == 6
+
+        # Simulate "barely keeping up": process batch in 7s, then 1s of idle
+        for _ in range(10):
+            clock.advance(7.0)
+            batcher.report_batch(100, processing_time_s=7.0)
+            for _ in range(10):
+                clock.advance(0.1)
+                batcher.report_batch(None)
+
+        assert batcher.state.level == 6
+
+    def test_escalation_preserves_buffered_active_messages(self):
+        """Messages in the active batch must survive escalation."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        # Establish timeline
+        initial = batcher.batch([make_message(0, "init")])
+        assert initial is not None
+        # Inner: active_batch=[0, 1e9), messages=[], future=[]
+
+        # Buffer a message in active batch (no future → returns None)
+        buffered = make_message(500_000_000, "buffered")
+        assert batcher.batch([buffered]) is None
+        # Inner: active_batch messages=[buffered], future=[]
+
+        # Trigger escalation — replaces inner batcher
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+        # Drain all batches with a far-future trigger
+        trigger = make_message(5_000_000_000, "trigger")
+        all_values: set[str] = set()
+        batch = batcher.batch([trigger])
+        while batch is not None:
+            all_values.update(m.value for m in batch.messages)
+            batch = batcher.batch([])
+
+        assert "buffered" in all_values, (
+            "Active batch message dropped during escalation"
+        )
+
+    def test_escalation_preserves_future_messages(self):
+        """Messages in future_messages must survive escalation."""
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+
+        # Establish timeline
+        batcher.batch([make_message(0, "init")])
+
+        # Send a far-future message: completes active batch, stays in _future
+        far_future = make_message(3_000_000_000, "far_future")
+        batch = batcher.batch([far_future])
+        assert batch is not None  # completed (empty) active batch
+        # Inner: active=[1e9, 2e9) msgs=[], future=[far_future(3e9)]
+
+        # Trigger escalation
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.5)
+        assert batcher.state.level == 2
+
+        # Drain with another trigger
+        trigger = make_message(10_000_000_000, "trigger")
+        all_values: set[str] = set()
+        batch = batcher.batch([trigger])
+        while batch is not None:
+            all_values.update(m.value for m in batch.messages)
+            batch = batcher.batch([])
+
+        assert "far_future" in all_values, "Future message dropped during escalation"
+
+    def test_deescalation_preserves_buffered_messages(self):
+        """Messages in the active batch must survive de-escalation."""
+        clock = FakeClock()
+        batcher = AdaptiveMessageBatcher(
+            base_batch_length_s=1.0, max_level=3, clock=clock
+        )
+
+        _escalate_to_level(batcher, 2)
+        assert batcher.state.level == 2
+
+        # Establish timeline at escalated batch length (~2s)
+        batcher.batch([make_message(0, "init")])
+
+        # Buffer a message
+        buffered = make_message(500_000_000, "buffered")
+        assert batcher.batch([buffered]) is None
+
+        # Trigger de-escalation via idle
+        clock.advance(DEESCALATION_IDLE_WINDOWS * batcher.batch_length_s + 0.1)
+        batcher.report_batch(None)
+        assert batcher.state.level == 1
+
+        # Drain
+        trigger = make_message(10_000_000_000, "trigger")
+        all_values: set[str] = set()
+        batch = batcher.batch([trigger])
+        while batch is not None:
+            all_values.update(m.value for m in batch.messages)
+            batch = batcher.batch([])
+
+        assert "buffered" in all_values, (
+            "Active batch message dropped during de-escalation"
+        )
+
+    def test_overload_resets_underload_counter(self):
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=2)
+        _escalate_to_level(batcher, 2)
+
+        # Almost enough underloaded batches
+        underloaded_time = batcher.batch_length_s * DEESCALATION_HEADROOM_RATIO - 0.1
+        for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=underloaded_time)
+
+        # One overloaded batch resets the counter
+        batcher.report_batch(100, processing_time_s=batcher.batch_length_s + 0.1)
+
+        # Need full threshold again
+        for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD - 1):
+            batcher.report_batch(100, processing_time_s=underloaded_time)
+        assert batcher.state.level == 2
