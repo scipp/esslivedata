@@ -20,6 +20,7 @@ from streaming_data_types import (
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus, ServiceStatus
+from ess.livedata.core.timestamp import Timestamp
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
@@ -125,15 +126,15 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
         # A fallback, useful in particular for testing so serialized data can be reused.
         if ev44.reference_time.size > 0:
-            timestamp = ev44.reference_time[-1]
+            timestamp = Timestamp.from_ns(ev44.reference_time[-1])
         else:
-            timestamp = message.timestamp()[1]
+            timestamp = Timestamp.from_ns(message.timestamp()[1])
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
 def _extract_reference_time(
     variables: list[dataarray_da00.Variable],
-) -> int | None:
+) -> Timestamp | None:
     """Extract the last reference_time value from da00 variables.
 
     Mirrors the ev44 convention of using ``reference_time[-1]`` as the message
@@ -143,7 +144,7 @@ def _extract_reference_time(
         if var.name == 'reference_time':
             data = np.asarray(var.data)
             if data.size > 0:
-                return int(data[-1])
+                return Timestamp.from_ns(int(data[-1]))
     return None
 
 
@@ -155,7 +156,9 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         # Prefer reference_time from the data variables (mirroring ev44 behavior)
         # over the opaque top-level timestamp_ns whose semantics are unspecified.
         ref_time = _extract_reference_time(da00.data)
-        timestamp = ref_time if ref_time is not None else da00.timestamp_ns
+        timestamp = (
+            ref_time if ref_time is not None else Timestamp.from_ns(da00.timestamp_ns)
+        )
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
@@ -168,7 +171,7 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
         key = self.get_stream_id(
             topic=message.topic(), source_name=log_data.source_name
         )
-        timestamp = log_data.timestamp_unix_ns
+        timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 
@@ -209,7 +212,7 @@ class X5f2ToStatusAdapter(
 
     def adapt(self, message: KafkaMessage) -> Message[JobStatus | ServiceStatus]:
         return Message(
-            timestamp=message.timestamp()[1],
+            timestamp=Timestamp(message.timestamp()[1]),
             stream=STATUS_STREAM_ID,
             value=x5f2_to_status(message.value()),
         )
@@ -222,25 +225,25 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
     (domain convention) at the adapter boundary.
     """
 
-    _MS_TO_NS = 1_000_000
-
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
         schema = streaming_data_types.utils.get_schema(buf)
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
-            stop_time = None if info.stop_time == 0 else info.stop_time * self._MS_TO_NS
+            stop_time = (
+                None if info.stop_time == 0 else Timestamp.from_ms(info.stop_time)
+            )
             value: RunStart | RunStop = RunStart(
                 run_name=info.run_name,
-                start_time=info.start_time * self._MS_TO_NS,
+                start_time=Timestamp.from_ms(info.start_time),
                 stop_time=stop_time,
             )
         elif schema == '6s4t':
             info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
             value = RunStop(
                 run_name=info.run_name,
-                stop_time=info.stop_time * self._MS_TO_NS,
+                stop_time=Timestamp.from_ms(info.stop_time),
             )
         else:
             raise streaming_data_types.exceptions.WrongSchemaException(
@@ -274,9 +277,9 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
 
         # A fallback, useful in particular for testing so serialized data can be reused.
         if reference_time.size > 0:
-            timestamp = reference_time[-1]
+            timestamp = Timestamp.from_ns(reference_time[-1])
         else:
-            timestamp = message.timestamp()[1]
+            timestamp = Timestamp.from_ns(message.timestamp()[1])
         return Message(
             timestamp=timestamp,
             stream=stream,
@@ -329,7 +332,7 @@ class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
         ad00 = area_detector_ad00.deserialise_ad00(message.value())
         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
-        timestamp = ad00.timestamp_ns
+        timestamp = Timestamp.from_ns(ad00.timestamp_ns)
         return Message(timestamp=timestamp, stream=key, value=ad00)
 
 
@@ -356,7 +359,7 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         # Livedata configuration uses a compacted Kafka topic. The Kafka message key
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
@@ -367,7 +370,7 @@ class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgeme
     """Adapts Kafka messages from the livedata responses topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[CommandAcknowledgement]:
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ns(message.timestamp()[1])
         ack = CommandAcknowledgement.model_validate_json(message.value())
         return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 

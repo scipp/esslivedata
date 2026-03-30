@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
+from ess.livedata.core.timestamp import Timestamp
 
 
 class Workflow(Protocol):
@@ -18,7 +19,7 @@ class Workflow(Protocol):
     """
 
     def accumulate(
-        self, data: dict[str, Any], *, start_time: int, end_time: int
+        self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
     ) -> None: ...
     def finalize(self) -> dict[str, Any]: ...
     def clear(self) -> None: ...

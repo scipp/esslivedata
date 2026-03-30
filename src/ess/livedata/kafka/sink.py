@@ -50,7 +50,7 @@ def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
         # the time of the first event since the last result was produced.
         da00 = dataarray_da00.serialise_da00(
             source_name=msg.stream.name,
-            timestamp_ns=msg.timestamp,
+            timestamp_ns=msg.timestamp.to_ns(),
             data=scipp_to_da00(msg.value),
         )
     except (ValueError, TypeError) as e:

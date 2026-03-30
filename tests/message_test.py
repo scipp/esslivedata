@@ -4,18 +4,19 @@
 import time
 
 from ess.livedata import Message, StreamId, StreamKind, compact_messages
+from ess.livedata.core.timestamp import Timestamp
 
 
 class TestMessage:
     def test_auto_generates_timestamp_when_not_provided(self) -> None:
-        before = time.time_ns()
+        before = Timestamp.from_ns(time.time_ns())
         msg = Message(stream=StreamId(kind=StreamKind.LOG, name="test"), value="data")
-        after = time.time_ns()
+        after = Timestamp.from_ns(time.time_ns())
 
         assert before <= msg.timestamp <= after
 
     def test_preserves_explicitly_provided_timestamp(self) -> None:
-        explicit_timestamp = 12345
+        explicit_timestamp = Timestamp.from_ns(12345)
         msg = Message(
             timestamp=explicit_timestamp,
             stream=StreamId(kind=StreamKind.LOG, name="test"),
@@ -38,10 +39,10 @@ class TestMessage:
 
 
 def test_comparison_compares_timestamps() -> None:
-    msg1 = Message(timestamp=1, stream="key1", value="value1")
-    msg2 = Message(timestamp=2, stream="key1", value="value2")
-    msg3 = Message(timestamp=3, stream="key0", value="value3")
-    msg4 = Message(timestamp=3, stream="key1", value="value3")
+    msg1 = Message(timestamp=Timestamp.from_ns(1), stream="key1", value="value1")
+    msg2 = Message(timestamp=Timestamp.from_ns(2), stream="key1", value="value2")
+    msg3 = Message(timestamp=Timestamp.from_ns(3), stream="key0", value="value3")
+    msg4 = Message(timestamp=Timestamp.from_ns(3), stream="key1", value="value3")
     assert msg1 < msg2
     assert msg2 < msg3
     assert msg1 < msg3
@@ -50,10 +51,10 @@ def test_comparison_compares_timestamps() -> None:
 
 
 def test_compact_messages_drops_all_but_latest_for_each_key() -> None:
-    msg1 = Message(timestamp=1, stream="key1", value="value1")
-    msg2 = Message(timestamp=2, stream="key1", value="value2")
-    msg3 = Message(timestamp=1, stream="key0", value="value3")
-    msg4 = Message(timestamp=3, stream="key1", value="value3")
+    msg1 = Message(timestamp=Timestamp.from_ns(1), stream="key1", value="value1")
+    msg2 = Message(timestamp=Timestamp.from_ns(2), stream="key1", value="value2")
+    msg3 = Message(timestamp=Timestamp.from_ns(1), stream="key0", value="value3")
+    msg4 = Message(timestamp=Timestamp.from_ns(3), stream="key1", value="value3")
     assert compact_messages([msg1, msg2, msg3, msg4]) == sorted([msg3, msg4])
     assert compact_messages([msg1, msg2, msg3]) == sorted([msg2, msg3])
     assert compact_messages([msg1, msg2]) == [msg2]

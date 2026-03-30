@@ -9,15 +9,17 @@ time axes in local time rather than UTC.
 
 from datetime import UTC, datetime
 
+from ess.livedata.core.timestamp import Duration, Timestamp
 
-def get_local_timezone_offset_ns() -> int:
+
+def get_local_timezone_offset_ns() -> Duration:
     """
     Get the current local timezone offset from UTC in nanoseconds.
 
     Returns
     -------
     :
-        Timezone offset in nanoseconds. Positive values mean local time
+        Timezone offset as a Duration. Positive values mean local time
         is ahead of UTC (e.g., +1h for CET), negative values mean local
         time is behind UTC (e.g., -5h for EST).
 
@@ -31,23 +33,23 @@ def get_local_timezone_offset_ns() -> int:
     now_local = now_utc.astimezone()
     offset = now_local.utcoffset()
     if offset is None:
-        return 0
-    return int(offset.total_seconds() * 1_000_000_000)
+        return Duration.from_ns(0)
+    return Duration.from_seconds(offset.total_seconds())
 
 
-def format_time_ns_local(ns: int) -> str:
+def format_time_ns_local(ns: Timestamp) -> str:
     """
-    Format nanoseconds since epoch as HH:MM:SS.s in local time.
+    Format a timestamp as HH:MM:SS.s in local time.
 
     Parameters
     ----------
     ns:
-        Nanoseconds since Unix epoch (UTC).
+        Timestamp to format.
 
     Returns
     -------
     :
         Formatted time string with 0.1s precision, e.g., "14:32:05.3".
     """
-    dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
+    dt = ns.to_datetime().astimezone()
     return f"{dt.strftime('%H:%M:%S')}.{dt.microsecond // 100000}"

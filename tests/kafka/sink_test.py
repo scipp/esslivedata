@@ -5,6 +5,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import (
     ChainedAdapter,
     Da00ToScippAdapter,
@@ -28,7 +29,9 @@ class TestDa00Serializer:
         stream_id = StreamId(kind=StreamKind.LIVEDATA_DATA, name='test_detector')
         payload_timestamp = 1234567890
         original_msg = Message(
-            timestamp=payload_timestamp, stream=stream_id, value=original_data
+            timestamp=Timestamp.from_ns(payload_timestamp),
+            stream=stream_id,
+            value=original_data,
         )
 
         # Serialize to da00
@@ -52,7 +55,9 @@ class TestDa00Serializer:
 
         # Verify the roundtrip preserved the data and payload timestamp
         assert sc.identical(result_msg.value, original_data)
-        assert result_msg.timestamp == payload_timestamp  # Should use da00 timestamp_ns
+        assert result_msg.timestamp == Timestamp.from_ns(
+            payload_timestamp
+        )  # Should use da00 timestamp_ns
         assert result_msg.stream.name == 'test_detector'  # From da00 source_name
 
     def test_serialize_dataarray_to_da00_with_multidimensional_data(self) -> None:
@@ -67,7 +72,9 @@ class TestDa00Serializer:
         stream_id = StreamId(kind=StreamKind.MONITOR_COUNTS, name='monitor_1')
         payload_timestamp = 9876543210
         original_msg = Message(
-            timestamp=payload_timestamp, stream=stream_id, value=original_data
+            timestamp=Timestamp.from_ns(payload_timestamp),
+            stream=stream_id,
+            value=original_data,
         )
 
         # Serialize and deserialize
@@ -89,7 +96,9 @@ class TestDa00Serializer:
 
         # Verify roundtrip uses payload timestamp, not Kafka timestamp
         assert sc.identical(result_msg.value, original_data)
-        assert result_msg.timestamp == payload_timestamp  # From da00 payload
+        assert result_msg.timestamp == Timestamp.from_ns(
+            payload_timestamp
+        )  # From da00 payload
         assert result_msg.stream.name == 'monitor_1'
 
 
@@ -106,7 +115,7 @@ class TestF144Serializer:
         stream_id = StreamId(kind=StreamKind.LOG, name='test_log')
         payload_timestamp = 9876543210  # Different from time coord
         original_msg = Message(
-            timestamp=payload_timestamp,  # This should NOT be used
+            timestamp=Timestamp.from_ns(payload_timestamp),  # This should NOT be used
             stream=stream_id,
             value=original_data,
         )
@@ -128,8 +137,8 @@ class TestF144Serializer:
 
         # Verify the roundtrip preserved the value and used time coordinate as timestamp
         assert result_msg.value.value == 42.5  # Value preserved
-        assert (
-            result_msg.timestamp == time_ns
+        assert result_msg.timestamp == Timestamp.from_ns(
+            time_ns
         )  # Uses time coord, not payload or Kafka timestamp
         assert result_msg.stream.name == 'test_log'  # From f144 source_name
 
@@ -142,7 +151,7 @@ class TestF144Serializer:
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='array_log')
         original_msg = Message(
-            timestamp=1111111111,  # Should be ignored
+            timestamp=Timestamp.from_ns(1111111111),  # Should be ignored
             stream=stream_id,
             value=original_data,
         )
@@ -160,7 +169,7 @@ class TestF144Serializer:
 
         # Verify array values are preserved and timestamp comes from time coordinate
         np.testing.assert_array_equal(result_msg.value.value, [1.0, 2.0, 3.0])
-        assert result_msg.timestamp == time_ns
+        assert result_msg.timestamp == Timestamp.from_ns(time_ns)
         assert result_msg.stream.name == 'array_log'
 
     def test_serialize_dataarray_to_f144_different_time_units(self) -> None:
@@ -171,7 +180,9 @@ class TestF144Serializer:
             coords={'time': sc.array(dims=[], values=time_us, unit='us')},
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='time_unit_log')
-        original_msg = Message(timestamp=0, stream=stream_id, value=original_data)
+        original_msg = Message(
+            timestamp=Timestamp.from_ns(0), stream=stream_id, value=original_data
+        )
 
         # Serialize and deserialize
         serialized_bytes = serialize_dataarray_to_f144(original_msg)
@@ -185,7 +196,7 @@ class TestF144Serializer:
         # Time should be converted to nanoseconds
         expected_time_ns = time_us * 1000  # us to ns conversion
         assert result_msg.value.value == 7.5
-        assert result_msg.timestamp == expected_time_ns
+        assert result_msg.timestamp == Timestamp.from_ns(expected_time_ns)
 
     def test_serialize_dataarray_to_f144_missing_time_coordinate_raises_error(
         self,
@@ -197,7 +208,9 @@ class TestF144Serializer:
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='no_time_log')
         original_msg = Message(
-            timestamp=1234567890, stream=stream_id, value=original_data
+            timestamp=Timestamp.from_ns(1234567890),
+            stream=stream_id,
+            value=original_data,
         )
 
         # Should raise an error when trying to serialize without time coordinate

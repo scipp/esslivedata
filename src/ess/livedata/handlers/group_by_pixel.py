@@ -10,6 +10,7 @@ from ess.reduce.nexus import group_event_data
 import ess.livedata.handlers._patch_group_event_data  # noqa: F401
 
 from ..core.handler import Accumulator
+from ..core.timestamp import Timestamp
 from .to_nxevent_data import Events, ToNXevent_data
 
 
@@ -37,7 +38,7 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
         # multi-dimensional shape using EmptyDetector's detector_number.
         self._detector_number = detector_number.flatten(to='detector_number')
 
-    def add(self, timestamp: int, data: Events) -> None:
+    def add(self, timestamp: Timestamp, data: Events) -> None:
         self._inner.add(timestamp, data)
 
     def get(self) -> sc.DataArray:

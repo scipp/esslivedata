@@ -9,6 +9,7 @@ import time
 import structlog
 
 from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -133,9 +134,7 @@ class ServiceRegistry:
         if worker_key not in self._worker_statuses:
             return None
         status = self._worker_statuses[worker_key]
-        current_time_ns = time.time_ns()
-        uptime_ns = current_time_ns - status.started_at
-        return uptime_ns / 1_000_000_000
+        return (Timestamp.now() - status.started_at).to_seconds()
 
     def get_last_seen_seconds_ago(self, worker_key: str) -> float | None:
         """Get how long ago the worker was last seen (in seconds).

@@ -16,6 +16,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.job import Job, JobId, JobReply, JobResult, JobState
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
 from ess.livedata.core.message import StreamId
+from ess.livedata.core.timestamp import Timestamp
 
 from .job_test import FakeProcessor
 
@@ -85,7 +86,9 @@ def scheduled_workflow_config():
             name="scheduled_workflow",
             version=1,
         ),
-        schedule=JobSchedule(start_time=50, end_time=250),
+        schedule=JobSchedule(
+            start_time=Timestamp.from_ns(50), end_time=Timestamp.from_ns(250)
+        ),
     )
 
 
@@ -99,7 +102,7 @@ def delayed_start_config():
             name="delayed_workflow",
             version=1,
         ),
-        schedule=JobSchedule(start_time=200),
+        schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
     )
 
 
@@ -146,8 +149,8 @@ class TestJobManager:
 
         # Push data that should activate the job (since start_time=-1)
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         statuses = manager.push_data(data)
@@ -166,8 +169,8 @@ class TestJobManager:
         _ = manager.schedule_job("source2", base_workflow_config)
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={
                 StreamId(name="source1"): sc.scalar(42.0),
                 StreamId(name="source2"): sc.scalar(24.0),
@@ -189,8 +192,8 @@ class TestJobManager:
         fake_job_factory.processors[job_id].should_fail_accumulate = True
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         statuses = manager.push_data(data)
@@ -210,7 +213,7 @@ class TestJobManager:
                 name="early_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=50),
+            schedule=JobSchedule(start_time=Timestamp.from_ns(50)),
         )
         config2 = WorkflowConfig(
             identifier=WorkflowId(
@@ -219,7 +222,7 @@ class TestJobManager:
                 name="late_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=150),
+            schedule=JobSchedule(start_time=Timestamp.from_ns(150)),
         )
 
         _ = manager.schedule_job("source1", config1)
@@ -228,8 +231,8 @@ class TestJobManager:
 
         # Push early data - should only activate job1
         early_data = WorkflowData(
-            start_time=100,
-            end_time=120,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(120),
             data={StreamId(name="source1"): sc.scalar(42.0)},
         )
         statuses = manager.push_data(early_data)
@@ -238,8 +241,8 @@ class TestJobManager:
 
         # Push later data - should activate job2
         later_data = WorkflowData(
-            start_time=160,
-            end_time=180,
+            start_time=Timestamp.from_ns(160),
+            end_time=Timestamp.from_ns(180),
             data={StreamId(name="source2"): sc.scalar(42.0)},
         )
         statuses = manager.push_data(later_data)
@@ -254,8 +257,8 @@ class TestJobManager:
         _ = manager.schedule_job("source1", base_workflow_config)
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="source1"): sc.scalar(42.0)},
         )
         statuses = manager.push_data(data)
@@ -264,8 +267,8 @@ class TestJobManager:
         assert len(manager.active_jobs) == 2
         assert len(statuses) == 2
         for job in manager.active_jobs:
-            assert job.start_time == 100  # Data start time
-            assert job.end_time == 200  # Data end time
+            assert job.start_time == Timestamp.from_ns(100)  # Data start time
+            assert job.end_time == Timestamp.from_ns(200)  # Data end time
 
     def test_stop_job_scheduled_removes_from_system(
         self, fake_job_factory, delayed_start_config
@@ -281,8 +284,8 @@ class TestJobManager:
 
         # After stopping, even when data reaches start time, job should not activate
         data = WorkflowData(
-            start_time=250,
-            end_time=300,
+            start_time=Timestamp.from_ns(250),
+            end_time=Timestamp.from_ns(300),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -298,8 +301,8 @@ class TestJobManager:
 
         # Activate the job
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -324,15 +327,15 @@ class TestJobManager:
 
         # Activate and feed data to the job
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
 
         # Verify job has data
-        assert manager.active_jobs[0].start_time == 100
-        assert manager.active_jobs[0].end_time == 200
+        assert manager.active_jobs[0].start_time == Timestamp.from_ns(100)
+        assert manager.active_jobs[0].end_time == Timestamp.from_ns(200)
 
         manager.reset_job(job_id)
 
@@ -368,8 +371,8 @@ class TestJobManager:
 
         # Activate jobs
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={
                 StreamId(name="source1"): sc.scalar(42.0),
                 StreamId(name="source2"): sc.scalar(24.0),
@@ -392,8 +395,8 @@ class TestJobManager:
 
         # Activate job
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -419,7 +422,9 @@ class TestJobManager:
                 name="workflow2",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=150, end_time=350),
+            schedule=JobSchedule(
+                start_time=Timestamp.from_ns(150), end_time=Timestamp.from_ns(350)
+            ),
         )
 
         # Schedule two jobs with different start times
@@ -431,8 +436,8 @@ class TestJobManager:
 
         # Push early data - should activate job1 only (start_time=50)
         early_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="source1"): sc.scalar(10.0)},
         )
         manager.push_data(early_data)
@@ -440,8 +445,8 @@ class TestJobManager:
 
         # Push later data - should activate job2 (start_time=150)
         later_data = WorkflowData(
-            start_time=200,
-            end_time=250,
+            start_time=Timestamp.from_ns(200),
+            end_time=Timestamp.from_ns(250),
             data={
                 StreamId(name="source1"): sc.scalar(20.0),
                 StreamId(name="source2"): sc.scalar(15.0),
@@ -452,8 +457,8 @@ class TestJobManager:
 
         # Push data that should finish job1 (end_time=250)
         finishing_data = WorkflowData(
-            start_time=251,
-            end_time=300,
+            start_time=Timestamp.from_ns(251),
+            end_time=Timestamp.from_ns(300),
             data={
                 StreamId(name="source1"): sc.scalar(30.0),
                 StreamId(name="source2"): sc.scalar(25.0),
@@ -474,13 +479,13 @@ class TestJobManager:
 
         # Push multiple data batches
         data1 = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(10.0)},
         )
         data2 = WorkflowData(
-            start_time=151,
-            end_time=200,
+            start_time=Timestamp.from_ns(151),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(20.0)},
         )
 
@@ -513,15 +518,15 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=175),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         # Activate job with initial data
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(10.0)},
         )
         manager.push_data(initial_data)
@@ -529,8 +534,8 @@ class TestJobManager:
 
         # Push data with start_time that goes beyond the job's scheduled end_time
         finishing_data = WorkflowData(
-            start_time=180,  # Beyond job's scheduled end_time of 175
-            end_time=200,
+            start_time=Timestamp.from_ns(180),  # Beyond job's scheduled end_time of 175
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(20.0)},
         )
         manager.push_data(finishing_data)
@@ -550,7 +555,7 @@ class TestJobManager:
                 name="workflow1",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=150),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(150)),
         )
         config2 = WorkflowConfig(
             identifier=WorkflowId(
@@ -559,7 +564,7 @@ class TestJobManager:
                 name="workflow2",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=200),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
         )
         config3 = WorkflowConfig(
             identifier=WorkflowId(
@@ -568,7 +573,7 @@ class TestJobManager:
                 name="workflow3",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=300),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
         )
 
         # Schedule three jobs with different end times
@@ -578,8 +583,8 @@ class TestJobManager:
 
         # Activate all jobs
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=120,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(120),
             data={
                 StreamId(name="source1"): sc.scalar(10.0),
                 StreamId(name="source2"): sc.scalar(20.0),
@@ -591,8 +596,8 @@ class TestJobManager:
 
         # Push data with start_time=175, should finish job1 (end_time=150), not others
         intermediate_data = WorkflowData(
-            start_time=175,
-            end_time=180,
+            start_time=Timestamp.from_ns(175),
+            end_time=Timestamp.from_ns(180),
             data={
                 StreamId(name="source2"): sc.scalar(5.0),
                 StreamId(name="source3"): sc.scalar(5.0),
@@ -607,8 +612,8 @@ class TestJobManager:
 
         # Push data with start_time=250, should finish job2 (end_time=200) but not job3
         later_data = WorkflowData(
-            start_time=250,
-            end_time=260,
+            start_time=Timestamp.from_ns(250),
+            end_time=Timestamp.from_ns(260),
             data={StreamId(name="source3"): sc.scalar(15.0)},
         )
         manager.push_data(later_data)
@@ -628,15 +633,15 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=200),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         # Activate job
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(10.0)},
         )
         manager.push_data(initial_data)
@@ -644,8 +649,8 @@ class TestJobManager:
 
         # Push data with start_time exactly matching job's scheduled start_time
         exact_data = WorkflowData(
-            start_time=200,  # Exactly matches job's end_time
-            end_time=250,
+            start_time=Timestamp.from_ns(200),  # Exactly matches job's end_time
+            end_time=Timestamp.from_ns(250),
             data={StreamId(name="test_source"): sc.scalar(20.0)},
         )
         manager.push_data(exact_data)
@@ -665,15 +670,15 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=300),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         # Activate job
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(10.0)},
         )
         manager.push_data(initial_data)
@@ -681,8 +686,8 @@ class TestJobManager:
 
         # Push data with start_time < job's scheduled end_time
         early_data = WorkflowData(
-            start_time=200,  # Before job's scheduled end_time of 300
-            end_time=250,
+            start_time=Timestamp.from_ns(200),  # Before job's scheduled end_time of 300
+            end_time=Timestamp.from_ns(250),
             data={StreamId(name="test_source"): sc.scalar(20.0)},
         )
         manager.push_data(early_data)
@@ -705,7 +710,7 @@ class TestJobManager:
                 name="workflow1",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=160),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(160)),
         )
         config2 = WorkflowConfig(
             identifier=WorkflowId(
@@ -714,7 +719,7 @@ class TestJobManager:
                 name="workflow2",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=250),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(250)),
         )
         config3 = WorkflowConfig(
             identifier=WorkflowId(
@@ -733,8 +738,8 @@ class TestJobManager:
 
         # Activate all jobs
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={
                 StreamId(name="source1"): sc.scalar(10.0),
                 StreamId(name="source2"): sc.scalar(20.0),
@@ -749,8 +754,10 @@ class TestJobManager:
 
         # Push data that would finish job1 due to schedule end_time, keep job3 active
         finishing_data = WorkflowData(
-            start_time=170,  # Beyond job1's scheduled end_time of 160
-            end_time=180,
+            start_time=Timestamp.from_ns(
+                170
+            ),  # Beyond job1's scheduled end_time of 160
+            end_time=Timestamp.from_ns(180),
             data={
                 StreamId(name="source1"): sc.scalar(5.0),
                 StreamId(name="source3"): sc.scalar(15.0),
@@ -784,8 +791,8 @@ class TestJobManager:
         # Activate job and push lots of data
         for i in range(5):
             data = WorkflowData(
-                start_time=100 + i * 100,
-                end_time=150 + i * 100,
+                start_time=Timestamp.from_ns(100 + i * 100),
+                end_time=Timestamp.from_ns(150 + i * 100),
                 data={StreamId(name="test_source"): sc.scalar(10.0 * i)},
             )
             manager.push_data(data)
@@ -806,14 +813,14 @@ class TestJobManager:
             identifier=WorkflowId(
                 instrument="test", namespace="data_reduction", name="future", version=1
             ),
-            schedule=JobSchedule(start_time=200),
+            schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
         )
         # Test past start (should activate immediately when data arrives)
         config_past = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test", namespace="data_reduction", name="past", version=1
             ),
-            schedule=JobSchedule(start_time=50),
+            schedule=JobSchedule(start_time=Timestamp.from_ns(50)),
         )
 
         _ = manager.schedule_job("source1", base_workflow_config)
@@ -822,8 +829,8 @@ class TestJobManager:
 
         # Push data at time 100
         data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={
                 StreamId(name="source1"): sc.scalar(10.0),
                 StreamId(name="source2"): sc.scalar(20.0),
@@ -837,8 +844,8 @@ class TestJobManager:
 
         # Push later data that should activate future job
         later_data = WorkflowData(
-            start_time=250,
-            end_time=300,
+            start_time=Timestamp.from_ns(250),
+            end_time=Timestamp.from_ns(300),
             data={StreamId(name="source2"): sc.scalar(40.0)},
         )
         manager.push_data(later_data)
@@ -860,7 +867,7 @@ class TestJobManager:
                 name="valid_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=100),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(100)),
         )
         job_id = manager.schedule_job("test_source", config_valid)
         assert job_id.source_name == "test_source"
@@ -875,14 +882,14 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=50),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(50)),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         data = WorkflowData(
-            start_time=30,  # Before job's end_time
-            end_time=100,  # Beyond job's end_time of 50 - so job should finish
+            start_time=Timestamp.from_ns(30),  # Before job's end_time
+            end_time=Timestamp.from_ns(100),  # Beyond job's end_time of 50
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -906,15 +913,17 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=100, end_time=200),
+            schedule=JobSchedule(
+                start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
+            ),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         # Push data with start_time exactly matching job's scheduled start_time
         data = WorkflowData(
-            start_time=100,  # Exactly matches job's start_time
-            end_time=150,
+            start_time=Timestamp.from_ns(100),  # Exactly matches job's start_time
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -932,15 +941,15 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(end_time=200),
+            schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
         )
 
         _ = manager.schedule_job("test_source", config)
 
         # Activate job
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(10.0)},
         )
         manager.push_data(initial_data)
@@ -948,8 +957,8 @@ class TestJobManager:
 
         # Push data with end_time exactly matching job's scheduled end_time
         final_data = WorkflowData(
-            start_time=180,
-            end_time=200,  # Exactly matches job's end_time
+            start_time=Timestamp.from_ns(180),
+            end_time=Timestamp.from_ns(200),  # Exactly matches job's end_time
             data={StreamId(name="test_source"): sc.scalar(20.0)},
         )
         manager.push_data(final_data)
@@ -959,8 +968,8 @@ class TestJobManager:
 
         # But the next data batch should finish it
         beyond_data = WorkflowData(
-            start_time=201,  # Beyond job's end_time
-            end_time=250,
+            start_time=Timestamp.from_ns(201),  # Beyond job's end_time
+            end_time=Timestamp.from_ns(250),
             data={StreamId(name="test_source"): sc.scalar(5.0)},
         )
         manager.push_data(beyond_data)
@@ -979,7 +988,9 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=100, end_time=200),
+            schedule=JobSchedule(
+                start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
+            ),
         )
 
         # Schedule multiple jobs with same timing
@@ -989,8 +1000,8 @@ class TestJobManager:
 
         # All should activate together
         data = WorkflowData(
-            start_time=150,
-            end_time=170,
+            start_time=Timestamp.from_ns(150),
+            end_time=Timestamp.from_ns(170),
             data={
                 StreamId(name="source1"): sc.scalar(10.0),
                 StreamId(name="source2"): sc.scalar(20.0),
@@ -1002,8 +1013,8 @@ class TestJobManager:
 
         # All should finish together
         finishing_data = WorkflowData(
-            start_time=250,  # Beyond all jobs' end_time
-            end_time=270,
+            start_time=Timestamp.from_ns(250),  # Beyond all jobs' end_time
+            end_time=Timestamp.from_ns(270),
             data={StreamId(name="source1"): sc.scalar(5.0)},
         )
         manager.push_data(finishing_data)
@@ -1024,14 +1035,16 @@ class TestJobManager:
                 name="test_workflow",
                 version=1,
             ),
-            schedule=JobSchedule(start_time=-100, end_time=200),
+            schedule=JobSchedule(
+                start_time=Timestamp.from_ns(-100), end_time=Timestamp.from_ns(200)
+            ),
         )
         _ = manager.schedule_job("test_source", config)
 
         # Data with positive time should activate job (since -100 < any positive time)
         data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1052,8 +1065,8 @@ class TestJobManager:
 
         # Activate the job
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1065,16 +1078,16 @@ class TestJobManager:
 
         # Push new data - should be handled gracefully, not crash
         new_data = WorkflowData(
-            start_time=201,
-            end_time=250,
+            start_time=Timestamp.from_ns(201),
+            end_time=Timestamp.from_ns(250),
             data={StreamId(name="test_source"): sc.scalar(84.0)},
         )
         manager.push_data(new_data)
 
         # Job should still be active (time window doesn't update on error)
         assert len(manager.active_jobs) == 1
-        assert manager.active_jobs[0].start_time == 100
-        assert manager.active_jobs[0].end_time == 200  # Not updated due to error
+        assert manager.active_jobs[0].start_time == Timestamp.from_ns(100)
+        assert manager.active_jobs[0].end_time == Timestamp.from_ns(200)
 
         results = manager.compute_results()
         assert len(results) == 1
@@ -1096,8 +1109,8 @@ class TestJobManager:
 
         # Activate the job
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1114,8 +1127,8 @@ class TestJobManager:
 
         # Push more data so job gets included in next compute_results
         more_data = WorkflowData(
-            start_time=201,
-            end_time=250,
+            start_time=Timestamp.from_ns(201),
+            end_time=Timestamp.from_ns(250),
             data={StreamId(name="test_source"): sc.scalar(24.0)},
         )
         manager.push_data(more_data)
@@ -1141,8 +1154,8 @@ class TestJobManager:
 
         # Activate job and push data
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1176,8 +1189,8 @@ class TestJobManager:
 
         # Activate job and push data
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1213,8 +1226,8 @@ class TestJobManager:
 
         # Push more data to trigger recomputation
         more_data = WorkflowData(
-            start_time=201,
-            end_time=300,
+            start_time=Timestamp.from_ns(201),
+            end_time=Timestamp.from_ns(300),
             data={StreamId(name="test_source"): sc.scalar(24.0)},
         )
         manager.push_data(more_data)
@@ -1246,8 +1259,8 @@ class TestJobManager:
 
         # Activate job and push data
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1280,8 +1293,8 @@ class TestJobManager:
 
         # Activate both jobs with initial data
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={
                 StreamId(name="source1"): sc.scalar(10.0),
                 StreamId(name="source2"): sc.scalar(20.0),
@@ -1297,8 +1310,8 @@ class TestJobManager:
 
         # Push data for only one job
         new_data = WorkflowData(
-            start_time=151,
-            end_time=200,
+            start_time=Timestamp.from_ns(151),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="source1"): sc.scalar(15.0)},
         )
         manager.push_data(new_data)
@@ -1324,8 +1337,8 @@ class TestJobManager:
 
         # Activate job with initial primary data
         initial_data = WorkflowData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(initial_data)
@@ -1338,8 +1351,8 @@ class TestJobManager:
 
         # Push only auxiliary data
         aux_data = WorkflowData(
-            start_time=151,
-            end_time=200,
+            start_time=Timestamp.from_ns(151),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="aux_source"): sc.scalar(99.0)},
         )
         manager.push_data(aux_data)
@@ -1364,8 +1377,8 @@ class TestPushFailureCascade:
         processor.should_fail_accumulate = True
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1396,8 +1409,8 @@ class TestPushFailureCascade:
         processor.should_fail_accumulate = True
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1406,8 +1419,8 @@ class TestPushFailureCascade:
         # Fix the processor and push again
         processor.should_fail_accumulate = False
         data2 = WorkflowData(
-            start_time=200,
-            end_time=300,
+            start_time=Timestamp.from_ns(200),
+            end_time=Timestamp.from_ns(300),
             data={StreamId(name="test_source"): sc.scalar(43.0)},
         )
         manager.push_data(data2)
@@ -1432,8 +1445,8 @@ class TestPushFailureCascade:
         processor = fake_job_factory.processors[job_id]
 
         data = WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name="test_source"): sc.scalar(42.0)},
         )
         manager.push_data(data)
@@ -1812,8 +1825,8 @@ class TestJobManagerThreading:
 
     def _make_data(self, source_names: list[str]) -> WorkflowData:
         return WorkflowData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data={StreamId(name=name): sc.scalar(1.0) for name in source_names},
         )
 
@@ -1885,8 +1898,8 @@ class TestJobManagerThreading:
                 manager.schedule_job(source, config)
 
             data = WorkflowData(
-                start_time=100,
-                end_time=200,
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
                 data={
                     StreamId(name=name): sc.scalar(float(i))
                     for i, name in enumerate(sources)
