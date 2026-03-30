@@ -5,27 +5,29 @@
 #
 #    requirements upgrade
 #
+--index-url https://pypi.org/simple
+
 cfgv==3.5.0
     # via pre-commit
 distlib==0.4.0
     # via virtualenv
-filelock==3.25.0
+filelock==3.25.2
     # via
     #   python-discovery
     #   virtualenv
-identify==2.6.17
+identify==2.6.18
     # via pre-commit
 nodeenv==1.10.0
     # via pre-commit
-platformdirs==4.9.2
+platformdirs==4.9.4
     # via
     #   python-discovery
     #   virtualenv
 pre-commit==4.5.1
     # via -r static.in
-python-discovery==1.1.0
+python-discovery==1.2.0
     # via virtualenv
 pyyaml==6.0.3
     # via pre-commit
-virtualenv==21.1.0
+virtualenv==21.2.0
     # via pre-commit
