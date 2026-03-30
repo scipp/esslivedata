@@ -30,6 +30,7 @@ class Accumulator(Protocol, Generic[T, U]):
     clearing it. This property is used by ``MessagePreprocessor.get_context()``
     to safely read current values for seeding newly activated jobs.
     """
+
     is_context: ClassVar[bool] = False
 
     def add(self, timestamp: int, data: T) -> bool:
