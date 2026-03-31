@@ -138,11 +138,15 @@ def _extract_reference_time(
 
     Mirrors the ev44 convention of using ``reference_time[-1]`` as the message
     timestamp, providing data-derived timestamps for consistent batching.
+
+    Only int64 and uint64 arrays are accepted. Smaller integer types (e.g.,
+    int32) cannot represent nanosecond-epoch timestamps without overflow and
+    are silently ignored, falling back to the top-level ``timestamp_ns``.
     """
     for var in variables:
         if var.name == 'reference_time':
             data = np.asarray(var.data)
-            if data.size > 0:
+            if data.size > 0 and data.dtype in (np.int64, np.uint64):
                 return int(data[-1])
     return None
 
