@@ -80,3 +80,49 @@ def test_updates_are_published_immediately(
     assert len(sink.messages) == 2
     # Expect only the new data point (delta), not cumulative
     assert sink.messages[-1].value.values.sum() == 0.5
+
+
+def test_duplicate_f144_messages_do_not_trigger_workflow() -> None:
+    """Re-sent f144 values with identical timestamps do not trigger workflow execution.
+
+    Upstream systems may re-send f144 values periodically (e.g., every 10s) even when
+    the value has not changed. These duplicates should be dropped at the accumulator
+    level and must not propagate through the pipeline as unnecessary workflow
+    executions.
+    """
+    instrument = 'dummy'
+    app = make_timeseries_app(instrument)
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry(instrument)
+
+    source_name = first_motion_source_name[instrument]
+    config_key = ConfigKey(
+        source_name=source_name, service_name="timeseries", key="workflow_config"
+    )
+    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    service.step()
+
+    # First message — accepted, workflow produces a result
+    app.publish_log_message(source_name=source_name, time=1, value=1.5)
+    service.step()
+    assert len(sink.messages) == 1
+
+    # Re-send same (time, value) — should be silently dropped, no new result
+    app.publish_log_message(source_name=source_name, time=1, value=1.5)
+    service.step()
+    assert len(sink.messages) == 1  # unchanged
+
+    # Multiple re-sends in one batch — still no new result
+    app.publish_log_message(source_name=source_name, time=1, value=1.5)
+    app.publish_log_message(source_name=source_name, time=1, value=1.5)
+    app.publish_log_message(source_name=source_name, time=1, value=1.5)
+    service.step()
+    assert len(sink.messages) == 1  # unchanged
+
+    # New timestamp — accepted, workflow produces a result
+    app.publish_log_message(source_name=source_name, time=2, value=3.0)
+    service.step()
+    assert len(sink.messages) == 2
+    assert sink.messages[-1].value.values.sum() == 3.0

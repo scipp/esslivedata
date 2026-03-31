@@ -33,7 +33,15 @@ class Accumulator(Protocol, Generic[T, U]):
 
     is_context: ClassVar[bool] = False
 
-    def add(self, timestamp: int, data: T) -> None: ...
+    def add(self, timestamp: int, data: T) -> bool:
+        """Add data to the accumulator.
+
+        Returns
+        -------
+        :
+            True if the data was accepted, False if it was skipped (e.g., duplicate).
+        """
+        ...
 
     def get(self) -> U: ...
 
