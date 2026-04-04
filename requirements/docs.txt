@@ -6,13 +6,15 @@
 #    requirements upgrade
 #
 -r base.txt
+--index-url https://pypi.org/simple
+
 accessible-pygments==0.0.5
     # via pydata-sphinx-theme
 alabaster==1.0.0
     # via sphinx
 asttokens==3.0.1
     # via stack-data
-attrs==25.4.0
+attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
@@ -26,7 +28,7 @@ beautifulsoup4==4.14.3
     # via
     #   nbconvert
     #   pydata-sphinx-theme
-bleach[css]==6.3.0
+bleach==6.3.0
     # via nbconvert
 comm==0.2.3
     # via
@@ -48,7 +50,7 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.21.2
     # via nbformat
-imagesize==1.4.1
+imagesize==2.0.0
     # via sphinx
 ipydatawidgets==4.3.5
     # via pythreejs
@@ -198,7 +200,7 @@ sphinxcontrib-htmlhelp==2.1.0
     # via sphinx
 sphinxcontrib-jsmath==1.0.1
     # via sphinx
-sphinxcontrib-mermaid==2.0.0
+sphinxcontrib-mermaid==2.0.1
     # via -r docs.in
 sphinxcontrib-qthelp==2.0.0
     # via sphinx
@@ -208,7 +210,7 @@ stack-data==0.6.3
     # via ipython
 tinycss2==1.4.0
     # via bleach
-tornado==6.5.4
+tornado==6.5.5
     # via
     #   ipykernel
     #   jupyter-client

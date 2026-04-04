@@ -6,6 +6,8 @@
 #    requirements upgrade
 #
 -r test.txt
+--index-url https://pypi.org/simple
+
 librt==0.8.1
     # via mypy
 mypy==1.19.1
