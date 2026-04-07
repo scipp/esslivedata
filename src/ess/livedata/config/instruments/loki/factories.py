@@ -46,11 +46,12 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
-        TransformValueStream,
     )
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
+
+    from .specs import LOKI_DYNAMIC_TRANSFORMS
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
@@ -102,14 +103,10 @@ def setup_factories(instrument: Instrument) -> None:
             for name, res in _bank_resolutions.items()
         },
         # Drive the rear bank's NeXus 'detector_carriage' transformation
-        # from the live f144 carriage readback. Other banks have no live
-        # value stream.
-        transform_value_streams={
-            'loki_detector_0': TransformValueStream(
-                transform_name='/entry/instrument/detector_carriage/value',
-                aux_stream='detector_carriage',
-            ),
-        },
+        # from the live f144 carriage readback. The mapping is shared with
+        # loki/specs.py so the spec routes the stream only to the consuming
+        # source.
+        dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams

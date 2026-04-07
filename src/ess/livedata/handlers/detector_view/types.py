@@ -284,6 +284,25 @@ TransformName = NewType('TransformName', str)
 """Name of the NeXus transformation entry driven by a live value stream."""
 
 
+@dataclass(frozen=True)
+class TransformValueStream:
+    """
+    Binds a NeXus transformation entry to the f144 stream that supplies its
+    live values at runtime.
+
+    Parameters
+    ----------
+    transform_name:
+        NeXus path of the transformation entry whose value is driven by the
+        live stream.
+    aux_stream:
+        Name of the auxiliary (f144) stream supplying the live values.
+    """
+
+    transform_name: str
+    aux_stream: str
+
+
 TransformValueLog = NewType('TransformValueLog', sc.DataArray)
 """NXlog-shaped DataArray (timeseries) of f144 values for a transform.
 

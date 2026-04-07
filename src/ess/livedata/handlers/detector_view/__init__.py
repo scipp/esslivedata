@@ -16,8 +16,13 @@ Supports two projection modes:
 """
 
 from .data_source import InstrumentDetectorSource, NeXusDetectorSource
-from .factory import DetectorViewFactory, TransformValueStream
-from .types import CoordinateMode, GeometricViewConfig, LogicalViewConfig
+from .factory import DetectorViewFactory
+from .types import (
+    CoordinateMode,
+    GeometricViewConfig,
+    LogicalViewConfig,
+    TransformValueStream,
+)
 
 __all__ = [
     'CoordinateMode',

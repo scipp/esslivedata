@@ -13,7 +13,10 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .detector_view.types import TransformValueStream
 
 import pydantic
 import scipp as sc
@@ -315,24 +318,43 @@ class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
     Subscribes to all supported ROI geometry streams (rectangle, polygon).
-    The render() method prefixes stream names with the job_id to create job-specific
-    ROI configuration streams, since each job instance needs its own ROIs.
+    The render() method prefixes ROI stream names with the job_id to create
+    job-specific ROI configuration streams, since each job instance needs its
+    own ROIs.
+
+    Optionally also advertises one or more global f144 streams that drive
+    runtime-dynamic NeXus transformation values for specific source_names.
+    These streams are physical properties of the instrument (not job-
+    specific), so they are rendered un-prefixed and only routed to the jobs
+    whose source_name actually consumes them.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        dynamic_transforms: dict[str, TransformValueStream] | None = None,
+    ) -> None:
         super().__init__(
             {
                 'roi_rectangle': 'roi_rectangle',
                 'roi_polygon': 'roi_polygon',
             }
         )
+        self._dynamic_transforms = dynamic_transforms or {}
+        # Advertise each unique global aux stream so the dashboard schema
+        # and spec validation know it exists. Routing is per-source via
+        # render().
+        for binding in self._dynamic_transforms.values():
+            stream = binding.aux_stream
+            if stream not in self._inputs:
+                self._inputs[stream] = AuxInput(choices=(stream,), default=stream)
 
     def render(
         self,
         job_id: JobId,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render ROI stream names with job-specific prefix.
+        """Render ROI stream names with job-specific prefix, plus any
+        source-specific global aux streams.
 
         Parameters
         ----------
@@ -344,40 +366,18 @@ class DetectorROIAuxSources(AuxSources):
         Returns
         -------
         :
-            Mapping from ROI geometry keys to job-specific stream names.
-            Keys are 'roi_rectangle', 'roi_polygon', etc.
-            Values are in the format '{source_name}/{job_number}/roi_{shape}'
-            (e.g., 'mantle/abc-123/roi_rectangle').
+            Mapping from ROI geometry keys to job-specific stream names
+            (e.g., ``'{source_name}/{job_number}/roi_rectangle'``), plus
+            any global aux streams bound to this source's NeXus transforms,
+            rendered un-prefixed.
         """
-        return {
+        rendered: dict[str, str] = {
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
-
-
-class DetectorCarriageAuxSources(DetectorROIAuxSources):
-    """ROI streams plus a fixed-name f144 position stream.
-
-    The f144 stream is shared across all jobs (the carriage position is a
-    physical property of the instrument, not job-specific), so its name is
-    rendered without a job-specific prefix.
-    """
-
-    def __init__(self, *, position_stream: str) -> None:
-        super().__init__()
-        self._position_stream = position_stream
-        self._inputs[position_stream] = AuxInput(
-            choices=(position_stream,), default=position_stream
-        )
-
-    def render(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        rendered = super().render(job_id, selections)
-        # Position stream is global - not job-prefixed.
-        rendered[self._position_stream] = self._position_stream
+        binding = self._dynamic_transforms.get(job_id.source_name)
+        if binding is not None:
+            rendered[binding.aux_stream] = binding.aux_stream
         return rendered
 
 

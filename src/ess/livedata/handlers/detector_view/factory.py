@@ -9,8 +9,6 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
@@ -39,6 +37,7 @@ from .types import (
     ROISpectra,
     TransformName,
     TransformValueLog,
+    TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
@@ -47,25 +46,6 @@ from .workflow import (
     add_logical_projection,
     create_base_workflow,
 )
-
-
-@dataclass(frozen=True)
-class TransformValueStream:
-    """
-    Binds a NeXus transformation entry to the f144 stream that supplies its
-    live values at runtime.
-
-    Parameters
-    ----------
-    transform_name:
-        NeXus path of the transformation entry whose value is driven by the
-        live stream.
-    aux_stream:
-        Name of the auxiliary (f144) stream supplying the live values.
-    """
-
-    transform_name: str
-    aux_stream: str
 
 
 class DetectorViewFactory:
@@ -96,12 +76,12 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        transform_value_streams: dict[str, TransformValueStream] | None = None,
+        dynamic_transforms: dict[str, TransformValueStream] | None = None,
     ) -> None:
         """
         Parameters
         ----------
-        transform_value_streams:
+        dynamic_transforms:
             Optional mapping ``source_name -> TransformValueStream`` binding a
             NeXus transformation entry of the detector's chain to the f144
             stream that supplies its live values. ``aux_stream`` is the
@@ -112,7 +92,7 @@ class DetectorViewFactory:
         """
         self._data_source = data_source
         self._view_config = view_config
-        self._transform_value_streams = transform_value_streams or {}
+        self._dynamic_transforms = dynamic_transforms or {}
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -261,7 +241,7 @@ class DetectorViewFactory:
 
         # Wire dynamic detector geometry (f144 NXlog stream) if configured for
         # this source.
-        value_stream = self._transform_value_streams.get(source_name)
+        value_stream = self._dynamic_transforms.get(source_name)
         if value_stream is not None:
             workflow[TransformName] = TransformName(value_stream.transform_name)
             context_keys[value_stream.aux_stream] = TransformValueLog
