@@ -22,6 +22,7 @@ from ess.livedata.core.job import (
     StreamStat,
     StreamStats,
 )
+from ess.livedata.core.timestamp import Timestamp
 
 
 class ServiceId(pydantic.BaseModel):
@@ -81,11 +82,11 @@ class JobStatusPayload(pydantic.BaseModel):
     error: str | None = pydantic.Field(default=None, description="Error message if any")
     job_id: JobId = pydantic.Field(description="Job identifier")
     workflow_id: str = pydantic.Field(description="Workflow identifier as string")
-    start_time: int | None = pydantic.Field(
-        default=None, description="Job start time in nanoseconds since epoch"
+    start_time: Timestamp | None = pydantic.Field(
+        default=None, description="Job start time"
     )
-    end_time: int | None = pydantic.Field(
-        default=None, description="Job end time in nanoseconds since epoch"
+    end_time: Timestamp | None = pydantic.Field(
+        default=None, description="Job end time"
     )
 
 
@@ -205,7 +206,7 @@ class ServiceStatusPayload(pydantic.BaseModel):
     namespace: str = pydantic.Field(description="Service namespace")
     worker_id: str = pydantic.Field(description="Worker UUID as string")
     state: ServiceState = pydantic.Field(description="Current state of the service")
-    started_at: int = pydantic.Field(description="Service start time in nanoseconds")
+    started_at: Timestamp = pydantic.Field(description="Service start time")
     active_job_count: int = pydantic.Field(description="Number of active jobs")
     error: str | None = pydantic.Field(default=None, description="Error message if any")
     batch_interval_s: float = pydantic.Field(
