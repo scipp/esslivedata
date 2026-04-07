@@ -268,28 +268,27 @@ Empty dict if no rectangles configured.
 
 
 @dataclass(frozen=True, slots=True)
-class DetectorTransformLinkOverride:
-    """Override for one link in the detector NeXus transformation chain.
+class TransformValue:
+    """Current scalar value of a named entry in a NeXus transformation chain.
 
-    Replaces the value of a single named link in the detector's
-    ``depends_on`` chain with a current scalar value provided at runtime
-    (typically from an f144 position stream). The link's units must match
-    those baked into the NeXus file.
+    Carries the latest value (typically from an f144 position stream) for a
+    single named transformation in a detector's ``depends_on`` chain. The
+    units must match those baked into the NeXus file.
     """
 
-    link_name: str
+    name: str
     value: sc.Variable
 
 
-DetectorTransformLinkName = NewType('DetectorTransformLinkName', str)
-"""Name of the NeXus transformation link whose value is overridden at runtime."""
+TransformName = NewType('TransformName', str)
+"""Name of the NeXus transformation entry driven by a live value stream."""
 
 
-DetectorTransformLinkLogValue = NewType('DetectorTransformLinkLogValue', sc.DataArray)
-"""NXlog-shaped DataArray of f144 values for the link being overridden.
+TransformValueLog = NewType('TransformValueLog', sc.DataArray)
+"""NXlog-shaped DataArray (timeseries) of f144 values for a transform.
 
 Set via ``set_context`` from the ToNXlog accumulator output. Carries a
-``time`` coord; the override provider extracts the latest sample.
+``time`` coord; the provider extracts the latest sample.
 """
 
 

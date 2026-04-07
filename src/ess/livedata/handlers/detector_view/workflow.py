@@ -51,9 +51,6 @@ from .roi import (
 )
 from .types import (
     CoordinateMode,
-    DetectorTransformLinkLogValue,
-    DetectorTransformLinkName,
-    DetectorTransformLinkOverride,
     EventCoordName,
     FlipX,
     HistogramBins,
@@ -61,44 +58,47 @@ from .types import (
     LogicalTransform,
     ProjectionType,
     ReductionDim,
+    TransformName,
+    TransformValue,
+    TransformValueLog,
     UsePixelWeighting,
 )
 
 
-def get_transformation_chain_with_override(
+def get_transformation_chain_with_value(
     detector: NeXusComponent[snx.NXdetector, SampleRun],
-    override: DetectorTransformLinkOverride,
+    transform_value: TransformValue,
 ) -> NeXusTransformationChain[snx.NXdetector, SampleRun]:
-    """Replace one link's value in the detector transformation chain.
+    """Inject a live value into one entry of the detector transformation chain.
 
     Replaces essreduce's ``get_transformation_chain`` so that a runtime
-    f144 stream value can drive the detector position. When the override
-    has an empty ``link_name``, this is a pass-through equivalent to the
-    upstream provider.
+    f144 stream value can drive the detector position. When the
+    ``transform_value`` has an empty ``name``, this is a pass-through
+    equivalent to the upstream provider.
     """
     chain = deepcopy(detector['depends_on'])
-    if override.link_name:
-        chain.transformations[override.link_name].value = override.value
+    if transform_value.name:
+        chain.transformations[transform_value.name].value = transform_value.value
     return NeXusTransformationChain[snx.NXdetector, SampleRun](chain)
 
 
-def detector_transform_link_override_from_nxlog(
-    log_value: DetectorTransformLinkLogValue,
-    link_name: DetectorTransformLinkName,
-) -> DetectorTransformLinkOverride:
-    """Build an override from the latest sample of an NXlog DataArray.
+def transform_value_from_log(
+    log: TransformValueLog,
+    name: TransformName,
+) -> TransformValue:
+    """Build a TransformValue from the latest sample of an NXlog DataArray.
 
-    The ``log_value`` arrives via ``set_context`` from the ``ToNXlog``
+    The ``log`` arrives via ``set_context`` from the ``ToNXlog``
     accumulator. We extract the most recent value as a scalar
     ``sc.Variable`` so the downstream ``to_transformation`` time-filter
     branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
-    Returns the no-op override (empty ``link_name``) when no log value is
-    available yet, so the file's baked-in initial link value is used.
+    Returns the no-op value (empty ``name``) when no log is available yet,
+    so the file's baked-in initial transformation value is used.
     """
-    if not link_name or log_value is None or log_value.sizes.get('time', 0) == 0:
-        return DetectorTransformLinkOverride(link_name='', value=sc.scalar(0.0))
-    latest = log_value['time', -1].data
-    return DetectorTransformLinkOverride(link_name=str(link_name), value=latest)
+    if not name or log is None or log.sizes.get('time', 0) == 0:
+        return TransformValue(name='', value=sc.scalar(0.0))
+    latest = log['time', -1].data
+    return TransformValue(name=str(name), value=latest)
 
 
 def create_base_workflow(
@@ -153,10 +153,10 @@ def create_base_workflow(
     # Replace essreduce's get_transformation_chain so the detector's NeXus
     # transformation chain can be patched at runtime with values from an
     # f144 position stream. Default override is None (no-op pass-through).
-    workflow.insert(get_transformation_chain_with_override)
-    workflow.insert(detector_transform_link_override_from_nxlog)
-    workflow[DetectorTransformLinkLogValue] = None  # type: ignore[assignment]
-    workflow[DetectorTransformLinkName] = DetectorTransformLinkName('')
+    workflow.insert(get_transformation_chain_with_value)
+    workflow.insert(transform_value_from_log)
+    workflow[TransformValueLog] = None  # type: ignore[assignment]
+    workflow[TransformName] = TransformName('')
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)

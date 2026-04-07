@@ -30,8 +30,6 @@ from .types import (
     Cumulative,
     Current,
     DetectorImage,
-    DetectorTransformLinkLogValue,
-    DetectorTransformLinkName,
     GeometricViewConfig,
     LogicalViewConfig,
     ROIPolygonReadback,
@@ -39,6 +37,8 @@ from .types import (
     ROIRectangleReadback,
     ROIRectangleRequest,
     ROISpectra,
+    TransformName,
+    TransformValueLog,
     UsePixelWeighting,
     ViewConfig,
 )
@@ -50,21 +50,22 @@ from .workflow import (
 
 
 @dataclass(frozen=True)
-class LinkOverride:
+class TransformValueStream:
     """
-    Wires an f144 NXlog stream to override one link of a detector's NeXus
-    transformation chain at runtime.
+    Binds a NeXus transformation entry to the f144 stream that supplies its
+    live values at runtime.
 
     Parameters
     ----------
+    transform_name:
+        NeXus path of the transformation entry whose value is driven by the
+        live stream.
     aux_stream:
-        Name of the auxiliary (f144) stream supplying the dynamic value.
-    link_name:
-        NeXus path of the transformation-chain link to override.
+        Name of the auxiliary (f144) stream supplying the live values.
     """
 
+    transform_name: str
     aux_stream: str
-    link_name: str
 
 
 class DetectorViewFactory:
@@ -95,23 +96,23 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        link_overrides: dict[str, LinkOverride] | None = None,
+        transform_value_streams: dict[str, TransformValueStream] | None = None,
     ) -> None:
         """
         Parameters
         ----------
-        link_overrides:
-            Optional mapping ``source_name -> LinkOverride`` wiring an f144
-            NXlog stream to override one link of the detector NeXus
-            transformation chain at runtime. ``aux_stream`` is the
-            logical name of the auxiliary input that delivers the NXlog
+        transform_value_streams:
+            Optional mapping ``source_name -> TransformValueStream`` binding a
+            NeXus transformation entry of the detector's chain to the f144
+            stream that supplies its live values. ``aux_stream`` is the
+            logical name of the auxiliary input delivering the NXlog
             DataArray (must match the corresponding ``AuxSources`` entry).
-            ``link_name`` is the entry of ``chain.transformations`` whose
-            ``.value`` will be replaced with the latest sample.
+            ``transform_name`` is the entry of ``chain.transformations``
+            whose ``.value`` will be replaced with the latest sample.
         """
         self._data_source = data_source
         self._view_config = view_config
-        self._link_overrides = link_overrides or {}
+        self._transform_value_streams = transform_value_streams or {}
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -258,19 +259,17 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic detector geometry override (f144 NXlog stream) if
-        # configured for this source.
-        link_override = self._link_overrides.get(source_name)
+        # Wire dynamic detector geometry (f144 NXlog stream) if configured for
+        # this source.
+        value_stream = self._transform_value_streams.get(source_name)
         initial_context: dict[str, object] | None = None
-        if link_override is not None:
-            workflow[DetectorTransformLinkName] = DetectorTransformLinkName(
-                link_override.link_name
-            )
-            context_keys[link_override.aux_stream] = DetectorTransformLinkLogValue
+        if value_stream is not None:
+            workflow[TransformName] = TransformName(value_stream.transform_name)
+            context_keys[value_stream.aux_stream] = TransformValueLog
             # Prime the context with the default (no f144 message yet) so the
             # noise replicas downstream of the transformation chain are baked
             # into the cached parent-of-dynamic layer at construction time.
-            initial_context = {link_override.aux_stream: None}
+            initial_context = {value_stream.aux_stream: None}
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

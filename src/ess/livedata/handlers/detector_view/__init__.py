@@ -16,7 +16,7 @@ Supports two projection modes:
 """
 
 from .data_source import InstrumentDetectorSource, NeXusDetectorSource
-from .factory import DetectorViewFactory, LinkOverride
+from .factory import DetectorViewFactory, TransformValueStream
 from .types import CoordinateMode, GeometricViewConfig, LogicalViewConfig
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
     'DetectorViewFactory',
     'GeometricViewConfig',
     'InstrumentDetectorSource',
-    'LinkOverride',
     'LogicalViewConfig',
     'NeXusDetectorSource',
+    'TransformValueStream',
 ]
