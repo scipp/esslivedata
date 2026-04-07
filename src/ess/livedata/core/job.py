@@ -120,6 +120,7 @@ class ServiceStatus:
     started_at: Timestamp
     active_job_count: int
     messages_processed: int
+    version: str = '0.0.0'
     error: str | None = None
     batch_interval_s: float = 1.0
 

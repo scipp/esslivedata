@@ -126,14 +126,13 @@ def test_to_nxlog_missing_attributes():
     assert ToNXlog(attrs=attrs).unit is None
 
 
-def test_to_nxlog_add_values_with_different_timestamps():
+def test_to_nxlog_add_values_with_increasing_timestamps():
     attrs = {'units': 'counts'}
     accumulator = ToNXlog(attrs=attrs)
 
-    # Add values with increasing timestamps to verify correct ordering
-    log_data1 = LogData(time=3000000, value=30.0)
-    log_data2 = LogData(time=1000000, value=10.0)
-    log_data3 = LogData(time=2000000, value=20.0)
+    log_data1 = LogData(time=1000000, value=10.0)
+    log_data2 = LogData(time=2000000, value=20.0)
+    log_data3 = LogData(time=3000000, value=30.0)
 
     accumulator.add(timestamp=Timestamp.from_ns(100), data=log_data1)
     accumulator.add(timestamp=Timestamp.from_ns(200), data=log_data2)
@@ -141,12 +140,10 @@ def test_to_nxlog_add_values_with_different_timestamps():
 
     result = accumulator.get()
 
-    # Verify the values are ordered by log_data.time, not by timestamp
     assert_identical(
         result.data, sc.array(dims=['time'], values=[10.0, 20.0, 30.0], unit='counts')
     )
 
-    # Verify times are also ordered
     start_time = sc.epoch(unit='ns')
     expected_times = [start_time.value + t for t in [1000000, 2000000, 3000000]]
     expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
@@ -268,33 +265,24 @@ def test_repeated_expand_and_clear_cycles():
         assert empty_result.sizes["time"] == 0
 
 
-def test_preservation_of_addition_order():
-    """Test that sorting occurs when getting data with multiple adds out of order."""
+def test_out_of_order_timestamps_are_skipped():
+    """Out-of-order timestamps are skipped to surface upstream issues."""
     attrs = {'units': 'K'}
     accumulator = ToNXlog(attrs=attrs)
 
-    # Add data with time 30
     accumulator.add(Timestamp.from_ns(0), LogData(time=30, value=3.0))
+    accumulator.add(
+        Timestamp.from_ns(0), LogData(time=10, value=1.0)
+    )  # out of order, skipped
+    accumulator.add(
+        Timestamp.from_ns(0), LogData(time=20, value=2.0)
+    )  # out of order, skipped
+    accumulator.add(
+        Timestamp.from_ns(0), LogData(time=40, value=4.0)
+    )  # in order, accepted
 
-    # Add data with earlier time 10
-    accumulator.add(Timestamp.from_ns(0), LogData(time=10, value=1.0))
-
-    # Add data with middle time 20
-    accumulator.add(Timestamp.from_ns(0), LogData(time=20, value=2.0))
-
-    # The data should be sorted by time, not in the order it was added
     result = accumulator.get()
-    start_time = sc.epoch(unit='ns')
-
-    # Check values are sorted by time
-    assert_identical(
-        result.data, sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='K')
-    )
-
-    # Check times are sorted
-    expected_times = [start_time.value + t for t in [10, 20, 30]]
-    expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
-    assert_identical(result.coords['time'], expected_time_coord)
+    assert_identical(result.data, sc.array(dims=['time'], values=[3.0, 4.0], unit='K'))
 
 
 def test_to_nxlog_array_data_1d():
@@ -422,32 +410,31 @@ def test_to_nxlog_capacity_expansion_with_arrays():
     )
 
 
-def test_to_nxlog_array_sorting():
-    """Test that array data is correctly sorted by time."""
+def test_out_of_order_array_data_is_skipped():
+    """Out-of-order timestamps with array data are skipped."""
     attrs = {'units': 'K'}
     accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
 
-    # Add data out of time order
-    log_data1 = LogData(time=3000000, value=[30.0, 31.0])
-    log_data2 = LogData(time=1000000, value=[10.0, 11.0])
-    log_data3 = LogData(time=2000000, value=[20.0, 21.0])
-
-    accumulator.add(timestamp=Timestamp.from_ns(0), data=log_data1)
-    accumulator.add(timestamp=Timestamp.from_ns(0), data=log_data2)
-    accumulator.add(timestamp=Timestamp.from_ns(0), data=log_data3)
+    accumulator.add(
+        timestamp=Timestamp.from_ns(0),
+        data=LogData(time=3000000, value=[30.0, 31.0]),
+    )
+    accumulator.add(
+        timestamp=Timestamp.from_ns(0),
+        data=LogData(time=1000000, value=[10.0, 11.0]),
+    )
+    accumulator.add(
+        timestamp=Timestamp.from_ns(0),
+        data=LogData(time=2000000, value=[20.0, 21.0]),
+    )
 
     result = accumulator.get()
 
-    # Should be sorted by time
-    expected_values = [[10.0, 11.0], [20.0, 21.0], [30.0, 31.0]]
+    # Only the first (in-order) entry should be kept
+    expected_values = [[30.0, 31.0]]
     assert_identical(
         result.data, sc.array(dims=['time', 'x'], values=expected_values, unit='K')
     )
-
-    start_time = sc.epoch(unit='ns')
-    expected_times = [start_time.value + t for t in [1000000, 2000000, 3000000]]
-    expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
-    assert_identical(result.coords['time'], expected_time_coord)
 
 
 def test_to_nxlog_different_dtypes():
@@ -493,3 +480,59 @@ def test_to_nxlog_clear_preserves_structure():
         dims=['time', 'x'], values=[[3.0, 4.0]], variances=[[0.3, 0.4]], unit='K'
     )
     assert_identical(result.data, expected_data)
+
+
+def test_duplicate_timestamp_same_value_silently_skipped():
+    """Re-sent f144 values with identical timestamp and value are silently dropped."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    accumulator.add(0, LogData(time=1000, value=42.0))
+    accumulator.add(0, LogData(time=1000, value=42.0))  # duplicate
+    accumulator.add(0, LogData(time=1000, value=42.0))  # duplicate
+    accumulator.add(0, LogData(time=2000, value=43.0))  # new timestamp
+
+    result = accumulator.get()
+    assert_identical(
+        result.data, sc.array(dims=['time'], values=[42.0, 43.0], unit='K')
+    )
+
+
+def test_duplicate_timestamp_different_value_skipped():
+    """Duplicate timestamp with different value is skipped (not accumulated)."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    accumulator.add(0, LogData(time=1000, value=42.0))
+    accumulator.add(0, LogData(time=1000, value=99.0))  # different value, skipped
+
+    result = accumulator.get()
+    assert_identical(result.data, sc.array(dims=['time'], values=[42.0], unit='K'))
+
+
+def test_duplicate_timestamp_array_value_skipped():
+    """Duplicate timestamp with array values is skipped."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    accumulator.add(0, LogData(time=1000, value=[1.0, 2.0]))
+    accumulator.add(0, LogData(time=1000, value=[1.0, 2.0]))  # same array, skipped
+    accumulator.add(0, LogData(time=2000, value=[3.0, 4.0]))
+
+    result = accumulator.get()
+    expected = sc.array(dims=['time', 'x'], values=[[1.0, 2.0], [3.0, 4.0]], unit='K')
+    assert_identical(result.data, expected)
+
+
+def test_clear_resets_duplicate_tracking():
+    """After clear(), the same timestamp can be added again."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    accumulator.add(0, LogData(time=1000, value=42.0))
+    accumulator.clear()
+
+    # Same timestamp should be accepted after clear
+    accumulator.add(0, LogData(time=1000, value=42.0))
+    result = accumulator.get()
+    assert_identical(result.data, sc.array(dims=['time'], values=[42.0], unit='K'))

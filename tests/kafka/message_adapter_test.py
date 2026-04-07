@@ -249,6 +249,56 @@ class TestKafkaToDa00Adapter:
 
         assert result.timestamp == Timestamp.from_ns(3000)
 
+    @pytest.mark.parametrize("dtype", [np.int32, np.int16, np.float32, np.float64])
+    def test_falls_back_to_timestamp_ns_when_reference_time_has_unsafe_dtype(
+        self, dtype: np.dtype
+    ) -> None:
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=dtype),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == Timestamp.from_ns(5678)
+
+    @pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+    def test_uses_reference_time_when_dtype_is_64bit_integer(
+        self, dtype: np.dtype
+    ) -> None:
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=dtype),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == Timestamp.from_ns(3000)
+
     def test_uses_timestamp_ns_when_reference_time_is_empty(self) -> None:
         da00_with_empty_ref_time = dataarray_da00.serialise_da00(
             source_name="instrument",

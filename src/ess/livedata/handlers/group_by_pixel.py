@@ -38,8 +38,8 @@ class GroupByPixel(Accumulator[Events, sc.DataArray]):
         # multi-dimensional shape using EmptyDetector's detector_number.
         self._detector_number = detector_number.flatten(to='detector_number')
 
-    def add(self, timestamp: Timestamp, data: Events) -> None:
-        self._inner.add(timestamp, data)
+    def add(self, timestamp: Timestamp, data: Events) -> bool:
+        return self._inner.add(timestamp, data)
 
     def get(self) -> sc.DataArray:
         ungrouped = self._inner.get()
