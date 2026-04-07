@@ -9,6 +9,8 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
@@ -47,6 +49,24 @@ from .workflow import (
 )
 
 
+@dataclass(frozen=True)
+class LinkOverride:
+    """
+    Wires an f144 NXlog stream to override one link of a detector's NeXus
+    transformation chain at runtime.
+
+    Parameters
+    ----------
+    aux_stream:
+        Name of the auxiliary (f144) stream supplying the dynamic value.
+    link_name:
+        NeXus path of the transformation-chain link to override.
+    """
+
+    aux_stream: str
+    link_name: str
+
+
 class DetectorViewFactory:
     """
     Factory for creating Sciline-based detector view workflows.
@@ -75,15 +95,15 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        link_overrides: dict[str, tuple[str, str]] | None = None,
+        link_overrides: dict[str, LinkOverride] | None = None,
     ) -> None:
         """
         Parameters
         ----------
         link_overrides:
-            Optional mapping ``source_name -> (aux_stream_name, link_name)``
-            wiring an f144 NXlog stream to override one link of the detector
-            NeXus transformation chain at runtime. ``aux_stream_name`` is the
+            Optional mapping ``source_name -> LinkOverride`` wiring an f144
+            NXlog stream to override one link of the detector NeXus
+            transformation chain at runtime. ``aux_stream`` is the
             logical name of the auxiliary input that delivers the NXlog
             DataArray (must match the corresponding ``AuxSources`` entry).
             ``link_name`` is the entry of ``chain.transformations`` whose
@@ -243,13 +263,14 @@ class DetectorViewFactory:
         link_override = self._link_overrides.get(source_name)
         initial_context: dict[str, object] | None = None
         if link_override is not None:
-            aux_stream_name, link_name = link_override
-            workflow[DetectorTransformLinkName] = DetectorTransformLinkName(link_name)
-            context_keys[aux_stream_name] = DetectorTransformLinkLogValue
+            workflow[DetectorTransformLinkName] = DetectorTransformLinkName(
+                link_override.link_name
+            )
+            context_keys[link_override.aux_stream] = DetectorTransformLinkLogValue
             # Prime the context with the default (no f144 message yet) so the
             # noise replicas downstream of the transformation chain are baked
             # into the cached parent-of-dynamic layer at construction time.
-            initial_context = {aux_stream_name: None}
+            initial_context = {link_override.aux_stream: None}
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

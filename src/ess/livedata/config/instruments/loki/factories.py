@@ -45,6 +45,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
+        LinkOverride,
         NeXusDetectorSource,
     )
     from ess.livedata.handlers.stream_processor_workflow import (
@@ -103,9 +104,9 @@ def setup_factories(instrument: Instrument) -> None:
         # Drive the rear bank's NeXus 'detector_carriage' link from the
         # live f144 carriage readback. Other banks have no override.
         link_overrides={
-            'loki_detector_0': (
-                'detector_carriage',
-                '/entry/instrument/detector_carriage/value',
+            'loki_detector_0': LinkOverride(
+                aux_stream='detector_carriage',
+                link_name='/entry/instrument/detector_carriage/value',
             ),
         },
     )
