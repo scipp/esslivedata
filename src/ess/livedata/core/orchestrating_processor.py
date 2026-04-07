@@ -9,6 +9,8 @@ from typing import Any, Generic
 
 import structlog
 
+from ess.livedata import __version__
+
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
 from .job import (
@@ -40,6 +42,7 @@ from .message_batcher import (
     MessageBatch,
     MessageBatcher,
 )
+from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -65,11 +68,18 @@ class MessagePreprocessor(Generic[Tin, Tout]):
 
     def _preprocess_stream(
         self, messages: list[Message[Tin]], accumulator: Accumulator[Tin, Tout]
-    ) -> Tout:
-        """Preprocess messages for a single stream using the given accumulator."""
+    ) -> Tout | None:
+        """Preprocess messages for a single stream using the given accumulator.
+
+        Returns None if no messages were accepted by the accumulator (e.g., all
+        duplicates), signalling that the stream should be excluded from workflow data.
+        """
+        any_accepted = False
         for message in messages:
-            accumulator.add(message.timestamp, message.value)
-        # We assume the accumulator is cleared in `get`.
+            if accumulator.add(message.timestamp, message.value) is not False:
+                any_accepted = True
+        if not any_accepted:
+            return None
         return accumulator.get()
 
     def release_buffers(self) -> None:
@@ -120,7 +130,9 @@ class MessagePreprocessor(Generic[Tin, Tout]):
                 logger.debug('no_preprocessor', stream_id=str(key))
                 continue
             try:
-                data[key] = self._preprocess_stream(messages, accumulator)
+                result = self._preprocess_stream(messages, accumulator)
+                if result is not None:
+                    data[key] = result
             except Exception:
                 logger.exception('preprocessing_error', stream_id=str(key))
         return WorkflowData(
@@ -151,21 +163,21 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
-        self._last_status_update: int | None = None
-        self._status_update_interval = 2_000_000_000  # 2 seconds
+        self._last_status_update: Timestamp | None = None
+        self._status_update_interval = Duration.from_seconds(2)
 
         # Service heartbeat state
         self._instrument = instrument.name
         self._namespace = instrument.active_namespace or "unknown"
         self._worker_id = str(uuid.uuid4())
-        self._started_at = time.time_ns()
+        self._started_at = Timestamp.now()
         self._service_state = ServiceState.starting
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
         # Metrics and stream stats tracking
-        self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
-        self._last_metrics_time: int | None = None
+        self._metrics_interval = Duration.from_seconds(30)
+        self._last_metrics_time: Timestamp | None = None
         self._batches_processed = 0
         self._empty_batches = 0
         self._errors_since_last_metrics = 0
@@ -281,7 +293,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_status_update is not None:
             if timestamp - self._last_status_update < self._status_update_interval:
                 return
@@ -311,6 +323,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             state=self._service_state,
             started_at=self._started_at,
             active_job_count=len(job_statuses),
+            version=__version__,
             error=self._service_error,
             batch_interval_s=self._message_batcher.batch_length_s,
             stream_stats=stream_stats,
@@ -318,13 +331,14 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _maybe_log_metrics(self) -> None:
         """Log processor metrics if the interval has elapsed."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_metrics_time is None:
             self._last_metrics_time = timestamp
             return
 
-        if timestamp - self._last_metrics_time >= self._metrics_interval:
-            window_seconds = (timestamp - self._last_metrics_time) / 1e9
+        elapsed = timestamp - self._last_metrics_time
+        if elapsed >= self._metrics_interval:
+            window_seconds = elapsed.to_seconds()
             active_jobs = len(self._job_manager.active_jobs)
 
             # Drain stream stats from the counter
@@ -381,7 +395,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _send_final_heartbeat(self) -> None:
         """Send a final service heartbeat with current state."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
         service_status = self._get_service_status(job_statuses)
         message = _service_status_to_message(service_status, timestamp=timestamp)
@@ -399,15 +413,15 @@ def _job_result_to_message(result: JobResult) -> Message:
     identify the job in the frontend.
     """
     return Message(
-        timestamp=result.start_time or 0,
+        timestamp=result.start_time or Timestamp.from_ns(0),
         stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
         value=result.data,
     )
 
 
-def _job_status_to_message(status: JobStatus, timestamp: int) -> Message:
+def _job_status_to_message(status: JobStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
 
 
-def _service_status_to_message(status: ServiceStatus, timestamp: int) -> Message:
+def _service_status_to_message(status: ServiceStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)

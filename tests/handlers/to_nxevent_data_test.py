@@ -5,6 +5,7 @@ import scipp as sc
 from scipp.testing import assert_identical
 from streaming_data_types import eventdata_ev44
 
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.to_nxevent_data import (
     DetectorEvents,
     MonitorEvents,
@@ -44,8 +45,8 @@ def test_MonitorEvents_from_ev44_raises_with_multi_pulse_message(
 
 def test_MonitorEvents_ToNXevent_data() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, MonitorEvents(time_of_arrival=[1, 10], unit='ns'))
-    to_nx.add(1000, MonitorEvents(time_of_arrival=[2], unit='ns'))
+    to_nx.add(Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1, 10], unit='ns'))
+    to_nx.add(Timestamp.from_ns(1000), MonitorEvents(time_of_arrival=[2], unit='ns'))
     events = to_nx.get()
     content = sc.DataArray(
         data=sc.ones(dims=['event'], shape=[3], unit='counts', dtype='float32'),
@@ -78,8 +79,14 @@ def test_MonitorEvents_ToNXevent_data() -> None:
 
 def test_DetectorEvents_ToNXevent_data() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, DetectorEvents(time_of_arrival=[1, 10], pixel_id=[2, 1], unit='ns'))
-    to_nx.add(1000, DetectorEvents(time_of_arrival=[2], pixel_id=[1], unit='ns'))
+    to_nx.add(
+        Timestamp.from_ns(0),
+        DetectorEvents(time_of_arrival=[1, 10], pixel_id=[2, 1], unit='ns'),
+    )
+    to_nx.add(
+        Timestamp.from_ns(1000),
+        DetectorEvents(time_of_arrival=[2], pixel_id=[1], unit='ns'),
+    )
     events = to_nx.get()
     content = sc.DataArray(
         data=sc.ones(dims=['event'], shape=[3], unit='counts', dtype='float32'),
@@ -123,25 +130,33 @@ def test_DetectorEvents_raises_on_array_length_mismatch() -> None:
 def test_ToNXevent_data_wrong_unit() -> None:
     to_nx = ToNXevent_data()
     with pytest.raises(ValueError, match="Expected unit 'ns'"):
-        to_nx.add(0, MonitorEvents(time_of_arrival=[1, 2, 3], unit='s'))
+        to_nx.add(
+            Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1, 2, 3], unit='s')
+        )
 
 
 def test_ToNXevent_data_mixing_event_types() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, MonitorEvents(time_of_arrival=[1, 2, 3], unit='ns'))
+    to_nx.add(Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1, 2, 3], unit='ns'))
 
     with pytest.raises(ValueError, match="Inconsistent event_id"):
         to_nx.add(
-            1000, DetectorEvents(time_of_arrival=[4, 5], pixel_id=[1, 2], unit='ns')
+            Timestamp.from_ns(1000),
+            DetectorEvents(time_of_arrival=[4, 5], pixel_id=[1, 2], unit='ns'),
         )
 
 
 def test_ToNXevent_data_mixing_event_types_reversed() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, DetectorEvents(time_of_arrival=[1, 2], pixel_id=[1, 2], unit='ns'))
+    to_nx.add(
+        Timestamp.from_ns(0),
+        DetectorEvents(time_of_arrival=[1, 2], pixel_id=[1, 2], unit='ns'),
+    )
 
     with pytest.raises(ValueError, match="Inconsistent event_id"):
-        to_nx.add(1000, MonitorEvents(time_of_arrival=[3, 4, 5], unit='ns'))
+        to_nx.add(
+            Timestamp.from_ns(1000), MonitorEvents(time_of_arrival=[3, 4, 5], unit='ns')
+        )
 
 
 def test_ToNXevent_data_get_raises_if_no_data_was_added() -> None:
@@ -152,7 +167,10 @@ def test_ToNXevent_data_get_raises_if_no_data_was_added() -> None:
 
 def test_ToNXevent_data_get_works_if_no_data_after_previous_get() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, DetectorEvents(time_of_arrival=[1, 2], pixel_id=[1, 2], unit='ns'))
+    to_nx.add(
+        Timestamp.from_ns(0),
+        DetectorEvents(time_of_arrival=[1, 2], pixel_id=[1, 2], unit='ns'),
+    )
     ref = to_nx.get()
     to_nx.release_buffers()
     # Empty, but initial data allowed for full initialization
@@ -164,12 +182,15 @@ def test_ToNXevent_data_second_cycle_not_corrupted_by_buffer_reuse() -> None:
     """After release, a new add/get cycle must return fresh data, not stale values."""
     acc = ToNXevent_data()
 
-    acc.add(0, DetectorEvents(time_of_arrival=[10, 20], pixel_id=[1, 2], unit='ns'))
+    acc.add(
+        Timestamp.from_ns(0),
+        DetectorEvents(time_of_arrival=[10, 20], pixel_id=[1, 2], unit='ns'),
+    )
     acc.get()
     acc.release_buffers()
 
     acc.add(
-        1000,
+        Timestamp.from_ns(1000),
         DetectorEvents(time_of_arrival=[30, 40, 50], pixel_id=[3, 4, 5], unit='ns'),
     )
     result2 = acc.get()
@@ -185,11 +206,14 @@ def test_ToNXevent_data_buffer_grows_across_cycles() -> None:
     """A cycle with more events than the previous must still be correct."""
     acc = ToNXevent_data()
 
-    acc.add(0, MonitorEvents(time_of_arrival=[1, 2], unit='ns'))
+    acc.add(Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1, 2], unit='ns'))
     acc.get()
     acc.release_buffers()
 
-    acc.add(1000, MonitorEvents(time_of_arrival=[10, 20, 30, 40, 50], unit='ns'))
+    acc.add(
+        Timestamp.from_ns(1000),
+        MonitorEvents(time_of_arrival=[10, 20, 30, 40, 50], unit='ns'),
+    )
     result = acc.get()
     acc.release_buffers()
 
@@ -201,11 +225,13 @@ def test_ToNXevent_data_buffer_shrinks_across_cycles() -> None:
     """A cycle with fewer events than a previous one must not include stale data."""
     acc = ToNXevent_data()
 
-    acc.add(0, MonitorEvents(time_of_arrival=[1, 2, 3, 4, 5], unit='ns'))
+    acc.add(
+        Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1, 2, 3, 4, 5], unit='ns')
+    )
     acc.get()
     acc.release_buffers()
 
-    acc.add(1000, MonitorEvents(time_of_arrival=[10, 20], unit='ns'))
+    acc.add(Timestamp.from_ns(1000), MonitorEvents(time_of_arrival=[10, 20], unit='ns'))
     result = acc.get()
     acc.release_buffers()
 
@@ -216,18 +242,23 @@ def test_ToNXevent_data_buffer_shrinks_across_cycles() -> None:
 
 def test_ToNXevent_data_get_raises_without_release() -> None:
     acc = ToNXevent_data()
-    acc.add(0, MonitorEvents(time_of_arrival=[1], unit='ns'))
+    acc.add(Timestamp.from_ns(0), MonitorEvents(time_of_arrival=[1], unit='ns'))
     acc.get()
     # No release_buffers() call
-    acc.add(1000, MonitorEvents(time_of_arrival=[2], unit='ns'))
+    acc.add(Timestamp.from_ns(1000), MonitorEvents(time_of_arrival=[2], unit='ns'))
     with pytest.raises(RuntimeError, match="have not been released"):
         acc.get()
 
 
 def test_ToNXevent_data_empty_chunks() -> None:
     to_nx = ToNXevent_data()
-    to_nx.add(0, DetectorEvents(time_of_arrival=[], pixel_id=[], unit='ns'))
-    to_nx.add(1000, DetectorEvents(time_of_arrival=[], pixel_id=[], unit='ns'))
+    to_nx.add(
+        Timestamp.from_ns(0), DetectorEvents(time_of_arrival=[], pixel_id=[], unit='ns')
+    )
+    to_nx.add(
+        Timestamp.from_ns(1000),
+        DetectorEvents(time_of_arrival=[], pixel_id=[], unit='ns'),
+    )
 
     events = to_nx.get()
     assert events.sizes["event_time_zero"] == 2

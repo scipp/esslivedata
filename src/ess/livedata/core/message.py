@@ -2,11 +2,12 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import datetime
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Generic, Protocol, TypeVar
+
+from .timestamp import Timestamp
 
 T = TypeVar('T')
 Tin = TypeVar('Tin')
@@ -46,8 +47,8 @@ class RunStart:
     """Run start event from the ESS control system."""
 
     run_name: str
-    start_time: int  # ns since epoch
-    stop_time: int | None = None  # ns since epoch, None when unset
+    start_time: Timestamp
+    stop_time: Timestamp | None = None
 
     def __str__(self) -> str:
         return f"RunStart(run_name={self.run_name!r})"
@@ -58,7 +59,7 @@ class RunStop:
     """Run stop event from the ESS control system."""
 
     run_name: str
-    stop_time: int  # ns since epoch
+    stop_time: Timestamp
 
     def __str__(self) -> str:
         return f"RunStop(run_name={self.run_name!r})"
@@ -81,11 +82,7 @@ class Message(Generic[T]):
         The value of the message.
     """
 
-    timestamp: int = field(
-        default_factory=lambda: int(
-            datetime.datetime.now(datetime.timezone.utc).timestamp() * 1_000_000_000
-        )
-    )
+    timestamp: Timestamp = field(default_factory=Timestamp.now)
     stream: StreamId
     value: T
 

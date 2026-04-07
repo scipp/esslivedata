@@ -7,6 +7,7 @@ import pytest
 import sciline
 import scipp as sc
 
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
 Streamed = NewType('Streamed', int)
@@ -81,11 +82,23 @@ class TestStreamProcessorWorkflow:
         )
 
         # Set context data
-        workflow.accumulate({'context': Context(5)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         # Accumulate dynamic data
-        workflow.accumulate({'streamed': Streamed(10)}, start_time=1000, end_time=2000)
-        workflow.accumulate({'streamed': Streamed(20)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(20)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         # Finalize and check result
         result = workflow.finalize()
@@ -103,15 +116,31 @@ class TestStreamProcessorWorkflow:
         )
 
         # Accumulate some data
-        workflow.accumulate({'context': Context(5)}, start_time=1000, end_time=2000)
-        workflow.accumulate({'streamed': Streamed(10)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         # Clear and start fresh
         workflow.clear()
 
         # Set new context and data
-        workflow.accumulate({'context': Context(2)}, start_time=1000, end_time=2000)
-        workflow.accumulate({'streamed': Streamed(15)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'context': Context(2)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(15)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         result = workflow.finalize()
         # Expected: context (2) * static (2) = 4, streamed: 15, final: 15 + 4 = 19
@@ -128,13 +157,25 @@ class TestStreamProcessorWorkflow:
         )
 
         # Accumulate with only context
-        workflow.accumulate({'context': Context(3)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'context': Context(3)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         # Accumulate with only streamed data
-        workflow.accumulate({'streamed': Streamed(7)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'streamed': Streamed(7)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         # Accumulate with unknown keys (should be ignored)
-        workflow.accumulate({'unknown': 42}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'unknown': 42},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         result = workflow.finalize()
         # Expected: context (3) * static (2) = 6, streamed: 7, final: 7 + 6 = 13
@@ -150,8 +191,16 @@ class TestStreamProcessorWorkflow:
             accumulators=(ProcessedStreamed,),
         )
 
-        workflow.accumulate({'context': Context(4)}, start_time=1000, end_time=2000)
-        workflow.accumulate({'streamed': Streamed(5)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'context': Context(4)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         result = workflow.finalize()
         # Expected: context (4) * static (2) = 8, streamed: 5, final: 5 + 8 = 13
@@ -168,7 +217,11 @@ class TestStreamProcessorWorkflow:
         )
 
         # Only accumulate dynamic data
-        workflow.accumulate({'streamed': Streamed(25)}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'streamed': Streamed(25)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         result = workflow.finalize()
         # Expected: streamed (25) + static (2) = 27
@@ -215,8 +268,8 @@ class TestWindowOutputs:
 
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result = workflow.finalize()
 
@@ -244,14 +297,14 @@ class TestWindowOutputs:
         # First accumulate
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         # Second accumulate with different times
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(2.0))},
-            start_time=3000,
-            end_time=4000,
+            start_time=Timestamp.from_ns(3000),
+            end_time=Timestamp.from_ns(4000),
         )
         result = workflow.finalize()
 
@@ -274,8 +327,8 @@ class TestWindowOutputs:
         # First period
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
         )
         result1 = workflow.finalize()
         assert result1['current'].coords['start_time'].value == 1000
@@ -283,8 +336,8 @@ class TestWindowOutputs:
         # After finalize, time should reset
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=5000,
-            end_time=6000,
+            start_time=Timestamp.from_ns(5000),
+            end_time=Timestamp.from_ns(6000),
         )
         result2 = workflow.finalize()
         assert result2['current'].coords['start_time'].value == 5000
@@ -292,14 +345,14 @@ class TestWindowOutputs:
         # After clear, time should also reset
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=7000,
-            end_time=8000,
+            start_time=Timestamp.from_ns(7000),
+            end_time=Timestamp.from_ns(8000),
         )
         workflow.clear()
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=9000,
-            end_time=10000,
+            start_time=Timestamp.from_ns(9000),
+            end_time=Timestamp.from_ns(10000),
         )
         result3 = workflow.finalize()
         assert result3['current'].coords['start_time'].value == 9000

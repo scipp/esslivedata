@@ -5,6 +5,7 @@
 import time
 
 from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.timestamp import Duration, Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry, make_worker_key
 
 
@@ -15,7 +16,7 @@ class TestMakeWorkerKey:
             namespace="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
         key = make_worker_key(status)
@@ -30,7 +31,7 @@ class TestServiceRegistry:
             namespace="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
 
@@ -47,7 +48,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
         status2 = ServiceStatus(
@@ -55,7 +56,7 @@ class TestServiceRegistry:
             namespace="ns2",
             worker_id="worker2",
             state=ServiceState.starting,
-            started_at=2000,
+            started_at=Timestamp.from_ns(2000),
             active_job_count=0,
         )
 
@@ -73,7 +74,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
         status_new = ServiceStatus(
@@ -81,7 +82,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=3,
         )
 
@@ -99,7 +100,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
 
@@ -116,7 +117,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
 
@@ -137,7 +138,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,  # Terminal state
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
         )
 
@@ -160,7 +161,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stale_worker",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
         registry.status_updated(status_stale)
@@ -174,7 +175,7 @@ class TestServiceRegistry:
             namespace="ns2",
             worker_id="fresh_worker",
             state=ServiceState.running,
-            started_at=2000,
+            started_at=Timestamp.from_ns(2000),
             active_job_count=1,
         )
         registry.status_updated(status_fresh)
@@ -186,7 +187,7 @@ class TestServiceRegistry:
     def test_get_worker_uptime_seconds(self) -> None:
         registry = ServiceRegistry()
         # started_at is in nanoseconds
-        started_at_ns = time.time_ns() - 60_000_000_000  # 60 seconds ago
+        started_at_ns = Timestamp.now() - Duration.from_seconds(60)
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -215,7 +216,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
 
@@ -239,7 +240,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=2,
         )
 
@@ -261,7 +262,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
         )
         registry.status_updated(status)
@@ -274,7 +275,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
         )
         registry.status_updated(status)
@@ -288,7 +289,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="worker1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
         )
         registry.status_updated(status)
@@ -302,7 +303,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stopped1",
             state=ServiceState.stopped,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=0,
         )
         stale = ServiceStatus(
@@ -310,7 +311,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="stale1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
         )
         registry.status_updated(stopped)
@@ -323,7 +324,7 @@ class TestServiceRegistry:
             namespace="ns1",
             worker_id="fresh1",
             state=ServiceState.running,
-            started_at=1000,
+            started_at=Timestamp.from_ns(1000),
             active_job_count=1,
         )
         registry.status_updated(fresh)

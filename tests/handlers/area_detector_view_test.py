@@ -4,6 +4,7 @@ import pytest
 import scipp as sc
 from ess.reduce.live import raw
 
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.area_detector_view import AreaDetectorView
 
 
@@ -26,7 +27,11 @@ class TestAreaDetectorViewFactory:
         workflow = factory('detector')
 
         frame = sc.DataArray(sc.ones(dims=['dim_0', 'dim_1'], shape=[8, 8]))
-        workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
         result = workflow.finalize()
 
         assert result['cumulative'].shape == (4, 4)
@@ -42,7 +47,11 @@ class TestAreaDetectorView:
         workflow = AreaDetectorView(logical_view)
 
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
-        workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
 
         result = workflow.finalize()
 
@@ -61,10 +70,18 @@ class TestAreaDetectorView:
         frame1 = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         frame2 = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]) * 2)
 
-        workflow.accumulate({'detector': frame1}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'detector': frame1},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
         workflow.finalize()
 
-        workflow.accumulate({'detector': frame2}, start_time=2000, end_time=3000)
+        workflow.accumulate(
+            {'detector': frame2},
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
+        )
         result2 = workflow.finalize()
 
         assert sc.allclose(result2['current'].data, frame2.data)
@@ -79,7 +96,11 @@ class TestAreaDetectorView:
         workflow = AreaDetectorView(logical_view)
 
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
-        workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
         workflow.finalize()
 
         workflow.clear()

@@ -4,20 +4,20 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from numbers import Number
 from typing import Any
 
 import structlog
 
 from ess.livedata.core.message import Message
+from ess.livedata.core.timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True, kw_only=True)
 class MessageBatch:
-    start_time: int
-    end_time: int
+    start_time: Timestamp
+    end_time: Timestamp
     messages: list[Message[Any]]
 
 
@@ -69,30 +69,23 @@ class NaiveMessageBatcher(MessageBatcher):
         self, batch_length_s: float = 1.0, pulse_length_s: float = 1.0 / 14
     ) -> None:
         # Batch length is currently ignored.
-        self._batch_length_s = batch_length_s
-        self._batch_length_ns = int(batch_length_s * 1_000_000_000)
-        self._pulse_length_ns = int(pulse_length_s * 1_000_000_000)
+        self._batch_length = Duration.from_seconds(batch_length_s)
+        self._pulse_length = Duration.from_seconds(pulse_length_s)
 
     @property
     def batch_length_s(self) -> float:
-        return self._batch_length_s
+        return self._batch_length.to_seconds()
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Number)]
+        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         if not messages:
             return None
         messages = sorted(messages)
         # start_time is the lower bound of the batch, end_time is the upper bound, both
         # in multiples of the pulse length.
-        start_time = (
-            messages[0].timestamp // self._pulse_length_ns * self._pulse_length_ns
-        )
-        end_time = (
-            (messages[-1].timestamp + self._pulse_length_ns - 1)
-            // self._pulse_length_ns
-            * self._pulse_length_ns
-        )
+        start_time = messages[0].timestamp.quantize(self._pulse_length)
+        end_time = messages[-1].timestamp.quantize_up(self._pulse_length)
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
 
@@ -120,14 +113,13 @@ class SimpleMessageBatcher(MessageBatcher):
     """
 
     def __init__(self, batch_length_s: float = 1.0) -> None:
-        self._batch_length_s_value = batch_length_s
-        self._batch_length_ns = int(batch_length_s * 1_000_000_000)
+        self._batch_length = Duration.from_seconds(batch_length_s)
         self._active_batch: MessageBatch | None = None
         self._future_messages: list[Message[Any]] = []
 
     @property
     def batch_length_s(self) -> float:
-        return self._batch_length_s_value
+        return self._batch_length.to_seconds()
 
     def set_batch_length(self, batch_length_s: float) -> None:
         """Update the batch length for future batches.
@@ -135,13 +127,11 @@ class SimpleMessageBatcher(MessageBatcher):
         The current active batch keeps its boundaries and completes normally.
         Only the next batch boundary will use the new length.
         """
-        self._batch_length_s_value = batch_length_s
-        self._batch_length_ns = int(batch_length_s * 1_000_000_000)
+        self._batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Number)]
-
+        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         # Create and return initial batch including everything
         if self._active_batch is None:
             return self._make_initial_batch(messages)
@@ -160,7 +150,7 @@ class SimpleMessageBatcher(MessageBatcher):
         # return an empty batch, which is desired behavior, i.e., we advance batch by
         # batch.
         batch = self._active_batch
-        new_end_time = batch.end_time + self._batch_length_ns
+        new_end_time = batch.end_time + self._batch_length
         new_active, self._future_messages = self._split_messages(
             self._future_messages, new_end_time
         )
@@ -183,13 +173,13 @@ class SimpleMessageBatcher(MessageBatcher):
         next_start = end_time
         self._active_batch = MessageBatch(
             start_time=next_start,
-            end_time=next_start + self._batch_length_ns,
+            end_time=next_start + self._batch_length,
             messages=[],
         )
         return batch
 
     def _split_messages(
-        self, messages: list[Message[Any]], timestamp: int
+        self, messages: list[Message[Any]], timestamp: Timestamp
     ) -> tuple[list[Message[Any]], list[Message[Any]]]:
         # Note that the batch start time will "lie" if there are late messages, but this
         # is currently considered acceptable and better than dropping messages.

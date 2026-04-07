@@ -12,12 +12,13 @@ import scipp as sc
 from ess.livedata.handlers.workflow_factory import Workflow
 
 from ..config.workflow_spec import JobId, ResultKey, WorkflowId
+from .timestamp import Timestamp
 
 
 @dataclass(slots=True, kw_only=True)
 class JobData:
-    start_time: int
-    end_time: int
+    start_time: Timestamp
+    end_time: Timestamp
     primary_data: dict[str, Any]
     aux_data: dict[str, Any]
 
@@ -35,8 +36,8 @@ class JobResult:
     job_id: JobId
     workflow_id: WorkflowId
     # Should this be included in the data instead?
-    start_time: int | None
-    end_time: int | None
+    start_time: Timestamp | None
+    end_time: Timestamp | None
     data: sc.DataGroup | None = None
     error_message: str | None = None
     warning_message: str | None = None
@@ -63,8 +64,8 @@ class JobStatus:
     state: JobState
     error_message: str | None = None
     warning_message: str | None = None
-    start_time: int | None = None
-    end_time: int | None = None
+    start_time: Timestamp | None = None
+    end_time: Timestamp | None = None
 
     @property
     def has_error(self) -> bool:
@@ -143,15 +144,16 @@ class ServiceStatus:
     namespace: str
     worker_id: str  # UUID as string
     state: ServiceState
-    started_at: int  # Nanoseconds since epoch
+    started_at: Timestamp
     active_job_count: int
+    version: str = '0.0.0'
     error: str | None = None
     batch_interval_s: float = 1.0
     stream_stats: StreamStats | None = None
 
 
 def _add_time_coords(
-    data: sc.DataGroup, start_time: int | None, end_time: int | None
+    data: sc.DataGroup, start_time: Timestamp | None, end_time: Timestamp | None
 ) -> sc.DataGroup:
     """
     Add start_time and end_time as 0-D coordinates to all DataArrays in a DataGroup.
@@ -173,8 +175,8 @@ def _add_time_coords(
     """
     if start_time is None or end_time is None:
         return data
-    start_coord = sc.scalar(start_time, unit='ns')
-    end_coord = sc.scalar(end_time, unit='ns')
+    start_coord = start_time.to_scipp()
+    end_coord = end_time.to_scipp()
 
     def maybe_add_coords(val: sc.DataArray) -> sc.DataArray:
         # Skip if workflow already set time coords - we have no idea what they
@@ -229,8 +231,8 @@ class Job:
         self._job_id = job_id
         self._workflow_id = workflow_id
         self._processor = processor
-        self._start_time: int | None = None
-        self._end_time: int | None = None
+        self._start_time: Timestamp | None = None
+        self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
@@ -255,11 +257,11 @@ class Job:
         return self._workflow_id
 
     @property
-    def start_time(self) -> int | None:
+    def start_time(self) -> Timestamp | None:
         return self._start_time
 
     @property
-    def end_time(self) -> int | None:
+    def end_time(self) -> Timestamp | None:
         return self._end_time
 
     @property

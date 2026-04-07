@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-import time
 from typing import ClassVar
 
 import panel as pn
 
 from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStats
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
@@ -34,6 +34,7 @@ class WorkerUIConstants:
     NAMESPACE_WIDTH = 200
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
+    VERSION_WIDTH = 200
     UPTIME_WIDTH = 120
     STATS_WIDTH = 240
 
@@ -164,6 +165,10 @@ class WorkerStatusRow:
             width=WorkerUIConstants.STATUS_WIDTH,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
+        self._version_pane = pn.pane.HTML(
+            width=WorkerUIConstants.VERSION_WIDTH,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
         self._uptime_pane = pn.pane.HTML(
             width=WorkerUIConstants.UPTIME_WIDTH,
             margin=WorkerUIConstants.STANDARD_MARGIN,
@@ -177,6 +182,7 @@ class WorkerStatusRow:
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
+            self._version_pane,
             self._uptime_pane,
             self._stats_pane,
             sizing_mode="stretch_width",
@@ -245,6 +251,9 @@ class WorkerStatusRow:
         status_style = self._create_status_style(status_color)
         self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
 
+        # Version
+        self._version_pane.object = f"<code>{status.version}</code>"
+
         # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
         show_last_seen = is_stale or status.state in (
             ServiceState.stopping,
@@ -276,11 +285,9 @@ class WorkerStatusRow:
             self._last_stream_stats
         )
 
-    def _calculate_uptime(self, started_at_ns: int) -> float:
+    def _calculate_uptime(self, started_at: Timestamp) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
-        current_time_ns = time.time_ns()
-        uptime_ns = current_time_ns - started_at_ns
-        return uptime_ns / 1_000_000_000
+        return (Timestamp.now() - started_at).to_seconds()
 
     @property
     def panel(self) -> pn.Column:
@@ -346,6 +353,11 @@ class BackendStatusWidget:
             pn.pane.HTML(
                 f'<span style="{header_style}">Status</span>',
                 width=WorkerUIConstants.STATUS_WIDTH,
+                margin=WorkerUIConstants.STANDARD_MARGIN,
+            ),
+            pn.pane.HTML(
+                f'<span style="{header_style}">Version</span>',
+                width=WorkerUIConstants.VERSION_WIDTH,
                 margin=WorkerUIConstants.STANDARD_MARGIN,
             ),
             pn.pane.HTML(

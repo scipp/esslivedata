@@ -9,8 +9,9 @@ from typing import Any
 
 import sciline
 import sciline.typing
-import scipp as sc
 from ess.reduce import streaming
+
+from ess.livedata.core.timestamp import Timestamp
 
 from .workflow_factory import Workflow
 
@@ -65,8 +66,8 @@ class StreamProcessorWorkflow(Workflow):
         self._context_keys = context_keys if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
-        self._current_start_time: int | None = None
-        self._current_end_time: int | None = None
+        self._current_start_time: Timestamp | None = None
+        self._current_end_time: Timestamp | None = None
         self._stream_processor = streaming.StreamProcessor(
             base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
@@ -76,7 +77,7 @@ class StreamProcessorWorkflow(Workflow):
         )
 
     def accumulate(
-        self, data: dict[str, Any], *, start_time: int, end_time: int
+        self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
     ) -> None:
         # Track time range of data since last finalize
         if self._current_start_time is None:
@@ -112,8 +113,8 @@ class StreamProcessorWorkflow(Workflow):
 
         # Add time coords to window outputs
         if self._window_outputs and self._current_start_time is not None:
-            start_time_coord = sc.scalar(self._current_start_time, unit='ns')
-            end_time_coord = sc.scalar(self._current_end_time, unit='ns')
+            start_time_coord = self._current_start_time.to_scipp()
+            end_time_coord = self._current_end_time.to_scipp()
 
             for name in self._window_outputs:
                 if name in results:

@@ -5,6 +5,7 @@
 import time
 
 from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 from ess.livedata.dashboard.widgets.backend_status_widget import BackendStatusWidget
 
@@ -20,7 +21,7 @@ def _make_status(
         namespace=namespace,
         worker_id=worker_id,
         state=state,
-        started_at=time.time_ns(),
+        started_at=Timestamp.now(),
         active_job_count=1,
     )
 
