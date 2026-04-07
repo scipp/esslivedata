@@ -12,7 +12,10 @@ import scipp as sc
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorCarriageAuxSources,
+    register_detector_view_spec,
+)
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
@@ -229,6 +232,7 @@ xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,
+    aux_sources=DetectorCarriageAuxSources(position_stream='detector_carriage'),
 )
 
 # Register tube view for all detector banks

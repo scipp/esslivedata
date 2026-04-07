@@ -266,6 +266,33 @@ Dict mapping ROI index to bounds dict: {idx: {y_dim: (low, high), x_dim: (low, h
 Empty dict if no rectangles configured.
 """
 
+
+@dataclass(frozen=True, slots=True)
+class DetectorTransformLinkOverride:
+    """Override for one link in the detector NeXus transformation chain.
+
+    Replaces the value of a single named link in the detector's
+    ``depends_on`` chain with a current scalar value provided at runtime
+    (typically from an f144 position stream). The link's units must match
+    those baked into the NeXus file.
+    """
+
+    link_name: str
+    value: sc.Variable
+
+
+DetectorTransformLinkName = NewType('DetectorTransformLinkName', str)
+"""Name of the NeXus transformation link whose value is overridden at runtime."""
+
+
+DetectorTransformLinkLogValue = NewType('DetectorTransformLinkLogValue', sc.DataArray)
+"""NXlog-shaped DataArray of f144 values for the link being overridden.
+
+Set via ``set_context`` from the ToNXlog accumulator output. Carries a
+``time`` coord; the override provider extracts the latest sample.
+"""
+
+
 ROIPolygonMasks = NewType('ROIPolygonMasks', dict)
 """Precomputed boolean masks for polygon ROIs.
 

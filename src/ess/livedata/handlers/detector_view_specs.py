@@ -21,7 +21,7 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSources, JobId, WorkflowOutputsBase
+from ..config.workflow_spec import AuxInput, AuxSources, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'tof', 'wavelength']
@@ -353,6 +353,32 @@ class DetectorROIAuxSources(AuxSources):
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
+
+
+class DetectorCarriageAuxSources(DetectorROIAuxSources):
+    """ROI streams plus a fixed-name f144 position stream.
+
+    The f144 stream is shared across all jobs (the carriage position is a
+    physical property of the instrument, not job-specific), so its name is
+    rendered without a job-specific prefix.
+    """
+
+    def __init__(self, *, position_stream: str) -> None:
+        super().__init__()
+        self._position_stream = position_stream
+        self._inputs[position_stream] = AuxInput(
+            choices=(position_stream,), default=position_stream
+        )
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        rendered = super().render(job_id, selections)
+        # Position stream is global - not job-prefixed.
+        rendered[self._position_stream] = self._position_stream
+        return rendered
 
 
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]

@@ -100,6 +100,14 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
+        # Drive the rear bank's NeXus 'detector_carriage' link from the
+        # live f144 carriage readback. Other banks have no override.
+        link_overrides={
+            'loki_detector_0': (
+                'detector_carriage',
+                '/entry/instrument/detector_carriage/value',
+            ),
+        },
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams

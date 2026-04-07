@@ -10,10 +10,12 @@ workflow for detector view data reduction.
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Literal
 
 import sciline
 import scipp as sc
+import scippnexus as snx
 from ess.reduce.live.raw import (
     DetectorViewResolution,
     PositionNoiseReplicaCount,
@@ -25,7 +27,7 @@ from ess.reduce.live.raw import (
     position_noise_for_cylindrical_pixel,
     position_with_noisy_replicas,
 )
-from ess.reduce.nexus.types import SampleRun
+from ess.reduce.nexus.types import NeXusComponent, NeXusTransformationChain, SampleRun
 from ess.reduce.time_of_flight import GenericTofWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
@@ -49,6 +51,9 @@ from .roi import (
 )
 from .types import (
     CoordinateMode,
+    DetectorTransformLinkLogValue,
+    DetectorTransformLinkName,
+    DetectorTransformLinkOverride,
     EventCoordName,
     FlipX,
     HistogramBins,
@@ -58,6 +63,42 @@ from .types import (
     ReductionDim,
     UsePixelWeighting,
 )
+
+
+def get_transformation_chain_with_override(
+    detector: NeXusComponent[snx.NXdetector, SampleRun],
+    override: DetectorTransformLinkOverride,
+) -> NeXusTransformationChain[snx.NXdetector, SampleRun]:
+    """Replace one link's value in the detector transformation chain.
+
+    Replaces essreduce's ``get_transformation_chain`` so that a runtime
+    f144 stream value can drive the detector position. When the override
+    has an empty ``link_name``, this is a pass-through equivalent to the
+    upstream provider.
+    """
+    chain = deepcopy(detector['depends_on'])
+    if override.link_name:
+        chain.transformations[override.link_name].value = override.value
+    return NeXusTransformationChain[snx.NXdetector, SampleRun](chain)
+
+
+def detector_transform_link_override_from_nxlog(
+    log_value: DetectorTransformLinkLogValue,
+    link_name: DetectorTransformLinkName,
+) -> DetectorTransformLinkOverride:
+    """Build an override from the latest sample of an NXlog DataArray.
+
+    The ``log_value`` arrives via ``set_context`` from the ``ToNXlog``
+    accumulator. We extract the most recent value as a scalar
+    ``sc.Variable`` so the downstream ``to_transformation`` time-filter
+    branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
+    Returns the no-op override (empty ``link_name``) when no log value is
+    available yet, so the file's baked-in initial link value is used.
+    """
+    if not link_name or log_value is None or log_value.sizes.get('time', 0) == 0:
+        return DetectorTransformLinkOverride(link_name='', value=sc.scalar(0.0))
+    latest = log_value['time', -1].data
+    return DetectorTransformLinkOverride(link_name=str(link_name), value=latest)
 
 
 def create_base_workflow(
@@ -108,6 +149,14 @@ def create_base_workflow(
         raise NotImplementedError("wavelength mode is not yet implemented")
     else:
         raise ValueError(f"Unknown coordinate_mode: {coordinate_mode}")
+
+    # Replace essreduce's get_transformation_chain so the detector's NeXus
+    # transformation chain can be patched at runtime with values from an
+    # f144 position stream. Default override is None (no-op pass-through).
+    workflow.insert(get_transformation_chain_with_override)
+    workflow.insert(detector_transform_link_override_from_nxlog)
+    workflow[DetectorTransformLinkLogValue] = None  # type: ignore[assignment]
+    workflow[DetectorTransformLinkName] = DetectorTransformLinkName('')
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)

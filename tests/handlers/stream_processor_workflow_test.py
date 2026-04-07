@@ -356,3 +356,63 @@ class TestWindowOutputs:
         )
         result3 = workflow.finalize()
         assert result3['current'].coords['start_time'].value == 9000
+
+
+class TestInitialContextPriming:
+    """Verify that initial_context triggers a one-shot set_context at
+    construction time, baking non-deterministic context-dependent providers
+    into a cached parameter so accumulate() does not re-roll them.
+    """
+
+    def test_initial_context_freezes_random_provider(self):
+        import random
+
+        def make_random_value(context: Context) -> ProcessedContext:
+            # Non-deterministic provider downstream of a context key.
+            return ProcessedContext(random.randint(0, 10**9) + context)
+
+        def process_streamed(
+            streamed: Streamed, context: ProcessedContext
+        ) -> ProcessedStreamed:
+            return ProcessedStreamed(streamed + context)
+
+        def to_output(s: ProcessedStreamed) -> Output:
+            return Output(s)
+
+        pipeline = sciline.Pipeline(
+            (make_random_value, process_streamed, to_output),
+            params={Context: 0},
+        )
+
+        workflow = StreamProcessorWorkflow(
+            pipeline,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'ctx': Context},
+            target_keys={'out': Output},
+            accumulators=(ProcessedStreamed,),
+            initial_context={'ctx': 0},
+        )
+
+        workflow.accumulate({'streamed': Streamed(1)}, start_time=0, end_time=1)
+        first = workflow.finalize()['out']
+        workflow.accumulate({'streamed': Streamed(1)}, start_time=1, end_time=2)
+        second = workflow.finalize()['out']
+        # If the random provider were re-rolled per chunk, accumulating twice
+        # would yield non-deterministic outputs differing across runs of the
+        # provider; the cached parameter freezes it to a single value.
+        assert second == 2 * first
+
+    def test_initial_context_ignored_for_unknown_key(self):
+        def passthrough(streamed: Streamed) -> Output:
+            return Output(streamed)
+
+        pipeline = sciline.Pipeline((passthrough,))
+        workflow = StreamProcessorWorkflow(
+            pipeline,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'out': Output},
+            accumulators=(Output,),
+            initial_context={'unknown': 0},  # silently dropped
+        )
+        workflow.accumulate({'streamed': Streamed(7)}, start_time=0, end_time=1)
+        assert workflow.finalize()['out'] == 7
