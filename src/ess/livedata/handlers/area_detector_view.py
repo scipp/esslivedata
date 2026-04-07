@@ -14,6 +14,8 @@ from typing import Any
 import scipp as sc
 from ess.reduce.live import raw
 
+from ess.livedata.core.timestamp import Timestamp
+
 from .workflow_factory import Workflow
 
 
@@ -34,10 +36,10 @@ class AreaDetectorView(Workflow):
         self._logical_view = logical_view
         self._cumulative: sc.DataArray | None = None
         self._previous: sc.DataArray | None = None
-        self._current_start_time: int | None = None
+        self._current_start_time: Timestamp | None = None
 
     def accumulate(
-        self, data: dict[str, Any], *, start_time: int, end_time: int
+        self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
     ) -> None:
         """
         Add data to the accumulator.
@@ -86,7 +88,7 @@ class AreaDetectorView(Workflow):
             current = current - self._previous
         self._previous = cumulative
 
-        time_coord = sc.scalar(self._current_start_time, unit='ns')
+        time_coord = self._current_start_time.to_scipp()
         current = current.assign_coords(time=time_coord)
         self._current_start_time = None
 

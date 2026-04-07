@@ -11,12 +11,15 @@ from ess.livedata.core.message_batcher import (
     AdaptiveMessageBatcher,
     SimpleMessageBatcher,
 )
+from ess.livedata.core.timestamp import Duration, Timestamp
 
 
 def make_message(timestamp_ns: int, value: str = "test") -> Message[str]:
     """Helper to create test messages with specific timestamps."""
     stream = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="test")
-    return Message(timestamp=timestamp_ns, stream=stream, value=value)
+    return Message(
+        timestamp=Timestamp.from_ns(timestamp_ns), stream=stream, value=value
+    )
 
 
 class TestSimpleMessageBatcher:
@@ -32,8 +35,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([msg])
 
         assert batch is not None
-        assert batch.start_time == 1000
-        assert batch.end_time == 1000
+        assert batch.start_time == Timestamp.from_ns(1000)
+        assert batch.end_time == Timestamp.from_ns(1000)
         assert batch.messages == [msg]
 
     def test_multiple_messages_same_time_creates_initial_batch(self):
@@ -43,8 +46,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch(messages)
 
         assert batch is not None
-        assert batch.start_time == 1000
-        assert batch.end_time == 1000
+        assert batch.start_time == Timestamp.from_ns(1000)
+        assert batch.end_time == Timestamp.from_ns(1000)
         assert batch.messages == messages
 
     def test_initial_batch_spans_all_timestamps(self):
@@ -58,8 +61,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch(messages)
 
         assert batch is not None
-        assert batch.start_time == 1000
-        assert batch.end_time == 3000
+        assert batch.start_time == Timestamp.from_ns(1000)
+        assert batch.end_time == Timestamp.from_ns(3000)
         assert len(batch.messages) == 3
 
     def test_second_batch_call_with_no_future_messages_returns_none(self):
@@ -87,8 +90,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([future_msg])
 
         assert batch is not None
-        assert batch.start_time == initial_end
-        assert batch.end_time == initial_end + batch_length_ns
+        assert batch.start_time == Timestamp.from_ns(initial_end)
+        assert batch.end_time == Timestamp.from_ns(initial_end + batch_length_ns)
         assert batch.messages == []  # Empty batch, future message goes to next
 
     def test_nearly_ordered_messages_basic_case(self):
@@ -115,7 +118,9 @@ class TestSimpleMessageBatcher:
         assert batch2 is not None
         # Late message should be included in returned batch (the completed active batch)
         assert len(batch2.messages) == 1  # Only the late message
-        assert batch2.messages[0].timestamp == 1400 + batch_length_ns - 10
+        assert batch2.messages[0].timestamp == Timestamp.from_ns(
+            1400 + batch_length_ns - 10
+        )
 
     def test_late_arriving_messages_included_in_current_batch(self):
         """
@@ -136,7 +141,9 @@ class TestSimpleMessageBatcher:
 
         assert batch is not None
         assert len(batch.messages) == 1
-        assert batch.messages[0].timestamp == 500  # Late message included
+        assert batch.messages[0].timestamp == Timestamp.from_ns(
+            500
+        )  # Late message included
 
     def test_batch_length_respected(self):
         batch_length_s = 2.0
@@ -151,35 +158,9 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([boundary_msg])
 
         assert batch is not None
-        assert batch.end_time == 1000 + batch_length_ns
-
-    def test_invalid_timestamp_filtered_out(self):
-        """Messages with non-numeric timestamps should be filtered out."""
-        batcher = SimpleMessageBatcher(batch_length_s=1.0)
-
-        # Create message with invalid timestamp manually
-        stream = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="test")
-        valid_msg = make_message(1000)
-        invalid_msg = Message(timestamp="invalid", stream=stream, value="test")  # type: ignore[arg-type]
-
-        batch = batcher.batch([valid_msg, invalid_msg])
-
-        assert batch is not None
-        assert len(batch.messages) == 1
-        assert batch.messages[0] == valid_msg
-
-    def test_all_invalid_timestamps_returns_none(self):
-        """If all messages have invalid timestamps, should return None."""
-        batcher = SimpleMessageBatcher(batch_length_s=1.0)
-
-        stream = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="test")
-        invalid_msgs = [
-            Message(timestamp="invalid1", stream=stream, value="test1"),  # type: ignore[arg-type]
-            Message(timestamp=None, stream=stream, value="test2"),  # type: ignore[arg-type]
-        ]
-
-        batch = batcher.batch(invalid_msgs)
-        assert batch is None
+        assert batch.end_time == Timestamp.from_ns(1000) + Duration.from_ns(
+            batch_length_ns
+        )
 
     def test_multiple_batches_progression(self):
         """Test progression through multiple batches."""
@@ -199,11 +180,11 @@ class TestSimpleMessageBatcher:
         assert batch3 is not None
 
         assert all(b is not None for b in [batch1, batch2, batch3])
-        assert batch1.end_time == 1000
-        assert batch2.start_time == 1000
-        assert batch2.end_time == 1000 + batch_length_ns
-        assert batch3.start_time == 1000 + batch_length_ns
-        assert batch3.end_time == 1000 + 2 * batch_length_ns
+        assert batch1.end_time == Timestamp.from_ns(1000)
+        assert batch2.start_time == Timestamp.from_ns(1000)
+        assert batch2.end_time == Timestamp.from_ns(1000 + batch_length_ns)
+        assert batch3.start_time == Timestamp.from_ns(1000 + batch_length_ns)
+        assert batch3.end_time == Timestamp.from_ns(1000 + 2 * batch_length_ns)
 
     def test_messages_accumulate_in_active_batch(self):
         """Messages within batch window should accumulate."""
@@ -247,8 +228,10 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([far_future])
 
         assert batch is not None
-        assert batch.start_time == 1000
-        assert batch.end_time == 1000 + batch_length_ns
+        assert batch.start_time == Timestamp.from_ns(1000)
+        assert batch.end_time == Timestamp.from_ns(1000) + Duration.from_ns(
+            batch_length_ns
+        )
 
     def test_zero_timestamp_messages(self):
         """Test behavior with zero timestamps."""
@@ -258,8 +241,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([msg])
 
         assert batch is not None
-        assert batch.start_time == 0
-        assert batch.end_time == 0
+        assert batch.start_time == Timestamp.from_ns(0)
+        assert batch.end_time == Timestamp.from_ns(0)
         assert batch.messages == [msg]
 
     def test_negative_timestamp_messages(self):
@@ -270,8 +253,8 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([msg])
 
         assert batch is not None
-        assert batch.start_time == -1000
-        assert batch.end_time == -1000
+        assert batch.start_time == Timestamp.from_ns(-1000)
+        assert batch.end_time == Timestamp.from_ns(-1000)
 
     def test_very_small_batch_length(self):
         """Test with very small batch length."""
@@ -286,7 +269,9 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([future_msg])
 
         assert batch is not None
-        assert batch.end_time == 1000 + batch_length_ns
+        assert batch.end_time == Timestamp.from_ns(1000) + Duration.from_ns(
+            batch_length_ns
+        )
 
     def test_mixed_early_and_late_messages(self):
         """Test complex scenario with mix of early, on-time, and late messages."""
@@ -310,7 +295,12 @@ class TestSimpleMessageBatcher:
         assert batch is not None
         # Should include all late messages
         late_timestamps = [msg.timestamp for msg in batch.messages]
-        expected_late = [4000, 5000 + batch_length_ns - 100, 3000, 4500]
+        expected_late = [
+            Timestamp.from_ns(4000),
+            Timestamp.from_ns(5000 + batch_length_ns - 100),
+            Timestamp.from_ns(3000),
+            Timestamp.from_ns(4500),
+        ]
         assert sorted(late_timestamps) == sorted(expected_late)
 
     def test_large_time_gaps_with_empty_batches(self):
@@ -321,7 +311,7 @@ class TestSimpleMessageBatcher:
         # Initial batch ending at timestamp 1000
         batch1 = batcher.batch([make_message(1000)])
         assert batch1 is not None
-        assert batch1.end_time == 1000
+        assert batch1.end_time == Timestamp.from_ns(1000)
 
         # Message 5 batch lengths in the future
         # This should trigger 5 empty batches before the message is processed
@@ -330,33 +320,33 @@ class TestSimpleMessageBatcher:
         # First call should return first empty batch
         batch2 = batcher.batch([gap_message])
         assert batch2 is not None
-        assert batch2.start_time == 1000
-        assert batch2.end_time == 1000 + batch_length_ns
+        assert batch2.start_time == Timestamp.from_ns(1000)
+        assert batch2.end_time == Timestamp.from_ns(1000 + batch_length_ns)
         assert len(batch2.messages) == 0
 
         # Subsequent calls should return more empty batches
         batch3 = batcher.batch([])
         assert batch3 is not None
-        assert batch3.start_time == 1000 + batch_length_ns
-        assert batch3.end_time == 1000 + 2 * batch_length_ns
+        assert batch3.start_time == Timestamp.from_ns(1000 + batch_length_ns)
+        assert batch3.end_time == Timestamp.from_ns(1000 + 2 * batch_length_ns)
         assert len(batch3.messages) == 0
 
         batch4 = batcher.batch([])
         assert batch4 is not None
-        assert batch4.start_time == 1000 + 2 * batch_length_ns
-        assert batch4.end_time == 1000 + 3 * batch_length_ns
+        assert batch4.start_time == Timestamp.from_ns(1000 + 2 * batch_length_ns)
+        assert batch4.end_time == Timestamp.from_ns(1000 + 3 * batch_length_ns)
         assert len(batch4.messages) == 0
 
         batch5 = batcher.batch([])
         assert batch5 is not None
-        assert batch5.start_time == 1000 + 3 * batch_length_ns
-        assert batch5.end_time == 1000 + 4 * batch_length_ns
+        assert batch5.start_time == Timestamp.from_ns(1000 + 3 * batch_length_ns)
+        assert batch5.end_time == Timestamp.from_ns(1000 + 4 * batch_length_ns)
         assert len(batch5.messages) == 0
 
         batch6 = batcher.batch([])
         assert batch6 is not None
-        assert batch6.start_time == 1000 + 4 * batch_length_ns
-        assert batch6.end_time == 1000 + 5 * batch_length_ns
+        assert batch6.start_time == Timestamp.from_ns(1000 + 4 * batch_length_ns)
+        assert batch6.end_time == Timestamp.from_ns(1000 + 5 * batch_length_ns)
         assert len(batch6.messages) == 0
 
         # Next call should return None (no more empty batches)
@@ -365,10 +355,12 @@ class TestSimpleMessageBatcher:
         assert result is None
         batch7 = batcher.batch([make_message(1000 + 6 * batch_length_ns + 100)])
         assert batch7 is not None
-        assert batch7.start_time == 1000 + 5 * batch_length_ns
-        assert batch7.end_time == 1000 + 6 * batch_length_ns
+        assert batch7.start_time == Timestamp.from_ns(1000 + 5 * batch_length_ns)
+        assert batch7.end_time == Timestamp.from_ns(1000 + 6 * batch_length_ns)
         assert len(batch7.messages) == 1
-        assert batch7.messages[0].timestamp == 1000 + 5 * batch_length_ns + 100
+        assert batch7.messages[0].timestamp == Timestamp.from_ns(
+            1000 + 5 * batch_length_ns + 100
+        )
 
     def test_large_gap_single_call_returns_first_empty_batch(self):
         """Single call with a large gap message returns only the first empty batch."""
@@ -383,16 +375,18 @@ class TestSimpleMessageBatcher:
         batch = batcher.batch([far_future])
 
         assert batch is not None
-        assert batch.start_time == 1000
-        assert batch.end_time == 1000 + batch_length_ns
+        assert batch.start_time == Timestamp.from_ns(1000)
+        assert batch.end_time == Timestamp.from_ns(1000) + Duration.from_ns(
+            batch_length_ns
+        )
         assert len(batch.messages) == 0
 
         # The far future message should still be waiting
         # Subsequent empty calls should produce more empty batches
         next_batch = batcher.batch([])
         assert next_batch is not None
-        assert next_batch.start_time == 1000 + batch_length_ns
-        assert next_batch.end_time == 1000 + 2 * batch_length_ns
+        assert next_batch.start_time == Timestamp.from_ns(1000 + batch_length_ns)
+        assert next_batch.end_time == Timestamp.from_ns(1000 + 2 * batch_length_ns)
         assert len(next_batch.messages) == 0
 
 

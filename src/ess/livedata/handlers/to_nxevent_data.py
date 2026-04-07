@@ -11,6 +11,7 @@ import scipp as sc
 from streaming_data_types import eventdata_ev44
 
 from ess.livedata.core.handler import Accumulator
+from ess.livedata.core.timestamp import Timestamp
 
 
 def _require_single_pulse(ev44: eventdata_ev44.EventData) -> None:
@@ -138,7 +139,7 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         self._weights = _WeightsBuffer()
         self._buffers_in_use = False
 
-    def add(self, timestamp: int, data: Events) -> bool:
+    def add(self, timestamp: Timestamp, data: Events) -> bool:
         if data.unit != 'ns':
             raise ValueError(f"Expected unit 'ns', got '{data.unit}'")
         if self._have_event_id is None:
@@ -149,7 +150,7 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         elif self._have_event_id != isinstance(data, DetectorEvents):
             # This should never happen, but we check to be safe.
             raise ValueError("Inconsistent event_id")
-        self._timestamps.append(int(timestamp))
+        self._timestamps.append(timestamp.to_ns())
         self._chunks.append(data)
         return True
 

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import json
-import time
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -12,6 +11,7 @@ import structlog
 from ess.livedata import Message, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 
 logger = structlog.get_logger(__name__)
@@ -88,9 +88,7 @@ class LogProducerWidget:
 
     def _publish_message(self, value: float, stream_name: str):
         """Publish a message to the specified stream."""
-        da = sc.DataArray(
-            sc.scalar(value), coords={'time': sc.scalar(time.time_ns(), unit='ns')}
-        )
+        da = sc.DataArray(sc.scalar(value), coords={'time': Timestamp.now().to_scipp()})
         msg = Message(value=da, stream=StreamId(kind=StreamKind.LOG, name=stream_name))
         self._sink.publish_messages([msg])
         logger.info(

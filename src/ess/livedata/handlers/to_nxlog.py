@@ -5,6 +5,7 @@ import scipp as sc
 import structlog
 
 from ess.livedata.core.handler import Accumulator
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.accumulators import LogData
 
 logger = structlog.get_logger(__name__)
@@ -74,7 +75,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                 [self._timeseries, self._timeseries], dim='time'
             )
 
-    def add(self, timestamp: int, data: LogData) -> bool:
+    def add(self, timestamp: Timestamp, data: LogData) -> bool:
         if self._last_time is not None:
             if data.time < self._last_time:
                 logger.warning(

@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-import time
 from typing import ClassVar
 
 import panel as pn
 
 from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
@@ -205,11 +205,9 @@ class WorkerStatusRow:
             f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
         )
 
-    def _calculate_uptime(self, started_at_ns: int) -> float:
+    def _calculate_uptime(self, started_at: Timestamp) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
-        current_time_ns = time.time_ns()
-        uptime_ns = current_time_ns - started_at_ns
-        return uptime_ns / 1_000_000_000
+        return (Timestamp.now() - started_at).to_seconds()
 
     @property
     def panel(self) -> pn.Row:

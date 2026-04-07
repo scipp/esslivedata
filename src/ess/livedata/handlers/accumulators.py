@@ -11,6 +11,7 @@ from ess.reduce.streaming import EternalAccumulator
 from streaming_data_types import logdata_f144
 
 from ..core.handler import Accumulator
+from ..core.timestamp import Timestamp
 from .to_nxevent_data import MonitorEvents
 
 __all__ = ["MonitorEvents"]
@@ -37,7 +38,7 @@ class LogData:
 
 
 class NullAccumulator(Accumulator[Any, None]):
-    def add(self, timestamp: int, data: Any) -> bool:
+    def add(self, timestamp: Timestamp, data: Any) -> bool:
         return True
 
     def get(self) -> None:
@@ -64,7 +65,7 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
     def __init__(self):
         self._latest: sc.DataArray | None = None
 
-    def add(self, timestamp: int, data: sc.DataArray) -> bool:
+    def add(self, timestamp: Timestamp, data: sc.DataArray) -> bool:
         _ = timestamp
         self._latest = data.copy()
         return True
@@ -224,7 +225,7 @@ class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.Data
         super().__init__(clear_on_get=clear_on_get)
         self._config = config or {}
 
-    def add(self, timestamp: int, data: sc.DataArray) -> bool:
+    def add(self, timestamp: Timestamp, data: sc.DataArray) -> bool:
         _ = timestamp
         self._add_cumulative(data)
         return True

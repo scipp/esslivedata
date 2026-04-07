@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import time
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,6 +14,7 @@ import numpy as np
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.core.timestamp import Timestamp
 
 from .autoscaler import Autoscaler
 from .plot_params import (
@@ -182,18 +182,18 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
     Lag is computed from the earliest end_time (oldest data) to show worst-case
     staleness.
     """
-    now_ns = time.time_ns()
-    min_start: int | None = None
-    min_end: int | None = None
-    max_end: int | None = None
+    now_ns = Timestamp.now()
+    min_start: Timestamp | None = None
+    min_end: Timestamp | None = None
+    max_end: Timestamp | None = None
 
     for da in data.values():
         if 'start_time' in da.coords:
-            start_ns = da.coords['start_time'].value
+            start_ns = Timestamp.from_scipp(da.coords['start_time'])
             if min_start is None or start_ns < min_start:
                 min_start = start_ns
         if 'end_time' in da.coords:
-            end_ns = da.coords['end_time'].value
+            end_ns = Timestamp.from_scipp(da.coords['end_time'])
             if min_end is None or end_ns < min_end:
                 min_end = end_ns
             if max_end is None or end_ns > max_end:
@@ -203,7 +203,7 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return None
 
     # Use min_end for lag (oldest data = maximum lag)
-    lag_s = (now_ns - min_end) / 1e9
+    lag_s = (now_ns - min_end).to_seconds()
 
     if min_start is not None and max_end is not None:
         start_str = format_time_ns_local(min_start)

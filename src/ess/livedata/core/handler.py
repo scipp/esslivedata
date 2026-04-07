@@ -6,6 +6,7 @@ from typing import ClassVar, Generic, Protocol, TypeVar
 
 from ..config.instrument import Instrument
 from .message import StreamId, Tin, Tout
+from .timestamp import Timestamp
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -33,7 +34,7 @@ class Accumulator(Protocol, Generic[T, U]):
 
     is_context: ClassVar[bool] = False
 
-    def add(self, timestamp: int, data: T) -> bool:
+    def add(self, timestamp: Timestamp, data: T) -> bool:
         """Add data to the accumulator.
 
         Returns

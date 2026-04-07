@@ -35,6 +35,7 @@ from .message_batcher import (
     MessageBatch,
     MessageBatcher,
 )
+from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -154,22 +155,22 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
-        self._last_status_update: int | None = None
-        self._status_update_interval = 2_000_000_000  # 2 seconds
+        self._last_status_update: Timestamp | None = None
+        self._status_update_interval = Duration.from_seconds(2)
 
         # Service heartbeat state
         self._instrument = instrument.name
         self._namespace = instrument.active_namespace or "unknown"
         self._worker_id = str(uuid.uuid4())
-        self._started_at = time.time_ns()
+        self._started_at = Timestamp.now()
         self._messages_processed = 0
         self._service_state = ServiceState.starting
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
         # Metrics tracking
-        self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
-        self._last_metrics_time: int | None = None
+        self._metrics_interval = Duration.from_seconds(30)
+        self._last_metrics_time: Timestamp | None = None
         self._batches_processed = 0
         self._empty_batches = 0
         self._errors_since_last_metrics = 0
@@ -284,7 +285,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_status_update is not None:
             if timestamp - self._last_status_update < self._status_update_interval:
                 return
@@ -320,12 +321,13 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _maybe_log_metrics(self) -> None:
         """Log processor metrics if the interval has elapsed."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_metrics_time is None:
             self._last_metrics_time = timestamp
             return
 
-        if timestamp - self._last_metrics_time >= self._metrics_interval:
+        elapsed = timestamp - self._last_metrics_time
+        if elapsed >= self._metrics_interval:
             active_jobs = len(self._job_manager.active_jobs)
             logger.info(
                 'processor_metrics',
@@ -334,7 +336,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 empty_batches=self._empty_batches,
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
-                interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
+                interval_seconds=elapsed.to_seconds(),
             )
             # Reset counters (except messages_processed which is cumulative for service)
             self._batches_processed = 0
@@ -376,7 +378,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _send_final_heartbeat(self) -> None:
         """Send a final service heartbeat with current state."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
         service_status = self._get_service_status(job_statuses)
         message = _service_status_to_message(service_status, timestamp=timestamp)
@@ -394,15 +396,15 @@ def _job_result_to_message(result: JobResult) -> Message:
     identify the job in the frontend.
     """
     return Message(
-        timestamp=result.start_time or 0,
+        timestamp=result.start_time or Timestamp.from_ns(0),
         stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
         value=result.data,
     )
 
 
-def _job_status_to_message(status: JobStatus, timestamp: int) -> Message:
+def _job_status_to_message(status: JobStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
 
 
-def _service_status_to_message(status: ServiceStatus, timestamp: int) -> Message:
+def _service_status_to_message(status: ServiceStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
