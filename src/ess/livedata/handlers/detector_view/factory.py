@@ -262,14 +262,9 @@ class DetectorViewFactory:
         # Wire dynamic detector geometry (f144 NXlog stream) if configured for
         # this source.
         value_stream = self._transform_value_streams.get(source_name)
-        initial_context: dict[str, object] | None = None
         if value_stream is not None:
             workflow[TransformName] = TransformName(value_stream.transform_name)
             context_keys[value_stream.aux_stream] = TransformValueLog
-            # Prime the context with the default (no f144 message yet) so the
-            # noise replicas downstream of the transformation chain are baked
-            # into the cached parent-of-dynamic layer at construction time.
-            initial_context = {value_stream.aux_stream: None}
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
@@ -278,7 +273,6 @@ class DetectorViewFactory:
             context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=window_outputs,
-            initial_context=initial_context,
             accumulators={
                 AccumulatedHistogram[Cumulative]: cumulative,
                 AccumulatedHistogram[Current]: window,

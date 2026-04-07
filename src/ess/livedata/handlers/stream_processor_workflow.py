@@ -33,7 +33,6 @@ class StreamProcessorWorkflow(Workflow):
         context_keys: dict[str, sciline.typing.Key] | None = None,
         target_keys: dict[str, sciline.typing.Key],
         window_outputs: Iterable[str] = (),
-        initial_context: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -76,23 +75,6 @@ class StreamProcessorWorkflow(Workflow):
             target_keys=tuple(self._target_keys.values()),
             **kwargs,
         )
-
-        # Prime context-dependent cached nodes by triggering an initial
-        # set_context. This forces essreduce's StreamProcessor to compute and
-        # cache the parent-of-dynamic layer (e.g., Projector) once, baking in
-        # any non-deterministic providers (e.g., unseeded RNG noise sampling)
-        # so that subsequent accumulate() calls reuse the same value rather
-        # than re-rolling. Without this, providers downstream of a context
-        # key are recomputed on every chunk and any randomness propagates as
-        # accumulator coord mismatches.
-        if initial_context:
-            primed = {
-                self._context_keys[name]: value
-                for name, value in initial_context.items()
-                if name in self._context_keys
-            }
-            if primed:
-                self._stream_processor.set_context(primed)
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
