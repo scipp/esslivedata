@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import panel as pn
 
-from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStats
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
@@ -36,11 +36,10 @@ class WorkerUIConstants:
     STATUS_WIDTH = 90
     VERSION_WIDTH = 200
     UPTIME_WIDTH = 120
-    STATS_WIDTH = 180
-    ROW_HEIGHT = 35
+    STATS_WIDTH = 240
 
     # Margins
-    STANDARD_MARGIN = (5, 5)
+    STANDARD_MARGIN = (2, 5)
     HEADER_MARGIN = (10, 10, 5, 10)
 
 
@@ -77,6 +76,70 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
+def _format_stream_stats_summary(stats: StreamStats | None) -> str:
+    """Format compact stream stats summary for the worker status row."""
+    if stats is None:
+        return "Msgs: -"
+    total = sum(s.count for s in stats.streams)
+    window = f"{stats.window_seconds:.0f}s"
+    return f"Msgs: {_format_messages(total)}/{window}"
+
+
+def _format_stream_stats_details(stats: StreamStats | None) -> str:
+    """Format expandable per-stream details table.
+
+    Always returns visible content so the row height stays consistent
+    regardless of whether stream data has arrived yet.
+    """
+    style = "margin: 0; font-size: 11px;"
+    if stats is None:
+        return (
+            f'<span style="{style}; color: {Colors.TEXT_MUTED}">No stream data</span>'
+        )
+    if not stats.streams:
+        return (
+            f'<details style="{style}">'
+            f"<summary>Streams ({stats.window_seconds:.0f}s window)</summary>"
+            "<i>No streams received</i>"
+            "</details>"
+        )
+    unmapped_count = sum(1 for s in stats.streams if s.stream is None)
+    summary_extra = ""
+    if unmapped_count:
+        summary_extra = (
+            f' — <span style="color: {StatusColors.ERROR}">'
+            f"{unmapped_count} unmapped</span>"
+        )
+    rows = []
+    for s in stats.streams:
+        stream_cell = s.stream or (
+            f'<span style="color: {StatusColors.ERROR}">unmapped</span>'
+        )
+        rows.append(
+            f"<tr><td>{s.topic}</td><td>{s.source_name}</td>"
+            f"<td>{stream_cell}</td><td style='text-align:right'>"
+            f"{_format_messages(s.count)}</td></tr>"
+        )
+    header_style = f"text-align:left; border-bottom:1px solid {Colors.BORDER}"
+    count_style = f"text-align:right; border-bottom:1px solid {Colors.BORDER}"
+    table = (
+        '<table style="width:100%; border-collapse:collapse; font-size:11px;">'
+        "<tr>"
+        f'<th style="{header_style}">Topic</th>'
+        f'<th style="{header_style}">Source</th>'
+        f'<th style="{header_style}">Stream</th>'
+        f'<th style="{count_style}">Count</th>'
+        "</tr>" + "".join(rows) + "</table>"
+    )
+    return (
+        f'<details style="{style}">'
+        f"<summary>{len(stats.streams)} streams / "
+        f"{stats.window_seconds:.0f}s window{summary_extra}</summary>"
+        f"{table}"
+        "</details>"
+    )
+
+
 class WorkerStatusRow:
     """Widget to display the status of a single backend worker.
 
@@ -92,45 +155,53 @@ class WorkerStatusRow:
         # Create stable pane references
         self._namespace_pane = pn.pane.HTML(
             width=WorkerUIConstants.NAMESPACE_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._worker_id_pane = pn.pane.HTML(
             width=WorkerUIConstants.WORKER_ID_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._status_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATUS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._version_pane = pn.pane.HTML(
             width=WorkerUIConstants.VERSION_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._uptime_pane = pn.pane.HTML(
             width=WorkerUIConstants.UPTIME_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._stats_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
 
-        self._panel = pn.Row(
+        row = pn.Row(
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
             self._version_pane,
             self._uptime_pane,
             self._stats_pane,
-            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
+            margin=0,
         )
+        self._details_pane = pn.pane.HTML(
+            "",
+            sizing_mode="stretch_width",
+            margin=(0, 10, 2, 10),
+        )
+        self._panel = pn.Column(
+            row,
+            self._details_pane,
+            sizing_mode="stretch_width",
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
+            margin=0,
+        )
+
+        self._last_stream_stats: StreamStats | None = None
 
         # Set initial content
         self.update(status, is_stale, last_seen_seconds_ago)
@@ -197,12 +268,21 @@ class WorkerStatusRow:
             time_text = f"Up: {_format_duration(uptime)}"
         self._uptime_pane.object = f"<span>{time_text}</span>"
 
+        # Cache stream stats when a new snapshot arrives
+        if status.stream_stats is not None:
+            self._last_stream_stats = status.stream_stats
+
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
-        msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
         batch_text = f"Batch: {status.batch_interval_s:.0f}s"
+        msgs_text = _format_stream_stats_summary(self._last_stream_stats)
         self._stats_pane.object = (
             f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
+        )
+
+        # Full-width expandable stream details
+        self._details_pane.object = _format_stream_stats_details(
+            self._last_stream_stats
         )
 
     def _calculate_uptime(self, started_at: Timestamp) -> float:
@@ -210,7 +290,7 @@ class WorkerStatusRow:
         return (Timestamp.now() - started_at).to_seconds()
 
     @property
-    def panel(self) -> pn.Row:
+    def panel(self) -> pn.Column:
         """Get the panel for this widget."""
         return self._panel
 

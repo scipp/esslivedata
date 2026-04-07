@@ -7,6 +7,7 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -14,8 +15,11 @@ def make_monitor_service_builder(
     *, instrument: str, dev: bool = True, log_level: int = logging.INFO
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    stream_counter = StreamCounter()
     adapter = (
-        RoutingAdapterBuilder(stream_mapping=stream_mapping)
+        RoutingAdapterBuilder(
+            stream_mapping=stream_mapping, stream_counter=stream_counter
+        )
         .with_beam_monitor_route()
         .with_logdata_route()
         .with_livedata_commands_route()
@@ -32,6 +36,7 @@ def make_monitor_service_builder(
         log_level=log_level,
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
+        stream_counter=stream_counter,
     )
 
 

@@ -23,7 +23,6 @@ def _make_status(
         state=state,
         started_at=Timestamp.now(),
         active_job_count=1,
-        messages_processed=10,
     )
 
 

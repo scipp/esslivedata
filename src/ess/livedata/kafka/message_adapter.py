@@ -39,6 +39,7 @@ from ..handlers.accumulators import LogData
 from ..handlers.to_nxevent_data import DetectorEvents, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
+from .stream_counter import StreamCounter
 from .stream_mapping import InputStreamKey, StreamLUT
 from .x5f2_compat import x5f2_to_status
 
@@ -108,16 +109,33 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
     the Kafka topics.
     """
 
-    def __init__(self, *, stream_lut: StreamLUT | None = None, stream_kind: StreamKind):
+    def __init__(
+        self,
+        *,
+        stream_lut: StreamLUT | None = None,
+        stream_kind: StreamKind,
+        stream_counter: StreamCounter | None = None,
+    ):
         self._stream_lut = stream_lut
         self._stream_kind = stream_kind
+        self._stream_counter = stream_counter
 
     def get_stream_id(self, topic: str, source_name: str) -> StreamId:
         if self._stream_lut is None:
-            # Assume the source name is unique
-            return StreamId(kind=self._stream_kind, name=source_name)
-        input_key = InputStreamKey(topic=topic, source_name=source_name)
-        return StreamId(kind=self._stream_kind, name=self._stream_lut[input_key])
+            resolved = source_name
+            stream_id = StreamId(kind=self._stream_kind, name=resolved)
+        else:
+            input_key = InputStreamKey(topic=topic, source_name=source_name)
+            try:
+                resolved = self._stream_lut[input_key]
+            except KeyError:
+                if self._stream_counter is not None:
+                    self._stream_counter.record(topic, source_name, None)
+                raise
+            stream_id = StreamId(kind=self._stream_kind, name=resolved)
+        if self._stream_counter is not None:
+            self._stream_counter.record(topic, source_name, resolved)
+        return stream_id
 
 
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
@@ -167,8 +185,17 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
-    def __init__(self, *, stream_lut: StreamLUT | None = None):
-        super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.LOG)
+    def __init__(
+        self,
+        *,
+        stream_lut: StreamLUT | None = None,
+        stream_counter: StreamCounter | None = None,
+    ):
+        super().__init__(
+            stream_lut=stream_lut,
+            stream_kind=StreamKind.LOG,
+            stream_counter=stream_counter,
+        )
 
     def adapt(self, message: KafkaMessage) -> Message[logdata_f144.ExtractedLogData]:
         log_data = logdata_f144.deserialise_f144(message.value())
@@ -266,8 +293,17 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
     yields better performance.
     """
 
-    def __init__(self, stream_lut: StreamLUT):
-        super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.MONITOR_EVENTS)
+    def __init__(
+        self,
+        stream_lut: StreamLUT,
+        *,
+        stream_counter: StreamCounter | None = None,
+    ):
+        super().__init__(
+            stream_lut=stream_lut,
+            stream_kind=StreamKind.MONITOR_EVENTS,
+            stream_counter=stream_counter,
+        )
 
     def adapt(self, message: KafkaMessage) -> Message[MonitorEvents]:
         buffer = message.value()
@@ -449,6 +485,7 @@ class AdaptingMessageSource(MessageSource[U]):
         source: MessageSource[T],
         adapter: MessageAdapter[T, U],
         raise_on_error: bool = False,
+        stream_counter: StreamCounter | None = None,
     ):
         """
         Parameters
@@ -460,10 +497,13 @@ class AdaptingMessageSource(MessageSource[U]):
         raise_on_error
             If True, exceptions during adaptation will be re-raised. If False,
             they will be logged and the message will be skipped.
+        stream_counter
+            Optional counter for recording per-stream message counts.
         """
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
+        self._stream_counter = stream_counter
 
     def get_messages(self) -> Sequence[U]:
         raw_messages = self._source.get_messages()
@@ -473,10 +513,17 @@ class AdaptingMessageSource(MessageSource[U]):
                 adapted.append(self._adapter.adapt(msg))
             except streaming_data_types.exceptions.WrongSchemaException:
                 logger.warning('Message %s has an unknown schema. Skipping.', msg)
+                self._record_error(msg)
                 if self._raise_on_error:
                     raise
             except Exception as e:
                 logger.exception('Error adapting message %s: %s', msg, e)
+                self._record_error(msg)
                 if self._raise_on_error:
                     raise
         return adapted
+
+    def _record_error(self, msg: T) -> None:
+        """Record an adaptation error in the stream counter if available."""
+        if self._stream_counter is not None and hasattr(msg, 'topic'):
+            self._stream_counter.record(msg.topic(), '<error>', None)
