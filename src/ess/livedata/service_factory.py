@@ -21,6 +21,7 @@ from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from .kafka.sink import KafkaSink, UnrollingSinkAdapter
+from .kafka.sink_serializers import Da00Serializer, make_default_sink_serializer
 from .kafka.source import (
     BackgroundMessageSource,
     KafkaConsumer,
@@ -269,7 +270,11 @@ class DataServiceRunner:
 
         if sink_type == 'kafka':
             kafka_sink = KafkaSink(
-                instrument=builder.instrument, kafka_config=kafka_config
+                kafka_config=kafka_config,
+                serializer=make_default_sink_serializer(
+                    instrument=builder.instrument,
+                    data_serializer=Da00Serializer(instrument=builder.instrument),
+                ),
             )
         else:
             kafka_sink = PlotToPngSink()

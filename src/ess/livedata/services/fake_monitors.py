@@ -14,13 +14,16 @@ from streaming_data_types import eventdata_ev44
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
     KafkaSink,
+    MessageSerializer,
     SerializationError,
-    serialize_dataarray_to_da00,
+    SerializedMessage,
 )
+from ess.livedata.kafka.sink_serializers import Da00Serializer
 from ess.livedata.logging_config import configure_logging
 
 logger = structlog.get_logger(__name__)
@@ -175,27 +178,34 @@ class EventsToHistogramAdapter(
         )
 
 
-def serialize_monitor_ev44(msg: Message[sc.Variable | sc.Dataset]) -> bytes:
-    if isinstance(msg.value, sc.Dataset):
-        toa = msg.value['time_of_arrival']
-        pixel_id = msg.value['pixel_id'].values
-    else:
-        toa = msg.value
-        pixel_id = np.ones_like(msg.value.values)
-    if toa.unit != 'ns':
-        raise SerializationError(f"Expected unit 'ns', got {toa.unit}")
-    try:
-        ev44 = eventdata_ev44.serialise_ev44(
-            source_name=msg.stream.name,
-            message_id=0,
-            reference_time=msg.timestamp,
-            reference_time_index=0,
-            time_of_flight=toa.values,
-            pixel_id=pixel_id,
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize message: {e}") from None
-    return ev44
+class MonitorEv44Serializer(MessageSerializer[sc.Variable | sc.Dataset]):
+    """Serializes fake monitor events to ``ev44``."""
+
+    def __init__(self, *, instrument: str) -> None:
+        self._instrument = instrument
+
+    def serialize(self, message: Message[sc.Variable | sc.Dataset]) -> SerializedMessage:
+        if isinstance(message.value, sc.Dataset):
+            toa = message.value['time_of_arrival']
+            pixel_id = message.value['pixel_id'].values
+        else:
+            toa = message.value
+            pixel_id = np.ones_like(message.value.values)
+        if toa.unit != 'ns':
+            raise SerializationError(f"Expected unit 'ns', got {toa.unit}")
+        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
+        try:
+            value = eventdata_ev44.serialise_ev44(
+                source_name=message.stream.name,
+                message_id=0,
+                reference_time=message.timestamp,
+                reference_time_index=0,
+                time_of_flight=toa.values,
+                pixel_id=pixel_id,
+            )
+        except (ValueError, TypeError) as e:
+            raise SerializationError(f"Failed to serialize message: {e}") from None
+        return SerializedMessage(topic=topic, key=None, value=value)
 
 
 def run_service(
@@ -211,12 +221,12 @@ def run_service(
     kafka_config = load_config(namespace=config_names.kafka)
     if mode == 'ev44':
         adapter = None
-        serializer = serialize_monitor_ev44
+        serializer: MessageSerializer = MonitorEv44Serializer(instrument=instrument)
     else:
         adapter = EventsToHistogramAdapter(
             toa=sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
         )
-        serializer = serialize_dataarray_to_da00
+        serializer = Da00Serializer(instrument=instrument)
 
     source = FakeMonitorSource(
         instrument=instrument, num_monitors=num_monitors, nexus_file=nexus_file
@@ -227,9 +237,7 @@ def run_service(
     resources = ExitStack()
     with resources:
         sink = resources.enter_context(
-            KafkaSink(
-                instrument=instrument, kafka_config=kafka_config, serializer=serializer
-            )
+            KafkaSink(kafka_config=kafka_config, serializer=serializer)
         )
         processor = IdentityProcessor(
             source=source,

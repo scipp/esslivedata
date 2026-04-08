@@ -16,7 +16,8 @@ from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
+from ess.livedata.kafka.sink import KafkaSink
+from ess.livedata.kafka.sink_serializers import CommandSerializer, Da00Serializer
 from ess.livedata.kafka.source import KafkaMessageSource
 
 from .transport import DashboardResources, Transport
@@ -68,7 +69,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             command_sink = self._exit_stack.enter_context(
                 KafkaSink[ConfigUpdate](
                     kafka_config=kafka_config,
-                    instrument=self._instrument,
+                    serializer=CommandSerializer(instrument=self._instrument),
                 )
             )
 
@@ -76,8 +77,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             roi_sink = self._exit_stack.enter_context(
                 KafkaSink[sc.DataArray](
                     kafka_config=kafka_config,
-                    instrument=self._instrument,
-                    serializer=serialize_dataarray_to_da00,
+                    serializer=Da00Serializer(instrument=self._instrument),
                 )
             )
 

@@ -10,7 +10,8 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
+from ess.livedata.kafka.sink import KafkaSink
+from ess.livedata.kafka.sink_serializers import F144Serializer
 from ess.livedata.logging_config import configure_logging
 
 
@@ -117,14 +118,12 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     from contextlib import ExitStack
 
     kafka_config = load_config(namespace=config_names.kafka)
-    serializer = serialize_dataarray_to_f144
+    serializer = F144Serializer(instrument=instrument)
 
     resources = ExitStack()
     with resources:
         sink = resources.enter_context(
-            KafkaSink(
-                instrument=instrument, kafka_config=kafka_config, serializer=serializer
-            )
+            KafkaSink(kafka_config=kafka_config, serializer=serializer)
         )
         processor = IdentityProcessor(
             source=FakeLogdataSource(instrument=instrument),
