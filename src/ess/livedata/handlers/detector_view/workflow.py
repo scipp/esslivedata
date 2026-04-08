@@ -28,6 +28,7 @@ from ess.reduce.live.raw import (
     position_with_noisy_replicas,
 )
 from ess.reduce.nexus.types import NeXusComponent, NeXusTransformationChain, SampleRun
+from ess.reduce.nexus.workflow import get_transformation_chain
 from ess.reduce.time_of_flight import GenericTofWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
@@ -76,10 +77,14 @@ def get_transformation_chain_with_value(
     ``transform_value`` has an empty ``name``, this is a pass-through
     equivalent to the upstream provider.
     """
-    chain = deepcopy(detector['depends_on'])
+    chain = get_transformation_chain(detector)
     if transform_value.name:
+        # Copy only when mutating so we don't leak changes back into the
+        # cached NeXusComponent. The pass-through branch keeps upstream's
+        # aliasing behaviour.
+        chain = deepcopy(chain)
         chain.transformations[transform_value.name].value = transform_value.value
-    return NeXusTransformationChain[snx.NXdetector, SampleRun](chain)
+    return chain
 
 
 def transform_value_from_log(
