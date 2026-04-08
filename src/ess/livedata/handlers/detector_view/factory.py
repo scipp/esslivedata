@@ -12,6 +12,7 @@ from __future__ import annotations
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.unwrap import LookupTableFilename
+from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
 
 from ..accumulators import make_no_copy_accumulator_pair
@@ -141,9 +142,10 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # Set lookup table filename for wavelength mode
+        # Set lookup table filename and error threshold for wavelength mode
         if mode == 'wavelength':
             workflow[LookupTableFilename] = tof_lookup_table_filename
+            workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)

@@ -17,7 +17,7 @@ from ess.reduce.nexus.types import (
     SampleRun,
 )
 from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
-from ess.reduce.unwrap.types import WavelengthMonitor
+from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
 from scippnexus import NXmonitor
 
 from .monitor_workflow_types import (
@@ -230,9 +230,10 @@ def create_monitor_workflow(
         # TOA mode without geometry file: provide minimal EmptyMonitor directly
         workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
 
-    # Configure lookup table for wavelength mode
+    # Configure lookup table and error threshold for wavelength mode
     if coordinate_mode == 'wavelength':
         workflow[LookupTableFilename] = tof_lookup_table_filename
+        workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
