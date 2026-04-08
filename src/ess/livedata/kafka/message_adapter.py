@@ -243,7 +243,7 @@ class X5f2ToStatusAdapter(
 
     def adapt(self, message: KafkaMessage) -> Message[JobStatus | ServiceStatus]:
         return Message(
-            timestamp=Timestamp(message.timestamp()[1]),
+            timestamp=Timestamp.from_ms(message.timestamp()[1]),
             stream=STATUS_STREAM_ID,
             value=x5f2_to_status(message.value()),
         )

@@ -830,7 +830,7 @@ class WorkflowStatusWidget:
         if earliest_start is None:
             timing_text = 'Starting...'
         else:
-            start_dt = datetime.fromtimestamp(earliest_start / 1e9, tz=UTC)
+            start_dt = earliest_start.to_datetime(tz=UTC)
             now = datetime.now(tz=UTC)
             duration_secs = int((now - start_dt).total_seconds())
 

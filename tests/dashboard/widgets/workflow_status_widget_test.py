@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.widgets.icons import get_icon
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
@@ -417,7 +418,7 @@ class TestWorkflowStatusWidgetWithJobs:
             job_id=job_id,
             workflow_id=workflow_id,
             state=JobState.active,
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -449,7 +450,7 @@ class TestWorkflowStatusWidgetWithJobs:
             workflow_id=workflow_id,
             state=JobState.error,
             error_message='Something went wrong',
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -523,7 +524,7 @@ class TestWorkflowStatusWidgetWithJobs:
             job_id=job_id,
             workflow_id=workflow_id,
             state=JobState.active,
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -585,7 +586,7 @@ class TestWorkflowStatusWidgetWithJobs:
             job_id=job_id,
             workflow_id=workflow_id,
             state=JobState.active,
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -671,7 +672,7 @@ class TestPerSourceStatus:
                     job_id=JobId(source_name=name, job_number=job_number),
                     workflow_id=workflow_id,
                     state=JobState.active,
-                    start_time=1000000000000,
+                    start_time=Timestamp.from_ns(1000000000000),
                 )
             )
 
@@ -711,7 +712,7 @@ class TestPerSourceStatus:
                 job_id=JobId(source_name='source2', job_number=job_number),
                 workflow_id=workflow_id,
                 state=JobState.active,
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
         job_service.status_updated(
@@ -720,7 +721,7 @@ class TestPerSourceStatus:
                 workflow_id=workflow_id,
                 state=JobState.error,
                 error_message='ZeroDivisionError',
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 
@@ -756,7 +757,7 @@ class TestPerSourceStatus:
                 error_message=(
                     'Traceback:\n  File "x.py"\nZeroDivisionError: division by zero'
                 ),
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 
@@ -893,7 +894,7 @@ class TestPerSourceStatus:
                     job_id=JobId(source_name=name, job_number=job_number),
                     workflow_id=workflow_id,
                     state=JobState.active,
-                    start_time=1000000000000,
+                    start_time=Timestamp.from_ns(1000000000000),
                 )
             )
 
@@ -1027,7 +1028,7 @@ class TestWorkflowStatusListWidget:
                 workflow_id=workflow_id,
                 job_id=job_id,
                 state=JobState.active,
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 
