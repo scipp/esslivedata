@@ -48,6 +48,10 @@ def _make_log(values: list[float], unit: str = 'mm') -> sc.DataArray:
 
 
 class TestTransformValueFromLog:
+    def test_raises_when_log_is_none(self):
+        with pytest.raises(ValueError, match='No samples yet'):
+            transform_value_from_log(None, TransformName('detector_carriage'))
+
     def test_raises_when_log_has_no_samples(self):
         empty = sc.DataArray(
             sc.array(dims=['time'], values=[], unit='mm'),

@@ -90,7 +90,7 @@ def get_transformation_chain_with_value(
 
 
 def transform_value_from_log(
-    log: TransformValueLog,
+    log: TransformValueLog | None,
     name: TransformName,
 ) -> TransformValue:
     """Build a TransformValue from the latest sample of an NXlog DataArray.
@@ -100,15 +100,18 @@ def transform_value_from_log(
     ``sc.Variable`` so the downstream ``to_transformation`` time-filter
     branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
 
+    Before the first ``set_context`` call the parameter is ``None``;
+    after it, it is an NXlog that may still be empty if no f144 message
+    has arrived yet. Both cases raise, so the workflow reports "no value
+    yet" rather than silently falling back to the reference file's
+    baked-in value (which may be stale or invalid).
+
     Raises
     ------
     ValueError
-        If the log has not yet received any samples. This is expected at
-        startup and is reported as a workflow error rather than silently
-        falling back to the reference file's baked-in value (which may
-        be stale or invalid).
+        If the log is ``None`` or has not yet received any samples.
     """
-    if log.sizes.get('time', 0) == 0:
+    if log is None or log.sizes.get('time', 0) == 0:
         raise ValueError(
             f"No samples yet for transformation {name!r}: f144 stream has not "
             "produced a value."
