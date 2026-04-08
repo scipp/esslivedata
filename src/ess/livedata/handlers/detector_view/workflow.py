@@ -90,7 +90,7 @@ def get_transformation_chain_with_value(
 
 
 def transform_value_from_log(
-    log: TransformValueLog | None,
+    log: TransformValueLog,
     name: TransformName,
 ) -> TransformValue:
     """Build a TransformValue from the latest sample of an NXlog DataArray.

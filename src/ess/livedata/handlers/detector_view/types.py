@@ -303,11 +303,14 @@ class TransformValueStream:
     aux_stream: str
 
 
-TransformValueLog = NewType('TransformValueLog', sc.DataArray)
+TransformValueLog = NewType('TransformValueLog', sc.DataArray | None)
 """NXlog-shaped DataArray (timeseries) of f144 values for a transform.
 
 Set via ``set_context`` from the ToNXlog accumulator output. Carries a
-``time`` coord; the provider extracts the latest sample.
+``time`` coord; the provider extracts the latest sample. The alias
+includes ``None`` because sciline initialises context-keyed parameters
+to ``None`` before the first ``set_context`` call; consumers must
+handle that.
 """
 
 
