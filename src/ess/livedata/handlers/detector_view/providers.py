@@ -169,11 +169,12 @@ def compute_detector_histogram(
         # Already dense data (shouldn't happen in normal flow)
         return DetectorHistogram(screen_binned_events)
 
-    # Convert bins to ns and rename dimension to match event_coord for histogramming.
-    # Then restore user's original dimension name and unit for output.
+    # Convert bins to match the event coordinate unit, rename dimension for
+    # histogramming, then restore original dimension name and unit for output.
     output_dim = bins.dim
-    bins_ns = bins.to(unit='ns').rename_dims({output_dim: event_coord})
-    histogrammed = screen_binned_events.hist({event_coord: bins_ns})
+    event_unit = screen_binned_events.bins.coords[event_coord].unit
+    bins_converted = bins.to(unit=event_unit).rename_dims({output_dim: event_coord})
+    histogrammed = screen_binned_events.hist({event_coord: bins_converted})
     histogrammed = histogrammed.rename_dims({event_coord: output_dim})
     histogrammed.coords[output_dim] = bins
     return DetectorHistogram(histogrammed)

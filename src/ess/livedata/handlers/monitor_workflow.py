@@ -51,9 +51,12 @@ def _histogram_monitor(
 
     if data.is_binned:
         # Event-mode: binned events from preprocessor
-        # Convert edges to ns and rename to match event coordinate
-        edges_ns = edges.to(unit='ns').rename_dims({target_dim: event_coord})
-        hist = data.hist({event_coord: edges_ns}, dim=data.dims)
+        # Convert edges to match the event coordinate unit and rename dimension
+        event_unit = data.bins.coords[event_coord].unit
+        edges_converted = edges.to(unit=event_unit).rename_dims(
+            {target_dim: event_coord}
+        )
+        hist = data.hist({event_coord: edges_converted}, dim=data.dims)
         # Rename dimension and coordinate to target dimension
         hist = hist.rename_dims({event_coord: target_dim})
         hist.coords[target_dim] = hist.coords.pop(event_coord)
