@@ -68,25 +68,22 @@ from .types import (
 
 def get_transformation_chain_with_value(
     detector: NeXusComponent[snx.NXdetector, SampleRun],
-    transform_value: TransformValue | None,
+    transform_value: TransformValue,
 ) -> NeXusTransformationChain[snx.NXdetector, SampleRun]:
     """Inject a live value into one entry of the detector transformation chain.
 
     Replaces essreduce's ``get_transformation_chain`` so that a runtime
-    f144 stream value can drive the detector position. When
-    ``transform_value`` is ``None``, this is a pass-through equivalent
-    to the upstream provider.
+    f144 stream value drives the detector position. The baked-in value
+    from the reference geometry file is intentionally never used: it may
+    be stale or invalid, and a wrong result is worse than no result.
     """
     chain = get_transformation_chain(detector)
-    if transform_value is None:
-        return chain
     if transform_value.name not in chain.transformations:
         raise KeyError(
             f"Transformation entry {transform_value.name!r} not found in chain. "
             f"Available entries: {sorted(chain.transformations.keys())}"
         )
-    # Copy only when mutating so we don't leak changes back into the cached
-    # NeXusComponent. The pass-through branch keeps upstream's aliasing.
+    # Copy so we don't leak changes back into the cached NeXusComponent.
     chain = deepcopy(chain)
     chain.transformations[transform_value.name].value = transform_value.value
     return chain
@@ -95,18 +92,27 @@ def get_transformation_chain_with_value(
 def transform_value_from_log(
     log: TransformValueLog,
     name: TransformName,
-) -> TransformValue | None:
+) -> TransformValue:
     """Build a TransformValue from the latest sample of an NXlog DataArray.
 
     The ``log`` arrives via ``set_context`` from the ``ToNXlog``
     accumulator. We extract the most recent value as a scalar
     ``sc.Variable`` so the downstream ``to_transformation`` time-filter
     branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
-    Returns ``None`` when the log has not yet received any samples, so
-    the file's baked-in initial transformation value is used.
+
+    Raises
+    ------
+    ValueError
+        If the log has not yet received any samples. This is expected at
+        startup and is reported as a workflow error rather than silently
+        falling back to the reference file's baked-in value (which may
+        be stale or invalid).
     """
     if log.sizes.get('time', 0) == 0:
-        return None
+        raise ValueError(
+            f"No samples yet for transformation {name!r}: f144 stream has not "
+            "produced a value."
+        )
     return TransformValue(name=name, value=log['time', -1].data)
 
 

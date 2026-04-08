@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import pytest
 import scipp as sc
 import scippnexus as snx
 from ess.reduce.nexus.types import NeXusComponent, SampleRun
@@ -47,7 +48,7 @@ def _make_log(values: list[float], unit: str = 'mm') -> sc.DataArray:
 
 
 class TestTransformValueFromLog:
-    def test_returns_none_when_log_has_no_samples(self):
+    def test_raises_when_log_has_no_samples(self):
         empty = sc.DataArray(
             sc.array(dims=['time'], values=[], unit='mm'),
             coords={
@@ -56,12 +57,12 @@ class TestTransformValueFromLog:
             },
         )
         log = TransformValueLog(empty)
-        assert transform_value_from_log(log, TransformName('detector_carriage')) is None
+        with pytest.raises(ValueError, match='No samples yet'):
+            transform_value_from_log(log, TransformName('detector_carriage'))
 
     def test_picks_latest_value(self):
         log = TransformValueLog(_make_log([1.0, 2.0, 7.5]))
         tv = transform_value_from_log(log, TransformName('detector_carriage'))
-        assert tv is not None
         assert tv.name == 'detector_carriage'
         assert tv.value.value == 7.5
         assert tv.value.unit == sc.Unit('mm')
@@ -71,7 +72,6 @@ class TestTransformValueFromLog:
     def test_units_propagate(self):
         log = TransformValueLog(_make_log([4.2], unit='m'))
         tv = transform_value_from_log(log, TransformName('detector_carriage'))
-        assert tv is not None
         assert tv.value.unit == sc.Unit('m')
 
 
@@ -84,12 +84,14 @@ class TestChainInjection:
             sc.DataGroup({'depends_on': chain})
         )
 
-    def test_none_value_returns_unchanged(self):
+    def test_raises_when_name_not_in_chain(self):
         chain = _make_chain()
         comp = self._component(chain)
-        out = get_transformation_chain_with_value(comp, None)
-        assert out.transformations['carriage'].value.value == 1.0
-        assert out.transformations['other'].value.value == 7.0
+        with pytest.raises(KeyError, match='missing'):
+            get_transformation_chain_with_value(
+                comp,
+                TransformValue(name='missing', value=sc.scalar(1.0, unit='mm')),
+            )
 
     def test_replaces_only_named_entry(self):
         chain = _make_chain()
