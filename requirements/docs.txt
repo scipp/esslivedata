@@ -12,7 +12,7 @@ alabaster==1.0.0
     # via sphinx
 asttokens==3.0.1
     # via stack-data
-attrs==25.4.0
+attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
@@ -48,7 +48,7 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.21.2
     # via nbformat
-imagesize==1.4.1
+imagesize==2.0.0
     # via sphinx
 ipydatawidgets==4.3.5
     # via pythreejs
@@ -56,7 +56,7 @@ ipykernel==7.2.0
     # via -r docs.in
 ipympl==0.10.0
     # via -r docs.in
-ipython==9.10.0
+ipython==9.10.1
     # via
     #   -r docs.in
     #   ipykernel
@@ -108,7 +108,7 @@ myst-parser==5.0.0
     # via -r docs.in
 nbclient==0.10.4
     # via nbconvert
-nbconvert==7.17.0
+nbconvert==7.17.1
     # via nbsphinx
 nbformat==5.10.4
     # via
@@ -119,7 +119,7 @@ nbsphinx==0.9.8
     # via -r docs.in
 nest-asyncio==1.6.0
     # via ipykernel
-pandas==3.0.1
+pandas==3.0.2
     # via -r docs.in
 pandocfilters==1.5.1
     # via nbconvert
@@ -141,9 +141,9 @@ pyarrow==23.0.1
     # via -r docs.in
 pydantic-settings==2.13.1
     # via autodoc-pydantic
-pydata-sphinx-theme==0.16.1
+pydata-sphinx-theme==0.17.0
     # via -r docs.in
-pygments==2.19.2
+pygments==2.20.0
     # via
     #   accessible-pygments
     #   ipython
@@ -198,7 +198,7 @@ sphinxcontrib-htmlhelp==2.1.0
     # via sphinx
 sphinxcontrib-jsmath==1.0.1
     # via sphinx
-sphinxcontrib-mermaid==2.0.0
+sphinxcontrib-mermaid==2.0.1
     # via -r docs.in
 sphinxcontrib-qthelp==2.0.0
     # via sphinx
@@ -208,7 +208,7 @@ stack-data==0.6.3
     # via ipython
 tinycss2==1.4.0
     # via bleach
-tornado==6.5.4
+tornado==6.5.5
     # via
     #   ipykernel
     #   jupyter-client
