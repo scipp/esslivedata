@@ -333,20 +333,17 @@ class DetectorROIAuxSources(AuxSources):
         self,
         dynamic_transforms: dict[str, TransformValueStream] | None = None,
     ) -> None:
-        super().__init__(
-            {
-                'roi_rectangle': 'roi_rectangle',
-                'roi_polygon': 'roi_polygon',
-            }
-        )
         self._dynamic_transforms = dynamic_transforms or {}
+        inputs: dict[str, str | AuxInput] = {
+            'roi_rectangle': 'roi_rectangle',
+            'roi_polygon': 'roi_polygon',
+        }
         # Advertise each unique global aux stream so the dashboard schema
         # and spec validation know it exists. Routing is per-source via
         # render().
         for binding in self._dynamic_transforms.values():
-            stream = binding.aux_stream
-            if stream not in self._inputs:
-                self._inputs[stream] = AuxInput(choices=(stream,), default=stream)
+            inputs.setdefault(binding.aux_stream, binding.aux_stream)
+        super().__init__(inputs)
 
     def render(
         self,

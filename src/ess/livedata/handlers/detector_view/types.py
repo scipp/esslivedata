@@ -267,6 +267,10 @@ Empty dict if no rectangles configured.
 """
 
 
+TransformName = NewType('TransformName', str)
+"""Name of the NeXus transformation entry driven by a live value stream."""
+
+
 @dataclass(frozen=True, slots=True)
 class TransformValue:
     """Current scalar value of a named entry in a NeXus transformation chain.
@@ -276,15 +280,11 @@ class TransformValue:
     units must match those baked into the NeXus file.
     """
 
-    name: str
+    name: TransformName
     value: sc.Variable
 
 
-TransformName = NewType('TransformName', str)
-"""Name of the NeXus transformation entry driven by a live value stream."""
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TransformValueStream:
     """
     Binds a NeXus transformation entry to the f144 stream that supplies its

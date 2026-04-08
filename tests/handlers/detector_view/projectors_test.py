@@ -128,13 +128,13 @@ class TestGeometricProjector:
         screen_shape = (4, 4)
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+        # A per-pixel (1-d) entry that is not a projection reference scalar.
+        coords['pixel_id'] = sc.arange('pixel', n_pixels, unit=None)
 
         projector = GeometricProjector(coords, edges)
         result = projector.project_events(data)
 
-        # screen_x / screen_y are per-pixel arrays and must stay as dims only.
-        assert 'screen_x' not in result.coords or result.coords['screen_x'].ndim >= 1
-        assert 'screen_y' not in result.coords or result.coords['screen_y'].ndim >= 1
+        assert 'pixel_id' not in result.coords
 
     def test_project_events_cycles_replicas(self):
         """Test that projector cycles through replicas."""

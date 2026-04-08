@@ -78,12 +78,17 @@ def get_transformation_chain_with_value(
     to the upstream provider.
     """
     chain = get_transformation_chain(detector)
-    if transform_value is not None:
-        # Copy only when mutating so we don't leak changes back into the
-        # cached NeXusComponent. The pass-through branch keeps upstream's
-        # aliasing behaviour.
-        chain = deepcopy(chain)
-        chain.transformations[transform_value.name].value = transform_value.value
+    if transform_value is None:
+        return chain
+    if transform_value.name not in chain.transformations:
+        raise KeyError(
+            f"Transformation entry {transform_value.name!r} not found in chain. "
+            f"Available entries: {sorted(chain.transformations.keys())}"
+        )
+    # Copy only when mutating so we don't leak changes back into the cached
+    # NeXusComponent. The pass-through branch keeps upstream's aliasing.
+    chain = deepcopy(chain)
+    chain.transformations[transform_value.name].value = transform_value.value
     return chain
 
 
@@ -102,7 +107,7 @@ def transform_value_from_log(
     """
     if log.sizes.get('time', 0) == 0:
         return None
-    return TransformValue(name=str(name), value=log['time', -1].data)
+    return TransformValue(name=name, value=log['time', -1].data)
 
 
 def create_base_workflow(
