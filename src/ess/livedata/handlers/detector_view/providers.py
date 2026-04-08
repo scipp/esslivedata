@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
-from ess.reduce.time_of_flight.types import TofDetector
+from ess.reduce.unwrap.types import WavelengthDetector
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
@@ -62,25 +62,25 @@ def project_raw_detector(
     return _project_detector(raw_detector, projector)
 
 
-def project_tof_detector(
-    tof_detector: TofDetector[SampleRun], projector: Projector
+def project_wavelength_detector(
+    wavelength_detector: WavelengthDetector[SampleRun], projector: Projector
 ) -> ScreenBinnedEvents:
     """
-    Project TOF events to screen coordinates.
+    Project wavelength events to screen coordinates.
 
     Parameters
     ----------
-    tof_detector:
-        Detector data with events binned by detector pixel (tof coord).
+    wavelength_detector:
+        Detector data with events binned by detector pixel (wavelength coord).
     projector:
         Projector instance (geometric or logical).
 
     Returns
     -------
     :
-        Events binned by screen coordinates with tof preserved.
+        Events binned by screen coordinates with wavelength preserved.
     """
-    return _project_detector(tof_detector, projector)
+    return _project_detector(wavelength_detector, projector)
 
 
 def compute_pixel_weights(

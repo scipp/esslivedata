@@ -24,7 +24,7 @@ from ..config.instrument import Instrument
 from ..config.workflow_spec import AuxSources, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
-CoordinateMode = Literal['toa', 'tof', 'wavelength']
+CoordinateMode = Literal['toa', 'wavelength']
 
 
 class CoordinateModeSettings(pydantic.BaseModel):
@@ -32,16 +32,9 @@ class CoordinateModeSettings(pydantic.BaseModel):
 
     mode: CoordinateMode = pydantic.Field(
         default='toa',
-        description="Coordinate system for event data: 'toa' (time-of-arrival), "
-        "'tof' (time-of-flight), or 'wavelength'.",
+        description="Coordinate system for event data: 'toa' (time-of-arrival) "
+        "or 'wavelength'.",
     )
-
-    @pydantic.field_validator('mode')
-    @classmethod
-    def _validate_mode(cls, v: CoordinateMode) -> CoordinateMode:
-        if v == 'wavelength':
-            raise ValueError("wavelength mode is not yet supported")
-        return v
 
 
 class DetectorViewParams(pydantic.BaseModel):
@@ -74,22 +67,6 @@ class DetectorViewParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
-    # TOF (time-of-flight) settings
-    tof_range: parameter_models.TOFRange = pydantic.Field(
-        title="Time of Flight Range",
-        description="Time of flight range filter for TOF mode.",
-        default=parameter_models.TOFRange(),
-    )
-    tof_edges: parameter_models.TOFEdges = pydantic.Field(
-        title="Time of Flight Edges",
-        description="Time of flight edges for histogramming in TOF mode.",
-        default=parameter_models.TOFEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
     # Wavelength settings
     wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
         title="Wavelength Range",
@@ -112,8 +89,6 @@ class DetectorViewParams(pydantic.BaseModel):
         match self.coordinate_mode.mode:
             case 'toa':
                 return self.toa_edges.get_edges()
-            case 'tof':
-                return self.tof_edges.get_edges()
             case 'wavelength':
                 return self.wavelength_edges.get_edges()
 
@@ -122,8 +97,6 @@ class DetectorViewParams(pydantic.BaseModel):
         match self.coordinate_mode.mode:
             case 'toa':
                 return self.toa_range.range if self.toa_range.enabled else None
-            case 'tof':
-                return self.tof_range.range if self.tof_range.enabled else None
             case 'wavelength':
                 return (
                     self.wavelength_range.range

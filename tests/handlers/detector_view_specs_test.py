@@ -12,7 +12,12 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
 )
 from ess.livedata.handlers.workflow_factory import SpecHandle
-from ess.livedata.parameter_models import TimeUnit, TOARange, TOFRange
+from ess.livedata.parameter_models import (
+    TimeUnit,
+    TOARange,
+    WavelengthRangeFilter,
+    WavelengthUnit,
+)
 
 
 class TestRegisterDetectorViewSpecs:
@@ -312,12 +317,14 @@ class TestDetectorViewParamsGetActiveRange:
         assert high.unit == unit.value
 
     @pytest.mark.parametrize(
-        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+        'unit', [WavelengthUnit.ANGSTROM, WavelengthUnit.NANOMETER]
     )
-    def test_tof_range_preserves_user_unit(self, unit: TimeUnit):
+    def test_wavelength_range_preserves_user_unit(self, unit: WavelengthUnit):
         params = DetectorViewParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+            wavelength_range=WavelengthRangeFilter(
+                enabled=True, start=1.0, stop=5.0, unit=unit
+            ),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None

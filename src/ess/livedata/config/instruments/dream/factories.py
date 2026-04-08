@@ -100,7 +100,7 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
         tof_lookup_table_filename = None
-        if params.coordinate_mode.mode in ('tof', 'wavelength'):
+        if params.coordinate_mode.mode == 'wavelength':
             tof_lookup_table_filename = _resolve_tof_lookup_table_filename(
                 params.instrument_configuration
             )
@@ -116,27 +116,23 @@ def setup_factories(instrument: Instrument) -> None:
     def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):
         """Factory for DREAM monitor workflow with TOF lookup table support."""
         mode = params.coordinate_mode.mode
-        if mode == 'wavelength':
-            raise NotImplementedError(
-                "wavelength mode not yet implemented for monitors"
-            )
 
         # monitor_bunker is only 6.62 m from the source, which is outside the
-        # DREAM TOF lookup table range (59.85-80.15 m). Only monitor_cave
-        # (Ltotal 72.33 m) is compatible with TOF mode.
-        if mode == 'tof' and source_name == 'monitor_bunker':
+        # DREAM lookup table range (59.85-80.15 m). Only monitor_cave
+        # (Ltotal 72.33 m) is compatible with wavelength mode.
+        if mode == 'wavelength' and source_name == 'monitor_bunker':
             raise ValueError(
-                "TOF mode is not supported for 'monitor_bunker'. "
+                "Wavelength mode is not supported for 'monitor_bunker'. "
                 "The bunker monitor's flight path (6.62 m) is outside the "
-                "DREAM TOF lookup table range (59.85-80.15 m). "
+                "DREAM lookup table range (59.85-80.15 m). "
                 "Use TOA mode for bunker monitor, or select 'monitor_cave' "
-                "for TOF mode."
+                "for wavelength mode."
             )
 
         tof_lookup_table_filename = None
         geometry_filename = None
 
-        if mode == 'tof':
+        if mode == 'wavelength':
             tof_lookup_table_filename = _resolve_tof_lookup_table_filename(
                 params.instrument_configuration
             )

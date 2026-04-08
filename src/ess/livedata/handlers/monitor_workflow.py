@@ -16,8 +16,8 @@ from ess.reduce.nexus.types import (
     RawMonitor,
     SampleRun,
 )
-from ess.reduce.time_of_flight import GenericTofWorkflow
-from ess.reduce.time_of_flight.types import TofLookupTableFilename, TofMonitor
+from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
+from ess.reduce.unwrap.types import WavelengthMonitor
 from scippnexus import NXmonitor
 
 from .monitor_workflow_types import (
@@ -76,11 +76,11 @@ def histogram_raw_monitor(
     return MonitorHistogram(_histogram_monitor(data, edges, 'event_time_offset'))
 
 
-def histogram_tof_monitor(
-    data: TofMonitor[SampleRun, NXmonitor], edges: HistogramEdges
+def histogram_wavelength_monitor(
+    data: WavelengthMonitor[SampleRun, NXmonitor], edges: HistogramEdges
 ) -> MonitorHistogram:
-    """Histogram or rebin monitor data by time-of-flight (TOF mode)."""
-    return MonitorHistogram(_histogram_monitor(data, edges, 'tof'))
+    """Histogram or rebin monitor data by wavelength (wavelength mode)."""
+    return MonitorHistogram(_histogram_monitor(data, edges, 'wavelength'))
 
 
 def cumulative_view(hist: MonitorHistogram) -> CumulativeMonitorHistogram:
@@ -111,31 +111,32 @@ def counts_in_range(
 
 
 def build_monitor_workflow(
-    coordinate_mode: Literal['toa', 'tof'] = 'toa',
+    coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
 ) -> sciline.Pipeline:
     """
     Build the base sciline workflow for monitor processing.
 
-    Uses GenericTofWorkflow as the base, which provides TOF conversion via lookup table.
-    The coordinate mode determines which histogram provider is used:
+    Uses GenericUnwrapWorkflow as the base, which provides wavelength conversion
+    via lookup table. The coordinate mode determines which histogram provider is used:
     - 'toa': Uses RawMonitor (event_time_offset coordinate)
-    - 'tof': Uses TofMonitor (tof coordinate, converted via lookup table)
+    - 'wavelength': Uses WavelengthMonitor (wavelength coordinate, converted via
+      lookup table)
 
     Parameters
     ----------
     coordinate_mode:
-        Coordinate system to use: 'toa' (time-of-arrival) or 'tof' (time-of-flight).
+        Coordinate system to use: 'toa' (time-of-arrival) or 'wavelength'.
     """
-    # GenericTofWorkflow extends GenericNeXusWorkflow with TOF providers, so it can
-    # be used for all coordinate modes. The coordinate mode determines which
+    # GenericUnwrapWorkflow extends GenericNeXusWorkflow with unwrap providers, so it
+    # can be used for all coordinate modes. The coordinate mode determines which
     # histogram provider to use.
-    workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[NXmonitor])
+    workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[NXmonitor])
 
     # Select histogram provider based on coordinate mode
     if coordinate_mode == 'toa':
         workflow.insert(histogram_raw_monitor)
-    elif coordinate_mode == 'tof':
-        workflow.insert(histogram_tof_monitor)
+    elif coordinate_mode == 'wavelength':
+        workflow.insert(histogram_wavelength_monitor)
     else:
         raise ValueError(f"Unsupported coordinate mode: {coordinate_mode}")
 
@@ -166,7 +167,7 @@ def create_monitor_workflow(
     edges: sc.Variable,
     *,
     range_filter: tuple[sc.Variable, sc.Variable] | None = None,
-    coordinate_mode: Literal['toa', 'tof'] = 'toa',
+    coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
     tof_lookup_table_filename: str | None = None,
     context_keys: dict[str, type] | None = None,
@@ -180,16 +181,16 @@ def create_monitor_workflow(
         The monitor name (e.g., 'monitor_1'). Used as dynamic key for stream mapping
         and as the NeXus component name when loading geometry from file.
     edges:
-        Bin edges for histogramming (TOA or TOF edges depending on mode).
+        Bin edges for histogramming (TOA or wavelength edges depending on mode).
     range_filter:
         Optional (low, high) range for ratemeter counts.
     coordinate_mode:
-        Coordinate system to use: 'toa' (time-of-arrival) or 'tof' (time-of-flight).
+        Coordinate system to use: 'toa' (time-of-arrival) or 'wavelength'.
     geometry_filename:
-        Path to NeXus file containing monitor geometry. Required for 'tof' mode
+        Path to NeXus file containing monitor geometry. Required for 'wavelength' mode
         (needed for Ltotal computation). Optional for 'toa' mode.
     tof_lookup_table_filename:
-        Path to TOF lookup table file. Required for 'tof' mode.
+        Path to lookup table file. Required for 'wavelength' mode.
     context_keys:
         Optional mapping from aux source stream names to sciline pipeline keys.
         Used to inject dynamic data (e.g., position streams) into the workflow
@@ -198,13 +199,16 @@ def create_monitor_workflow(
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
 
-    # Validate TOF mode requirements
-    if coordinate_mode == 'tof':
+    # Validate wavelength mode requirements
+    if coordinate_mode == 'wavelength':
         if tof_lookup_table_filename is None:
-            raise ValueError("tof_lookup_table_filename is required for 'tof' mode")
+            raise ValueError(
+                "tof_lookup_table_filename is required for 'wavelength' mode"
+            )
         if geometry_filename is None:
             raise ValueError(
-                "geometry_filename is required for 'tof' mode (needed for Ltotal)"
+                "geometry_filename is required for 'wavelength' mode "
+                "(needed for Ltotal)"
             )
 
     workflow = build_monitor_workflow(coordinate_mode=coordinate_mode)
@@ -226,9 +230,9 @@ def create_monitor_workflow(
         # TOA mode without geometry file: provide minimal EmptyMonitor directly
         workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
 
-    # Configure lookup table for TOF mode
-    if coordinate_mode == 'tof':
-        workflow[TofLookupTableFilename] = tof_lookup_table_filename
+    # Configure lookup table for wavelength mode
+    if coordinate_mode == 'wavelength':
+        workflow[LookupTableFilename] = tof_lookup_table_filename
 
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
@@ -238,7 +242,8 @@ def create_monitor_workflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
         # providers will assemble monitor data to produce RawMonitor.
-        # For TOF mode, GenericTofWorkflow providers convert RawMonitor to TofMonitor.
+        # For wavelength mode, GenericUnwrapWorkflow providers convert RawMonitor to
+        # WavelengthMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
         context_keys=context_keys,
         target_keys={

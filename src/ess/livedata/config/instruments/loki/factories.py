@@ -22,7 +22,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         TransmissionRun,
     )
-    from ess.reduce.time_of_flight.types import TofLookupTableFilename
+    from ess.reduce.unwrap import LookupTableFilename
     from ess.sans import types as sans_types
     from ess.sans.types import (
         BeamCenter,
@@ -53,9 +53,9 @@ def setup_factories(instrument: Instrument) -> None:
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
-    def _resolve_tof_lookup_table_filename() -> str:
-        """Resolve TOF lookup table filename lazily to avoid eager downloads."""
-        return str(ess.loki.data.loki_tof_lookup_table_no_choppers())
+    def _resolve_lookup_table_filename() -> str:
+        """Resolve lookup table filename lazily to avoid eager downloads."""
+        return str(ess.loki.data.loki_lookup_table_no_choppers())
 
     def _make_base_workflow() -> LokiWorkflow:
         """Create the base LokiWorkflow for I(Q) reduction.
@@ -66,7 +66,7 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        wf[TofLookupTableFilename] = _resolve_tof_lookup_table_filename()
+        wf[LookupTableFilename] = _resolve_lookup_table_filename()
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -110,8 +110,8 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
         tof_lookup_table_filename = None
-        if params.coordinate_mode.mode in ('tof', 'wavelength'):
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+        if params.coordinate_mode.mode == 'wavelength':
+            tof_lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
             source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
@@ -122,18 +122,14 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
-        """Factory for LOKI monitor workflow with TOF lookup table support."""
+        """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
-        if mode == 'wavelength':
-            raise NotImplementedError(
-                "wavelength mode not yet implemented for monitors"
-            )
 
         tof_lookup_table_filename = None
         geometry_filename = None
 
-        if mode == 'tof':
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+        if mode == 'wavelength':
+            tof_lookup_table_filename = _resolve_lookup_table_filename()
             geometry_filename = _nexus_geometry_filename
 
         return create_monitor_workflow(

@@ -35,8 +35,8 @@ def setup_factories(instrument: Instrument) -> None:
     import sciline
     import scippnexus as snx
     from ess.bifrost.data import (
+        lookup_table_simulation,
         simulated_elastic_incoherent_with_phonon,
-        tof_lookup_table_simulation,
     )
     from ess.bifrost.live import (
         BifrostQCutWorkflow,
@@ -52,12 +52,12 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from ess.reduce.streaming import EternalAccumulator
     from ess.reduce.uncertainty import UncertaintyBroadcastMode
+    from ess.reduce.unwrap import LookupTableFilename
     from ess.spectroscopy.types import (
         InstrumentAngle,
         PreopenNeXusFile,
         ProtonCharge,
         SampleAngle,
-        TimeOfFlightLookupTableFilename,
     )
     from scippnexus import NXdetector
 
@@ -152,7 +152,7 @@ def setup_factories(instrument: Instrument) -> None:
             detector_names = list(f['entry/instrument'][snx.NXdetector])
         workflow = BifrostQCutWorkflow(detector_names)
         workflow[Filename[SampleRun]] = fname
-        workflow[TimeOfFlightLookupTableFilename] = tof_lookup_table_simulation()
+        workflow[LookupTableFilename] = lookup_table_simulation()
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
         # ProtonCharge is not used in streaming normalization, set to 1. Revisit once
         # there is a established stream for this.

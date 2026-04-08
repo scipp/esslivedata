@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
-from ess.reduce.time_of_flight.types import TofLookupTableFilename
+from ess.reduce.unwrap import LookupTableFilename
 from scippnexus import NXdetector
 
 from ..accumulators import make_no_copy_accumulator_pair
@@ -99,9 +99,9 @@ class DetectorViewFactory:
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
         tof_lookup_table_filename:
-            Path to TOF lookup table file. Required for 'tof' and 'wavelength'
-            coordinate modes. The caller (instrument factory) is responsible
-            for resolving this from instrument-specific params.
+            Path to lookup table file. Required for 'wavelength' coordinate mode.
+            The caller (instrument factory) is responsible for resolving this
+            from instrument-specific params.
 
         Returns
         -------
@@ -110,8 +110,8 @@ class DetectorViewFactory:
         """
         mode = params.coordinate_mode.mode
 
-        # Validate TOF/wavelength mode requirements
-        if mode in ('tof', 'wavelength'):
+        # Validate wavelength mode requirements
+        if mode == 'wavelength':
             if tof_lookup_table_filename is None:
                 raise ValueError(f"{mode} mode requires tof_lookup_table_filename")
             if isinstance(self._data_source, DetectorNumberSource):
@@ -123,7 +123,6 @@ class DetectorViewFactory:
         # Get mode-specific event coordinate
         event_coord = {
             'toa': 'event_time_offset',
-            'tof': 'tof',
             'wavelength': 'wavelength',
         }[mode]
 
@@ -142,9 +141,9 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # Set lookup table filename for TOF/wavelength modes
-        if mode in ('tof', 'wavelength'):
-            workflow[TofLookupTableFilename] = tof_lookup_table_filename
+        # Set lookup table filename for wavelength mode
+        if mode == 'wavelength':
+            workflow[LookupTableFilename] = tof_lookup_table_filename
 
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)
