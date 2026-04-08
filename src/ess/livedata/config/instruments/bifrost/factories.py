@@ -53,6 +53,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.streaming import EternalAccumulator
     from ess.reduce.uncertainty import UncertaintyBroadcastMode
     from ess.reduce.unwrap import LookupTableFilename
+    from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
         InstrumentAngle,
         PreopenNeXusFile,
@@ -150,9 +151,17 @@ def setup_factories(instrument: Instrument) -> None:
         fname = simulated_elastic_incoherent_with_phonon()
         with snx.File(fname) as f:
             detector_names = list(f['entry/instrument'][snx.NXdetector])
+            monitor_names = list(f['entry/instrument'][snx.NXmonitor])
         workflow = BifrostQCutWorkflow(detector_names)
         workflow[Filename[SampleRun]] = fname
         workflow[LookupTableFilename] = lookup_table_simulation()
+        # The spectroscopy TofWorkflow looks up the detector threshold under the
+        # hardcoded key 'detector' (NeXusDetectorName('detector')); monitors are
+        # looked up by their actual NeXus component name.
+        workflow[LookupTableRelativeErrorThreshold] = {
+            'detector': float('inf'),
+            **{name: float('inf') for name in monitor_names},
+        }
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
         # ProtonCharge is not used in streaming normalization, set to 1. Revisit once
         # there is a established stream for this.
