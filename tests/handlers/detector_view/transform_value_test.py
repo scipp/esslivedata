@@ -47,21 +47,21 @@ def _make_log(values: list[float], unit: str = 'mm') -> sc.DataArray:
 
 
 class TestTransformValueFromLog:
-    def test_returns_noop_when_log_is_none(self):
-        tv = transform_value_from_log(
-            None,  # type: ignore[arg-type]
-            TransformName('detector_carriage'),
+    def test_returns_none_when_log_has_no_samples(self):
+        empty = sc.DataArray(
+            sc.array(dims=['time'], values=[], unit='mm'),
+            coords={
+                'time': sc.epoch(unit='ns')
+                + sc.array(dims=['time'], values=[], unit='ns', dtype='int64')
+            },
         )
-        assert tv.name == ''
-
-    def test_returns_noop_when_name_is_empty(self):
-        log = TransformValueLog(_make_log([1.0]))
-        tv = transform_value_from_log(log, TransformName(''))
-        assert tv.name == ''
+        log = TransformValueLog(empty)
+        assert transform_value_from_log(log, TransformName('detector_carriage')) is None
 
     def test_picks_latest_value(self):
         log = TransformValueLog(_make_log([1.0, 2.0, 7.5]))
         tv = transform_value_from_log(log, TransformName('detector_carriage'))
+        assert tv is not None
         assert tv.name == 'detector_carriage'
         assert tv.value.value == 7.5
         assert tv.value.unit == sc.Unit('mm')
@@ -71,13 +71,8 @@ class TestTransformValueFromLog:
     def test_units_propagate(self):
         log = TransformValueLog(_make_log([4.2], unit='m'))
         tv = transform_value_from_log(log, TransformName('detector_carriage'))
+        assert tv is not None
         assert tv.value.unit == sc.Unit('m')
-
-
-class TestTransformValueDataclass:
-    def test_noop_constructible(self):
-        tv = TransformValue(name='', value=sc.scalar(0.0))
-        assert tv.name == ''
 
 
 class TestChainInjection:
@@ -89,12 +84,10 @@ class TestChainInjection:
             sc.DataGroup({'depends_on': chain})
         )
 
-    def test_noop_value_returns_unchanged(self):
+    def test_none_value_returns_unchanged(self):
         chain = _make_chain()
         comp = self._component(chain)
-        out = get_transformation_chain_with_value(
-            comp, TransformValue(name='', value=sc.scalar(0.0))
-        )
+        out = get_transformation_chain_with_value(comp, None)
         assert out.transformations['carriage'].value.value == 1.0
         assert out.transformations['other'].value.value == 7.0
 

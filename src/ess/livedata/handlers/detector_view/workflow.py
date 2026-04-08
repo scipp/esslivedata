@@ -68,17 +68,17 @@ from .types import (
 
 def get_transformation_chain_with_value(
     detector: NeXusComponent[snx.NXdetector, SampleRun],
-    transform_value: TransformValue,
+    transform_value: TransformValue | None,
 ) -> NeXusTransformationChain[snx.NXdetector, SampleRun]:
     """Inject a live value into one entry of the detector transformation chain.
 
     Replaces essreduce's ``get_transformation_chain`` so that a runtime
-    f144 stream value can drive the detector position. When the
-    ``transform_value`` has an empty ``name``, this is a pass-through
-    equivalent to the upstream provider.
+    f144 stream value can drive the detector position. When
+    ``transform_value`` is ``None``, this is a pass-through equivalent
+    to the upstream provider.
     """
     chain = get_transformation_chain(detector)
-    if transform_value.name:
+    if transform_value is not None:
         # Copy only when mutating so we don't leak changes back into the
         # cached NeXusComponent. The pass-through branch keeps upstream's
         # aliasing behaviour.
@@ -90,20 +90,19 @@ def get_transformation_chain_with_value(
 def transform_value_from_log(
     log: TransformValueLog,
     name: TransformName,
-) -> TransformValue:
+) -> TransformValue | None:
     """Build a TransformValue from the latest sample of an NXlog DataArray.
 
     The ``log`` arrives via ``set_context`` from the ``ToNXlog``
     accumulator. We extract the most recent value as a scalar
     ``sc.Variable`` so the downstream ``to_transformation`` time-filter
     branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
-    Returns the no-op value (empty ``name``) when no log is available yet,
-    so the file's baked-in initial transformation value is used.
+    Returns ``None`` when the log has not yet received any samples, so
+    the file's baked-in initial transformation value is used.
     """
-    if not name or log is None or log.sizes.get('time', 0) == 0:
-        return TransformValue(name='', value=sc.scalar(0.0))
-    latest = log['time', -1].data
-    return TransformValue(name=str(name), value=latest)
+    if log.sizes.get('time', 0) == 0:
+        return None
+    return TransformValue(name=str(name), value=log['time', -1].data)
 
 
 def create_base_workflow(
@@ -155,14 +154,6 @@ def create_base_workflow(
     else:
         raise ValueError(f"Unknown coordinate_mode: {coordinate_mode}")
 
-    # Replace essreduce's get_transformation_chain so the detector's NeXus
-    # transformation chain can be patched at runtime with values from an
-    # f144 position stream. Default override is None (no-op pass-through).
-    workflow.insert(get_transformation_chain_with_value)
-    workflow.insert(transform_value_from_log)
-    workflow[TransformValueLog] = None  # type: ignore[assignment]
-    workflow[TransformName] = TransformName('')
-
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)
 
@@ -190,6 +181,33 @@ def create_base_workflow(
     workflow[HistogramSlice] = histogram_slice
 
     return workflow
+
+
+def add_dynamic_transform(
+    workflow: sciline.Pipeline,
+    *,
+    transform_name: str,
+) -> None:
+    """
+    Patch the workflow to drive a NeXus transformation from a live f144 stream.
+
+    Replaces essreduce's ``get_transformation_chain`` provider so that the
+    detector's transformation chain picks up the latest value from an
+    ``NXlog`` context stream. Only call this for sources that have a
+    dynamic geometry configured; otherwise the workflow uses the file's
+    baked-in transformation unchanged.
+
+    Parameters
+    ----------
+    workflow:
+        Sciline pipeline to configure.
+    transform_name:
+        Name of the entry inside the detector's ``depends_on`` chain whose
+        value is driven by the f144 stream.
+    """
+    workflow.insert(get_transformation_chain_with_value)
+    workflow.insert(transform_value_from_log)
+    workflow[TransformName] = TransformName(transform_name)
 
 
 def add_geometric_projection(

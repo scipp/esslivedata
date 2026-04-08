@@ -35,13 +35,13 @@ from .types import (
     ROIRectangleReadback,
     ROIRectangleRequest,
     ROISpectra,
-    TransformName,
     TransformValueLog,
     TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
 from .workflow import (
+    add_dynamic_transform,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -243,7 +243,7 @@ class DetectorViewFactory:
         # this source.
         value_stream = self._dynamic_transforms.get(source_name)
         if value_stream is not None:
-            workflow[TransformName] = TransformName(value_stream.transform_name)
+            add_dynamic_transform(workflow, transform_name=value_stream.transform_name)
             context_keys[value_stream.aux_stream] = TransformValueLog
 
         cumulative, window = make_no_copy_accumulator_pair()
