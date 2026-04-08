@@ -152,7 +152,8 @@ class TestKafkaToMonitorEventsAdapter:
         )
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp.from_ns(9999)
+        # Kafka broker timestamps are ms since epoch, not ns (issue #848).
+        assert result.timestamp == Timestamp.from_ms(9999)
 
     def test_wrong_schema_raises_exception(self, monkeypatch) -> None:
         """Test that providing wrong schema raises exception."""
@@ -552,7 +553,8 @@ class TestKafkaToEv44Adapter:
         adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == Timestamp.from_ns(9999)
+        # Kafka broker timestamps are ms since epoch, not ns (issue #848).
+        assert result.timestamp == Timestamp.from_ms(9999)
 
 
 class TestAdaptingMessageSource:
