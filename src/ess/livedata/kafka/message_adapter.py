@@ -146,7 +146,7 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
         if ev44.reference_time.size > 0:
             timestamp = Timestamp.from_ns(ev44.reference_time[-1])
         else:
-            timestamp = Timestamp.from_ns(message.timestamp()[1])
+            timestamp = Timestamp.from_ms(message.timestamp()[1])
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
@@ -259,7 +259,7 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
         schema = streaming_data_types.utils.get_schema(buf)
-        timestamp = Timestamp.from_ns(message.timestamp()[1])
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
             stop_time = (
@@ -319,7 +319,7 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
         if reference_time.size > 0:
             timestamp = Timestamp.from_ns(reference_time[-1])
         else:
-            timestamp = Timestamp.from_ns(message.timestamp()[1])
+            timestamp = Timestamp.from_ms(message.timestamp()[1])
         return Message(
             timestamp=timestamp,
             stream=stream,
@@ -399,7 +399,7 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
-        timestamp = Timestamp.from_ns(message.timestamp()[1])
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         # Livedata configuration uses a compacted Kafka topic. The Kafka message key
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
@@ -410,7 +410,7 @@ class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgeme
     """Adapts Kafka messages from the livedata responses topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[CommandAcknowledgement]:
-        timestamp = Timestamp.from_ns(message.timestamp()[1])
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         ack = CommandAcknowledgement.model_validate_json(message.value())
         return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 
