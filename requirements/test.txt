@@ -7,3 +7,5 @@
 #
 -r base.txt
 -r basetest.txt
+--index-url https://pypi.org/simple
+

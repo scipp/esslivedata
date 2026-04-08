@@ -5,6 +5,8 @@
 #
 #    requirements upgrade
 #
+--index-url https://pypi.org/simple
+
 build==1.4.0
     # via -r wheels.in
 packaging==26.0
