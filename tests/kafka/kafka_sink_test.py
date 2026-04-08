@@ -3,35 +3,50 @@
 """
 Producer-interaction tests for :class:`KafkaSink`.
 
-These tests focus on the sink's behavior *as a producer client*: they use a
-hand-rolled fake ``confluent_kafka.Producer`` to capture ``produce`` calls and
-verify dispatch, error handling, and lifecycle. Encoding is not exercised here
-— it is covered exhaustively in :mod:`sink_serializers_test`. A stub
-:class:`MessageSerializer` returning canned bytes keeps these tests focused on
-the producer-interaction contract.
+These tests use real serializers wherever possible, so that encoding output
+and sink wiring are exercised together end-to-end. A hand-rolled fake
+:class:`confluent_kafka.Producer` captures ``produce`` calls for assertion.
+Stubs appear only where there is a specific reason — here, deterministic
+failure injection for the :class:`SerializationError` handling tests.
 """
 
 from __future__ import annotations
 
-import pytest
-from confluent_kafka import KafkaException
+import json
 
-from ess.livedata.core.message import Message, StreamId, StreamKind
+import pytest
+import scipp as sc
+from confluent_kafka import KafkaException
+from streaming_data_types import dataarray_da00
+
+from ess.livedata.config.models import ConfigKey
+from ess.livedata.core.message import (
+    COMMANDS_STREAM_ID,
+    Message,
+    StreamId,
+    StreamKind,
+)
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka.sink import (
     KafkaSink,
     MessageSerializer,
     SerializationError,
     SerializedMessage,
 )
+from ess.livedata.kafka.sink_serializers import CommandSerializer, Da00Serializer
+
+INSTRUMENT = 'dummy'
 
 
 class _FakeProducer:
     """
     Minimal stand-in for ``confluent_kafka.Producer``.
 
-    Records ``produce`` calls. ``poll`` and ``flush`` are no-ops unless
-    configured to raise via ``raise_on_produce`` or ``raise_on_flush``.
+    Faking the broker is unavoidable — a real producer would need a running
+    Kafka cluster. Records ``produce`` calls for assertion. ``raise_on_produce``
+    / ``raise_on_flush`` inject broker errors so the sink's error handling can
+    be verified without a real broker.
     """
 
     def __init__(self, config: dict) -> None:
@@ -64,38 +79,6 @@ class _FakeProducer:
         self.flushed += 1
 
 
-class _StubSerializer(MessageSerializer):
-    """Returns canned :class:`SerializedMessage` values per message."""
-
-    def __init__(
-        self,
-        *,
-        topic: str = 'stub_topic',
-        key: bytes | None = None,
-        value: bytes = b'stub_value',
-        raise_error: Exception | None = None,
-    ) -> None:
-        self._topic = topic
-        self._key = key
-        self._value = value
-        self._raise_error = raise_error
-        self.calls: list[Message] = []
-
-    def serialize(self, message: Message) -> SerializedMessage:
-        self.calls.append(message)
-        if self._raise_error is not None:
-            raise self._raise_error
-        return SerializedMessage(topic=self._topic, key=self._key, value=self._value)
-
-
-def _make_message(value: str = 'payload') -> Message:
-    return Message(
-        timestamp=Timestamp.from_ns(0),
-        stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name='s'),
-        value=value,
-    )
-
-
 @pytest.fixture
 def producer() -> _FakeProducer:
     return _FakeProducer(config={})
@@ -113,42 +96,90 @@ def sink_factory(producer: _FakeProducer):
     return _make
 
 
+def _data_message(name: str = 'detector') -> Message[sc.DataArray]:
+    return Message(
+        timestamp=Timestamp.from_ns(1_234_567_890),
+        stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=name),
+        value=sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0, 1, 2], unit='mm')},
+        ),
+    )
+
+
+def _command_message() -> Message[ConfigUpdate]:
+    class _Payload:
+        def model_dump_json(self) -> str:
+            return json.dumps({'foo': 'bar'})
+
+    return Message(
+        timestamp=Timestamp.from_ns(0),
+        stream=COMMANDS_STREAM_ID,
+        value=ConfigUpdate(
+            config_key=ConfigKey(
+                source_name='detector_1',
+                service_name='data_reduction',
+                key='workflow',
+            ),
+            value=_Payload(),
+        ),
+    )
+
+
 class TestPublish:
-    def test_forwards_topic_key_and_value_to_producer(
+    def test_forwards_real_serializer_output_to_producer(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        serializer = _StubSerializer(topic='t1', key=b'k1', value=b'v1')
+        serializer = Da00Serializer(instrument=INSTRUMENT)
+        msg = _data_message()
         with sink_factory(serializer) as sink:
-            sink.publish_messages([_make_message()])
+            sink.publish_messages([msg])
 
         assert len(producer.produced) == 1
         call = producer.produced[0]
-        assert call['topic'] == 't1'
-        assert call['key'] == b'k1'
-        assert call['value'] == b'v1'
+        assert call['topic'] == f'{INSTRUMENT}_livedata_data'
+        assert call['key'] is None
+        # The bytes on the wire must decode back to the original data.
+        decoded = dataarray_da00.deserialise_da00(call['value'])
+        assert decoded.source_name == 'detector'
+        assert decoded.timestamp_ns == 1_234_567_890
         assert call['callback'] is not None
+
+    def test_command_serializer_emits_key(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        serializer = CommandSerializer(instrument=INSTRUMENT)
+        msg = _command_message()
+        with sink_factory(serializer) as sink:
+            sink.publish_messages([msg])
+
+        call = producer.produced[0]
+        assert call['topic'] == f'{INSTRUMENT}_livedata_commands'
+        assert call['key'] == str(msg.value.config_key).encode('utf-8')
+        assert json.loads(call['value'].decode('utf-8')) == {'foo': 'bar'}
 
     def test_publishes_each_message_once(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        serializer = _StubSerializer()
+        serializer = Da00Serializer(instrument=INSTRUMENT)
         with sink_factory(serializer) as sink:
-            sink.publish_messages([_make_message(), _make_message(), _make_message()])
+            sink.publish_messages(
+                [_data_message('a'), _data_message('b'), _data_message('c')]
+            )
         assert len(producer.produced) == 3
-
-    def test_key_none_is_forwarded(self, sink_factory, producer: _FakeProducer) -> None:
-        serializer = _StubSerializer(key=None)
-        with sink_factory(serializer) as sink:
-            sink.publish_messages([_make_message()])
-        assert producer.produced[0]['key'] is None
+        names = [
+            dataarray_da00.deserialise_da00(call['value']).source_name
+            for call in producer.produced
+        ]
+        assert names == ['a', 'b', 'c']
 
     def test_flush_called_after_batch(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        serializer = _StubSerializer()
+        serializer = Da00Serializer(instrument=INSTRUMENT)
         with sink_factory(serializer) as sink:
-            sink.publish_messages([_make_message()])
-        # One flush during publish, one during close
+            sink.publish_messages([_data_message()])
+        # One flush during publish, one during close.
         assert producer.flushed >= 1
 
 
@@ -156,11 +187,11 @@ class TestContextManager:
     def test_publish_outside_context_raises(self) -> None:
         sink = KafkaSink(
             kafka_config={},
-            serializer=_StubSerializer(),
+            serializer=Da00Serializer(instrument=INSTRUMENT),
             producer_factory=lambda config: _FakeProducer(config),
         )
         with pytest.raises(RuntimeError, match='context manager'):
-            sink.publish_messages([_make_message()])
+            sink.publish_messages([_data_message()])
 
     def test_enter_builds_producer_via_factory(self) -> None:
         captured: list[dict] = []
@@ -172,7 +203,7 @@ class TestContextManager:
         cfg = {'bootstrap.servers': 'host:9092'}
         with KafkaSink(
             kafka_config=cfg,
-            serializer=_StubSerializer(),
+            serializer=Da00Serializer(instrument=INSTRUMENT),
             producer_factory=factory,
         ):
             pass
@@ -183,51 +214,54 @@ class TestErrorHandling:
     def test_serialization_error_is_logged_and_skipped(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        serializer = _StubSerializer(raise_error=SerializationError('boom'))
-        with sink_factory(serializer) as sink:
-            # Must not raise
-            sink.publish_messages([_make_message(), _make_message()])
-        # Neither message reaches the producer
+        # Deterministic failure injection: justifies a local ad-hoc serializer.
+        class _AlwaysFails:
+            def serialize(self, message: Message) -> SerializedMessage:
+                raise SerializationError('boom')
+
+        with sink_factory(_AlwaysFails()) as sink:
+            # Must not raise.
+            sink.publish_messages([_data_message(), _data_message()])
         assert producer.produced == []
-        # Serializer was still called for both
-        assert len(serializer.calls) == 2
 
     def test_one_serialization_error_does_not_block_other_messages(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        class _PartialSerializer(_StubSerializer):
+        class _FailsOnSecond:
             def __init__(self) -> None:
-                super().__init__(topic='t', value=b'ok')
                 self._count = 0
+                self._inner = Da00Serializer(instrument=INSTRUMENT)
 
             def serialize(self, message: Message) -> SerializedMessage:
                 self._count += 1
                 if self._count == 2:
                     raise SerializationError('bad second message')
-                return SerializedMessage(topic='t', key=None, value=b'ok')
+                return self._inner.serialize(message)
 
-        serializer = _PartialSerializer()
-        with sink_factory(serializer) as sink:
+        with sink_factory(_FailsOnSecond()) as sink:
             sink.publish_messages(
-                [_make_message('a'), _make_message('b'), _make_message('c')]
+                [_data_message('a'), _data_message('b'), _data_message('c')]
             )
         assert len(producer.produced) == 2
+        names = [
+            dataarray_da00.deserialise_da00(call['value']).source_name
+            for call in producer.produced
+        ]
+        assert names == ['a', 'c']
 
     def test_kafka_exception_from_produce_is_logged(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
         producer.raise_on_produce = KafkaException('broker down')
-        serializer = _StubSerializer()
-        with sink_factory(serializer) as sink:
-            # Must not raise
-            sink.publish_messages([_make_message()])
-        assert producer.produced == []  # raise happens before append
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            # Must not raise.
+            sink.publish_messages([_data_message()])
+        assert producer.produced == []
 
     def test_kafka_exception_from_flush_is_logged(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
-        serializer = _StubSerializer()
-        with sink_factory(serializer) as sink:
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
             producer.raise_on_flush = KafkaException('flush failed')
-            # Must not raise
-            sink.publish_messages([_make_message()])
+            # Must not raise.
+            sink.publish_messages([_data_message()])
