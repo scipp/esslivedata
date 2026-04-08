@@ -141,8 +141,10 @@ class TestKafkaToMonitorEventsAdapter:
             pixel_id=np.array([1]),
         )
 
+        # Realistic broker timestamp: ms since epoch, ~2023-11-14.
+        broker_ts_ms = 1_700_000_000_000
         message = FakeKafkaMessage(
-            value=empty_ref_time_ev44, topic="monitors", timestamp=9999
+            value=empty_ref_time_ev44, topic="monitors", timestamp=broker_ts_ms
         )
 
         adapter = KafkaToMonitorEventsAdapter(
@@ -152,8 +154,10 @@ class TestKafkaToMonitorEventsAdapter:
         )
         result = adapter.adapt(message)
 
-        # Kafka broker timestamps are ms since epoch, not ns.
-        assert result.timestamp == Timestamp.from_ms(9999)
+        assert result.timestamp == Timestamp.from_ms(broker_ts_ms)
+        # Guard against reintroducing a ns-vs-ms unit error: the converted value
+        # must land in a realistic epoch-ns range, not ~year 56 or ~1970.
+        assert result.timestamp.to_ns() == broker_ts_ms * 1_000_000
 
     def test_wrong_schema_raises_exception(self, monkeypatch) -> None:
         """Test that providing wrong schema raises exception."""
@@ -546,15 +550,19 @@ class TestKafkaToEv44Adapter:
             pixel_id=np.array([1]),
         )
 
+        # Realistic broker timestamp: ms since epoch, ~2023-11-14.
+        broker_ts_ms = 1_700_000_000_000
         message = FakeKafkaMessage(
-            value=empty_ref_time_ev44, topic="monitors", timestamp=9999
+            value=empty_ref_time_ev44, topic="monitors", timestamp=broker_ts_ms
         )
 
         adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
         result = adapter.adapt(message)
 
-        # Kafka broker timestamps are ms since epoch, not ns.
-        assert result.timestamp == Timestamp.from_ms(9999)
+        assert result.timestamp == Timestamp.from_ms(broker_ts_ms)
+        # Guard against reintroducing a ns-vs-ms unit error: the converted value
+        # must land in a realistic epoch-ns range, not ~year 56 or ~1970.
+        assert result.timestamp.to_ns() == broker_ts_ms * 1_000_000
 
 
 class TestAdaptingMessageSource:
