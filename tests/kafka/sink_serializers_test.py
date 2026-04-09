@@ -70,9 +70,6 @@ from ess.livedata.kafka.sink_serializers import (
 INSTRUMENT = 'dummy'
 
 
-# -- Data serializers -------------------------------------------------------
-
-
 class TestDa00Serializer:
     def test_round_trip_via_source_adapter(self) -> None:
         data = sc.DataArray(
@@ -150,9 +147,6 @@ class TestF144Serializer:
         )
         with pytest.raises((SerializationError, KeyError)):
             F144Serializer(instrument=INSTRUMENT).serialize(msg)
-
-
-# -- Status serializers -----------------------------------------------------
 
 
 def _make_service_status(**overrides) -> ServiceStatus:
@@ -258,9 +252,6 @@ class TestJobStatusToX5f2Serializer:
         assert decoded_status.job_id == status.job_id
 
 
-# -- Command / Response serializers -----------------------------------------
-
-
 class _DummyCommandPayload:
     """Minimal stand-in for a pydantic command payload."""
 
@@ -330,9 +321,6 @@ class TestResponseSerializer:
         assert decoded.value == ack
 
 
-# -- Routers ----------------------------------------------------------------
-
-
 class _FixedSerializer:
     """Test stub that records calls and returns a canned SerializedMessage."""
 
@@ -395,9 +383,6 @@ class TestRouteByStatusTypeSerializer:
         assert router.serialize(job_msg).value == b'job'
         assert len(svc.calls) == 1
         assert len(job.calls) == 1
-
-
-# -- Default factory --------------------------------------------------------
 
 
 class TestMakeDefaultSinkSerializer:
