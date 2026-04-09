@@ -220,6 +220,10 @@ class WorkflowStatusWidget:
         # refresh() compares this to detect structural changes (staging, commit, stop).
         self._last_state_version: int | None = None
 
+        # Tracks whether the backend reported all jobs as stopped or lost.
+        # Used to trigger a full rebuild (buttons change) on status transition.
+        self._backend_stopped: bool = False
+
         self._build_widget()
 
     @property
@@ -354,8 +358,8 @@ class WorkflowStatusWidget:
             )
             buttons.append(play_btn)
 
-        # Show stop and reset buttons if workflow is running
-        if active_job_number is not None:
+        # Show stop and reset buttons if workflow is running (not backend-stopped)
+        if active_job_number is not None and not self._backend_stopped:
             stop_btn = create_tool_button(
                 icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
@@ -854,6 +858,15 @@ class WorkflowStatusWidget:
                 pending_sources,
             )
 
+        if worst_state == JobState.stopped:
+            return (
+                'STOPPED',
+                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
+                'Backend shut down',
+                None,
+                per_source_list,
+            )
+
         status_text = worst_state.value.upper()
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
             worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
@@ -995,10 +1008,20 @@ class WorkflowStatusWidget:
         )
         if current_version != self._last_state_version:
             self._last_state_version = current_version
+            self._backend_stopped = False
             self._build_widget()
             return
 
         status, status_color, timing_text, _, per_source = self._get_status_and_timing()
+
+        # Detect backend-stopped transition (requires full rebuild for buttons)
+        is_backend_stopped = status in ('STOPPED', 'LOST') and (
+            self._orchestrator.get_active_job_number(self._workflow_id) is not None
+        )
+        if is_backend_stopped != self._backend_stopped:
+            self._backend_stopped = is_backend_stopped
+            self._build_widget()
+            return
 
         if self._status_badge is not None:
             new_badge = self._make_status_badge_html(status, status_color)
