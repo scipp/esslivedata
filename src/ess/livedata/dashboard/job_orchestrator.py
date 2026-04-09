@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from enum import StrEnum, auto
 from typing import TYPE_CHECKING, NewType
 from uuid import UUID
 
@@ -84,6 +85,13 @@ class JobSet(BaseModel):
         ]
 
 
+class StoppedReason(StrEnum):
+    """Why a workflow was stopped."""
+
+    user = auto()
+    backend_shutdown = auto()
+
+
 @dataclass
 class WorkflowState:
     """State for an active workflow, including transitions."""
@@ -92,6 +100,7 @@ class WorkflowState:
     previous: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
     version: int = 0
+    stopped_reason: StoppedReason | None = None
 
 
 @dataclass
@@ -442,6 +451,7 @@ class JobOrchestrator:
 
         # Set as current JobSet
         state.current = job_set
+        state.stopped_reason = None
 
         # Activate the new job number under the ingestion guard, then notify
         # subscribers. This ensures that when Orchestrator.update() next runs,
@@ -579,6 +589,13 @@ class JobOrchestrator:
         if state is None or state.current is None:
             return None
         return state.current.job_number
+
+    def get_stopped_reason(self, workflow_id: WorkflowId) -> StoppedReason | None:
+        """Get the reason why a workflow was stopped, if any."""
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            return None
+        return state.stopped_reason
 
     def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
         """
@@ -767,10 +784,12 @@ class JobOrchestrator:
         # between now and actually stopping will be discarded by the ingest
         # filter in Orchestrator.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
-        self._deactivate_workflow(workflow_id)
+        self._deactivate_workflow(workflow_id, StoppedReason.user)
         return True
 
-    def _deactivate_workflow(self, workflow_id: WorkflowId) -> None:
+    def _deactivate_workflow(
+        self, workflow_id: WorkflowId, reason: StoppedReason
+    ) -> None:
         """Clear active job state, clean up data, persist, and notify subscribers."""
         state = self._workflows[workflow_id]
         job_number = state.current.job_number if state.current else None
@@ -779,6 +798,7 @@ class JobOrchestrator:
             self._active_job_registry.deactivate(job_number)
         state.previous = state.current
         state.current = None
+        state.stopped_reason = reason
 
         self._persist_state_to_store(workflow_id)
         self._notify_workflow_stopped(workflow_id)
@@ -807,7 +827,7 @@ class JobOrchestrator:
                     'Backend reported all jobs stopped, deactivating workflow %s',
                     workflow_id,
                 )
-                self._deactivate_workflow(workflow_id)
+                self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
 
     def _all_jobs_stopped(self, job_ids: list[JobId]) -> bool:
         """Check if all jobs have reported non-stale stopped state."""

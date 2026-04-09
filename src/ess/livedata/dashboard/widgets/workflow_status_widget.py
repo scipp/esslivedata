@@ -737,10 +737,16 @@ class WorkflowStatusWidget:
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
+            from ess.livedata.dashboard.job_orchestrator import StoppedReason
+
+            reason = self._orchestrator.get_stopped_reason(self._workflow_id)
+            timing = (
+                'Backend shut down' if reason == StoppedReason.backend_shutdown else ''
+            )
             return (
                 'STOPPED',
                 WorkflowWidgetStyles.STATUS_COLORS['stopped'],
-                '',
+                timing,
                 None,
                 [],
             )

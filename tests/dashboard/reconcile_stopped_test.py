@@ -58,6 +58,30 @@ class TestReconcileStoppedJobs:
 
         assert len(fake_message_sink.messages) == messages_before
 
+    def test_sets_stopped_reason_to_backend_shutdown(
+        self, job_orchestrator, job_service, workflow_id
+    ):
+        """Stopped reason distinguishes backend shutdown from user stop."""
+        from ess.livedata.dashboard.job_orchestrator import StoppedReason
+
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        _report_all_stopped(job_service, job_ids, workflow_id)
+        job_orchestrator.reconcile_stopped_jobs()
+
+        assert (
+            job_orchestrator.get_stopped_reason(workflow_id)
+            == StoppedReason.backend_shutdown
+        )
+
+    def test_user_stop_sets_stopped_reason_to_user(self, job_orchestrator, workflow_id):
+        """User-initiated stop sets reason to user."""
+        from ess.livedata.dashboard.job_orchestrator import StoppedReason
+
+        job_orchestrator.commit_workflow(workflow_id)
+        job_orchestrator.stop_workflow(workflow_id)
+
+        assert job_orchestrator.get_stopped_reason(workflow_id) == StoppedReason.user
+
     def test_bumps_version_on_deactivation(
         self, job_orchestrator, job_service, workflow_id
     ):
