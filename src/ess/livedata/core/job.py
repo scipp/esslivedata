@@ -97,6 +97,7 @@ class JobState(StrEnum):
     finishing = "finishing"
     error = "error"
     warning = "warning"
+    stopped = "stopped"
 
 
 class ServiceState(StrEnum):

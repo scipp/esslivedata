@@ -369,6 +369,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         """
         logger.info('service_shutting_down')
         self._service_state = ServiceState.stopping
+        self._job_manager.mark_all_stopped()
         self._send_final_heartbeat()
         self._job_manager.shutdown()
 
@@ -394,13 +395,17 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._send_final_heartbeat()
 
     def _send_final_heartbeat(self) -> None:
-        """Send a final service heartbeat with current state."""
+        """Send a final heartbeat with job and service statuses."""
         timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
+        messages = [
+            _job_status_to_message(status, timestamp=timestamp)
+            for status in job_statuses
+        ]
         service_status = self._get_service_status(job_statuses)
-        message = _service_status_to_message(service_status, timestamp=timestamp)
+        messages.append(_service_status_to_message(service_status, timestamp=timestamp))
         try:
-            self._sink.publish_messages([message])
+            self._sink.publish_messages(messages)
         except Exception:
             logger.exception('Failed to send final heartbeat')
 

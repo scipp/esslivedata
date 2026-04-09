@@ -49,6 +49,7 @@ class WorkflowWidgetStyles:
         'pending': StatusColors.PENDING,
         'finishing': StatusColors.PENDING,
         'scheduled': StatusColors.PENDING,
+        'lost': StatusColors.ERROR,
     }
     MODIFIED_BORDER_COLOR = StatusColors.WARNING
     UNCONFIGURED_BG = WarningBox.BG
@@ -776,11 +777,16 @@ class WorkflowStatusWidget:
                 error_summary=error_summary,
             )
 
-            # Status: priority error > warning > active
+            # Status: priority error > warning > stopped > active
             if job_status.state == JobState.error:
                 worst_state = JobState.error
             elif job_status.state == JobState.warning and worst_state != JobState.error:
                 worst_state = JobState.warning
+            elif job_status.state == JobState.stopped and worst_state not in (
+                JobState.error,
+                JobState.warning,
+            ):
+                worst_state = JobState.stopped
 
             # Timing: track earliest start
             start = job_status.start_time
@@ -802,7 +808,34 @@ class WorkflowStatusWidget:
         )
 
         if not has_fresh_backend_status:
-            # Show expected sources as pending dots
+            # Check if we had statuses that are now stale (backend lost)
+            has_stale_statuses = any(
+                job_status.workflow_id == self._workflow_id
+                and job_status.job_id.job_number == active_job_number
+                for job_status in self._job_service.job_statuses.values()
+            )
+            if has_stale_statuses:
+                stale_sources = [
+                    SourceStatus(
+                        source_name=js.job_id.source_name,
+                        display_title=self._orchestrator.get_source_title(
+                            js.job_id.source_name
+                        ),
+                        state=js.state,
+                        error_summary='Backend lost',
+                    )
+                    for js in self._job_service.job_statuses.values()
+                    if js.workflow_id == self._workflow_id
+                    and js.job_id.job_number == active_job_number
+                ]
+                return (
+                    'LOST',
+                    WorkflowWidgetStyles.STATUS_COLORS['lost'],
+                    'Backend connection lost',
+                    None,
+                    stale_sources,
+                )
+            # Genuinely pending — never received any heartbeat
             pending_sources = [
                 SourceStatus(
                     source_name=name,

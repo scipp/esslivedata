@@ -1947,6 +1947,66 @@ class TestJobManagerThreading:
         manager.shutdown()  # Should not raise
 
 
+class TestMarkAllStopped:
+    def test_marks_active_jobs_as_stopped(self, fake_job_factory, base_workflow_config):
+        """Active jobs transition to stopped state."""
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job("source1", base_workflow_config)
+        data = WorkflowData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data={StreamId(name="source1"): sc.scalar(42.0)},
+        )
+        manager.push_data(data)
+        assert manager.get_job_status(job_id).state == JobState.active
+
+        manager.mark_all_stopped()
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.stopped
+
+    def test_marks_scheduled_jobs_as_stopped(
+        self, fake_job_factory, delayed_start_config
+    ):
+        """Scheduled (not yet active) jobs also transition to stopped."""
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job("source1", delayed_start_config)
+
+        manager.mark_all_stopped()
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.stopped
+
+    def test_preserves_tracking_for_status_reporting(
+        self, fake_job_factory, base_workflow_config
+    ):
+        """get_all_job_statuses still returns statuses after mark_all_stopped."""
+        manager = JobManager(fake_job_factory)
+        manager.schedule_job("source1", base_workflow_config)
+        manager.schedule_job("source2", base_workflow_config)
+        data = WorkflowData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data={
+                StreamId(name="source1"): sc.scalar(1.0),
+                StreamId(name="source2"): sc.scalar(2.0),
+            },
+        )
+        manager.push_data(data)
+
+        manager.mark_all_stopped()
+
+        statuses = manager.get_all_job_statuses()
+        assert len(statuses) == 2
+        assert all(s.state == JobState.stopped for s in statuses)
+
+    def test_noop_when_no_jobs(self, fake_job_factory):
+        """No error when called with no jobs."""
+        manager = JobManager(fake_job_factory)
+        manager.mark_all_stopped()
+        assert manager.get_all_job_statuses() == []
+
+
 class TestPeekPendingAuxStreams:
     def test_returns_empty_when_no_scheduled_jobs(self, fake_job_factory):
         manager = JobManager(fake_job_factory)

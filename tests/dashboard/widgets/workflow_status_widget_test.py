@@ -558,14 +558,14 @@ class TestWorkflowStatusWidgetWithJobs:
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
 
-    def test_status_becomes_pending_when_heartbeat_stale(
+    def test_status_becomes_lost_when_heartbeat_stale(
         self,
         workflow_status_widget,
         job_service,
         workflow_id,
         job_orchestrator,
     ):
-        """Test status transitions from ACTIVE to PENDING when heartbeat stales."""
+        """Test status transitions from ACTIVE to LOST when heartbeat stales."""
         import time
 
         # Use short timeout for testing (1 second)
@@ -597,9 +597,46 @@ class TestWorkflowStatusWidgetWithJobs:
         # Wait for heartbeat to become stale (> 1 second)
         time.sleep(1.1)
 
-        # Status should now be PENDING (stale heartbeat)
-        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
-        assert status == 'PENDING'
+        # Status should now be LOST (backend disappeared without graceful shutdown)
+        status, _, timing, _, per_source = (
+            workflow_status_widget._get_status_and_timing()
+        )
+        assert status == 'LOST'
+        assert timing == 'Backend connection lost'
+        assert len(per_source) == 1
+        assert per_source[0].source_name == 'source1'
+
+    def test_stopped_job_status_shows_stopped(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Test that stopped job status from graceful shutdown shows STOPPED."""
+        # Stage and commit to create active job
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+
+        # Backend sends stopped status (graceful shutdown)
+        job_id = JobId(source_name='source1', job_number=job_ids[0].job_number)
+        job_status = JobStatus(
+            job_id=job_id,
+            workflow_id=workflow_id,
+            state=JobState.stopped,
+            start_time=Timestamp.from_ns(1000000000000),
+        )
+        job_service.status_updated(job_status)
+
+        status, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+        assert status == 'STOPPED'
+        assert len(per_source) == 1
+        assert per_source[0].state == JobState.stopped
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
         """Test that is_status_stale returns True for old status."""
