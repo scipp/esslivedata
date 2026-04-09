@@ -49,7 +49,6 @@ class WorkflowWidgetStyles:
         'pending': StatusColors.PENDING,
         'finishing': StatusColors.PENDING,
         'scheduled': StatusColors.PENDING,
-        'lost': StatusColors.ERROR,
     }
     MODIFIED_BORDER_COLOR = StatusColors.WARNING
     UNCONFIGURED_BG = WarningBox.BG
@@ -354,9 +353,7 @@ class WorkflowStatusWidget:
             )
             buttons.append(play_btn)
 
-        # Show stop and reset buttons if workflow has an active job number.
-        # This includes backend-stopped state where the user needs the stop
-        # button to clear the stale job and get back to the play button.
+        # Show stop and reset buttons if workflow is running
         if active_job_number is not None:
             stop_btn = create_tool_button(
                 icon_name='player-stop',
@@ -810,34 +807,7 @@ class WorkflowStatusWidget:
         )
 
         if not has_fresh_backend_status:
-            # Check if we had statuses that are now stale (backend lost)
-            has_stale_statuses = any(
-                job_status.workflow_id == self._workflow_id
-                and job_status.job_id.job_number == active_job_number
-                for job_status in self._job_service.job_statuses.values()
-            )
-            if has_stale_statuses:
-                stale_sources = [
-                    SourceStatus(
-                        source_name=js.job_id.source_name,
-                        display_title=self._orchestrator.get_source_title(
-                            js.job_id.source_name
-                        ),
-                        state=js.state,
-                        error_summary='Backend lost',
-                    )
-                    for js in self._job_service.job_statuses.values()
-                    if js.workflow_id == self._workflow_id
-                    and js.job_id.job_number == active_job_number
-                ]
-                return (
-                    'LOST',
-                    WorkflowWidgetStyles.STATUS_COLORS['lost'],
-                    'Backend connection lost',
-                    None,
-                    stale_sources,
-                )
-            # Genuinely pending — never received any heartbeat
+            # Show expected sources as pending dots
             pending_sources = [
                 SourceStatus(
                     source_name=name,
@@ -854,15 +824,6 @@ class WorkflowStatusWidget:
                 'Waiting for backend...',
                 None,
                 pending_sources,
-            )
-
-        if worst_state == JobState.stopped:
-            return (
-                'STOPPED',
-                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
-                'Backend shut down',
-                None,
-                per_source_list,
             )
 
         status_text = worst_state.value.upper()

@@ -31,6 +31,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.core.job import JobState
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .active_job_registry import ActiveJobRegistry
@@ -43,6 +44,8 @@ from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
+
+    from .job_service import JobService
 
 logger = structlog.get_logger(__name__)
 
@@ -113,6 +116,7 @@ class JobOrchestrator:
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         active_job_registry: ActiveJobRegistry,
+        job_service: JobService | None = None,
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
@@ -129,6 +133,9 @@ class JobOrchestrator:
         active_job_registry
             Thread-safe registry for tracking active job numbers and
             cleaning up data on deactivation.
+        job_service
+            Optional job service for querying job statuses. Required for
+            reconciling stale active state after backend shutdown.
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
@@ -142,6 +149,7 @@ class JobOrchestrator:
         self._command_service = command_service
         self._workflow_registry = workflow_registry
         self._active_job_registry = active_job_registry
+        self._job_service = job_service
         self._config_store = config_store
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
@@ -751,9 +759,6 @@ class JobOrchestrator:
         :
             True if jobs were stopped, False if no active jobs.
         """
-        state = self._workflows[workflow_id]
-        job_number = state.current.job_number if state.current else None
-
         if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
 
@@ -762,20 +767,61 @@ class JobOrchestrator:
         # between now and actually stopping will be discarded by the ingest
         # filter in Orchestrator.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
+        self._deactivate_workflow(workflow_id)
+        return True
+
+    def _deactivate_workflow(self, workflow_id: WorkflowId) -> None:
+        """Clear active job state, clean up data, persist, and notify subscribers."""
+        state = self._workflows[workflow_id]
+        job_number = state.current.job_number if state.current else None
+
         if job_number is not None:
             self._active_job_registry.deactivate(job_number)
         state.previous = state.current
         state.current = None
 
-        # Persist updated state
         self._persist_state_to_store(workflow_id)
-
-        # Notify widget lifecycle subscribers that workflow was stopped
         self._notify_workflow_stopped(workflow_id)
-
-        # Notify workflow subscribers (e.g., PlotOrchestrator) that workflow was stopped
         self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
 
+    def reconcile_stopped_jobs(self) -> None:
+        """Deactivate workflows whose backend jobs have all reported stopped.
+
+        When a backend worker shuts down, it sends a final heartbeat with all
+        jobs in ``stopped`` state. This method detects that situation and clears
+        the dashboard-side active state so the widget transitions cleanly to
+        STOPPED with a play button.
+
+        Intended to be called periodically from the background update loop.
+        """
+        if self._job_service is None:
+            return
+        for workflow_id, state in self._workflows.items():
+            if state.current is None:
+                continue
+            job_ids = list(state.current.job_ids())
+            if not job_ids:
+                continue
+            if self._all_jobs_stopped(job_ids):
+                logger.info(
+                    'Backend reported all jobs stopped, deactivating workflow %s',
+                    workflow_id,
+                )
+                self._deactivate_workflow(workflow_id)
+
+    def _all_jobs_stopped(self, job_ids: list[JobId]) -> bool:
+        """Check if all jobs have reported non-stale stopped state."""
+        if self._job_service is None:
+            return False
+        statuses = self._job_service.job_statuses
+        for job_id in job_ids:
+            status = statuses.get(job_id)
+            if status is None:
+                return False
+            if status.state != JobState.stopped:
+                return False
+            if self._job_service.is_status_stale(job_id):
+                return False
         return True
 
     def reset_workflow(self, workflow_id: WorkflowId) -> bool:

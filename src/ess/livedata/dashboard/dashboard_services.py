@@ -139,6 +139,7 @@ class DashboardServices:
             start = time.monotonic()
             try:
                 self.orchestrator.update()
+                self.job_orchestrator.reconcile_stopped_jobs()
                 self.session_registry.cleanup_stale_sessions()
             except Exception:
                 logger.exception("orchestrator_update_error")
@@ -208,6 +209,7 @@ class DashboardServices:
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
             active_job_registry=active_job_registry,
+            job_service=self.job_service,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
