@@ -23,7 +23,6 @@ class WorkerUIConstants:
     COLORS: ClassVar[dict[ServiceState, str]] = {
         ServiceState.starting: StatusColors.MUTED,
         ServiceState.running: StatusColors.SUCCESS,
-        ServiceState.stopping: StatusColors.WARNING,
         ServiceState.stopped: StatusColors.MUTED,
         ServiceState.error: StatusColors.ERROR,
     }
@@ -209,8 +208,8 @@ class WorkerStatusRow:
     def _get_status_color(self, status: ServiceStatus, is_stale: bool) -> str:
         """Get color for worker state, considering staleness."""
         if is_stale:
-            # Graceful shutdown (inferred from timed-out stopping): show gray
-            if status.state == ServiceState.stopping:
+            # Graceful shutdown: last heartbeat was 'stopped', show gray not red
+            if status.state == ServiceState.stopped:
                 return WorkerUIConstants.COLORS[ServiceState.stopped]
             return WorkerUIConstants.STALE_COLOR
         return WorkerUIConstants.COLORS.get(
@@ -244,7 +243,7 @@ class WorkerStatusRow:
         status_color = self._get_status_color(status, is_stale)
         if is_stale:
             # Distinguish graceful shutdown from unexpected disappearance
-            is_graceful = status.state == ServiceState.stopping
+            is_graceful = status.state == ServiceState.stopped
             status_text = "STOPPED" if is_graceful else "STALE"
         else:
             status_text = status.state.value.upper()
@@ -256,7 +255,6 @@ class WorkerStatusRow:
 
         # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
         show_last_seen = is_stale or status.state in (
-            ServiceState.stopping,
             ServiceState.stopped,
             ServiceState.error,
         )
@@ -390,7 +388,6 @@ class BackendStatusWidget:
         # Count workers by display state (considering staleness)
         starting_count = 0
         running_count = 0
-        stopping_count = 0
         stopped_count = 0
         stale_count = 0
         error_count = 0
@@ -400,7 +397,7 @@ class BackendStatusWidget:
 
             if is_stale:
                 # Distinguish graceful shutdown from unexpected disappearance
-                if status.state in (ServiceState.stopping, ServiceState.stopped):
+                if status.state == ServiceState.stopped:
                     stopped_count += 1
                 else:
                     stale_count += 1
@@ -408,8 +405,6 @@ class BackendStatusWidget:
                 starting_count += 1
             elif status.state == ServiceState.running:
                 running_count += 1
-            elif status.state == ServiceState.stopping:
-                stopping_count += 1
             elif status.state == ServiceState.stopped:
                 stopped_count += 1
             elif status.state == ServiceState.error:
@@ -426,10 +421,6 @@ class BackendStatusWidget:
             )
         if running_count:
             parts.append(_span(colors[ServiceState.running], running_count, "running"))
-        if stopping_count:
-            parts.append(
-                _span(colors[ServiceState.stopping], stopping_count, "stopping")
-            )
         if stopped_count:
             parts.append(_span(colors[ServiceState.stopped], stopped_count, "stopped"))
         if stale_count:

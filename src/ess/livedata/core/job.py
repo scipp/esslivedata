@@ -105,8 +105,7 @@ class ServiceState(StrEnum):
 
     starting = auto()  # Service initializing
     running = auto()  # Normal operation
-    stopping = auto()  # Graceful shutdown in progress
-    stopped = auto()  # Graceful shutdown completed
+    stopped = auto()  # Service shut down
     error = auto()  # Service encountered fatal error
 
 

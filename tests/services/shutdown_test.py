@@ -2,8 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the backend shutdown lifecycle.
 
-Verifies that the shutdown sequence (shutdown → thread join → report_stopped)
-sends correct job and service status heartbeats at each stage.
+Verifies that finalize() sends correct job and service status heartbeats.
 """
 
 from ess.livedata.config import instrument_registry, workflow_spec
@@ -55,33 +54,15 @@ def _extract_statuses(
     return job_statuses, service_statuses
 
 
-def test_shutdown_does_not_mark_jobs_stopped():
-    """shutdown() must not mark jobs as stopped (worker loop still running)."""
+def test_finalize_marks_jobs_stopped():
+    """finalize() marks all jobs as stopped and sends the final heartbeat."""
     app = _make_detector_app()
     _start_job(app)
 
     processor = app.service._processor
     app.sink.status_messages.clear()
 
-    processor.shutdown()
-
-    job_statuses, service_statuses = _extract_statuses(app)
-    # shutdown() sends only a service heartbeat, no job statuses
-    assert len(job_statuses) == 0
-    assert len(service_statuses) == 1
-    assert service_statuses[0].state == ServiceState.stopping
-
-
-def test_report_stopped_marks_jobs_stopped():
-    """report_stopped() marks all jobs as stopped and sends the final heartbeat."""
-    app = _make_detector_app()
-    _start_job(app)
-
-    processor = app.service._processor
-    processor.shutdown()
-    app.sink.status_messages.clear()
-
-    processor.report_stopped()
+    processor.finalize()
 
     job_statuses, service_statuses = _extract_statuses(app)
     assert len(job_statuses) >= 1
@@ -90,18 +71,33 @@ def test_report_stopped_marks_jobs_stopped():
     assert service_statuses[0].state == ServiceState.stopped
 
 
-def test_report_error_marks_jobs_stopped():
-    """report_error() marks all jobs as stopped and sends the final heartbeat."""
+def test_finalize_with_error_marks_jobs_stopped():
+    """finalize(error=...) marks all jobs as stopped with error state."""
     app = _make_detector_app()
     _start_job(app)
 
     processor = app.service._processor
     app.sink.status_messages.clear()
 
-    processor.report_error("fatal crash")
+    processor.finalize(error="fatal crash")
 
     job_statuses, service_statuses = _extract_statuses(app)
     assert len(job_statuses) >= 1
     assert all(s.state == JobState.stopped for s in job_statuses)
     assert len(service_statuses) == 1
     assert service_statuses[0].state == ServiceState.error
+
+
+def test_finalize_is_idempotent():
+    """Calling finalize() twice does not send duplicate heartbeats."""
+    app = _make_detector_app()
+    _start_job(app)
+
+    processor = app.service._processor
+    app.sink.status_messages.clear()
+
+    processor.finalize()
+    first_count = len(app.sink.status_messages)
+
+    processor.finalize()
+    assert len(app.sink.status_messages) == first_count
