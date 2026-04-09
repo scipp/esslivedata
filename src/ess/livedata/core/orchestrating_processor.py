@@ -362,40 +362,62 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             self._last_metrics_time = timestamp
 
     def shutdown(self) -> None:
-        """Transition to stopping state and send heartbeat.
+        """Transition to stopping state and send service heartbeat.
 
-        Called by Service at the beginning of graceful shutdown to notify the
-        dashboard that this worker is shutting down intentionally.
+        Called by Service at the beginning of graceful shutdown, while the
+        worker thread may still be running. Only sends the service-level
+        heartbeat (not job statuses) to avoid racing with the worker loop
+        which continues to update job states until it stops.
         """
         logger.info('service_shutting_down')
         self._service_state = ServiceState.stopping
+        self._send_service_heartbeat()
+
+    def report_stopped(self) -> None:
+        """Mark jobs as stopped and send final heartbeat.
+
+        Called by Service after the worker thread has joined, so job states
+        can be safely transitioned without racing with the processing loop.
+        """
+        logger.info('service_stopped')
+        self._service_state = ServiceState.stopped
         self._job_manager.mark_all_stopped()
         self._send_final_heartbeat()
         self._job_manager.shutdown()
 
-    def report_stopped(self) -> None:
-        """Transition to stopped state and send final heartbeat.
-
-        Called by Service after worker thread has stopped to notify the
-        dashboard that shutdown completed successfully.
-        """
-        logger.info('service_stopped')
-        self._service_state = ServiceState.stopped
-        self._send_final_heartbeat()
-
     def report_error(self, error_message: str) -> None:
-        """Transition to error state and send final heartbeat.
+        """Mark jobs as stopped and send final error heartbeat.
 
-        Called by Service when an unhandled exception occurs to notify the
-        dashboard that this worker encountered a fatal error.
+        Called by Service when an unhandled exception occurs, after the
+        worker loop has exited.
         """
         logger.error('service_error', error=error_message)
         self._service_state = ServiceState.error
         self._service_error = error_message
+        self._job_manager.mark_all_stopped()
         self._send_final_heartbeat()
+        self._job_manager.shutdown()
+
+    def _send_service_heartbeat(self) -> None:
+        """Send a service-only heartbeat (no job statuses).
+
+        Used during shutdown() while the worker thread is still running,
+        to avoid racing with job state updates in the processing loop.
+        """
+        timestamp = Timestamp.now()
+        job_statuses = self._job_manager.get_all_job_statuses()
+        service_status = self._get_service_status(job_statuses)
+        message = _service_status_to_message(service_status, timestamp=timestamp)
+        try:
+            self._sink.publish_messages([message])
+        except Exception:
+            logger.exception('Failed to send service heartbeat')
 
     def _send_final_heartbeat(self) -> None:
-        """Send a final heartbeat with job and service statuses."""
+        """Send a final heartbeat with job and service statuses.
+
+        Called after the worker thread has stopped, so job states are stable.
+        """
         timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
         messages = [
