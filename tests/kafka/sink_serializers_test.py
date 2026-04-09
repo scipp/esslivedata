@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 
+import numpy as np
 import pytest
 import scipp as sc
 from streaming_data_types import dataarray_da00
@@ -112,6 +113,32 @@ class TestDa00Serializer:
         result = Da00Serializer(instrument=INSTRUMENT).serialize(msg)
         assert result.topic == f'{INSTRUMENT}_beam_monitor'
 
+    def test_round_trip_multidimensional_data_with_monitor_counts(self) -> None:
+        data = sc.DataArray(
+            data=sc.array(dims=['x', 'y'], values=[[1, 2], [3, 4]], unit='counts'),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.1, 0.2], unit='m'),
+                'y': sc.array(dims=['y'], values=[10, 20], unit='s'),
+            },
+        )
+        msg = Message(
+            timestamp=Timestamp.from_ns(9_876_543_210),
+            stream=StreamId(kind=StreamKind.MONITOR_COUNTS, name='monitor_1'),
+            value=data,
+        )
+        result = Da00Serializer(instrument=INSTRUMENT).serialize(msg)
+
+        adapter = ChainedAdapter(
+            first=KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS),
+            second=Da00ToScippAdapter(),
+        )
+        decoded = adapter.adapt(
+            FakeKafkaMessage(value=result.value, topic=result.topic)
+        )
+        assert sc.identical(decoded.value, data)
+        assert decoded.timestamp == Timestamp.from_ns(9_876_543_210)
+        assert decoded.stream.name == 'monitor_1'
+
 
 class TestF144Serializer:
     def test_round_trip_via_source_adapter(self) -> None:
@@ -138,6 +165,45 @@ class TestF144Serializer:
         assert decoded.value.value == 42.5
         assert decoded.timestamp == Timestamp.from_ns(time_ns)
         assert decoded.stream.name == 'log1'
+
+    def test_round_trip_with_array_data(self) -> None:
+        time_ns = 9_876_543_210
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'time': sc.scalar(time_ns, unit='ns')},
+        )
+        msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LOG, name='array_log'),
+            value=data,
+        )
+        result = F144Serializer(instrument=INSTRUMENT).serialize(msg)
+
+        decoded = KafkaToF144Adapter().adapt(
+            FakeKafkaMessage(value=result.value, topic=result.topic)
+        )
+        np.testing.assert_array_equal(decoded.value.value, [1.0, 2.0, 3.0])
+        assert decoded.timestamp == Timestamp.from_ns(time_ns)
+        assert decoded.stream.name == 'array_log'
+
+    def test_time_coord_in_microseconds_is_converted_to_ns(self) -> None:
+        time_us = 1_234_567_890_123_456
+        data = sc.DataArray(
+            data=sc.array(dims=[], values=7.5, unit='V'),
+            coords={'time': sc.array(dims=[], values=time_us, unit='us')},
+        )
+        msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LOG, name='time_unit_log'),
+            value=data,
+        )
+        result = F144Serializer(instrument=INSTRUMENT).serialize(msg)
+
+        decoded = KafkaToF144Adapter().adapt(
+            FakeKafkaMessage(value=result.value, topic=result.topic)
+        )
+        assert decoded.value.value == 7.5
+        assert decoded.timestamp == Timestamp.from_ns(time_us * 1000)
 
     def test_missing_time_coord_raises_serialization_error(self) -> None:
         msg = Message(
