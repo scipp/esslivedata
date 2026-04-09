@@ -146,10 +146,11 @@ class JobStatusToX5f2Serializer(MessageSerializer[JobStatus]):
 
 class CommandSerializer(MessageSerializer[ConfigUpdate]):
     """
-    Serializes :class:`ConfigUpdate` messages for the compacted commands topic.
+    Serializes :class:`ConfigUpdate` messages for the commands topic.
 
-    Produces a Kafka message key derived from the config key so the compacted
-    topic retains the latest value per key.
+    The Kafka message key is the encoded string representation of the
+    :class:`ConfigKey`; the value carries the payload JSON. Consumers reconstruct
+    the ``ConfigKey`` from the message key (see :class:`CommandsAdapter`).
     """
 
     def __init__(self, *, instrument: str) -> None:
