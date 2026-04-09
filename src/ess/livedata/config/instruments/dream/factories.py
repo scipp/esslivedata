@@ -117,18 +117,6 @@ def setup_factories(instrument: Instrument) -> None:
         """Factory for DREAM monitor workflow with TOF lookup table support."""
         mode = params.coordinate_mode.mode
 
-        # monitor_bunker is only 6.62 m from the source, which is outside the
-        # DREAM lookup table range (59.85-80.15 m). Only monitor_cave
-        # (Ltotal 72.33 m) is compatible with wavelength mode.
-        if mode == 'wavelength' and source_name == 'monitor_bunker':
-            raise ValueError(
-                "Wavelength mode is not supported for 'monitor_bunker'. "
-                "The bunker monitor's flight path (6.62 m) is outside the "
-                "DREAM lookup table range (59.85-80.15 m). "
-                "Use TOA mode for bunker monitor, or select 'monitor_cave' "
-                "for wavelength mode."
-            )
-
         lookup_table_filename = None
         geometry_filename = None
 

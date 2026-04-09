@@ -653,13 +653,19 @@ class TestDreamMonitorWorkflowFactory:
             coordinate_mode=CoordinateModeSettings(mode='wavelength'),
         )
 
-    def test_wavelength_mode_rejected_for_monitor_bunker(
-        self, dream_params_wavelength_mode
+    @pytest.mark.parametrize(
+        'monitor_name',
+        [
+            'monitor_bunker',  # Ltotal 6.62 m
+            'monitor_cave',  # Ltotal 72.33 m
+        ],
+    )
+    def test_wavelength_mode_allowed_for_all_monitors(
+        self, monitor_name, dream_params_wavelength_mode
     ):
-        """Test that wavelength mode raises ValueError for monitor_bunker.
+        """Test that wavelength mode is allowed for all DREAM monitors.
 
-        The bunker monitor's flight path (6.62 m) is outside the DREAM
-        lookup table range (59.85-80.15 m), so wavelength mode is not supported.
+        Both monitors fall within the DREAM lookup table range (5-80 m).
         """
         from ess.livedata.config.instruments.dream.factories import setup_factories
         from ess.livedata.config.instruments.dream.specs import instrument
@@ -674,34 +680,7 @@ class TestDreamMonitorWorkflowFactory:
         )
         factory = instrument.workflow_factory._factories[workflow_id]
 
-        with pytest.raises(
-            ValueError, match="Wavelength mode is not supported for 'monitor_bunker'"
-        ):
-            factory('monitor_bunker', dream_params_wavelength_mode)
-
-    def test_wavelength_mode_allowed_for_monitor_cave(
-        self, dream_params_wavelength_mode
-    ):
-        """Test that wavelength mode is allowed for monitor_cave.
-
-        The cave monitor's flight path (72.33 m) is within the DREAM
-        lookup table range (59.85-80.15 m).
-        """
-        from ess.livedata.config.instruments.dream.factories import setup_factories
-        from ess.livedata.config.instruments.dream.specs import instrument
-        from ess.livedata.config.workflow_spec import WorkflowId
-
-        setup_factories(instrument)
-        workflow_id = WorkflowId(
-            instrument='dream',
-            namespace='monitor_data',
-            name='monitor_histogram',
-            version=1,
-        )
-        factory = instrument.workflow_factory._factories[workflow_id]
-
-        # Should not raise - cave monitor is compatible with wavelength mode
-        workflow = factory('monitor_cave', dream_params_wavelength_mode)
+        workflow = factory(monitor_name, dream_params_wavelength_mode)
         assert workflow is not None
 
 
@@ -744,9 +723,8 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         conversion. The essreduce unwrap function expects one of:
         'time_of_flight', 'tof', or 'frame_time' as the coordinate name.
         """
-        # Use monitor_cave because its Ltotal (72.33 m) is within the DREAM
-        # lookup table range (59.85-80.15 m). monitor_bunker has Ltotal of
-        # only 6.62 m which is outside the lookup table range.
+        # Use monitor_cave (Ltotal 72.33 m); both monitors are within the DREAM
+        # lookup table range (5-80 m). monitor_bunker has Ltotal of 6.62 m.
         workflow = create_monitor_workflow(
             'monitor_cave',
             wavelength_edges,
