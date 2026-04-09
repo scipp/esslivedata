@@ -211,7 +211,7 @@ class TestContextManager:
 
 
 class TestErrorHandling:
-    def test_serialization_error_is_logged_and_skipped(
+    def test_serialization_error_is_skipped(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
         # Deterministic failure injection: justifies a local ad-hoc serializer.
@@ -249,7 +249,7 @@ class TestErrorHandling:
         ]
         assert names == ['a', 'c']
 
-    def test_kafka_exception_from_produce_is_logged(
+    def test_kafka_exception_from_produce_does_not_propagate(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
         producer.raise_on_produce = KafkaException('broker down')
@@ -258,7 +258,7 @@ class TestErrorHandling:
             sink.publish_messages([_data_message()])
         assert producer.produced == []
 
-    def test_kafka_exception_from_flush_is_logged(
+    def test_kafka_exception_from_flush_does_not_propagate(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
         with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:

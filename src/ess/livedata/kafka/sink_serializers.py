@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import socket
+from typing import TypeVar
 
 import scipp as sc
 from streaming_data_types import dataarray_da00, logdata_f144
@@ -31,6 +32,8 @@ from .sink import MessageSerializer, SerializationError, SerializedMessage
 from .sink_routing import RouteByStatusTypeSerializer, RouteByStreamKindSerializer
 from .x5f2_compat import job_status_to_x5f2, service_status_to_x5f2
 
+T = TypeVar('T')
+
 
 def _get_software_version() -> str:
     """Get the software version for x5f2 messages."""
@@ -40,51 +43,69 @@ def _get_software_version() -> str:
         return '0.0.0'
 
 
-class Da00Serializer(MessageSerializer[sc.DataArray]):
+class _TopicResolvingSerializer(MessageSerializer[T]):
+    """
+    Base class for serializers that resolve a Kafka topic from the instrument
+    name and stream kind, and wrap encoding errors in :class:`SerializationError`.
+
+    Subclasses implement :meth:`_encode` to produce the key/value bytes.
+    """
+
+    def __init__(self, *, instrument: str) -> None:
+        self._instrument = instrument
+
+    def _encode(self, message: Message[T]) -> tuple[bytes | None, bytes]:
+        """Return ``(key, value)`` bytes for the message.
+
+        Raises
+        ------
+        :
+            Any exception from the underlying encoding library; the base class
+            catches ``(AttributeError, ValueError, TypeError)`` and wraps them
+            in :class:`SerializationError`.
+        """
+        raise NotImplementedError
+
+    def serialize(self, message: Message[T]) -> SerializedMessage:
+        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
+        try:
+            key, value = self._encode(message)
+        except (AttributeError, ValueError, TypeError) as e:
+            raise SerializationError(f"Failed to serialize message: {e}") from None
+        return SerializedMessage(topic=topic, key=key, value=value)
+
+
+class Da00Serializer(_TopicResolvingSerializer[sc.DataArray]):
     """Serializes scipp DataArrays to the ``da00`` flatbuffer schema."""
 
-    def __init__(self, *, instrument: str) -> None:
-        self._instrument = instrument
-
-    def serialize(self, message: Message[sc.DataArray]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            # We use the payload timestamp, which in turn was set from the result's
-            # `start_time`. Depending on whether the result is a cumulative result or
-            # a delta result, this is either the time of the first event in the
-            # result, or the time of the first event since the last result was
-            # produced.
-            value = dataarray_da00.serialise_da00(
-                source_name=message.stream.name,
-                timestamp_ns=message.timestamp.to_ns(),
-                data=scipp_to_da00(message.value),
-            )
-        except (ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=None, value=value)
+    def _encode(self, message: Message[sc.DataArray]) -> tuple[None, bytes]:
+        # We use the payload timestamp, which in turn was set from the result's
+        # `start_time`. Depending on whether the result is a cumulative result or
+        # a delta result, this is either the time of the first event in the
+        # result, or the time of the first event since the last result was
+        # produced.
+        value = dataarray_da00.serialise_da00(
+            source_name=message.stream.name,
+            timestamp_ns=message.timestamp.to_ns(),
+            data=scipp_to_da00(message.value),
+        )
+        return None, value
 
 
-class F144Serializer(MessageSerializer[sc.DataArray]):
+class F144Serializer(_TopicResolvingSerializer[sc.DataArray]):
     """Serializes scipp log-data DataArrays to the ``f144`` flatbuffer schema."""
 
-    def __init__(self, *, instrument: str) -> None:
-        self._instrument = instrument
-
-    def serialize(self, message: Message[sc.DataArray]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            da = message.value
-            value = logdata_f144.serialise_f144(
-                source_name=message.stream.name,
-                value=da.values,
-                timestamp_unix_ns=da.coords['time'].to(unit='ns', copy=False).value,
-            )
-        except (ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=None, value=value)
+    def _encode(self, message: Message[sc.DataArray]) -> tuple[None, bytes]:
+        da = message.value
+        value = logdata_f144.serialise_f144(
+            source_name=message.stream.name,
+            value=da.values,
+            timestamp_unix_ns=da.coords['time'].to(unit='ns', copy=False).value,
+        )
+        return None, value
 
 
-class ServiceStatusToX5f2Serializer(MessageSerializer[ServiceStatus]):
+class ServiceStatusToX5f2Serializer(_TopicResolvingSerializer[ServiceStatus]):
     """Serializes :class:`ServiceStatus` heartbeats to the ``x5f2`` schema."""
 
     def __init__(
@@ -95,26 +116,22 @@ class ServiceStatusToX5f2Serializer(MessageSerializer[ServiceStatus]):
         host_name: str,
         process_id: int,
     ) -> None:
-        self._instrument = instrument
+        super().__init__(instrument=instrument)
         self._software_version = software_version
         self._host_name = host_name
         self._process_id = process_id
 
-    def serialize(self, message: Message[ServiceStatus]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            value = service_status_to_x5f2(
-                message.value,
-                software_version=self._software_version,
-                host_name=self._host_name,
-                process_id=self._process_id,
-            )
-        except (ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=None, value=value)
+    def _encode(self, message: Message[ServiceStatus]) -> tuple[None, bytes]:
+        value = service_status_to_x5f2(
+            message.value,
+            software_version=self._software_version,
+            host_name=self._host_name,
+            process_id=self._process_id,
+        )
+        return None, value
 
 
-class JobStatusToX5f2Serializer(MessageSerializer[JobStatus]):
+class JobStatusToX5f2Serializer(_TopicResolvingSerializer[JobStatus]):
     """Serializes :class:`JobStatus` heartbeats to the ``x5f2`` schema."""
 
     def __init__(
@@ -125,26 +142,22 @@ class JobStatusToX5f2Serializer(MessageSerializer[JobStatus]):
         host_name: str,
         process_id: int,
     ) -> None:
-        self._instrument = instrument
+        super().__init__(instrument=instrument)
         self._software_version = software_version
         self._host_name = host_name
         self._process_id = process_id
 
-    def serialize(self, message: Message[JobStatus]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            value = job_status_to_x5f2(
-                message.value,
-                software_version=self._software_version,
-                host_name=self._host_name,
-                process_id=self._process_id,
-            )
-        except (ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=None, value=value)
+    def _encode(self, message: Message[JobStatus]) -> tuple[None, bytes]:
+        value = job_status_to_x5f2(
+            message.value,
+            software_version=self._software_version,
+            host_name=self._host_name,
+            process_id=self._process_id,
+        )
+        return None, value
 
 
-class CommandSerializer(MessageSerializer[ConfigUpdate]):
+class CommandSerializer(_TopicResolvingSerializer[ConfigUpdate]):
     """
     Serializes :class:`ConfigUpdate` messages for the commands topic.
 
@@ -153,42 +166,28 @@ class CommandSerializer(MessageSerializer[ConfigUpdate]):
     the ``ConfigKey`` from the message key (see :class:`CommandsAdapter`).
     """
 
-    def __init__(self, *, instrument: str) -> None:
-        self._instrument = instrument
-
-    def serialize(self, message: Message[ConfigUpdate]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            key = str(message.value.config_key).encode('utf-8')
-            value = message.value.value.model_dump_json().encode('utf-8')
-        except (AttributeError, ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=key, value=value)
+    def _encode(self, message: Message[ConfigUpdate]) -> tuple[bytes, bytes]:
+        key = str(message.value.config_key).encode('utf-8')
+        value = message.value.value.model_dump_json().encode('utf-8')
+        return key, value
 
 
-class ResponseSerializer(MessageSerializer[CommandAcknowledgement]):
+class ResponseSerializer(_TopicResolvingSerializer[CommandAcknowledgement]):
     """
     Serializes :class:`CommandAcknowledgement` events for the responses topic.
 
     Acknowledgements are events (not state), so no key is emitted.
     """
 
-    def __init__(self, *, instrument: str) -> None:
-        self._instrument = instrument
-
-    def serialize(self, message: Message[CommandAcknowledgement]) -> SerializedMessage:
-        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
-        try:
-            value = message.value.model_dump_json().encode('utf-8')
-        except (AttributeError, ValueError, TypeError) as e:
-            raise SerializationError(f"Failed to serialize message: {e}") from None
-        return SerializedMessage(topic=topic, key=None, value=value)
+    def _encode(self, message: Message[CommandAcknowledgement]) -> tuple[None, bytes]:
+        value = message.value.model_dump_json().encode('utf-8')
+        return None, value
 
 
 def make_default_sink_serializer(
     *,
     instrument: str,
-    data_serializer: MessageSerializer,
+    data_serializer: MessageSerializer | None = None,
 ) -> RouteByStreamKindSerializer:
     """
     Build the routing serializer used by production services.
@@ -207,9 +206,11 @@ def make_default_sink_serializer(
     instrument:
         Instrument name used to resolve Kafka topics via ``stream_kind_to_topic``.
     data_serializer:
-        Serializer for data-carrying streams. Typically :class:`Da00Serializer` or
-        :class:`F144Serializer`, or a custom serializer for specialized services.
+        Serializer for data-carrying streams. Defaults to :class:`Da00Serializer`
+        which is the standard encoding for all production services.
     """
+    if data_serializer is None:
+        data_serializer = Da00Serializer(instrument=instrument)
     software_version = _get_software_version()
     host_name = socket.gethostname()
     process_id = os.getpid()

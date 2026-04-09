@@ -18,6 +18,7 @@ import uuid
 
 import pytest
 import scipp as sc
+from streaming_data_types import dataarray_da00
 
 from ess.livedata.config.acknowledgement import (
     AcknowledgementResponse,
@@ -433,3 +434,16 @@ class TestMakeDefaultSinkSerializer:
             FakeKafkaMessage(value=job_result.value, topic=job_result.topic)
         )
         assert isinstance(decoded_job.value, JobStatus)
+
+    def test_defaults_to_da00_serializer(self) -> None:
+        serializer = make_default_sink_serializer(instrument=INSTRUMENT)
+        msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name='d'),
+            value=sc.DataArray(data=sc.array(dims=['x'], values=[1.0], unit='m')),
+        )
+        result = serializer.serialize(msg)
+        assert result.topic == f'{INSTRUMENT}_livedata_data'
+        # Verify the bytes are valid da00 by decoding.
+        decoded = dataarray_da00.deserialise_da00(result.value)
+        assert decoded.source_name == 'd'
