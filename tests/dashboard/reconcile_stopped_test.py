@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for JobOrchestrator.reconcile_stopped_jobs().
+"""Tests for JobOrchestrator.check_stopped().
 
 When a backend worker shuts down, it sends a final heartbeat marking all jobs
 as stopped. The dashboard detects this and deactivates the workflow so the
@@ -21,7 +21,7 @@ class TestReconcileStoppedJobs:
         assert job_orchestrator.get_active_job_number(workflow_id) is not None
 
         _report_all_stopped(job_service, job_ids, workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_active_job_number(workflow_id) is None
 
@@ -33,7 +33,7 @@ class TestReconcileStoppedJobs:
 
         # Only report one job as stopped
         _report_status(job_service, job_ids[0], workflow_id, JobState.stopped)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_active_job_number(workflow_id) is not None
 
@@ -42,7 +42,7 @@ class TestReconcileStoppedJobs:
     ):
         """Workflow stays active if no heartbeats have been received yet."""
         job_orchestrator.commit_workflow(workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_active_job_number(workflow_id) is not None
 
@@ -54,7 +54,7 @@ class TestReconcileStoppedJobs:
         messages_before = len(fake_message_sink.messages)
 
         _report_all_stopped(job_service, job_ids, workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert len(fake_message_sink.messages) == messages_before
 
@@ -66,7 +66,7 @@ class TestReconcileStoppedJobs:
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         _report_all_stopped(job_service, job_ids, workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert (
             job_orchestrator.get_stopped_reason(workflow_id)
@@ -91,7 +91,7 @@ class TestReconcileStoppedJobs:
 
         job_ids = list(job_orchestrator._workflows[workflow_id].current.job_ids())
         _report_all_stopped(job_service, job_ids, workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_workflow_state_version(workflow_id) > version_before
 
@@ -106,7 +106,7 @@ class TestReconcileStoppedJobs:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         _report_all_stopped(stale_job_service, job_ids, workflow_id)
 
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_active_job_number(workflow_id) is not None
 
@@ -117,8 +117,8 @@ class TestReconcileStoppedJobs:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         _report_all_stopped(job_service, job_ids, workflow_id)
 
-        job_orchestrator.reconcile_stopped_jobs()
-        job_orchestrator.reconcile_stopped_jobs()  # second call should be safe
+        job_orchestrator.check_stopped(workflow_id)
+        job_orchestrator.check_stopped(workflow_id)  # second call should be safe
 
         assert job_orchestrator.get_active_job_number(workflow_id) is None
 
@@ -131,7 +131,7 @@ class TestReconcileStoppedJobs:
 
         # Only stop jobs for workflow 1
         _report_all_stopped(job_service, job_ids_1, workflow_id)
-        job_orchestrator.reconcile_stopped_jobs()
+        job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_active_job_number(workflow_id) is None
         assert job_orchestrator.get_active_job_number(workflow_id_2) is not None

@@ -804,30 +804,32 @@ class JobOrchestrator:
         self._notify_workflow_stopped(workflow_id)
         self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
 
-    def reconcile_stopped_jobs(self) -> None:
-        """Deactivate workflows whose backend jobs have all reported stopped.
+    def check_stopped(self, workflow_id: WorkflowId) -> None:
+        """Deactivate workflow if all its backend jobs have reported stopped.
 
-        When a backend worker shuts down, it sends a final heartbeat with all
-        jobs in ``stopped`` state. This method detects that situation and clears
-        the dashboard-side active state so the widget transitions cleanly to
-        STOPPED with a play button.
+        When a backend worker shuts down, it sends a final heartbeat marking
+        all jobs as stopped. Call this after receiving a stopped ``JobStatus``
+        to check whether the workflow should transition to STOPPED.
 
-        Intended to be called periodically from the background update loop.
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to check.
         """
         if self._job_service is None:
             return
-        for workflow_id, state in self._workflows.items():
-            if state.current is None:
-                continue
-            job_ids = list(state.current.job_ids())
-            if not job_ids:
-                continue
-            if self._all_jobs_stopped(job_ids):
-                logger.info(
-                    'Backend reported all jobs stopped, deactivating workflow %s',
-                    workflow_id,
-                )
-                self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
+        state = self._workflows.get(workflow_id)
+        if state is None or state.current is None:
+            return
+        job_ids = list(state.current.job_ids())
+        if not job_ids:
+            return
+        if self._all_jobs_stopped(job_ids):
+            logger.info(
+                'Backend reported all jobs stopped, deactivating workflow %s',
+                workflow_id,
+            )
+            self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
 
     def _all_jobs_stopped(self, job_ids: list[JobId]) -> bool:
         """Check if all jobs have reported non-stale stopped state."""

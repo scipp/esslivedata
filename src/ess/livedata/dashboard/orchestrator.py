@@ -9,7 +9,7 @@ import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.workflow_spec import JobNumber, ResultKey
-from ..core.job import JobStatus, ServiceStatus
+from ..core.job import JobState, JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
@@ -103,6 +103,8 @@ class Orchestrator:
             elif isinstance(value, JobStatus):
                 if self._is_active_job(value.job_id.job_number):
                     self._job_service.status_updated(value)
+                    if value.state == JobState.stopped and self._job_orchestrator:
+                        self._job_orchestrator.check_stopped(value.workflow_id)
             else:
                 self._logger.warning("Unknown status type: %s", type(value))
         elif stream_id == RESPONSES_STREAM_ID:
