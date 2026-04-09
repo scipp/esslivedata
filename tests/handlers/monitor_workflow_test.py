@@ -294,8 +294,8 @@ class TestCreateMonitorWorkflow:
         assert workflow is not None
 
     def test_workflow_with_wavelength_mode_requires_lookup_table(self, toa_edges):
-        """Test that wavelength mode requires tof_lookup_table_filename."""
-        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
+        """Test that wavelength mode requires lookup_table_filename."""
+        with pytest.raises(ValueError, match="lookup_table_filename is required"):
             create_monitor_workflow(
                 'monitor_1', toa_edges, coordinate_mode='wavelength'
             )
@@ -307,7 +307,7 @@ class TestCreateMonitorWorkflow:
                 'monitor_1',
                 toa_edges,
                 coordinate_mode='wavelength',
-                tof_lookup_table_filename='/path/to/lookup.h5',
+                lookup_table_filename='/path/to/lookup.h5',
             )
 
     def test_context_keys_forwarded_to_stream_processor(self, toa_edges):
@@ -636,7 +636,7 @@ class TestMonitorWorkflowFactoryCoordinateMode:
             ),
         )
 
-        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
+        with pytest.raises(ValueError, match="lookup_table_filename is required"):
             create_monitor_workflow_factory('monitor_1', params)
 
 
@@ -752,7 +752,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             wavelength_edges,
             coordinate_mode='wavelength',
             geometry_filename=str(geometry_filename),
-            tof_lookup_table_filename=str(lookup_table_filename),
+            lookup_table_filename=str(lookup_table_filename),
         )
 
         # Create histogram data like fake_monitors da00 mode produces

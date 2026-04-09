@@ -41,8 +41,8 @@ def setup_factories(instrument: Instrument) -> None:
 
     from .specs import DreamDetectorViewParams
 
-    def _resolve_tof_lookup_table_filename(instrument_configuration):
-        """Resolve TOF lookup table filename from DREAM instrument configuration."""
+    def _resolve_lookup_table_filename(instrument_configuration):
+        """Resolve lookup table filename from DREAM instrument configuration."""
         from ess.dream.workflows import _get_lookup_table_filename_from_configuration
 
         config = getattr(
@@ -99,14 +99,14 @@ def setup_factories(instrument: Instrument) -> None:
         source_name: str, params: DreamDetectorViewParams
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
-        tof_lookup_table_filename = None
+        lookup_table_filename = None
         if params.coordinate_mode.mode == 'wavelength':
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename(
+            lookup_table_filename = _resolve_lookup_table_filename(
                 params.instrument_configuration
             )
 
         return _detector_view_factory.make_workflow(
-            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
 
     # Monitor workflow factory with DREAM-specific TOF configuration
@@ -129,11 +129,11 @@ def setup_factories(instrument: Instrument) -> None:
                 "for wavelength mode."
             )
 
-        tof_lookup_table_filename = None
+        lookup_table_filename = None
         geometry_filename = None
 
         if mode == 'wavelength':
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename(
+            lookup_table_filename = _resolve_lookup_table_filename(
                 params.instrument_configuration
             )
             geometry_filename = get_nexus_geometry_filename('dream-no-shape')
@@ -143,7 +143,7 @@ def setup_factories(instrument: Instrument) -> None:
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            tof_lookup_table_filename=tof_lookup_table_filename,
+            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 

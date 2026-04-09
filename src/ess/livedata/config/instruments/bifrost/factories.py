@@ -155,9 +155,9 @@ def setup_factories(instrument: Instrument) -> None:
         workflow = BifrostQCutWorkflow(detector_names)
         workflow[Filename[SampleRun]] = fname
         workflow[LookupTableFilename] = lookup_table_simulation()
-        # The spectroscopy TofWorkflow looks up the detector threshold under the
-        # hardcoded key 'detector' (NeXusDetectorName('detector')); monitors are
-        # looked up by their actual NeXus component name.
+        # BifrostQCutWorkflow looks up the detector threshold under the hardcoded
+        # key 'detector' (NeXusDetectorName('detector')); monitors are looked up
+        # by their actual NeXus component name.
         workflow[LookupTableRelativeErrorThreshold] = {
             'detector': float('inf'),
             **{name: float('inf') for name in monitor_names},

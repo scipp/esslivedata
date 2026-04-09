@@ -109,12 +109,12 @@ def setup_factories(instrument: Instrument) -> None:
         source_name: str, params: DetectorViewParams
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
-        tof_lookup_table_filename = None
+        lookup_table_filename = None
         if params.coordinate_mode.mode == 'wavelength':
-            tof_lookup_table_filename = _resolve_lookup_table_filename()
+            lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
-            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
@@ -125,11 +125,11 @@ def setup_factories(instrument: Instrument) -> None:
         """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
 
-        tof_lookup_table_filename = None
+        lookup_table_filename = None
         geometry_filename = None
 
         if mode == 'wavelength':
-            tof_lookup_table_filename = _resolve_lookup_table_filename()
+            lookup_table_filename = _resolve_lookup_table_filename()
             geometry_filename = _nexus_geometry_filename
 
         return create_monitor_workflow(
@@ -137,7 +137,7 @@ def setup_factories(instrument: Instrument) -> None:
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            tof_lookup_table_filename=tof_lookup_table_filename,
+            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 

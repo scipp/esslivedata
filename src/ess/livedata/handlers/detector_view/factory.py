@@ -88,7 +88,7 @@ class DetectorViewFactory:
         self,
         source_name: str,
         params: DetectorViewParams,
-        tof_lookup_table_filename: str | None = None,
+        lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -99,7 +99,7 @@ class DetectorViewFactory:
             Name of the detector source (e.g., 'panel_0').
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
-        tof_lookup_table_filename:
+        lookup_table_filename:
             Path to lookup table file. Required for 'wavelength' coordinate mode.
             The caller (instrument factory) is responsible for resolving this
             from instrument-specific params.
@@ -113,8 +113,8 @@ class DetectorViewFactory:
 
         # Validate wavelength mode requirements
         if mode == 'wavelength':
-            if tof_lookup_table_filename is None:
-                raise ValueError(f"{mode} mode requires tof_lookup_table_filename")
+            if lookup_table_filename is None:
+                raise ValueError(f"{mode} mode requires lookup_table_filename")
             if isinstance(self._data_source, DetectorNumberSource):
                 raise ValueError(
                     f"{mode} mode requires geometry for Ltotal computation; "
@@ -144,7 +144,7 @@ class DetectorViewFactory:
 
         # Set lookup table filename and error threshold for wavelength mode
         if mode == 'wavelength':
-            workflow[LookupTableFilename] = tof_lookup_table_filename
+            workflow[LookupTableFilename] = lookup_table_filename
             workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
         # Configure detector data source (EmptyDetector)

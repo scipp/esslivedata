@@ -172,7 +172,7 @@ def create_monitor_workflow(
     range_filter: tuple[sc.Variable, sc.Variable] | None = None,
     coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
-    tof_lookup_table_filename: str | None = None,
+    lookup_table_filename: str | None = None,
     context_keys: dict[str, type] | None = None,
 ):
     """
@@ -192,7 +192,7 @@ def create_monitor_workflow(
     geometry_filename:
         Path to NeXus file containing monitor geometry. Required for 'wavelength' mode
         (needed for Ltotal computation). Optional for 'toa' mode.
-    tof_lookup_table_filename:
+    lookup_table_filename:
         Path to lookup table file. Required for 'wavelength' mode.
     context_keys:
         Optional mapping from aux source stream names to sciline pipeline keys.
@@ -204,10 +204,8 @@ def create_monitor_workflow(
 
     # Validate wavelength mode requirements
     if coordinate_mode == 'wavelength':
-        if tof_lookup_table_filename is None:
-            raise ValueError(
-                "tof_lookup_table_filename is required for 'wavelength' mode"
-            )
+        if lookup_table_filename is None:
+            raise ValueError("lookup_table_filename is required for 'wavelength' mode")
         if geometry_filename is None:
             raise ValueError(
                 "geometry_filename is required for 'wavelength' mode "
@@ -235,7 +233,7 @@ def create_monitor_workflow(
 
     # Configure lookup table and error threshold for wavelength mode
     if coordinate_mode == 'wavelength':
-        workflow[LookupTableFilename] = tof_lookup_table_filename
+        workflow[LookupTableFilename] = lookup_table_filename
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
