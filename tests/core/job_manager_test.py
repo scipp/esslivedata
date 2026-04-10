@@ -1947,12 +1947,14 @@ class TestJobManagerThreading:
         manager.shutdown()  # Should not raise
 
 
-class TestPeekPendingAuxStreams:
+class TestPeekPendingStreams:
     def test_returns_empty_when_no_scheduled_jobs(self, fake_job_factory):
         manager = JobManager(fake_job_factory)
-        assert manager.peek_pending_aux_streams(start_time=100) == set()
+        assert manager.peek_pending_streams(start_time=100) == set()
 
-    def test_returns_aux_streams_for_job_ready_to_activate(self, fake_job_factory):
+    def test_returns_aux_and_primary_streams_for_job_ready_to_activate(
+        self, fake_job_factory
+    ):
         manager = JobManager(fake_job_factory)
         config = WorkflowConfig(
             identifier=WorkflowId(
@@ -1966,8 +1968,9 @@ class TestPeekPendingAuxStreams:
         )
         manager.schedule_job("src", config)
 
-        assert manager.peek_pending_aux_streams(start_time=50) == set()
-        assert manager.peek_pending_aux_streams(start_time=100) == {
+        assert manager.peek_pending_streams(start_time=50) == set()
+        assert manager.peek_pending_streams(start_time=100) == {
+            "src",
             "temp_stream",
             "speed_stream",
         }
@@ -1987,9 +1990,9 @@ class TestPeekPendingAuxStreams:
         )
         manager.schedule_job("src", config)
 
-        result1 = manager.peek_pending_aux_streams(start_time=100)
-        result2 = manager.peek_pending_aux_streams(start_time=100)
-        assert result1 == result2 == {"stream_a"}
+        result1 = manager.peek_pending_streams(start_time=100)
+        result2 = manager.peek_pending_streams(start_time=100)
+        assert result1 == result2 == {"src", "stream_a"}
 
     def test_returns_union_of_multiple_jobs(self, fake_job_factory):
         manager = JobManager(fake_job_factory)
@@ -2014,10 +2017,18 @@ class TestPeekPendingAuxStreams:
         manager.schedule_job("src_a", config_a)
         manager.schedule_job("src_b", config_b)
 
-        result = manager.peek_pending_aux_streams(start_time=100)
-        assert result == {"temperature", "chopper_speed", "pressure"}
+        result = manager.peek_pending_streams(start_time=100)
+        assert result == {
+            "src_a",
+            "src_b",
+            "temperature",
+            "chopper_speed",
+            "pressure",
+        }
 
-    def test_returns_empty_for_jobs_without_aux_sources(self, fake_job_factory):
+    def test_returns_primary_streams_for_jobs_without_aux_sources(
+        self, fake_job_factory
+    ):
         manager = JobManager(fake_job_factory)
         config = WorkflowConfig(
             identifier=WorkflowId(
@@ -2029,4 +2040,4 @@ class TestPeekPendingAuxStreams:
         )
         manager.schedule_job("src", config)
 
-        assert manager.peek_pending_aux_streams(start_time=100) == set()
+        assert manager.peek_pending_streams(start_time=100) == {"src"}
