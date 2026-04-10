@@ -8,6 +8,7 @@ from typing import ClassVar
 
 import panel as pn
 
+from ess.livedata import format_version
 from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStats
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
@@ -252,7 +253,7 @@ class WorkerStatusRow:
         self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
 
         # Version
-        self._version_pane.object = f"<code>{status.version}</code>"
+        self._version_pane.object = f"<code>{format_version(status.version)}</code>"
 
         # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
         show_last_seen = is_stale or status.state in (
