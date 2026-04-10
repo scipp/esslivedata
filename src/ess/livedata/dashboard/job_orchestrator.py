@@ -32,7 +32,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.core.job import JobState
+from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .active_job_registry import ActiveJobRegistry
@@ -804,20 +804,18 @@ class JobOrchestrator:
         self._notify_workflow_stopped(workflow_id)
         self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
 
-    def check_stopped(self, workflow_id: WorkflowId) -> None:
-        """Deactivate workflow if all its backend jobs have reported stopped.
+    def on_job_status_updated(self, job_status: JobStatus) -> None:
+        """React to a job status update from ``JobService``.
 
         When a backend worker shuts down, it sends a final heartbeat marking
-        all jobs as stopped. Call this after receiving a stopped ``JobStatus``
-        to check whether the workflow should transition to STOPPED.
-
-        Parameters
-        ----------
-        workflow_id:
-            The workflow to check.
+        all jobs as stopped. This checks whether all jobs in the workflow
+        have reported stopped, and if so deactivates the workflow.
         """
+        if job_status.state != JobState.stopped:
+            return
         if self._job_service is None:
             return
+        workflow_id = job_status.workflow_id
         state = self._workflows.get(workflow_id)
         if state is None or state.current is None:
             return

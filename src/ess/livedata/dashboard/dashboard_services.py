@@ -213,6 +213,8 @@ class DashboardServices:
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
         )
+        self.job_service.on_status_updated = self.job_orchestrator.on_job_status_updated
+
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
@@ -220,7 +222,6 @@ class DashboardServices:
             instrument_config=self.instrument_config,
         )
 
-        # Create orchestrator now that job_orchestrator exists
         self.orchestrator = Orchestrator(
             self._transport_resources.message_source,
             data_service=self.data_service,
