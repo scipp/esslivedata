@@ -124,7 +124,6 @@ def job_orchestrator(
         command_service=command_service,
         workflow_registry=workflow_registry,
         active_job_registry=active_job_registry,
-        job_service=job_service,
         config_store=None,
     )
     job_service.on_status_updated = orchestrator.on_job_status_updated

@@ -88,33 +88,6 @@ class TestReconcileStoppedJobs:
 
         assert job_orchestrator.get_workflow_state_version(workflow_id) > version_before
 
-    def test_ignores_stale_stopped_statuses(
-        self,
-        command_service,
-        workflow_registry,
-        active_job_registry,
-    ):
-        """Stopped statuses that are stale (timed out) are not trusted."""
-        from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
-        from ess.livedata.dashboard.job_service import JobService
-
-        stale_job_service = JobService(heartbeat_timeout_ns=0)
-        orchestrator = JobOrchestrator(
-            command_service=command_service,
-            workflow_registry=workflow_registry,
-            active_job_registry=active_job_registry,
-            job_service=stale_job_service,
-            config_store=None,
-        )
-        stale_job_service.on_status_updated = orchestrator.on_job_status_updated
-
-        # Pick a workflow from the registry
-        workflow_id = next(iter(workflow_registry))
-        job_ids = orchestrator.commit_workflow(workflow_id)
-        _report_all_stopped(stale_job_service, job_ids, workflow_id)
-
-        assert orchestrator.get_active_job_number(workflow_id) is not None
-
     def test_idempotent_when_already_stopped(
         self, job_orchestrator, job_service, workflow_id
     ):

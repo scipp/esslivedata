@@ -46,8 +46,6 @@ from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
 
-    from .job_service import JobService
-
 logger = structlog.get_logger(__name__)
 
 SourceName = str
@@ -125,7 +123,6 @@ class JobOrchestrator:
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         active_job_registry: ActiveJobRegistry,
-        job_service: JobService | None = None,
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
@@ -142,9 +139,6 @@ class JobOrchestrator:
         active_job_registry
             Thread-safe registry for tracking active job numbers and
             cleaning up data on deactivation.
-        job_service
-            Optional job service for querying job statuses. Required for
-            reconciling stale active state after backend shutdown.
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
@@ -158,7 +152,6 @@ class JobOrchestrator:
         self._command_service = command_service
         self._workflow_registry = workflow_registry
         self._active_job_registry = active_job_registry
-        self._job_service = job_service
         self._config_store = config_store
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
@@ -168,6 +161,7 @@ class JobOrchestrator:
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
+        self._job_states: dict[JobId, JobState] = {}
 
         # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
@@ -808,12 +802,12 @@ class JobOrchestrator:
         """React to a job status update from ``JobService``.
 
         When a backend worker shuts down, it sends a final heartbeat marking
-        all jobs as stopped. This checks whether all jobs in the workflow
-        have reported stopped, and if so deactivates the workflow.
+        all jobs as stopped. This tracks the latest state per job and checks
+        whether all jobs in the workflow have reported stopped, deactivating
+        the workflow if so.
         """
+        self._job_states[job_status.job_id] = job_status.state
         if job_status.state != JobState.stopped:
-            return
-        if self._job_service is None:
             return
         workflow_id = job_status.workflow_id
         state = self._workflows.get(workflow_id)
@@ -822,27 +816,12 @@ class JobOrchestrator:
         job_ids = list(state.current.job_ids())
         if not job_ids:
             return
-        if self._all_jobs_stopped(job_ids):
+        if all(self._job_states.get(jid) == JobState.stopped for jid in job_ids):
             logger.info(
                 'Backend reported all jobs stopped, deactivating workflow %s',
                 workflow_id,
             )
             self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
-
-    def _all_jobs_stopped(self, job_ids: list[JobId]) -> bool:
-        """Check if all jobs have reported non-stale stopped state."""
-        if self._job_service is None:
-            return False
-        statuses = self._job_service.job_statuses
-        for job_id in job_ids:
-            status = statuses.get(job_id)
-            if status is None:
-                return False
-            if status.state != JobState.stopped:
-                return False
-            if self._job_service.is_status_stale(job_id):
-                return False
-        return True
 
     def reset_workflow(self, workflow_id: WorkflowId) -> bool:
         """
