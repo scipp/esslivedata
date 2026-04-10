@@ -64,10 +64,10 @@ dream = [
     "essdiffraction>=26.4.0",
 ]
 loki = [
-    "esssans>=25.11.0",
+    "esssans>=26.4.0",
 ]
 odin = [
-    "essimaging",
+    "essimaging>=26.4.0",
 ]
 estia = [
     "essreflectometry>=26.4.0",
