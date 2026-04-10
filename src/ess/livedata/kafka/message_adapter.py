@@ -95,6 +95,14 @@ class FakeKafkaMessage(KafkaMessage):
         return self._value == other._value and self._topic == other._topic
 
 
+class UnmappedStreamError(KeyError):
+    """Raised when a (topic, source_name) pair has no mapping in the stream LUT.
+
+    Already recorded as unmapped in the stream counter before raising, so
+    callers should not record a second ``<error>`` entry.
+    """
+
+
 class MessageAdapter(Protocol, Generic[T, U]):
     def adapt(self, message: T) -> U: ...
 
@@ -131,7 +139,7 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
             except KeyError:
                 if self._stream_counter is not None:
                     self._stream_counter.record(topic, source_name, None)
-                raise
+                raise UnmappedStreamError(source_name) from None
             stream_id = StreamId(kind=self._stream_kind, name=resolved)
         if self._stream_counter is not None:
             self._stream_counter.record(topic, source_name, resolved)
@@ -511,6 +519,10 @@ class AdaptingMessageSource(MessageSource[U]):
         for msg in raw_messages:
             try:
                 adapted.append(self._adapter.adapt(msg))
+            except UnmappedStreamError:
+                # Already recorded in the stream counter by get_stream_id.
+                if self._raise_on_error:
+                    raise
             except streaming_data_types.exceptions.WrongSchemaException:
                 logger.warning('Message %s has an unknown schema. Skipping.', msg)
                 self._record_error(msg)

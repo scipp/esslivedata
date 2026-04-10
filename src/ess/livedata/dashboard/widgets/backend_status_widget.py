@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import ClassVar
 
 import panel as pn
@@ -117,7 +118,7 @@ def _format_stream_stats_details(stats: StreamStats | None) -> str:
             f'<span style="color: {StatusColors.ERROR}">unmapped</span>'
         )
         rows.append(
-            f"<tr><td>{s.topic}</td><td>{s.source_name}</td>"
+            f"<tr><td>{escape(s.topic)}</td><td>{escape(s.source_name)}</td>"
             f"<td>{stream_cell}</td><td style='text-align:right'>"
             f"{_format_messages(s.count)}</td></tr>"
         )
