@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any, Generic
 
 import structlog
@@ -15,6 +16,7 @@ from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
 from .job import (
     JobResult,
+    JobState,
     JobStatus,
     ServiceState,
     ServiceStatus,
@@ -381,12 +383,12 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             logger.info('service_stopped')
             self._service_state = ServiceState.stopped
 
-        self._job_manager.mark_all_stopped()
-
         timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
         messages = [
-            _job_status_to_message(status, timestamp=timestamp)
+            _job_status_to_message(
+                replace(status, state=JobState.stopped), timestamp=timestamp
+            )
             for status in job_statuses
         ]
         service_status = self._get_service_status(job_statuses)

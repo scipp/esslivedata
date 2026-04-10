@@ -487,17 +487,6 @@ class JobManager:
             # first auxiliary data.
             self._jobs_with_primary_data.remove(job.job_id)
 
-    def mark_all_stopped(self) -> None:
-        """Mark all active and scheduled jobs as stopped.
-
-        Unlike ``stop_job``, this preserves tracking state so that
-        ``get_all_job_statuses`` still returns statuses for these jobs.
-        Used during shutdown to report final job states before the
-        service exits.
-        """
-        for job_id in list(self._active_jobs) + list(self._scheduled_jobs):
-            self._job_states[job_id] = JobState.stopped
-
     def shutdown(self) -> None:
         """Shut down the thread pool executor, if one was created."""
         if self._executor is not None:
