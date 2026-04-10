@@ -86,29 +86,39 @@ class TestReconcileStoppedJobs:
         self, job_orchestrator, job_service, workflow_id
     ):
         """Version is incremented so widgets detect the state change."""
-        job_orchestrator.commit_workflow(workflow_id)
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
         version_before = job_orchestrator.get_workflow_state_version(workflow_id)
-
-        job_ids = list(job_orchestrator._workflows[workflow_id].current.job_ids())
         _report_all_stopped(job_service, job_ids, workflow_id)
         job_orchestrator.check_stopped(workflow_id)
 
         assert job_orchestrator.get_workflow_state_version(workflow_id) > version_before
 
-    def test_ignores_stale_stopped_statuses(self, job_orchestrator, workflow_id):
+    def test_ignores_stale_stopped_statuses(
+        self,
+        command_service,
+        workflow_registry,
+        active_job_registry,
+        workflow_id,
+    ):
         """Stopped statuses that are stale (timed out) are not trusted."""
-        # Use a job service with very short timeout so statuses become stale
+        from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
         from ess.livedata.dashboard.job_service import JobService
 
         stale_job_service = JobService(heartbeat_timeout_ns=0)
-        job_orchestrator._job_service = stale_job_service
+        orchestrator = JobOrchestrator(
+            command_service=command_service,
+            workflow_registry=workflow_registry,
+            active_job_registry=active_job_registry,
+            job_service=stale_job_service,
+            config_store=None,
+        )
 
-        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_ids = orchestrator.commit_workflow(workflow_id)
         _report_all_stopped(stale_job_service, job_ids, workflow_id)
 
-        job_orchestrator.check_stopped(workflow_id)
+        orchestrator.check_stopped(workflow_id)
 
-        assert job_orchestrator.get_active_job_number(workflow_id) is not None
+        assert orchestrator.get_active_job_number(workflow_id) is not None
 
     def test_idempotent_when_already_stopped(
         self, job_orchestrator, job_service, workflow_id

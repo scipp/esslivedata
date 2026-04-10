@@ -367,7 +367,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         Called by Service after the worker thread has joined, so job states
         can be safely transitioned without racing with the processing loop.
-        Must be called exactly once.
+        Idempotent — safe to call more than once.
         """
         if self._finalized:
             return

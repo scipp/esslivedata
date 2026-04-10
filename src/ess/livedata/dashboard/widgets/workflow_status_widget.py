@@ -25,6 +25,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
 from ..format_utils import extract_error_summary
+from ..job_orchestrator import StoppedReason
 from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
@@ -737,8 +738,6 @@ class WorkflowStatusWidget:
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
-            from ess.livedata.dashboard.job_orchestrator import StoppedReason
-
             reason = self._orchestrator.get_stopped_reason(self._workflow_id)
             timing = (
                 'Backend shut down' if reason == StoppedReason.backend_shutdown else ''
