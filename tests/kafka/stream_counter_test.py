@@ -72,3 +72,27 @@ class TestStreamCounter:
         counter = StreamCounter()
         stats = counter.drain(window_seconds=42.5)
         assert stats.window_seconds == 42.5
+
+    def test_ignores_epics_dmov_suffix(self) -> None:
+        counter = StreamCounter()
+        counter.record("motion", "INST-Dev:Mtr.DMOV", None)
+        counter.record("motion", "INST-Dev:Mtr.RBV", "stream_1")
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "INST-Dev:Mtr.RBV"
+
+    def test_ignores_epics_val_suffix(self) -> None:
+        counter = StreamCounter()
+        counter.record("motion", "INST-Dev:Mtr.VAL", None)
+        counter.record("motion", "INST-Dev:Mtr.RBV", "stream_1")
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "INST-Dev:Mtr.RBV"
+
+    def test_ignores_dmov_and_val_on_any_topic(self) -> None:
+        counter = StreamCounter()
+        counter.record("other_topic", "PV.DMOV", None)
+        counter.record("other_topic", "PV.VAL", None)
+        counter.record("other_topic", "PV.RBV", "resolved")
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
