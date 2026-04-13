@@ -178,37 +178,6 @@ class TestKafkaToMonitorEventsAdapter:
         with pytest.raises(WrongSchemaException, match="Wrong schema"):
             adapter.adapt(message)
 
-    def test_pixellated_source_emits_detector_events(self) -> None:
-        """Pixellated sources produce DetectorEvents with DETECTOR_EVENTS kind."""
-        message = FakeKafkaMessage(value=make_serialized_ev44(), topic="monitors")
-        adapter = KafkaToMonitorEventsAdapter(
-            stream_lut={
-                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
-            },
-            pixellated_sources=frozenset({'monitor_0'}),
-        )
-        result = adapter.adapt(message)
-
-        assert result.stream.kind == StreamKind.DETECTOR_EVENTS
-        assert result.stream.name == "monitor_0"
-        assert isinstance(result.value, DetectorEvents)
-        assert result.value.pixel_id == [1]
-        assert result.value.time_of_arrival == [123456]
-
-    def test_non_pixellated_source_unaffected_by_pixellated_config(self) -> None:
-        """Non-pixellated sources should still produce MonitorEvents."""
-        message = FakeKafkaMessage(value=make_serialized_ev44(), topic="monitors")
-        adapter = KafkaToMonitorEventsAdapter(
-            stream_lut={
-                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor_0"
-            },
-            pixellated_sources=frozenset({'other_monitor'}),
-        )
-        result = adapter.adapt(message)
-
-        assert result.stream.kind == StreamKind.MONITOR_EVENTS
-        assert not isinstance(result.value, DetectorEvents)
-
 
 class TestKafkaToF144Adapter:
     def test_adapter(self) -> None:

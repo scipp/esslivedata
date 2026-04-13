@@ -15,21 +15,19 @@ def make_monitor_service_builder(
     *, instrument: str, dev: bool = True, log_level: int = logging.INFO
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
-    instrument_obj = instrument_registry[instrument]
-    instrument_obj.load_factories()
     stream_counter = StreamCounter()
     adapter = (
         RoutingAdapterBuilder(
             stream_mapping=stream_mapping, stream_counter=stream_counter
         )
-        .with_beam_monitor_route(
-            pixellated_sources=instrument_obj.pixellated_monitor_sources
-        )
+        .with_beam_monitor_route()
         .with_logdata_route()
         .with_livedata_commands_route()
         .with_run_control_route()
         .build()
     )
+    instrument_obj = instrument_registry[instrument]
+    instrument_obj.load_factories()
     service_name = 'monitor_data'
     preprocessor_factory = ReductionHandlerFactory(instrument=instrument_obj)
     return DataServiceBuilder(
