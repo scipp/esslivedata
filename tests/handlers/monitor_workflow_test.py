@@ -622,45 +622,48 @@ class TestRegisterMonitorWorkflowSpecs:
         assert hasattr(workflow, 'accumulate')
 
 
+def _make_pixellated_monitor_data(event_pixel_ids: list[int]) -> sc.DataArray:
+    """Create binned data with event_id coord, as ToNXevent_data produces
+    when fed DetectorEvents from a pixellated monitor."""
+    n = len(event_pixel_ids)
+    toa = sc.array(dims=['event'], values=[1_000_000] * n, unit='ns', dtype='int32')
+    event_id = sc.array(
+        dims=['event'], values=event_pixel_ids, unit=None, dtype='int32'
+    )
+    weights = sc.ones(sizes={'event': n}, dtype='float64', unit='counts')
+    events = sc.DataArray(
+        data=weights,
+        coords={'event_time_offset': toa, 'event_id': event_id},
+    )
+    sizes = sc.array(dims=['event_time_zero'], values=[n], unit=None, dtype='int64')
+    begin = sc.cumsum(sizes, mode='exclusive')
+    return sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
+
+
+_PIXEL_IDS = sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
+
+
 class TestMonitorCountsPerPixel:
     """Tests for monitor_counts_per_pixel provider."""
 
-    @pytest.fixture
-    def pixel_ids(self):
-        return sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
-
-    def _make_binned_data(self, event_pixel_ids):
-        """Create binned data with event_id coord, as ToNXevent_data produces."""
-        n = len(event_pixel_ids)
-        toa = sc.array(dims=['event'], values=[1_000_000] * n, unit='ns', dtype='int32')
-        event_id = sc.array(
-            dims=['event'], values=event_pixel_ids, unit=None, dtype='int32'
-        )
-        weights = sc.ones(sizes={'event': n}, dtype='float64', unit='counts')
-        events = sc.DataArray(
-            data=weights,
-            coords={'event_time_offset': toa, 'event_id': event_id},
-        )
-        sizes = sc.array(dims=['event_time_zero'], values=[n], unit=None, dtype='int64')
-        begin = sc.cumsum(sizes, mode='exclusive')
-        return sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
-
-    def test_counts_by_pixel(self, pixel_ids):
+    def test_counts_by_pixel(self):
         result = monitor_counts_per_pixel(
-            self._make_binned_data([4, 5, 4, 8, 5]), pixel_ids
+            _make_pixellated_monitor_data([4, 5, 4, 8, 5]), _PIXEL_IDS
         )
         assert result.dims == ('event_id',)
         assert result.sizes['event_id'] == 5
         assert list(result.values) == [2.0, 2.0, 0.0, 0.0, 1.0]
 
-    def test_zero_counts_for_unseen_pixels(self, pixel_ids):
-        result = monitor_counts_per_pixel(self._make_binned_data([4]), pixel_ids)
+    def test_zero_counts_for_unseen_pixels(self):
+        result = monitor_counts_per_pixel(
+            _make_pixellated_monitor_data([4]), _PIXEL_IDS
+        )
         assert result.values[0] == 1.0
         assert all(v == 0.0 for v in result.values[1:])
 
-    def test_consistent_shape(self, pixel_ids):
-        r1 = monitor_counts_per_pixel(self._make_binned_data([4]), pixel_ids)
-        r2 = monitor_counts_per_pixel(self._make_binned_data([8]), pixel_ids)
+    def test_consistent_shape(self):
+        r1 = monitor_counts_per_pixel(_make_pixellated_monitor_data([4]), _PIXEL_IDS)
+        r2 = monitor_counts_per_pixel(_make_pixellated_monitor_data([8]), _PIXEL_IDS)
         assert r1.sizes == r2.sizes
         assert sc.identical(r1.coords['event_id'], r2.coords['event_id'])
 
@@ -668,37 +671,18 @@ class TestMonitorCountsPerPixel:
 class TestCreateCountsPerPixelWorkflow:
     """Tests for create_counts_per_pixel_workflow end-to-end."""
 
-    @pytest.fixture
-    def pixel_ids(self):
-        return sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
-
-    def _make_binned_data(self, event_pixel_ids):
-        n = len(event_pixel_ids)
-        toa = sc.array(dims=['event'], values=[1_000_000] * n, unit='ns', dtype='int32')
-        event_id = sc.array(
-            dims=['event'], values=event_pixel_ids, unit=None, dtype='int32'
-        )
-        weights = sc.ones(sizes={'event': n}, dtype='float64', unit='counts')
-        events = sc.DataArray(
-            data=weights,
-            coords={'event_time_offset': toa, 'event_id': event_id},
-        )
-        sizes = sc.array(dims=['event_time_zero'], values=[n], unit=None, dtype='int64')
-        begin = sc.cumsum(sizes, mode='exclusive')
-        return sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
-
-    def test_creates_stream_processor_workflow(self, pixel_ids):
+    def test_creates_stream_processor_workflow(self):
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
 
-        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
+        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=_PIXEL_IDS)
         assert isinstance(workflow, StreamProcessorWorkflow)
 
-    def test_single_cycle(self, pixel_ids):
-        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
+    def test_single_cycle(self):
+        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=_PIXEL_IDS)
         workflow.accumulate(
-            {'mon': self._make_binned_data([4, 5, 4])},
+            {'mon': _make_pixellated_monitor_data([4, 5, 4])},
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1000),
         )
@@ -707,18 +691,18 @@ class TestCreateCountsPerPixelWorkflow:
         assert results['counts_per_pixel'].values[0] == 2.0  # pixel 4
         assert results['counts_per_pixel'].values[1] == 1.0  # pixel 5
 
-    def test_current_resets_each_cycle(self, pixel_ids):
-        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
+    def test_current_resets_each_cycle(self):
+        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=_PIXEL_IDS)
 
         workflow.accumulate(
-            {'mon': self._make_binned_data([4, 5])},
+            {'mon': _make_pixellated_monitor_data([4, 5])},
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1000),
         )
         workflow.finalize()
 
         workflow.accumulate(
-            {'mon': self._make_binned_data([4, 4])},
+            {'mon': _make_pixellated_monitor_data([4, 4])},
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -727,18 +711,18 @@ class TestCreateCountsPerPixelWorkflow:
         assert current.values[0] == 2.0  # pixel 4 this cycle only
         assert current.values[1] == 0.0  # pixel 5 not in this cycle
 
-    def test_cumulative_across_cycles(self, pixel_ids):
-        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
+    def test_cumulative_across_cycles(self):
+        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=_PIXEL_IDS)
 
         workflow.accumulate(
-            {'mon': self._make_binned_data([4, 5])},
+            {'mon': _make_pixellated_monitor_data([4, 5])},
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1000),
         )
         workflow.finalize()
 
         workflow.accumulate(
-            {'mon': self._make_binned_data([4, 4])},
+            {'mon': _make_pixellated_monitor_data([4, 4])},
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )

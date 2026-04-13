@@ -151,8 +151,10 @@ def setup_factories(instrument: Instrument) -> None:
             geometry_filename=geometry_filename,
         )
 
-    # Pixellated monitor (beam_monitor_m3): register for DetectorEvents in adapter
-    # and attach counts-per-pixel factory with known pixel IDs
+    # Pixellated monitor (beam_monitor_m3): register for DetectorEvents in adapter.
+    # Hard-coded because the NeXus geometry file does not contain detector_number
+    # for monitors. If it did, load_factories() would pick it up automatically
+    # via Instrument._load_detector_from_nexus.
     instrument.register_pixellated_monitor('beam_monitor_m3')
     _m3_pixel_ids = sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
 

@@ -436,12 +436,12 @@ class Instrument:
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
 
-        for name in self.detector_names:
+        for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
                 try:
                     self._load_detector_from_nexus(name)
-                except ValueError:
-                    # Nexus file not available or detector not in file
+                except (ValueError, KeyError):
+                    # NeXus file not available, or detector_number not in file
                     pass
 
 
