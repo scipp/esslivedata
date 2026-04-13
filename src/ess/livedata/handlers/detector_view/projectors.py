@@ -164,10 +164,7 @@ class GeometricProjector:
         )
 
         # Bin by screen coordinates (preserving events)
-        binned = flat_events.bin(self._edges)
-        for name, value in self._scalar_coords.items():
-            binned.coords[name] = value
-        return binned
+        return flat_events.bin(self._edges).assign_coords(self._scalar_coords)
 
     def compute_weights(self) -> sc.DataArray:
         """
