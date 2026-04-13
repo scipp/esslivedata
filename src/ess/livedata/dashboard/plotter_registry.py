@@ -355,7 +355,7 @@ def _register_all_plotters() -> None:
             multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
-        factory=LinePlotter.from_params,
+        factory=LinePlotter.from_display_params,
     )
 
     plotter_registry.register_plotter(
