@@ -26,8 +26,10 @@ from .monitor_workflow_types import (
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorCountsInRange,
+    MonitorCountsPerPixel,
     MonitorCountsTotal,
     MonitorHistogram,
+    MonitorPixelIds,
     WindowMonitorHistogram,
 )
 
@@ -259,4 +261,58 @@ def create_monitor_workflow(
             WindowMonitorHistogram: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
+    )
+
+
+def monitor_counts_per_pixel(
+    data: NeXusData[NXmonitor, SampleRun],
+    pixel_ids: MonitorPixelIds,
+) -> MonitorCountsPerPixel:
+    """Count events per pixel from preprocessed monitor data with event_id.
+
+    Operates on the raw preprocessed data (before assembly) so no sciline graph
+    machinery for NXdetector assembly or grouping is needed. The ``event_id``
+    coordinate is populated by ``ToNXevent_data`` when fed ``DetectorEvents``.
+
+    Uses ``np.bincount`` for a fixed-shape output indexed by ``pixel_ids``,
+    which is required for cumulative accumulation across cycles.
+    """
+    import numpy as np
+
+    event_table = data.bins.constituents['data']
+    event_id = event_table.coords['event_id'].values
+    counts = np.bincount(event_id, minlength=int(pixel_ids.values[-1]) + 1)
+    return MonitorCountsPerPixel(
+        sc.DataArray(
+            sc.array(
+                dims=['event_id'],
+                values=counts[pixel_ids.values].astype('float64'),
+                unit='counts',
+            ),
+            coords={'event_id': pixel_ids},
+        )
+    )
+
+
+def create_counts_per_pixel_workflow(source_name: str, *, pixel_ids: sc.Variable):
+    """Factory for a lightweight counts-per-pixel workflow.
+
+    Parameters
+    ----------
+    source_name:
+        Monitor source name.
+    pixel_ids:
+        Known pixel IDs for the monitor. Ensures consistent output shape
+        across accumulation cycles.
+    """
+    from .accumulators import NoCopyAccumulator
+    from .stream_processor_workflow import StreamProcessorWorkflow
+
+    workflow = sciline.Pipeline(providers=[monitor_counts_per_pixel])
+    workflow[MonitorPixelIds] = pixel_ids
+    return StreamProcessorWorkflow(
+        workflow,
+        dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
+        target_keys={'counts_per_pixel': MonitorCountsPerPixel},
+        accumulators={MonitorCountsPerPixel: NoCopyAccumulator()},
     )

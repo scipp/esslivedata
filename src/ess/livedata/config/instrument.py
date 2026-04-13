@@ -96,6 +96,7 @@ class Instrument:
     _logical_view_handles: dict[str, SpecHandle] = field(
         default_factory=dict, init=False
     )
+    _pixellated_monitors: set[str] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -178,6 +179,24 @@ class Instrument:
 
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
+
+    def register_pixellated_monitor(self, name: str) -> None:
+        """Mark a monitor as pixellated (has meaningful per-pixel event IDs).
+
+        This tells the adapter to emit ``DetectorEvents`` (preserving pixel_id)
+        instead of plain ``MonitorEvents`` for this source.
+        """
+        if name not in self.monitors:
+            raise ValueError(
+                f"Source '{name}' not in declared monitors. "
+                f"Available monitors: {self.monitors}"
+            )
+        self._pixellated_monitors.add(name)
+
+    @property
+    def pixellated_monitor_sources(self) -> frozenset[str]:
+        """Source names of monitors registered as pixellated."""
+        return frozenset(self._pixellated_monitors)
 
     def get_source_title(self, source_name: str) -> str:
         """Get display title for a source, falling back to source_name.

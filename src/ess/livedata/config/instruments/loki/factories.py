@@ -124,7 +124,10 @@ def setup_factories(instrument: Instrument) -> None:
             source_name, params, lookup_table_filename=lookup_table_filename
         )
 
-    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+    from ess.livedata.handlers.monitor_workflow import (
+        create_counts_per_pixel_workflow,
+        create_monitor_workflow,
+    )
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 
     @specs.monitor_handle.attach_factory()
@@ -147,6 +150,16 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
+
+    # Pixellated monitor (beam_monitor_m3): register for DetectorEvents in adapter
+    # and attach counts-per-pixel factory with known pixel IDs
+    instrument.register_pixellated_monitor('beam_monitor_m3')
+    _m3_pixel_ids = sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
+
+    @specs.counts_per_pixel_handle.attach_factory()
+    def _counts_per_pixel_factory(source_name: str):
+        """Factory for LOKI counts-per-pixel workflow."""
+        return create_counts_per_pixel_workflow(source_name, pixel_ids=_m3_pixel_ids)
 
     # --- Providers for current_run transmission mode ---
     # Map SampleRun monitors to TransmissionRun[SampleRun] so the standard

@@ -19,6 +19,7 @@ from ess.livedata.handlers.detector_view_specs import (
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
+    register_counts_per_pixel_specs,
     register_monitor_workflow_specs,
 )
 
@@ -238,8 +239,15 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
+# All monitors get the standard TOA histogram. beam_monitor_m3 is additionally
+# pixellated (pixel IDs 4-8) and gets a separate counts-per-pixel workflow.
 monitor_handle = register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
+)
+
+_pixellated_monitors = ['beam_monitor_m3']
+counts_per_pixel_handle = register_counts_per_pixel_specs(
+    instrument, _pixellated_monitors
 )
 
 xy_projection_handle = register_detector_view_spec(
