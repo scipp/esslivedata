@@ -20,6 +20,7 @@ from ess.livedata.handlers.detector_view_specs import (
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
+    register_pixellated_monitor_workflow_specs,
 )
 
 from .views import get_tube_view
@@ -238,8 +239,16 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
+# beam_monitor_m3 is pixellated (pixel IDs 4-8) — register separately
+_pixellated_monitors = ['beam_monitor_m3']
+_regular_monitors = [m for m in instrument.monitors if m not in _pixellated_monitors]
+
 monitor_handle = register_monitor_workflow_specs(
-    instrument, instrument.monitors, params=MonitorDataParams
+    instrument, _regular_monitors, params=MonitorDataParams
+)
+
+pixellated_monitor_handle = register_pixellated_monitor_workflow_specs(
+    instrument, _pixellated_monitors, params=MonitorDataParams
 )
 
 xy_projection_handle = register_detector_view_spec(

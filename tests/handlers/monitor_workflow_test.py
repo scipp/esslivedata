@@ -13,12 +13,15 @@ from ess.livedata.handlers.monitor_workflow import (
     counts_total,
     create_monitor_workflow,
     cumulative_view,
+    histogram_pixellated_monitor,
     histogram_raw_monitor,
+    monitor_counts_per_pixel,
     window_view,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
+    register_pixellated_monitor_workflow_specs,
 )
 from ess.livedata.handlers.monitor_workflow_types import (
     HistogramEdges,
@@ -617,6 +620,236 @@ class TestRegisterMonitorWorkflowSpecs:
         workflow = factory.create(source_name='monitor_1', config=config)
         assert workflow is not None
         assert hasattr(workflow, 'accumulate')
+
+
+class TestPixellatedMonitorProviders:
+    """Tests for pixellated monitor provider functions."""
+
+    @pytest.fixture
+    def grouped_events(self):
+        """Create events grouped by detector_number (3 pixels).
+
+        Simulates what GroupByPixel + assemble_detector_data produce:
+        a DataArray with dim 'detector_number', binned events with
+        'event_time_offset' coord.
+        """
+        toa = sc.array(
+            dims=['event'],
+            values=[1.5, 2.5, 3.5, 7.5, 8.5, 4.5],
+            unit='ns',
+        )
+        weights = sc.ones(sizes={'event': 6}, dtype='float64', unit='counts')
+        events = sc.DataArray(data=weights, coords={'event_time_offset': toa})
+        # 3 pixels: pixel 0 has 2 events, pixel 1 has 3 events, pixel 2 has 1 event
+        begin = sc.array(
+            dims=['detector_number'], values=[0, 2, 5], dtype='int64', unit=None
+        )
+        end = sc.array(
+            dims=['detector_number'], values=[2, 5, 6], dtype='int64', unit=None
+        )
+        return sc.DataArray(
+            data=sc.bins(begin=begin, end=end, dim='event', data=events),
+            coords={
+                'detector_number': sc.array(
+                    dims=['detector_number'], values=[10, 20, 30], unit=None
+                )
+            },
+        )
+
+    @pytest.fixture
+    def toa_edges(self):
+        return sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
+
+    def test_histogram_pixellated_monitor_sums_over_pixels(
+        self, grouped_events, toa_edges
+    ):
+        """Histogram should sum across all pixels, producing 1D output."""
+        result = histogram_pixellated_monitor(grouped_events, toa_edges)
+        assert result.dims == ('time_of_arrival',)
+        assert result.sizes['time_of_arrival'] == 5
+        assert result.sum().value == 6.0
+
+    def test_monitor_counts_per_pixel(self, grouped_events):
+        """Counts per pixel should be 1D indexed by detector_number."""
+        result = monitor_counts_per_pixel(grouped_events)
+        assert result.dims == ('detector_number',)
+        assert result.sizes['detector_number'] == 3
+        assert result.values[0] == 2.0  # pixel 10
+        assert result.values[1] == 3.0  # pixel 20
+        assert result.values[2] == 1.0  # pixel 30
+        assert result.unit == 'counts'
+
+
+class TestCreatePixellatedMonitorWorkflow:
+    """Tests for create_monitor_workflow with detector_number.
+
+    In production, ``GroupByPixel`` pre-groups events by pixel. The
+    ``_patch_group_event_data`` monkey-patch makes the subsequent
+    ``assemble_detector_data`` call idempotent for pre-grouped data.
+    Import it here to activate the patch.
+    """
+
+    import ess.livedata.handlers._patch_group_event_data
+
+    @pytest.fixture
+    def toa_edges(self):
+        return sc.linspace('time_of_arrival', 0, 71_000_000, num=101, unit='ns')
+
+    @pytest.fixture
+    def detector_number(self):
+        return sc.array(dims=['detector_number'], values=[4, 5, 6, 7, 8], unit=None)
+
+    def test_creates_stream_processor_workflow(self, toa_edges, detector_number):
+        from ess.livedata.handlers.stream_processor_workflow import (
+            StreamProcessorWorkflow,
+        )
+
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, detector_number=detector_number
+        )
+        assert isinstance(workflow, StreamProcessorWorkflow)
+
+    def test_rejects_wavelength_mode(self, toa_edges, detector_number):
+        with pytest.raises(ValueError, match="only support 'toa'"):
+            create_monitor_workflow(
+                'monitor_1',
+                toa_edges,
+                detector_number=detector_number,
+                coordinate_mode='wavelength',
+            )
+
+    def test_has_counts_per_pixel_target(self, toa_edges, detector_number):
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, detector_number=detector_number
+        )
+        assert 'counts_per_pixel' in workflow._target_keys
+
+    def test_full_workflow_cycle(self, toa_edges, detector_number):
+        """End-to-end: accumulate grouped events, finalize, check outputs."""
+        from ess.reduce.nexus import group_event_data
+
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, detector_number=detector_number
+        )
+
+        # Create flat events and group by pixel (like GroupByPixel does)
+        toa = sc.array(
+            dims=['event'],
+            values=[1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000],
+            unit='ns',
+            dtype='int32',
+        )
+        pixel_ids = sc.array(
+            dims=['event'], values=[4, 5, 6, 5, 8], unit=None, dtype='int32'
+        )
+        weights = sc.ones(sizes={'event': 5}, dtype='float64', unit='counts')
+        events = sc.DataArray(
+            data=weights,
+            coords={'event_time_offset': toa, 'event_id': pixel_ids},
+        )
+        sizes = sc.array(dims=['event_time_zero'], values=[5], unit=None, dtype='int64')
+        begin = sc.cumsum(sizes, mode='exclusive')
+        ungrouped = sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
+        grouped = group_event_data(
+            event_data=ungrouped, detector_number=detector_number
+        )
+
+        workflow.accumulate(
+            {'monitor_1': grouped},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
+        )
+        results = workflow.finalize()
+
+        # Standard histogram outputs
+        assert 'cumulative' in results
+        assert 'current' in results
+        assert 'counts_total' in results
+        assert 'counts_in_toa_range' in results
+        assert results['cumulative'].dims == ('time_of_arrival',)
+        assert results['cumulative'].sum().value == 5.0
+
+        # Counts per pixel output
+        assert 'counts_per_pixel' in results
+        pixel_counts = results['counts_per_pixel']
+        assert pixel_counts.dims == ('detector_number',)
+        assert pixel_counts.sizes['detector_number'] == 5
+        assert pixel_counts.sum().value == 5.0
+        # pixel 5 has 2 events, pixels 4, 6, 8 have 1 each, pixel 7 has 0
+        assert pixel_counts.values[1] == 2.0  # pixel 5
+
+    def test_counts_per_pixel_accumulates_cumulatively(
+        self, toa_edges, detector_number
+    ):
+        """Counts per pixel should accumulate across finalize cycles."""
+        from ess.reduce.nexus import group_event_data
+
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, detector_number=detector_number
+        )
+
+        # Helper to create grouped events
+        def make_grouped(pixel_id_value):
+            toa = sc.array(dims=['event'], values=[1_000_000], unit='ns', dtype='int32')
+            pixel_ids = sc.array(
+                dims=['event'], values=[pixel_id_value], unit=None, dtype='int32'
+            )
+            weights = sc.ones(sizes={'event': 1}, dtype='float64', unit='counts')
+            events = sc.DataArray(
+                data=weights,
+                coords={'event_time_offset': toa, 'event_id': pixel_ids},
+            )
+            sizes = sc.array(
+                dims=['event_time_zero'], values=[1], unit=None, dtype='int64'
+            )
+            begin = sc.cumsum(sizes, mode='exclusive')
+            ungrouped = sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
+            return group_event_data(
+                event_data=ungrouped, detector_number=detector_number
+            )
+
+        # Cycle 1: one event on pixel 4
+        workflow.accumulate(
+            {'monitor_1': make_grouped(4)},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
+        )
+        results1 = workflow.finalize()
+        assert results1['counts_per_pixel'].values[0] == 1.0  # pixel 4
+
+        # Cycle 2: one event on pixel 4 again
+        workflow.accumulate(
+            {'monitor_1': make_grouped(4)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        results2 = workflow.finalize()
+        assert results2['counts_per_pixel'].values[0] == 2.0  # cumulative
+
+
+class TestRegisterPixellatedMonitorSpecs:
+    """Tests for pixellated monitor spec registration."""
+
+    @pytest.fixture
+    def test_instrument(self):
+        from ess.livedata.config.instrument import Instrument
+
+        return Instrument(
+            name='test_inst_pixellated',
+            monitors=['monitor_pix'],
+        )
+
+    def test_register_returns_handle(self, test_instrument):
+        handle = register_pixellated_monitor_workflow_specs(
+            test_instrument, ['monitor_pix']
+        )
+        assert handle is not None
+        assert handle.workflow_id.namespace == 'monitor_data'
+        assert handle.workflow_id.name == 'pixellated_monitor'
+
+    def test_register_empty_returns_none(self, test_instrument):
+        handle = register_pixellated_monitor_workflow_specs(test_instrument, [])
+        assert handle is None
 
 
 class TestMonitorWorkflowFactoryCoordinateMode:

@@ -9,16 +9,19 @@ from typing import Literal
 import sciline
 import scipp as sc
 from ess.reduce.nexus.types import (
+    EmptyDetector,
     EmptyMonitor,
     Filename,
     NeXusData,
     NeXusName,
+    RawDetector,
     RawMonitor,
     SampleRun,
 )
+from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
-from scippnexus import NXmonitor
+from scippnexus import NXdetector, NXmonitor
 
 from .monitor_workflow_types import (
     CumulativeMonitorHistogram,
@@ -26,6 +29,7 @@ from .monitor_workflow_types import (
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorCountsInRange,
+    MonitorCountsPerPixel,
     MonitorCountsTotal,
     MonitorHistogram,
     WindowMonitorHistogram,
@@ -84,6 +88,27 @@ def histogram_wavelength_monitor(
 ) -> MonitorHistogram:
     """Histogram or rebin monitor data by wavelength (wavelength mode)."""
     return MonitorHistogram(_histogram_monitor(data, edges, 'wavelength'))
+
+
+def histogram_pixellated_monitor(
+    data: RawDetector[SampleRun], edges: HistogramEdges
+) -> MonitorHistogram:
+    """Histogram pixellated monitor data, summing over all dims including pixel.
+
+    Uses the same ``_histogram_monitor`` logic as regular monitors. Because
+    ``dim=data.dims`` includes ``detector_number``, the result is a 1D TOA
+    histogram identical to what a non-pixellated monitor would produce.
+    """
+    return MonitorHistogram(_histogram_monitor(data, edges, 'event_time_offset'))
+
+
+def monitor_counts_per_pixel(data: RawDetector[SampleRun]) -> MonitorCountsPerPixel:
+    """Total event counts per pixel for pixellated monitors.
+
+    Returns a 1D DataArray indexed by ``detector_number`` with the total
+    event weight in each pixel.
+    """
+    return MonitorCountsPerPixel(data.bins.sum())
 
 
 def cumulative_view(hist: MonitorHistogram) -> CumulativeMonitorHistogram:
@@ -165,6 +190,16 @@ def _create_minimal_empty_monitor() -> sc.DataArray:
     return sc.DataArray(sc.scalar(0.0, unit='counts'))
 
 
+_MONITOR_TARGET_KEYS = {
+    'cumulative': CumulativeMonitorHistogram,
+    'current': WindowMonitorHistogram,
+    'counts_total': MonitorCountsTotal,
+    'counts_in_toa_range': MonitorCountsInRange,
+}
+
+_MONITOR_WINDOW_OUTPUTS = ['current', 'counts_total', 'counts_in_toa_range']
+
+
 def create_monitor_workflow(
     source_name: str,
     edges: sc.Variable,
@@ -174,6 +209,7 @@ def create_monitor_workflow(
     geometry_filename: str | None = None,
     lookup_table_filename: str | None = None,
     context_keys: dict[str, type] | None = None,
+    detector_number: sc.Variable | None = None,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -198,23 +234,63 @@ def create_monitor_workflow(
         Optional mapping from aux source stream names to sciline pipeline keys.
         Used to inject dynamic data (e.g., position streams) into the workflow
         via StreamProcessorWorkflow's context mechanism.
+    detector_number:
+        Pixel IDs for pixellated monitors. When provided, the workflow uses the
+        NXdetector assembly path to group events by pixel and produces an additional
+        ``MonitorCountsPerPixel`` output. Only TOA mode is supported.
     """
-    from .accumulators import make_no_copy_accumulator_pair
+    from .accumulators import NoCopyAccumulator, make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
 
-    # Validate wavelength mode requirements
-    if coordinate_mode == 'wavelength':
-        if lookup_table_filename is None:
-            raise ValueError("lookup_table_filename is required for 'wavelength' mode")
-        if geometry_filename is None:
-            raise ValueError(
-                "geometry_filename is required for 'wavelength' mode "
-                "(needed for Ltotal)"
+    if detector_number is not None:
+        # Pixellated monitor: NXdetector path with pixel grouping
+        if coordinate_mode != 'toa':
+            raise ValueError("Pixellated monitors only support 'toa' coordinate mode")
+        from .detector_view.data_source import create_empty_detector
+
+        workflow = GenericNeXusWorkflow(
+            run_types=[SampleRun], monitor_types=[NXmonitor]
+        )
+        workflow[EmptyDetector[SampleRun]] = create_empty_detector(detector_number)
+        workflow.insert(histogram_pixellated_monitor)
+        workflow.insert(monitor_counts_per_pixel)
+        workflow.insert(cumulative_view)
+        workflow.insert(window_view)
+        workflow.insert(counts_total)
+        workflow.insert(counts_in_range)
+        dynamic_keys = {source_name: NeXusData[NXdetector, SampleRun]}
+    else:
+        # Standard monitor: NXmonitor path
+        if coordinate_mode == 'wavelength':
+            if lookup_table_filename is None:
+                raise ValueError(
+                    "lookup_table_filename is required for 'wavelength' mode"
+                )
+            if geometry_filename is None:
+                raise ValueError(
+                    "geometry_filename is required for 'wavelength' mode "
+                    "(needed for Ltotal)"
+                )
+
+        workflow = build_monitor_workflow(coordinate_mode=coordinate_mode)
+
+        # Configure geometry source
+        if geometry_filename is not None:
+            workflow[Filename[SampleRun]] = geometry_filename
+            workflow[NeXusName[NXmonitor]] = source_name
+        else:
+            workflow[EmptyMonitor[SampleRun, NXmonitor]] = (
+                _create_minimal_empty_monitor()
             )
 
-    workflow = build_monitor_workflow(coordinate_mode=coordinate_mode)
-    workflow[HistogramEdges] = edges
+        # Configure lookup table and error threshold for wavelength mode
+        if coordinate_mode == 'wavelength':
+            workflow[LookupTableFilename] = lookup_table_filename
+            workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
+        dynamic_keys = {source_name: NeXusData[NXmonitor, SampleRun]}
 
+    # Shared parameter setup
+    workflow[HistogramEdges] = edges
     if range_filter is not None:
         workflow[HistogramRangeLow] = range_filter[0].to(unit=edges.unit)
         workflow[HistogramRangeHigh] = range_filter[1].to(unit=edges.unit)
@@ -222,41 +298,23 @@ def create_monitor_workflow(
         workflow[HistogramRangeLow] = edges[edges.dim, 0]
         workflow[HistogramRangeHigh] = edges[edges.dim, -1]
 
-    # Configure geometry source
-    if geometry_filename is not None:
-        # Load geometry from NeXus file (required for TOF mode)
-        workflow[Filename[SampleRun]] = geometry_filename
-        workflow[NeXusName[NXmonitor]] = source_name
-    else:
-        # TOA mode without geometry file: provide minimal EmptyMonitor directly
-        workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
-
-    # Configure lookup table and error threshold for wavelength mode
-    if coordinate_mode == 'wavelength':
-        workflow[LookupTableFilename] = lookup_table_filename
-        workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
-
-    # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
-    # MonitorCountsTotal and MonitorCountsInRange are computed from
-    # WindowMonitorHistogram during finalize, not accumulated separately.
+    # Build accumulators and targets
     cumulative, window = make_no_copy_accumulator_pair()
+    target_keys = dict(_MONITOR_TARGET_KEYS)
+    accumulators: dict = {
+        CumulativeMonitorHistogram: cumulative,
+        WindowMonitorHistogram: window,
+    }
+
+    if detector_number is not None:
+        target_keys['counts_per_pixel'] = MonitorCountsPerPixel
+        accumulators[MonitorCountsPerPixel] = NoCopyAccumulator()
+
     return StreamProcessorWorkflow(
         workflow,
-        # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
-        # providers will assemble monitor data to produce RawMonitor.
-        # For wavelength mode, GenericUnwrapWorkflow providers convert RawMonitor to
-        # WavelengthMonitor.
-        dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
+        dynamic_keys=dynamic_keys,
         context_keys=context_keys,
-        target_keys={
-            'cumulative': CumulativeMonitorHistogram,
-            'current': WindowMonitorHistogram,
-            'counts_total': MonitorCountsTotal,
-            'counts_in_toa_range': MonitorCountsInRange,
-        },
-        accumulators={
-            CumulativeMonitorHistogram: cumulative,
-            WindowMonitorHistogram: window,
-        },
-        window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
+        target_keys=target_keys,
+        accumulators=accumulators,
+        window_outputs=_MONITOR_WINDOW_OUTPUTS,
     )

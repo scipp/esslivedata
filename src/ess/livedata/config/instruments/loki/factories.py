@@ -148,6 +148,22 @@ def setup_factories(instrument: Instrument) -> None:
             geometry_filename=geometry_filename,
         )
 
+    # Pixellated monitor (beam_monitor_m3): register detector_number and factory
+    _m3_detector_number = sc.array(
+        dims=['detector_number'], values=[4, 5, 6, 7, 8], unit=None
+    )
+    instrument.configure_pixellated_monitor('beam_monitor_m3', _m3_detector_number)
+
+    @specs.pixellated_monitor_handle.attach_factory()
+    def _pixellated_monitor_factory(source_name: str, params: MonitorDataParams):
+        """Factory for LOKI pixellated monitor workflow."""
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            detector_number=instrument.get_detector_number(source_name),
+        )
+
     # --- Providers for current_run transmission mode ---
     # Map SampleRun monitors to TransmissionRun[SampleRun] so the standard
     # transmission_fraction provider can use them as if they came from a
