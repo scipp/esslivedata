@@ -9,6 +9,11 @@ from dataclasses import dataclass
 
 from ess.livedata.core.job import StreamStat, StreamStats
 
+# EPICS PV field suffixes that are noise for reporting.
+# Only .RBV (Read Back Value) carries the actual readback; .VAL (setpoint)
+# and .DMOV (done-moving flag) are redundant in our dashboards.
+_IGNORED_SOURCE_SUFFIXES = ('.DMOV', '.VAL')
+
 
 @dataclass(slots=True)
 class _Entry:
@@ -30,7 +35,13 @@ class StreamCounter:
         )
 
     def record(self, topic: str, source_name: str, stream: str | None) -> None:
-        """Increment count for a (topic, source_name) combination."""
+        """Increment count for a (topic, source_name) combination.
+
+        Sources whose names end with known EPICS noise suffixes (.DMOV, .VAL)
+        are silently dropped to reduce clutter in status displays.
+        """
+        if source_name.endswith(_IGNORED_SOURCE_SUFFIXES):
+            return
         key = (topic, source_name)
         entry = self._counts[key]
         entry.count += 1

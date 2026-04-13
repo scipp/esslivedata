@@ -45,6 +45,7 @@ from ess.livedata.kafka.message_adapter import (
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
 )
+from ess.livedata.kafka.stream_counter import StreamCounter
 
 
 def make_serialized_ev44() -> bytes:
@@ -628,6 +629,37 @@ class TestAdaptingMessageSource:
         exception_logs = [log for log in captured if log['log_level'] == 'error']
         assert len(exception_logs) == 1
         assert "error adapting message" in exception_logs[0]['event'].lower()
+
+    def test_unmapped_stream_does_not_double_count(self) -> None:
+        """UnmappedStreamError is already recorded by get_stream_id, so
+        AdaptingMessageSource must not record a second '<error>' entry."""
+        f144_bytes = logdata_f144.serialise_f144(
+            source_name="PV:Mtr.RBV", value=1.0, timestamp_unix_ns=1000
+        )
+
+        class Source(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return [FakeKafkaMessage(value=f144_bytes, topic="motion")]
+
+        stream_counter = StreamCounter()
+        adapter = KafkaToF144Adapter(
+            stream_lut={},  # empty LUT → every source is unmapped
+            stream_counter=stream_counter,
+        )
+        adapting_source = AdaptingMessageSource(
+            source=Source(),
+            adapter=ChainedAdapter(first=adapter, second=F144ToLogDataAdapter()),
+            stream_counter=stream_counter,
+        )
+
+        messages = adapting_source.get_messages()
+        assert len(messages) == 0
+
+        stats = stream_counter.drain(window_seconds=30.0)
+        # Only one entry (the real source), no '<error>' duplicate
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "PV:Mtr.RBV"
+        assert stats.streams[0].stream is None
 
 
 def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:

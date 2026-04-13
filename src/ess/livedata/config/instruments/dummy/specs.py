@@ -35,7 +35,7 @@ instrument = Instrument(
     name='dummy',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
-    f144_attribute_registry={'motion1': {'units': 'mm'}},
+    f144_attribute_registry={'motion1': {'units': 'mm'}, 'motion2': {'units': 'deg'}},
 )
 
 # Register instrument

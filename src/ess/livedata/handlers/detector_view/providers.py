@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
-from ess.reduce.time_of_flight.types import TofDetector
+from ess.reduce.unwrap.types import WavelengthDetector
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
@@ -62,25 +62,25 @@ def project_raw_detector(
     return _project_detector(raw_detector, projector)
 
 
-def project_tof_detector(
-    tof_detector: TofDetector[SampleRun], projector: Projector
+def project_wavelength_detector(
+    wavelength_detector: WavelengthDetector[SampleRun], projector: Projector
 ) -> ScreenBinnedEvents:
     """
-    Project TOF events to screen coordinates.
+    Project wavelength events to screen coordinates.
 
     Parameters
     ----------
-    tof_detector:
-        Detector data with events binned by detector pixel (tof coord).
+    wavelength_detector:
+        Detector data with events binned by detector pixel (wavelength coord).
     projector:
         Projector instance (geometric or logical).
 
     Returns
     -------
     :
-        Events binned by screen coordinates with tof preserved.
+        Events binned by screen coordinates with wavelength preserved.
     """
-    return _project_detector(tof_detector, projector)
+    return _project_detector(wavelength_detector, projector)
 
 
 def compute_pixel_weights(
@@ -169,11 +169,12 @@ def compute_detector_histogram(
         # Already dense data (shouldn't happen in normal flow)
         return DetectorHistogram(screen_binned_events)
 
-    # Convert bins to ns and rename dimension to match event_coord for histogramming.
-    # Then restore user's original dimension name and unit for output.
+    # Convert bins to match the event coordinate unit, rename dimension for
+    # histogramming, then restore original dimension name and unit for output.
     output_dim = bins.dim
-    bins_ns = bins.to(unit='ns').rename_dims({output_dim: event_coord})
-    histogrammed = screen_binned_events.hist({event_coord: bins_ns})
+    event_unit = screen_binned_events.bins.coords[event_coord].unit
+    bins_converted = bins.to(unit=event_unit).rename_dims({output_dim: event_coord})
+    histogrammed = screen_binned_events.hist({event_coord: bins_converted})
     histogrammed = histogrammed.rename_dims({event_coord: output_dim})
     histogrammed.coords[output_dim] = bins
     return DetectorHistogram(histogrammed)

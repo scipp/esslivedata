@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the monitor view workflow using StreamProcessor."""
 
-import pydantic
 import pytest
 import scipp as sc
 
@@ -32,8 +31,9 @@ from ess.livedata.parameter_models import (
     TimeUnit,
     TOAEdges,
     TOARange,
-    TOFEdges,
-    TOFRange,
+    WavelengthEdges,
+    WavelengthRangeFilter,
+    WavelengthUnit,
 )
 
 
@@ -89,14 +89,14 @@ class TestMonitorDataParams:
         assert edges.dim == 'time_of_arrival'
         assert len(edges) == 51
 
-    def test_get_active_edges_tof_mode(self):
-        """Test get_active_edges returns TOF edges in TOF mode."""
+    def test_get_active_edges_wavelength_mode(self):
+        """Test get_active_edges returns wavelength edges in wavelength mode."""
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_edges=TOFEdges(start=0.0, stop=100.0, num_bins=50),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+            wavelength_edges=WavelengthEdges(start=0.1, stop=10.0, num_bins=50),
         )
         edges = params.get_active_edges()
-        assert edges.dim == 'tof'
+        assert edges.dim == 'wavelength'
         assert len(edges) == 51
 
     def test_get_active_range_returns_none_when_disabled(self):
@@ -121,12 +121,16 @@ class TestMonitorDataParams:
         assert high.unit == unit.value
 
     @pytest.mark.parametrize(
-        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+        'unit', [WavelengthUnit.ANGSTROM, WavelengthUnit.NANOMETER]
     )
-    def test_get_active_range_tof_mode_preserves_user_unit(self, unit: TimeUnit):
+    def test_get_active_range_wavelength_mode_preserves_user_unit(
+        self, unit: WavelengthUnit
+    ):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+            wavelength_range=WavelengthRangeFilter(
+                enabled=True, start=1.0, stop=5.0, unit=unit
+            ),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None
@@ -289,19 +293,21 @@ class TestCreateMonitorWorkflow:
         )
         assert workflow is not None
 
-    def test_workflow_with_tof_mode_requires_lookup_table(self, toa_edges):
-        """Test that TOF mode requires tof_lookup_table_filename."""
-        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
-            create_monitor_workflow('monitor_1', toa_edges, coordinate_mode='tof')
+    def test_workflow_with_wavelength_mode_requires_lookup_table(self, toa_edges):
+        """Test that wavelength mode requires lookup_table_filename."""
+        with pytest.raises(ValueError, match="lookup_table_filename is required"):
+            create_monitor_workflow(
+                'monitor_1', toa_edges, coordinate_mode='wavelength'
+            )
 
-    def test_workflow_with_tof_mode_requires_geometry_file(self, toa_edges):
-        """Test that TOF mode requires geometry_filename."""
+    def test_workflow_with_wavelength_mode_requires_geometry_file(self, toa_edges):
+        """Test that wavelength mode requires geometry_filename."""
         with pytest.raises(ValueError, match="geometry_filename is required"):
             create_monitor_workflow(
                 'monitor_1',
                 toa_edges,
-                coordinate_mode='tof',
-                tof_lookup_table_filename='/path/to/lookup.h5',
+                coordinate_mode='wavelength',
+                lookup_table_filename='/path/to/lookup.h5',
             )
 
     def test_context_keys_forwarded_to_stream_processor(self, toa_edges):
@@ -611,18 +617,11 @@ class TestRegisterMonitorWorkflowSpecs:
 class TestMonitorWorkflowFactoryCoordinateMode:
     """Tests for coordinate mode in monitor workflow factory."""
 
-    def test_wavelength_mode_raises_validation_error(self):
-        """Test that wavelength mode raises ValidationError."""
-        with pytest.raises(
-            pydantic.ValidationError, match="wavelength mode is not yet supported"
-        ):
-            CoordinateModeSettings(mode='wavelength')
-
-    def test_tof_mode_requires_geometry_and_lookup_table(self):
-        """Test that TOF mode requires geometry and lookup table files.
+    def test_wavelength_mode_requires_geometry_and_lookup_table(self):
+        """Test that wavelength mode requires geometry and lookup table files.
 
         The create_monitor_workflow_factory doesn't provide these parameters,
-        so TOF mode should raise ValueError. Instrument-specific factories
+        so wavelength mode should raise ValueError. Instrument-specific factories
         (like DREAM) are responsible for providing these files.
         """
         from ess.livedata.handlers.monitor_workflow_specs import (
@@ -630,12 +629,14 @@ class TestMonitorWorkflowFactoryCoordinateMode:
         )
 
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_edges=TOFEdges(start=0.0, stop=100.0, num_bins=10),
-            tof_range=TOFRange(enabled=True, start=20.0, stop=80.0, unit=TimeUnit.MS),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+            wavelength_edges=WavelengthEdges(start=0.1, stop=10.0, num_bins=10),
+            wavelength_range=WavelengthRangeFilter(
+                enabled=True, start=1.0, stop=5.0, unit=WavelengthUnit.ANGSTROM
+            ),
         )
 
-        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
+        with pytest.raises(ValueError, match="lookup_table_filename is required"):
             create_monitor_workflow_factory('monitor_1', params)
 
 
@@ -644,19 +645,27 @@ class TestDreamMonitorWorkflowFactory:
     """Tests for DREAM-specific monitor workflow factory validation."""
 
     @pytest.fixture
-    def dream_params_tof_mode(self):
-        """Create DreamMonitorDataParams with TOF mode enabled."""
+    def dream_params_wavelength_mode(self):
+        """Create DreamMonitorDataParams with wavelength mode enabled."""
         from ess.livedata.config.instruments.dream.specs import DreamMonitorDataParams
 
         return DreamMonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
         )
 
-    def test_tof_mode_rejected_for_monitor_bunker(self, dream_params_tof_mode):
-        """Test that TOF mode raises ValueError for monitor_bunker.
+    @pytest.mark.parametrize(
+        'monitor_name',
+        [
+            'monitor_bunker',  # Ltotal 6.62 m
+            'monitor_cave',  # Ltotal 72.33 m
+        ],
+    )
+    def test_wavelength_mode_allowed_for_all_monitors(
+        self, monitor_name, dream_params_wavelength_mode
+    ):
+        """Test that wavelength mode is allowed for all DREAM monitors.
 
-        The bunker monitor's flight path (6.62 m) is outside the DREAM TOF
-        lookup table range (59.85-80.15 m), so TOF mode is not supported.
+        Both monitors fall within the DREAM lookup table range (5-80 m).
         """
         from ess.livedata.config.instruments.dream.factories import setup_factories
         from ess.livedata.config.instruments.dream.specs import instrument
@@ -671,45 +680,20 @@ class TestDreamMonitorWorkflowFactory:
         )
         factory = instrument.workflow_factory._factories[workflow_id]
 
-        with pytest.raises(
-            ValueError, match="TOF mode is not supported for 'monitor_bunker'"
-        ):
-            factory('monitor_bunker', dream_params_tof_mode)
-
-    def test_tof_mode_allowed_for_monitor_cave(self, dream_params_tof_mode):
-        """Test that TOF mode is allowed for monitor_cave.
-
-        The cave monitor's flight path (72.33 m) is within the DREAM TOF
-        lookup table range (59.85-80.15 m).
-        """
-        from ess.livedata.config.instruments.dream.factories import setup_factories
-        from ess.livedata.config.instruments.dream.specs import instrument
-        from ess.livedata.config.workflow_spec import WorkflowId
-
-        setup_factories(instrument)
-        workflow_id = WorkflowId(
-            instrument='dream',
-            namespace='monitor_data',
-            name='monitor_histogram',
-            version=1,
-        )
-        factory = instrument.workflow_factory._factories[workflow_id]
-
-        # Should not raise - cave monitor is compatible with TOF mode
-        workflow = factory('monitor_cave', dream_params_tof_mode)
+        workflow = factory(monitor_name, dream_params_wavelength_mode)
         assert workflow is not None
 
 
 @pytest.mark.slow
-class TestMonitorWorkflowTofModeHistogramInput:
-    """Tests for TOF coordinate mode with histogram input data.
+class TestMonitorWorkflowWavelengthModeHistogramInput:
+    """Tests for wavelength coordinate mode with histogram input data.
 
     These tests require DREAM dependencies (essdiffraction) for the lookup table.
     """
 
     @pytest.fixture
-    def tof_edges(self):
-        return sc.linspace('tof', 0, 71_000_000, num=101, unit='ns')
+    def wavelength_edges(self):
+        return sc.linspace('wavelength', 0.1, 10.0, num=101, unit='Å')
 
     @pytest.fixture
     def geometry_filename(self):
@@ -727,25 +711,26 @@ class TestMonitorWorkflowTofModeHistogramInput:
             ess.dream.InstrumentConfiguration.high_flux_BC215
         )
 
-    def test_tof_mode_with_histogram_input(
-        self, tof_edges, geometry_filename, lookup_table_filename
+    def test_wavelength_mode_with_histogram_input(
+        self, wavelength_edges, geometry_filename, lookup_table_filename
     ):
-        """Test TOF mode workflow with histogram input data (da00/MONITOR_COUNTS).
+        """Test wavelength mode workflow with histogram input data.
+
+        Histogram input data from da00/MONITOR_COUNTS.
 
         This is a regression test for the issue where histogram data with
-        frame_time coordinate was not properly handled by the TOF conversion.
-        The essreduce _time_of_flight_data_histogram function expects one of:
+        frame_time coordinate was not properly handled by the TOA-to-wavelength
+        conversion. The essreduce unwrap function expects one of:
         'time_of_flight', 'tof', or 'frame_time' as the coordinate name.
         """
-        # Use monitor_cave because its Ltotal (72.33 m) is within the DREAM
-        # lookup table range (59.85-80.15 m). monitor_bunker has Ltotal of
-        # only 6.62 m which is outside the lookup table range.
+        # Use monitor_cave (Ltotal 72.33 m); both monitors are within the DREAM
+        # lookup table range (5-80 m). monitor_bunker has Ltotal of 6.62 m.
         workflow = create_monitor_workflow(
             'monitor_cave',
-            tof_edges,
-            coordinate_mode='tof',
+            wavelength_edges,
+            coordinate_mode='wavelength',
             geometry_filename=str(geometry_filename),
-            tof_lookup_table_filename=str(lookup_table_filename),
+            lookup_table_filename=str(lookup_table_filename),
         )
 
         # Create histogram data like fake_monitors da00 mode produces
@@ -771,9 +756,9 @@ class TestMonitorWorkflowTofModeHistogramInput:
         assert 'counts_total' in results
         assert 'counts_in_toa_range' in results
 
-        # Check that we got valid results. In TOF mode, counts may not be
+        # Check that we got valid results. In wavelength mode, counts may not be
         # exactly preserved due to rebinning - some frame_time bins may fall
-        # outside the target TOF range. We verify non-zero counts to confirm
+        # outside the target wavelength range. We verify non-zero counts to confirm
         # the workflow processed data successfully.
         assert results['cumulative'].sum().value > 0
         assert results['current'].sum().value > 0

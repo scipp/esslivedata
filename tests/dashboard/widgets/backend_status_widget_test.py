@@ -4,10 +4,13 @@
 
 import time
 
-from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStat, StreamStats
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
-from ess.livedata.dashboard.widgets.backend_status_widget import BackendStatusWidget
+from ess.livedata.dashboard.widgets.backend_status_widget import (
+    BackendStatusWidget,
+    _format_stream_stats_details,
+)
 
 
 def _make_status(
@@ -110,3 +113,32 @@ class TestBackendStatusWidgetClearButton:
         widget._on_clear_stopped()
         widget.refresh()
         assert len(widget._worker_rows) == 0
+
+
+class TestFormatStreamStatsDetails:
+    def test_html_escapes_source_name(self) -> None:
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(
+                    topic="t",
+                    source_name="<script>alert(1)</script>",
+                    stream=None,
+                    count=1,
+                ),
+            ),
+        )
+        html = _format_stream_stats_details(stats)
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_html_escapes_topic(self) -> None:
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(topic="<b>bad</b>", source_name="src", stream="s", count=1),
+            ),
+        )
+        html = _format_stream_stats_details(stats)
+        assert "<b>bad</b>" not in html
+        assert "&lt;b&gt;" in html

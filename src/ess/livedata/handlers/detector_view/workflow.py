@@ -29,7 +29,7 @@ from ess.reduce.live.raw import (
 )
 from ess.reduce.nexus.types import NeXusComponent, NeXusTransformationChain, SampleRun
 from ess.reduce.nexus.workflow import get_transformation_chain
-from ess.reduce.time_of_flight import GenericTofWorkflow
+from ess.reduce.unwrap import GenericUnwrapWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
 from .providers import (
@@ -41,7 +41,7 @@ from .providers import (
     detector_image,
     get_screen_metadata,
     project_raw_detector,
-    project_tof_detector,
+    project_wavelength_detector,
 )
 from .roi import (
     precompute_roi_polygon_masks,
@@ -143,30 +143,26 @@ def create_base_workflow(
     coordinate_mode:
         Coordinate system for event data:
         - 'toa': Time-of-arrival (uses GenericNeXusWorkflow, RawDetector)
-        - 'tof': Time-of-flight (uses GenericTofWorkflow, TofDetector)
-        - 'wavelength': Wavelength (uses GenericTofWorkflow, WavelengthDetector)
-        For 'tof' and 'wavelength', caller must configure lookup table provider.
+        - 'wavelength': Wavelength (uses GenericUnwrapWorkflow, WavelengthDetector)
+        For 'wavelength', caller must configure lookup table provider.
 
     Returns
     -------
     :
         Sciline pipeline with detector view providers.
     """
-    # GenericTofWorkflow extends GenericNeXusWorkflow with TOF providers, so it can
-    # be used for all coordinate modes. The coordinate mode determines which
+    # GenericUnwrapWorkflow extends GenericNeXusWorkflow with unwrap providers, so it
+    # can be used for all coordinate modes. The coordinate mode determines which
     # projection provider to use.
-    workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
+    workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
 
     # Select projection provider based on coordinate mode
     if coordinate_mode == 'toa':
         workflow.insert(project_raw_detector)
-    elif coordinate_mode == 'tof':
-        workflow.insert(project_tof_detector)
     elif coordinate_mode == 'wavelength':
-        # Future: would use WavelengthDetector-based provider
-        raise NotImplementedError("wavelength mode is not yet implemented")
+        workflow.insert(project_wavelength_detector)
     else:
-        raise ValueError(f"Unknown coordinate_mode: {coordinate_mode}")
+        raise ValueError(f"Unsupported coordinate mode: {coordinate_mode!r}")
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)
