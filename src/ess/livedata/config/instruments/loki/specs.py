@@ -228,8 +228,8 @@ instrument = Instrument(
             description='Downstream, movable (on detector carriage)',
         ),
         'detector_carriage': SourceMetadata(
-            title='Sample-Rear Distance',
-            description='Rear detector carriage position along the beam axis (z).',
+            title='Rear Detector Carriage',
+            description='Rear detector carriage position (5.098 m offset from origin).',
         ),
     },
 )
