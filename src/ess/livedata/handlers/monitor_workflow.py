@@ -21,6 +21,7 @@ from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, Wavelengt
 from scippnexus import NXmonitor
 
 from .monitor_workflow_types import (
+    CumulativeCountsPerPixel,
     CumulativeMonitorHistogram,
     HistogramEdges,
     HistogramRangeHigh,
@@ -30,6 +31,7 @@ from .monitor_workflow_types import (
     MonitorCountsTotal,
     MonitorHistogram,
     MonitorPixelIds,
+    WindowCountsPerPixel,
     WindowMonitorHistogram,
 )
 
@@ -294,6 +296,18 @@ def monitor_counts_per_pixel(
     )
 
 
+def cumulative_counts_per_pixel(
+    counts: MonitorCountsPerPixel,
+) -> CumulativeCountsPerPixel:
+    """Identity transform for routing to cumulative accumulator."""
+    return CumulativeCountsPerPixel(counts)
+
+
+def window_counts_per_pixel(counts: MonitorCountsPerPixel) -> WindowCountsPerPixel:
+    """Identity transform for routing to window accumulator."""
+    return WindowCountsPerPixel(counts)
+
+
 def create_counts_per_pixel_workflow(source_name: str, *, pixel_ids: sc.Variable):
     """Factory for a lightweight counts-per-pixel workflow.
 
@@ -305,14 +319,28 @@ def create_counts_per_pixel_workflow(source_name: str, *, pixel_ids: sc.Variable
         Known pixel IDs for the monitor. Ensures consistent output shape
         across accumulation cycles.
     """
-    from .accumulators import NoCopyAccumulator
+    from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
 
-    workflow = sciline.Pipeline(providers=[monitor_counts_per_pixel])
+    workflow = sciline.Pipeline(
+        providers=[
+            monitor_counts_per_pixel,
+            cumulative_counts_per_pixel,
+            window_counts_per_pixel,
+        ]
+    )
     workflow[MonitorPixelIds] = pixel_ids
+    cumulative, window = make_no_copy_accumulator_pair()
     return StreamProcessorWorkflow(
         workflow,
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
-        target_keys={'counts_per_pixel': MonitorCountsPerPixel},
-        accumulators={MonitorCountsPerPixel: NoCopyAccumulator()},
+        target_keys={
+            'counts_per_pixel': CumulativeCountsPerPixel,
+            'counts_per_pixel_current': WindowCountsPerPixel,
+        },
+        accumulators={
+            CumulativeCountsPerPixel: cumulative,
+            WindowCountsPerPixel: window,
+        },
+        window_outputs=['counts_per_pixel_current'],
     )

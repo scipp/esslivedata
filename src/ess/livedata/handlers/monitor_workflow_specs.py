@@ -203,6 +203,16 @@ class CountsPerPixelOutputs(WorkflowOutputsBase):
             'start of the run.'
         ),
     )
+    counts_per_pixel_current: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['event_id'], shape=[0], unit='counts'),
+        ),
+        title='Counts per pixel (current)',
+        description=(
+            'Event counts per detector pixel for the latest update interval. '
+            'Resets each update interval.'
+        ),
+    )
 
 
 def register_counts_per_pixel_specs(

@@ -707,6 +707,26 @@ class TestCreateCountsPerPixelWorkflow:
         assert results['counts_per_pixel'].values[0] == 2.0  # pixel 4
         assert results['counts_per_pixel'].values[1] == 1.0  # pixel 5
 
+    def test_current_resets_each_cycle(self, pixel_ids):
+        workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
+
+        workflow.accumulate(
+            {'mon': self._make_binned_data([4, 5])},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
+        )
+        workflow.finalize()
+
+        workflow.accumulate(
+            {'mon': self._make_binned_data([4, 4])},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        results = workflow.finalize()
+        current = results['counts_per_pixel_current']
+        assert current.values[0] == 2.0  # pixel 4 this cycle only
+        assert current.values[1] == 0.0  # pixel 5 not in this cycle
+
     def test_cumulative_across_cycles(self, pixel_ids):
         workflow = create_counts_per_pixel_workflow('mon', pixel_ids=pixel_ids)
 
