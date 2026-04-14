@@ -20,6 +20,7 @@ from .autoscaler import Autoscaler
 from .plot_params import (
     LayoutParams,
     PlotAspect,
+    PlotDisplayParams1d,
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
@@ -600,9 +601,10 @@ class LinePlotter(Plotter):
         }
 
     @classmethod
-    def from_params(cls, params: PlotParams1d):
-        """Create LinePlotter from PlotParams1d."""
-        rate = getattr(params, 'rate', None)
+    def from_display_params(
+        cls, params: PlotDisplayParams1d, *, normalize_to_rate: bool = False
+    ):
+        """Create LinePlotter from display parameters."""
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
@@ -611,7 +613,14 @@ class LinePlotter(Plotter):
             tick_params=params.ticks,
             mode=params.line.mode,
             errors=params.line.errors,
-            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
+            normalize_to_rate=normalize_to_rate,
+        )
+
+    @classmethod
+    def from_params(cls, params: PlotParams1d):
+        """Create LinePlotter from PlotParams1d."""
+        return cls.from_display_params(
+            params, normalize_to_rate=params.rate.normalize_to_rate
         )
 
     _BASE_METHOD: ClassVar[dict[str, str]] = {

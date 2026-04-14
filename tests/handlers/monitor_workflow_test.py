@@ -166,6 +166,11 @@ class TestMonitorWorkflowProviders:
         # All 5 events should be histogrammed
         assert result.sum().value == 5.0
 
+    def test_histogram_raw_monitor_preserves_edge_unit(self, sample_events):
+        edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='us')
+        result = histogram_raw_monitor(sample_events, edges)
+        assert result.coords['time_of_arrival'].unit == 'us'
+
     def test_histogram_raw_monitor_histogram_mode(self, toa_edges):
         """Test rebinning of already-histogrammed monitor data."""
         # Create input histogram with different edges (finer binning)
