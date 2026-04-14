@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from uuid import UUID
 
 import structlog
@@ -25,6 +26,15 @@ class JobService:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._job_status_timestamps: dict[JobId, int] = {}
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
+        self._on_status_updated: Callable[[JobStatus], None] | None = None
+
+    @property
+    def on_status_updated(self) -> Callable[[JobStatus], None] | None:
+        return self._on_status_updated
+
+    @on_status_updated.setter
+    def on_status_updated(self, callback: Callable[[JobStatus], None]) -> None:
+        self._on_status_updated = callback
 
     @property
     def job_statuses(self) -> dict[JobId, JobStatus]:
@@ -36,6 +46,8 @@ class JobService:
         logger.debug("Job status updated: %s", job_status)
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
+        if self._on_status_updated is not None:
+            self._on_status_updated(job_status)
 
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).

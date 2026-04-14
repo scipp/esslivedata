@@ -47,21 +47,14 @@ class ServiceBase(ABC):
     def _handle_shutdown(self, signum: int, _: Any) -> None:
         """Handle shutdown signals"""
         self._logger.info("Received signal %d, initiating shutdown...", signum)
-        self._notify_processor_shutdown()
         self.stop()
-        self._notify_processor_stopped()
+        self._finalize_processor()
         sys.exit(0)
 
-    def _notify_processor_shutdown(self) -> None:  # noqa: B027
-        """Notify processor of shutdown if it supports lifecycle hooks.
+    def _finalize_processor(self) -> None:  # noqa: B027
+        """Finalize processor after the worker thread has stopped.
 
-        Override in subclasses to provide processor-specific shutdown notification.
-        """
-
-    def _notify_processor_stopped(self) -> None:  # noqa: B027
-        """Notify processor that shutdown completed if it supports lifecycle hooks.
-
-        Override in subclasses to provide processor-specific stopped notification.
+        Override in subclasses to provide processor-specific finalization.
         """
 
     def start(self, blocking: bool = True) -> None:
@@ -121,6 +114,7 @@ class Service(ServiceBase):
         self._processor = processor
         self._thread: threading.Thread | None = None
         self._resources = resources
+        self._worker_error: str | None = None
 
     def __enter__(self) -> Self:
         """Enter the context manager protocol."""
@@ -166,7 +160,7 @@ class Service(ServiceBase):
                     time.sleep(remaining)
         except Exception as e:
             self._logger.exception("Error in service loop")
-            self._notify_processor_error(str(e))
+            self._worker_error = str(e)
             self._running = False
             # Send a signal to the main thread to unblock it
             if threading.current_thread() is not threading.main_thread():
@@ -174,29 +168,13 @@ class Service(ServiceBase):
         finally:
             self._logger.info("Service loop stopped")
 
-    def _notify_processor_shutdown(self) -> None:
-        """Notify processor of shutdown if it supports lifecycle hooks."""
-        if hasattr(self._processor, 'shutdown'):
+    def _finalize_processor(self) -> None:
+        """Finalize processor after the worker thread has joined."""
+        if hasattr(self._processor, 'finalize'):
             try:
-                self._processor.shutdown()
+                self._processor.finalize(error=self._worker_error)
             except Exception:
-                self._logger.exception("Error notifying processor of shutdown")
-
-    def _notify_processor_stopped(self) -> None:
-        """Notify processor that shutdown completed if it supports lifecycle hooks."""
-        if hasattr(self._processor, 'report_stopped'):
-            try:
-                self._processor.report_stopped()
-            except Exception:
-                self._logger.exception("Error notifying processor of stopped")
-
-    def _notify_processor_error(self, error_message: str) -> None:
-        """Notify processor of error if it supports lifecycle hooks."""
-        if hasattr(self._processor, 'report_error'):
-            try:
-                self._processor.report_error(error_message)
-            except Exception:
-                self._logger.exception("Error notifying processor of error")
+                self._logger.exception("Error finalizing processor")
 
     def _stop_impl(self) -> None:
         """Stop the service gracefully"""

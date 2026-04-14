@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any, Generic
 
 import structlog
@@ -15,6 +16,7 @@ from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
 from .job import (
     JobResult,
+    JobState,
     JobStatus,
     ServiceState,
     ServiceStatus,
@@ -183,6 +185,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._errors_since_last_metrics = 0
         self._stream_stats_provider = stream_stats_provider
         self._pending_stream_stats: StreamStats | None = None
+        self._finalized = False
 
     def process(self) -> None:
         # Transition from starting to running on first process cycle
@@ -366,48 +369,41 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             self._errors_since_last_metrics = 0
             self._last_metrics_time = timestamp
 
-    def shutdown(self) -> None:
-        """Transition to stopping state and send heartbeat.
+    def finalize(self, *, error: str | None = None) -> None:
+        """Mark jobs as stopped, send final heartbeat, and shut down.
 
-        Called by Service at the beginning of graceful shutdown to notify the
-        dashboard that this worker is shutting down intentionally.
+        Called by Service after the worker thread has joined, so job states
+        can be safely transitioned without racing with the processing loop.
+        Idempotent — safe to call more than once.
         """
-        logger.info('service_shutting_down')
-        self._service_state = ServiceState.stopping
-        self._send_final_heartbeat()
-        self._job_manager.shutdown()
+        if self._finalized:
+            return
+        self._finalized = True
 
-    def report_stopped(self) -> None:
-        """Transition to stopped state and send final heartbeat.
+        if error is not None:
+            logger.error('service_error', error=error)
+            self._service_state = ServiceState.error
+            self._service_error = error
+        else:
+            logger.info('service_stopped')
+            self._service_state = ServiceState.stopped
 
-        Called by Service after worker thread has stopped to notify the
-        dashboard that shutdown completed successfully.
-        """
-        logger.info('service_stopped')
-        self._service_state = ServiceState.stopped
-        self._send_final_heartbeat()
-
-    def report_error(self, error_message: str) -> None:
-        """Transition to error state and send final heartbeat.
-
-        Called by Service when an unhandled exception occurs to notify the
-        dashboard that this worker encountered a fatal error.
-        """
-        logger.error('service_error', error=error_message)
-        self._service_state = ServiceState.error
-        self._service_error = error_message
-        self._send_final_heartbeat()
-
-    def _send_final_heartbeat(self) -> None:
-        """Send a final service heartbeat with current state."""
         timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
+        messages = [
+            _job_status_to_message(
+                replace(status, state=JobState.stopped), timestamp=timestamp
+            )
+            for status in job_statuses
+        ]
         service_status = self._get_service_status(job_statuses)
-        message = _service_status_to_message(service_status, timestamp=timestamp)
+        messages.append(_service_status_to_message(service_status, timestamp=timestamp))
         try:
-            self._sink.publish_messages([message])
+            self._sink.publish_messages(messages)
         except Exception:
             logger.exception('Failed to send final heartbeat')
+
+        self._job_manager.shutdown()
 
 
 def _job_result_to_message(result: JobResult) -> Message:

@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from enum import StrEnum, auto
 from typing import TYPE_CHECKING, NewType
 from uuid import UUID
 
@@ -31,6 +32,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .active_job_registry import ActiveJobRegistry
@@ -81,6 +83,13 @@ class JobSet(BaseModel):
         ]
 
 
+class StoppedReason(StrEnum):
+    """Why a workflow was stopped."""
+
+    user = auto()
+    backend_shutdown = auto()
+
+
 @dataclass
 class WorkflowState:
     """State for an active workflow, including transitions."""
@@ -89,6 +98,7 @@ class WorkflowState:
     previous: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
     version: int = 0
+    stopped_reason: StoppedReason | None = None
 
 
 @dataclass
@@ -151,6 +161,7 @@ class JobOrchestrator:
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
+        self._job_states: dict[JobId, JobState] = {}
 
         # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
@@ -434,6 +445,7 @@ class JobOrchestrator:
 
         # Set as current JobSet
         state.current = job_set
+        state.stopped_reason = None
 
         # Activate the new job number under the ingestion guard, then notify
         # subscribers. This ensures that when Orchestrator.update() next runs,
@@ -571,6 +583,13 @@ class JobOrchestrator:
         if state is None or state.current is None:
             return None
         return state.current.job_number
+
+    def get_stopped_reason(self, workflow_id: WorkflowId) -> StoppedReason | None:
+        """Get the reason why a workflow was stopped, if any."""
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            return None
+        return state.stopped_reason
 
     def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
         """
@@ -751,9 +770,6 @@ class JobOrchestrator:
         :
             True if jobs were stopped, False if no active jobs.
         """
-        state = self._workflows[workflow_id]
-        job_number = state.current.job_number if state.current else None
-
         if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
 
@@ -762,21 +778,55 @@ class JobOrchestrator:
         # between now and actually stopping will be discarded by the ingest
         # filter in Orchestrator.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
+        self._deactivate_workflow(workflow_id, StoppedReason.user)
+        return True
+
+    def _deactivate_workflow(
+        self, workflow_id: WorkflowId, reason: StoppedReason
+    ) -> None:
+        """Clear active job state, clean up data, persist, and notify subscribers."""
+        state = self._workflows[workflow_id]
+        job_number = state.current.job_number if state.current else None
+
+        if state.current is not None:
+            for job_id in state.current.job_ids():
+                self._job_states.pop(job_id, None)
         if job_number is not None:
             self._active_job_registry.deactivate(job_number)
         state.previous = state.current
         state.current = None
+        state.stopped_reason = reason
 
-        # Persist updated state
         self._persist_state_to_store(workflow_id)
-
-        # Notify widget lifecycle subscribers that workflow was stopped
         self._notify_workflow_stopped(workflow_id)
-
-        # Notify workflow subscribers (e.g., PlotOrchestrator) that workflow was stopped
         self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
 
-        return True
+    def on_job_status_updated(self, job_status: JobStatus) -> None:
+        """React to a job status update from ``JobService``.
+
+        When a backend worker shuts down, it sends a final heartbeat marking
+        all jobs as stopped. This tracks the latest state per job and checks
+        whether all jobs in the workflow have reported stopped, deactivating
+        the workflow if so.
+        """
+        workflow_id = job_status.workflow_id
+        state = self._workflows.get(workflow_id)
+        if state is None or state.current is None:
+            return
+        job_ids = list(state.current.job_ids())
+        if job_status.job_id not in job_ids:
+            return
+        self._job_states[job_status.job_id] = job_status.state
+        if job_status.state != JobState.stopped:
+            return
+        if not job_ids:
+            return
+        if all(self._job_states.get(jid) == JobState.stopped for jid in job_ids):
+            logger.info(
+                'Backend reported all jobs stopped, deactivating workflow %s',
+                workflow_id,
+            )
+            self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
 
     def reset_workflow(self, workflow_id: WorkflowId) -> bool:
         """
