@@ -238,9 +238,9 @@ def register_counts_per_pixel_specs(
 
     handle = instrument.register_spec(
         namespace='monitor_data',
-        name='counts_per_pixel',
+        name='monitor_counts_per_pixel',
         version=1,
-        title="Monitor counts per pixel",
+        title="Beam monitor data: counts per pixel",
         description=(
             "Per-pixel event counts for pixellated beam monitors. "
             "Counts events by pixel ID without histogramming or "
