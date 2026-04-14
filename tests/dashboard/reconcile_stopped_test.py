@@ -120,6 +120,19 @@ class TestReconcileStoppedJobs:
 
         assert not any(jid in job_orchestrator._job_states for jid in job_ids)
 
+    def test_late_status_after_deactivation_does_not_leak(
+        self, job_orchestrator, job_service, workflow_id
+    ):
+        """Status updates for already-deactivated jobs don't re-insert entries."""
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        _report_all_stopped(job_service, job_ids, workflow_id)
+
+        # Late arrivals after deactivation should be ignored
+        for job_id in job_ids:
+            _report_status(job_service, job_id, workflow_id, JobState.active)
+
+        assert not job_orchestrator._job_states
+
     def test_reconciles_independently_per_workflow(
         self, job_orchestrator, job_service, workflow_id, workflow_id_2
     ):

@@ -809,14 +809,16 @@ class JobOrchestrator:
         whether all jobs in the workflow have reported stopped, deactivating
         the workflow if so.
         """
-        self._job_states[job_status.job_id] = job_status.state
-        if job_status.state != JobState.stopped:
-            return
         workflow_id = job_status.workflow_id
         state = self._workflows.get(workflow_id)
         if state is None or state.current is None:
             return
         job_ids = list(state.current.job_ids())
+        if job_status.job_id not in job_ids:
+            return
+        self._job_states[job_status.job_id] = job_status.state
+        if job_status.state != JobState.stopped:
+            return
         if not job_ids:
             return
         if all(self._job_states.get(jid) == JobState.stopped for jid in job_ids):
