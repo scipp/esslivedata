@@ -637,10 +637,6 @@ class TestServiceStateToNicosStatus:
             == NicosStatus.OK
         )
         assert (
-            service_state_to_nicos_status_constant(ServiceState.stopping)
-            == NicosStatus.DISABLED
-        )
-        assert (
             service_state_to_nicos_status_constant(ServiceState.error)
             == NicosStatus.ERROR
         )

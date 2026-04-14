@@ -97,6 +97,7 @@ class JobState(StrEnum):
     finishing = "finishing"
     error = "error"
     warning = "warning"
+    stopped = "stopped"
 
 
 class ServiceState(StrEnum):
@@ -104,8 +105,7 @@ class ServiceState(StrEnum):
 
     starting = auto()  # Service initializing
     running = auto()  # Normal operation
-    stopping = auto()  # Graceful shutdown in progress
-    stopped = auto()  # Graceful shutdown completed
+    stopped = auto()  # Service shut down
     error = auto()  # Service encountered fatal error
 
 
