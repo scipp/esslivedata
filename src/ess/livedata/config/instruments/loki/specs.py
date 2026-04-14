@@ -229,7 +229,8 @@ instrument = Instrument(
         ),
         'detector_carriage': SourceMetadata(
             title='Rear Detector Carriage',
-            description='Rear detector carriage position w.r.t. its zero at z=5.098 m after the sample.',
+            description='Rear detector carriage position w.r.t. its zero at z=5.098 m '
+            'after the sample.',
         ),
     },
 )
