@@ -21,21 +21,22 @@ def make_detector_service_builder(
     group_by_pixel: bool = True,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    instrument_obj = instrument_registry[instrument]
+    instrument_obj.load_factories()
     stream_counter = StreamCounter()
-    adapter = (
-        RoutingAdapterBuilder(
-            stream_mapping=stream_mapping, stream_counter=stream_counter
-        )
-        .with_detector_route()
+    builder = RoutingAdapterBuilder(
+        stream_mapping=stream_mapping, stream_counter=stream_counter
+    )
+    builder = (
+        builder.with_detector_route()
         .with_area_detector_route()
-        .with_logdata_route()
         .with_livedata_commands_route()
         .with_livedata_roi_route()
         .with_run_control_route()
-        .build()
     )
-    instrument_obj = instrument_registry[instrument]
-    instrument_obj.load_factories()
+    if instrument_obj.has_detector_motion:
+        builder = builder.with_logdata_route()
+    adapter = builder.build()
     service_name = 'detector_data'
     preprocessor_factory = DetectorHandlerFactory(
         instrument=instrument_obj, group_by_pixel=group_by_pixel

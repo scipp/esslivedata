@@ -86,6 +86,8 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    has_detector_motion: bool = False
+    has_monitor_motion: bool = False
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None

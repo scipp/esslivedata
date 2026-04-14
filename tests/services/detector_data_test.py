@@ -8,6 +8,7 @@ from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
@@ -267,3 +268,17 @@ def test_message_that_cannot_be_decoded_is_ignored(
     error_logs = [log for log in captured if log['log_level'] == 'error']
     assert any("Error adapting message" in log['event'] for log in error_logs)
     assert any("unpack_from requires a buffer" in str(log) for log in error_logs)
+
+
+def test_loki_detector_service_subscribes_to_motion_topic() -> None:
+    builder = make_detector_service_builder(instrument='loki')
+    stream_mapping = get_stream_mapping(instrument='loki', dev=True)
+    assert stream_mapping.log_topics
+    assert stream_mapping.log_topics <= set(builder._adapter.topics)
+
+
+def test_dummy_detector_service_does_not_subscribe_to_motion_topic() -> None:
+    builder = make_detector_service_builder(instrument='dummy')
+    stream_mapping = get_stream_mapping(instrument='dummy', dev=True)
+    assert stream_mapping.log_topics
+    assert stream_mapping.log_topics.isdisjoint(builder._adapter.topics)

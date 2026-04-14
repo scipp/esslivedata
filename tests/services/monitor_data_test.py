@@ -14,6 +14,7 @@ import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers.livedata_app import LivedataApp
@@ -104,3 +105,17 @@ def test_can_configure_and_stop_monitor_workflow(
     app.publish_monitor_events(size=1000, time=20)
     service.step()
     assert len(sink.messages) == 12
+
+
+def test_loki_monitor_service_subscribes_to_motion_topic() -> None:
+    builder = make_monitor_service_builder(instrument='loki')
+    stream_mapping = get_stream_mapping(instrument='loki', dev=True)
+    assert stream_mapping.log_topics
+    assert stream_mapping.log_topics <= set(builder._adapter.topics)
+
+
+def test_dummy_monitor_service_does_not_subscribe_to_motion_topic() -> None:
+    builder = make_monitor_service_builder(instrument='dummy')
+    stream_mapping = get_stream_mapping(instrument='dummy', dev=True)
+    assert stream_mapping.log_topics
+    assert stream_mapping.log_topics.isdisjoint(builder._adapter.topics)

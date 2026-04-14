@@ -201,6 +201,8 @@ instrument = Instrument(
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
+    has_detector_motion=True,
+    has_monitor_motion=True,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),
