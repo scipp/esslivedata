@@ -246,9 +246,7 @@ monitor_handle = register_monitor_workflow_specs(
 )
 
 _pixellated_monitors = ['beam_monitor_m3']
-counts_per_pixel_handle = register_counts_per_pixel_specs(
-    instrument, _pixellated_monitors
-)
+register_counts_per_pixel_specs(instrument, _pixellated_monitors)
 
 xy_projection_handle = register_detector_view_spec(
     instrument=instrument,

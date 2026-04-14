@@ -230,12 +230,12 @@ def register_counts_per_pixel_specs(
 
     Returns
     -------
-    SpecHandle for later factory attachment, or None if no sources.
+    SpecHandle, or None if no sources.
     """
     if not source_names:
         return None
 
-    return instrument.register_spec(
+    handle = instrument.register_spec(
         namespace='monitor_data',
         name='counts_per_pixel',
         version=1,
@@ -248,6 +248,8 @@ def register_counts_per_pixel_specs(
         source_names=source_names,
         outputs=CountsPerPixelOutputs,
     )
+    instrument.counts_per_pixel_handle = handle
+    return handle
 
 
 def register_monitor_workflow_specs(
