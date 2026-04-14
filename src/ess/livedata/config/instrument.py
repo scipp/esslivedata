@@ -180,11 +180,23 @@ class Instrument:
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
 
-    def register_pixellated_monitor(self, name: str) -> None:
+    def register_pixellated_monitor(
+        self,
+        name: str,
+        detector_number: sc.Variable | None = None,
+    ) -> None:
         """Mark a monitor as pixellated (has meaningful per-pixel event IDs).
 
         This tells the adapter to emit ``DetectorEvents`` (preserving pixel_id)
         instead of plain ``MonitorEvents`` for this source.
+
+        Parameters
+        ----------
+        name
+            Name of the monitor (must be in self.monitors).
+        detector_number
+            Optional explicit detector_number array. If not provided,
+            ``load_factories`` will attempt to load it from the NeXus file.
         """
         if name not in self.monitors:
             raise ValueError(
@@ -192,6 +204,8 @@ class Instrument:
                 f"Available monitors: {self.monitors}"
             )
         self._pixellated_monitors.add(name)
+        if detector_number is not None:
+            self._detector_numbers[name] = detector_number
 
     @property
     def pixellated_monitor_sources(self) -> frozenset[str]:

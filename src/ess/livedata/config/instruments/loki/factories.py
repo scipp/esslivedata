@@ -151,17 +151,16 @@ def setup_factories(instrument: Instrument) -> None:
             geometry_filename=geometry_filename,
         )
 
-    # Pixellated monitor (beam_monitor_m3): register for DetectorEvents in adapter.
-    # Hard-coded because the NeXus geometry file does not contain detector_number
-    # for monitors. If it did, load_factories() would pick it up automatically
-    # via Instrument._load_detector_from_nexus.
-    instrument.register_pixellated_monitor('beam_monitor_m3')
-    _m3_pixel_ids = sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None)
+    instrument.register_pixellated_monitor(
+        'beam_monitor_m3',
+        detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
+    )
 
     @specs.counts_per_pixel_handle.attach_factory()
     def _counts_per_pixel_factory(source_name: str):
         """Factory for LOKI counts-per-pixel workflow."""
-        return create_counts_per_pixel_workflow(source_name, pixel_ids=_m3_pixel_ids)
+        pixel_ids = instrument.get_detector_number(source_name)
+        return create_counts_per_pixel_workflow(source_name, pixel_ids=pixel_ids)
 
     # --- Providers for current_run transmission mode ---
     # Map SampleRun monitors to TransmissionRun[SampleRun] so the standard
