@@ -148,11 +148,6 @@ def setup_factories(instrument: Instrument) -> None:
             geometry_filename=geometry_filename,
         )
 
-    instrument.configure_pixellated_monitor(
-        'beam_monitor_m3',
-        detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
-    )
-
     # --- Providers for current_run transmission mode ---
     # Map SampleRun monitors to TransmissionRun[SampleRun] so the standard
     # transmission_fraction provider can use them as if they came from a

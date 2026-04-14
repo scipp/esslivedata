@@ -217,21 +217,22 @@ class CountsPerPixelOutputs(WorkflowOutputsBase):
 
 def register_counts_per_pixel_specs(
     instrument: Instrument,
-    source_names: list[str],
 ) -> SpecHandle | None:
     """Register a counts-per-pixel workflow spec for pixellated monitors.
+
+    Uses ``instrument.pixellated_monitor_sources`` as source names, so
+    ``configure_pixellated_monitor`` must be called first.
 
     Parameters
     ----------
     instrument
         The instrument to register the workflow specs for.
-    source_names
-        List of pixellated monitor source names.
 
     Returns
     -------
-    SpecHandle, or None if no sources.
+    SpecHandle, or None if no pixellated monitors.
     """
+    source_names = sorted(instrument.pixellated_monitor_sources)
     if not source_names:
         return None
 

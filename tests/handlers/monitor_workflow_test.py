@@ -741,12 +741,13 @@ class TestRegisterCountsPerPixelSpecs:
         return Instrument(name='test_inst_pix', monitors=['mon_pix'])
 
     def test_register_returns_handle(self, test_instrument):
-        handle = register_counts_per_pixel_specs(test_instrument, ['mon_pix'])
+        test_instrument.configure_pixellated_monitor('mon_pix')
+        handle = register_counts_per_pixel_specs(test_instrument)
         assert handle is not None
         assert handle.workflow_id.name == 'counts_per_pixel'
 
-    def test_register_empty_returns_none(self, test_instrument):
-        assert register_counts_per_pixel_specs(test_instrument, []) is None
+    def test_register_no_pixellated_monitors_returns_none(self, test_instrument):
+        assert register_counts_per_pixel_specs(test_instrument) is None
 
 
 class TestMonitorWorkflowFactoryCoordinateMode:

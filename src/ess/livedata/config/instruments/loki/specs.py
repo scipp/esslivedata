@@ -245,8 +245,11 @@ monitor_handle = register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
 )
 
-_pixellated_monitors = ['beam_monitor_m3']
-register_counts_per_pixel_specs(instrument, _pixellated_monitors)
+instrument.configure_pixellated_monitor(
+    'beam_monitor_m3',
+    detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
+)
+register_counts_per_pixel_specs(instrument)
 
 xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
