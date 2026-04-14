@@ -48,7 +48,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
-        job_threads: int = 1,
+        job_threads: int = 5,
         stream_counter: StreamCounter | None = None,
     ) -> None:
         """
@@ -206,15 +206,15 @@ class DataServiceRunner:
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
             '--sync-scheduler',
-            action='store_true',
-            default=False,
+            action=argparse.BooleanOptionalAction,
+            default=True,
             help='Use synchronous dask scheduler instead of threaded'
             ' (reduces GIL contention)',
         )
         self._parser.add_argument(
             '--job-threads',
             type=int,
-            default=1,
+            default=5,
             help='Number of threads for parallel job execution (1=sequential)',
         )
         self._parser.add_argument(
