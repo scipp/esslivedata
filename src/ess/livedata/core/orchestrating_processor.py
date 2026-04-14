@@ -241,7 +241,12 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # Seed context data for jobs about to activate.
         # peek uses the batch start_time to predict which jobs will activate
         # in the upcoming process_jobs call (which uses the same start_time).
-        needed = self._job_manager.peek_pending_aux_streams(workflow_data.start_time)
+        # This covers both auxiliary streams (e.g., log data for detector
+        # workflows) and primary streams (e.g., log data for the timeseries
+        # service). Without primary stream seeding, a timeseries job that
+        # activates after its data was already consumed will never receive
+        # historical data from the preprocessor's context accumulators.
+        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
         if needed:
             missing = needed - {s.name for s in workflow_data.data}
             if missing:

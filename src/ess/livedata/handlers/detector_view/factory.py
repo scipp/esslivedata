@@ -36,10 +36,13 @@ from .types import (
     ROIRectangleReadback,
     ROIRectangleRequest,
     ROISpectra,
+    TransformValueLog,
+    TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
 from .workflow import (
+    add_dynamic_transform,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -67,6 +70,14 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
+    dynamic_transforms:
+        Optional mapping ``source_name -> TransformValueStream`` binding a
+        NeXus transformation entry of the detector's chain to the f144
+        stream that supplies its live values. ``aux_stream`` is the
+        logical name of the auxiliary input delivering the NXlog
+        DataArray (must match the corresponding ``AuxSources`` entry).
+        ``transform_name`` is the entry of ``chain.transformations``
+        whose ``.value`` will be replaced with the latest sample.
     """
 
     def __init__(
@@ -74,9 +85,11 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
+        dynamic_transforms: dict[str, TransformValueStream] | None = None,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
+        self._dynamic_transforms = dynamic_transforms or {}
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -222,6 +235,13 @@ class DetectorViewFactory:
                 'counts_in_toa_range',
                 'roi_spectra_current',
             )
+
+        # Wire dynamic detector geometry (f144 NXlog stream) if configured for
+        # this source.
+        value_stream = self._dynamic_transforms.get(source_name)
+        if value_stream is not None:
+            add_dynamic_transform(workflow, transform_name=value_stream.transform_name)
+            context_keys[value_stream.aux_stream] = TransformValueLog
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

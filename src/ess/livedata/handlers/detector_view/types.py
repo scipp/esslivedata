@@ -266,6 +266,54 @@ Dict mapping ROI index to bounds dict: {idx: {y_dim: (low, high), x_dim: (low, h
 Empty dict if no rectangles configured.
 """
 
+
+TransformName = NewType('TransformName', str)
+"""Name of the NeXus transformation entry driven by a live value stream."""
+
+
+@dataclass(frozen=True, slots=True)
+class TransformValue:
+    """Current scalar value of a named entry in a NeXus transformation chain.
+
+    Carries the latest value (typically from an f144 position stream) for a
+    single named transformation in a detector's ``depends_on`` chain. The
+    units must match those baked into the NeXus file.
+    """
+
+    name: TransformName
+    value: sc.Variable
+
+
+@dataclass(frozen=True, slots=True)
+class TransformValueStream:
+    """
+    Binds a NeXus transformation entry to the f144 stream that supplies its
+    live values at runtime.
+
+    Parameters
+    ----------
+    transform_name:
+        NeXus path of the transformation entry whose value is driven by the
+        live stream.
+    aux_stream:
+        Name of the auxiliary (f144) stream supplying the live values.
+    """
+
+    transform_name: str
+    aux_stream: str
+
+
+TransformValueLog = NewType('TransformValueLog', sc.DataArray | None)
+"""NXlog-shaped DataArray (timeseries) of f144 values for a transform.
+
+Set via ``set_context`` from the ToNXlog accumulator output. Carries a
+``time`` coord; the provider extracts the latest sample. The alias
+includes ``None`` because sciline initialises context-keyed parameters
+to ``None`` before the first ``set_context`` call; consumers must
+handle that.
+"""
+
+
 ROIPolygonMasks = NewType('ROIPolygonMasks', dict)
 """Precomputed boolean masks for polygon ROIs.
 

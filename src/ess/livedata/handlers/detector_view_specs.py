@@ -13,7 +13,10 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .detector_view.types import TransformValueStream
 
 import pydantic
 import scipp as sc
@@ -21,7 +24,7 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSources, JobId, WorkflowOutputsBase
+from ..config.workflow_spec import AuxInput, AuxSources, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
@@ -288,24 +291,40 @@ class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
     Subscribes to all supported ROI geometry streams (rectangle, polygon).
-    The render() method prefixes stream names with the job_id to create job-specific
-    ROI configuration streams, since each job instance needs its own ROIs.
+    The render() method prefixes ROI stream names with the job_id to create
+    job-specific ROI configuration streams, since each job instance needs its
+    own ROIs.
+
+    Optionally also advertises one or more global f144 streams that drive
+    runtime-dynamic NeXus transformation values for specific source_names.
+    These streams are physical properties of the instrument (not job-
+    specific), so they are rendered un-prefixed and only routed to the jobs
+    whose source_name actually consumes them.
     """
 
-    def __init__(self) -> None:
-        super().__init__(
-            {
-                'roi_rectangle': 'roi_rectangle',
-                'roi_polygon': 'roi_polygon',
-            }
-        )
+    def __init__(
+        self,
+        dynamic_transforms: dict[str, TransformValueStream] | None = None,
+    ) -> None:
+        self._dynamic_transforms = dynamic_transforms or {}
+        inputs: dict[str, str | AuxInput] = {
+            'roi_rectangle': 'roi_rectangle',
+            'roi_polygon': 'roi_polygon',
+        }
+        # Advertise each unique global aux stream so the dashboard schema
+        # and spec validation know it exists. Routing is per-source via
+        # render().
+        for binding in self._dynamic_transforms.values():
+            inputs.setdefault(binding.aux_stream, binding.aux_stream)
+        super().__init__(inputs)
 
     def render(
         self,
         job_id: JobId,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render ROI stream names with job-specific prefix.
+        """Render ROI stream names with job-specific prefix, plus any
+        source-specific global aux streams.
 
         Parameters
         ----------
@@ -317,15 +336,19 @@ class DetectorROIAuxSources(AuxSources):
         Returns
         -------
         :
-            Mapping from ROI geometry keys to job-specific stream names.
-            Keys are 'roi_rectangle', 'roi_polygon', etc.
-            Values are in the format '{source_name}/{job_number}/roi_{shape}'
-            (e.g., 'mantle/abc-123/roi_rectangle').
+            Mapping from ROI geometry keys to job-specific stream names
+            (e.g., ``'{source_name}/{job_number}/roi_rectangle'``), plus
+            any global aux streams bound to this source's NeXus transforms,
+            rendered un-prefixed.
         """
-        return {
+        rendered: dict[str, str] = {
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
+        binding = self._dynamic_transforms.get(job_id.source_name)
+        if binding is not None:
+            rendered[binding.aux_stream] = binding.aux_stream
+        return rendered
 
 
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]

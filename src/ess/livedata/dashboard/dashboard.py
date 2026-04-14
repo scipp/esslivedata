@@ -10,7 +10,7 @@ from pathlib import Path
 import panel as pn
 from holoviews import Dimension
 
-from ess.livedata import ServiceBase, __version__
+from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
@@ -210,7 +210,7 @@ class DashboardBase(ServiceBase, ABC):
         # causes layout overflow and a vertical scrollbar.
         version_label = pn.pane.HTML(
             f'<div style="font-size: 11px; color: #888; padding: 10px;">'
-            f'v{__version__}</div>',
+            f'v{format_version(__version__)}</div>',
         )
         sidebar_with_heartbeat = pn.Column(
             sidebar_content,
