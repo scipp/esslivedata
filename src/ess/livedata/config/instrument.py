@@ -181,7 +181,7 @@ class Instrument:
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
 
-    def register_pixellated_monitor(
+    def configure_pixellated_monitor(
         self,
         name: str,
         detector_number: sc.Variable | None = None,

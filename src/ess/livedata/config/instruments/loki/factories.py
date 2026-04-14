@@ -148,7 +148,7 @@ def setup_factories(instrument: Instrument) -> None:
             geometry_filename=geometry_filename,
         )
 
-    instrument.register_pixellated_monitor(
+    instrument.configure_pixellated_monitor(
         'beam_monitor_m3',
         detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
     )
