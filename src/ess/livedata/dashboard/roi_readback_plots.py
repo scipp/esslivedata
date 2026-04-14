@@ -21,7 +21,23 @@ from ess.livedata.config.models import (
 )
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .plots import Plotter
+from .plots import OverlayUnitKey, Plotter, _unit_str
+
+
+def _roi_overlay_unit_key(da: sc.DataArray) -> OverlayUnitKey:
+    """Build an overlay unit key from ROI coordinate metadata.
+
+    ROI DataArrays use named coords ('x', 'y') rather than dimension
+    coordinates, and have no meaningful value unit.
+    """
+    kdim_units = tuple(
+        sorted(
+            (name, _unit_str(da.coords[name].unit))
+            for name in ('x', 'y')
+            if name in da.coords
+        )
+    )
+    return OverlayUnitKey(kdim_units=kdim_units, vdim_unit=None)
 
 
 class ROIReadbackStyle(pydantic.BaseModel):
@@ -80,6 +96,14 @@ class RectanglesReadbackPlotter(Plotter):
     def from_params(cls, params: RectanglesReadbackParams) -> RectanglesReadbackPlotter:
         """Create plotter from params."""
         return cls(params)
+
+    def _extract_overlay_unit_key(
+        self, data: dict[ResultKey, sc.DataArray]
+    ) -> OverlayUnitKey | None:
+        if not data:
+            return None
+        da = next(iter(data.values()))
+        return _roi_overlay_unit_key(da)
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
@@ -186,6 +210,14 @@ class PolygonsReadbackPlotter(Plotter):
     def from_params(cls, params: PolygonsReadbackParams) -> PolygonsReadbackPlotter:
         """Create plotter from params."""
         return cls(params)
+
+    def _extract_overlay_unit_key(
+        self, data: dict[ResultKey, sc.DataArray]
+    ) -> OverlayUnitKey | None:
+        if not data:
+            return None
+        da = next(iter(data.values()))
+        return _roi_overlay_unit_key(da)
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs

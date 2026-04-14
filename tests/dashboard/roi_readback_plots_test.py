@@ -422,3 +422,35 @@ class TestPlotterCompatibility:
         )
         compatible = plotter_registry.get_compatible_plotters({'key': data})
         assert 'lines' in compatible
+
+
+class TestROIReadbackOverlayUnitKey:
+    """Tests for ROI readback plotter overlay unit key extraction."""
+
+    def test_rectangles_readback_stores_kdim_units(self, result_key):
+        roi = RectangleROI(
+            x=Interval(min=0.0, max=1.0, unit='m'),
+            y=Interval(min=0.0, max=1.0, unit='m'),
+        )
+        da = RectangleROI.to_concatenated_data_array({0: roi})
+        plotter = RectanglesReadbackPlotter(RectanglesReadbackParams())
+        plotter.compute({result_key: da})
+        key = plotter.overlay_unit_key
+        assert key is not None
+        assert key.kdim_units == (('x', 'm'), ('y', 'm'))
+        assert key.vdim_unit is None
+
+    def test_polygons_readback_stores_kdim_units(self, result_key):
+        roi = PolygonROI(
+            x=[0.0, 1.0, 1.0, 0.0],
+            y=[0.0, 0.0, 1.0, 1.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        da = PolygonROI.to_concatenated_data_array({0: roi})
+        plotter = PolygonsReadbackPlotter(PolygonsReadbackParams())
+        plotter.compute({result_key: da})
+        key = plotter.overlay_unit_key
+        assert key is not None
+        assert key.kdim_units == (('x', 'mm'), ('y', 'mm'))
+        assert key.vdim_unit is None

@@ -35,6 +35,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
+from ..plots import OverlayUnitKey, validate_cross_layer_units
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
@@ -940,6 +941,7 @@ class PlotGridTabs:
             Composed plot from session DMaps/elements, or None if none available.
         """
         plots = []
+        unit_keys: list[tuple[str, OverlayUnitKey]] = []
         has_layout = False
         for layer in cell.layers:
             layer_id = layer.layer_id
@@ -967,8 +969,21 @@ class PlotGridTabs:
                     has_layout = True
                 plots.append(dmap)
 
+                # Collect unit key for cross-layer validation
+                if state is not None and state.plotter is not None:
+                    key = state.plotter.overlay_unit_key
+                    if key is not None:
+                        unit_keys.append((layer.config.plot_name, key))
+
         if not plots:
             return None
+
+        # Validate cross-layer unit compatibility before composing
+        error = validate_cross_layer_units(unit_keys)
+        if error is not None:
+            return hv.Text(0.5, 0.5, f"Error: {error}").opts(
+                text_align='center', text_baseline='middle'
+            )
 
         result: hv.DynamicMap | hv.Element
         if len(plots) == 1:

@@ -2100,3 +2100,242 @@ class TestRateNormalizationIntegration:
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
+
+
+def _make_result_key(source_name: str) -> ResultKey:
+    return ResultKey(
+        workflow_id=WorkflowId(instrument='test', namespace='ns', name='wf', version=1),
+        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
+        output_name='result',
+    )
+
+
+def _make_1d_da(
+    *, dim: str = 'tof', coord_unit: str = 'ms', value_unit: str = 'counts'
+) -> sc.DataArray:
+    coord = sc.arange(dim, 5, dtype='float64', unit=coord_unit)
+    return sc.DataArray(
+        sc.ones(sizes={dim: 5}, unit=value_unit),
+        coords={dim: coord},
+    )
+
+
+class TestValidateOverlayUnits:
+    """Tests for Site 1: intra-layer overlay unit validation."""
+
+    def test_single_entry_passes(self):
+        key = _make_result_key('src_a')
+        da = _make_1d_da()
+        plots._validate_overlay_units({key: da})
+
+    def test_matching_units_pass(self):
+        data = {
+            _make_result_key('src_a'): _make_1d_da(),
+            _make_result_key('src_b'): _make_1d_da(),
+        }
+        plots._validate_overlay_units(data)
+
+    def test_mismatched_coord_units_raise(self):
+        data = {
+            _make_result_key('src_a'): _make_1d_da(coord_unit='ms'),
+            _make_result_key('src_b'): _make_1d_da(coord_unit='us'),
+        }
+        with pytest.raises(ValueError, match=r"coordinate 'tof'.*ms.*µs"):
+            plots._validate_overlay_units(data)
+
+    def test_mismatched_value_units_raise(self):
+        data = {
+            _make_result_key('src_a'): _make_1d_da(value_unit='counts'),
+            _make_result_key('src_b'): _make_1d_da(value_unit='counts/us'),
+        }
+        with pytest.raises(ValueError, match="value unit mismatch"):
+            plots._validate_overlay_units(data)
+
+    def test_mismatched_dims_raise(self):
+        data = {
+            _make_result_key('src_a'): _make_1d_da(dim='tof'),
+            _make_result_key('src_b'): _make_1d_da(dim='wavelength'),
+        }
+        with pytest.raises(ValueError, match="dimension mismatch"):
+            plots._validate_overlay_units(data)
+
+    def test_error_message_includes_source_names(self):
+        data = {
+            _make_result_key('detector_1'): _make_1d_da(coord_unit='ms'),
+            _make_result_key('detector_2'): _make_1d_da(coord_unit='us'),
+        }
+        with pytest.raises(ValueError, match=r"detector_1.*detector_2"):
+            plots._validate_overlay_units(data)
+
+
+class TestOverlayUnitKey:
+    """Tests for OverlayUnitKey construction and cross-layer validation."""
+
+    def test_from_data_array_1d(self):
+        da = _make_1d_da(dim='tof', coord_unit='ms', value_unit='counts')
+        key = plots.OverlayUnitKey.from_data_array(da)
+        assert key.kdim_units == (('tof', 'ms'),)
+        assert key.vdim_unit == 'counts'
+
+    def test_from_data_array_2d(self):
+        da = sc.DataArray(
+            sc.ones(sizes={'y': 4, 'x': 5}, unit='counts'),
+            coords={
+                'x': sc.arange('x', 5, dtype='float64', unit='m'),
+                'y': sc.arange('y', 4, dtype='float64', unit='m'),
+            },
+        )
+        key = plots.OverlayUnitKey.from_data_array(da)
+        assert key.kdim_units == (('x', 'm'), ('y', 'm'))
+        assert key.vdim_unit == 'counts'
+
+    def test_from_data_array_no_vdim(self):
+        da = _make_1d_da()
+        key = plots.OverlayUnitKey.from_data_array(da, include_vdim=False)
+        assert key.vdim_unit is None
+
+    def test_cross_layer_matching_units_pass(self):
+        keys = [
+            (
+                'layer_a',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+            (
+                'layer_b',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+        ]
+        assert plots.validate_cross_layer_units(keys) is None
+
+    def test_cross_layer_mismatched_kdim_units(self):
+        keys = [
+            (
+                'layer_a',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+            (
+                'layer_b',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'us'),), vdim_unit='counts'),
+            ),
+        ]
+        error = plots.validate_cross_layer_units(keys)
+        assert error is not None
+        assert 'tof' in error
+        assert 'ms' in error
+        assert 'us' in error
+
+    def test_cross_layer_mismatched_vdim_units(self):
+        keys = [
+            (
+                'layer_a',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+            (
+                'layer_b',
+                plots.OverlayUnitKey(
+                    kdim_units=(('tof', 'ms'),), vdim_unit='counts/us'
+                ),
+            ),
+        ]
+        error = plots.validate_cross_layer_units(keys)
+        assert error is not None
+        assert 'value unit mismatch' in error
+
+    def test_cross_layer_vdim_none_skips_check(self):
+        keys = [
+            (
+                'image',
+                plots.OverlayUnitKey(
+                    kdim_units=(('x', 'm'), ('y', 'm')), vdim_unit='counts'
+                ),
+            ),
+            (
+                'roi',
+                plots.OverlayUnitKey(
+                    kdim_units=(('x', 'm'), ('y', 'm')), vdim_unit=None
+                ),
+            ),
+        ]
+        assert plots.validate_cross_layer_units(keys) is None
+
+    def test_cross_layer_vdim_none_still_checks_kdims(self):
+        keys = [
+            (
+                'image',
+                plots.OverlayUnitKey(kdim_units=(('x', 'm'),), vdim_unit='counts'),
+            ),
+            ('roi', plots.OverlayUnitKey(kdim_units=(('x', 'mm'),), vdim_unit=None)),
+        ]
+        error = plots.validate_cross_layer_units(keys)
+        assert error is not None
+        assert 'x' in error
+
+    def test_cross_layer_single_key_passes(self):
+        keys = [
+            (
+                'only_layer',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+        ]
+        assert plots.validate_cross_layer_units(keys) is None
+
+    def test_cross_layer_non_overlapping_kdims_pass(self):
+        keys = [
+            (
+                'curve',
+                plots.OverlayUnitKey(kdim_units=(('tof', 'ms'),), vdim_unit='counts'),
+            ),
+            (
+                'roi',
+                plots.OverlayUnitKey(
+                    kdim_units=(('x', 'm'), ('y', 'm')), vdim_unit=None
+                ),
+            ),
+        ]
+        assert plots.validate_cross_layer_units(keys) is None
+
+
+class TestPlotterOverlayUnitKey:
+    """Integration tests: plotter stores overlay unit key after compute()."""
+
+    def test_line_plotter_stores_key(self):
+        params = PlotParams1d()
+        plotter = plots.LinePlotter.from_params(params)
+        key = _make_result_key('src')
+        da = _make_1d_da(dim='tof', coord_unit='ms', value_unit='counts')
+        plotter.compute({key: da})
+        unit_key = plotter.overlay_unit_key
+        assert unit_key is not None
+        assert unit_key.kdim_units == (('tof', 'ms'),)
+        assert unit_key.vdim_unit == 'counts'
+
+    def test_image_plotter_stores_key(self):
+        params = PlotParams2d()
+        plotter = plots.ImagePlotter.from_params(params)
+        key = _make_result_key('src')
+        da = sc.DataArray(
+            sc.ones(sizes={'y': 4, 'x': 5}, unit='counts'),
+            coords={
+                'x': sc.arange('x', 5, dtype='float64', unit='m'),
+                'y': sc.arange('y', 4, dtype='float64', unit='m'),
+            },
+        )
+        plotter.compute({key: da})
+        unit_key = plotter.overlay_unit_key
+        assert unit_key is not None
+        assert unit_key.kdim_units == (('x', 'm'), ('y', 'm'))
+        assert unit_key.vdim_unit == 'counts'
+
+    def test_compute_with_mismatched_units_shows_error(self):
+        params = PlotParams1d()
+        plotter = plots.LinePlotter.from_params(params)
+        data = {
+            _make_result_key('src_a'): _make_1d_da(coord_unit='ms'),
+            _make_result_key('src_b'): _make_1d_da(coord_unit='us'),
+        }
+        plotter.compute(data)
+        result = plotter.get_cached_state()
+        # Validation error is caught and wrapped in an Overlay containing hv.Text
+        assert isinstance(result, hv.Overlay)
+        (element,) = result.values()
+        assert isinstance(element, hv.Text)
