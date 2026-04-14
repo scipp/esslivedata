@@ -744,7 +744,7 @@ class TestRegisterCountsPerPixelSpecs:
         test_instrument.configure_pixellated_monitor('mon_pix')
         handle = register_counts_per_pixel_specs(test_instrument)
         assert handle is not None
-        assert handle.workflow_id.name == 'counts_per_pixel'
+        assert handle.workflow_id.name == 'monitor_counts_per_pixel'
 
     def test_register_no_pixellated_monitors_returns_none(self, test_instrument):
         assert register_counts_per_pixel_specs(test_instrument) is None
