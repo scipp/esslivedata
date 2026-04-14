@@ -788,6 +788,9 @@ class JobOrchestrator:
         state = self._workflows[workflow_id]
         job_number = state.current.job_number if state.current else None
 
+        if state.current is not None:
+            for job_id in state.current.job_ids():
+                self._job_states.pop(job_id, None)
         if job_number is not None:
             self._active_job_registry.deactivate(job_number)
         state.previous = state.current

@@ -98,6 +98,28 @@ class TestReconcileStoppedJobs:
 
         assert job_orchestrator.get_active_job_number(workflow_id) is None
 
+    def test_cleans_up_job_states_on_deactivation(
+        self, job_orchestrator, job_service, workflow_id
+    ):
+        """Job state tracking entries are removed when a workflow is deactivated."""
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        _report_all_stopped(job_service, job_ids, workflow_id)
+
+        assert not any(jid in job_orchestrator._job_states for jid in job_ids)
+
+    def test_cleans_up_job_states_on_user_stop(
+        self, job_orchestrator, job_service, workflow_id
+    ):
+        """Job state entries are cleaned up on user-initiated stop too."""
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+
+        for job_id in job_ids:
+            _report_status(job_service, job_id, workflow_id, JobState.active)
+
+        job_orchestrator.stop_workflow(workflow_id)
+
+        assert not any(jid in job_orchestrator._job_states for jid in job_ids)
+
     def test_reconciles_independently_per_workflow(
         self, job_orchestrator, job_service, workflow_id, workflow_id_2
     ):
