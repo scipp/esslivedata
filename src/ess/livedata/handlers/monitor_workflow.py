@@ -57,9 +57,9 @@ def _histogram_monitor(
             {target_dim: event_coord}
         )
         hist = data.hist({event_coord: edges_converted}, dim=data.dims)
-        # Rename dimension and coordinate to target dimension
+        # Rename dimension and coordinate back to target dimension and unit
         hist = hist.rename_dims({event_coord: target_dim})
-        hist.coords[target_dim] = hist.coords.pop(event_coord)
+        hist.coords[target_dim] = hist.coords.pop(event_coord).to(unit=edges.unit)
     else:
         # Histogram-mode: already histogrammed from Cumulative preprocessor
         # Rename dimension if needed
