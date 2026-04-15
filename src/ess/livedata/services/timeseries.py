@@ -8,6 +8,10 @@ from functools import partial
 from typing import Any, NoReturn
 
 from ess.livedata.config import instrument_registry
+from ess.livedata.config.route_derivation import (
+    gather_source_names,
+    resolve_stream_names,
+)
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
@@ -25,18 +29,21 @@ def make_timeseries_service_builder(
     attribute_registry: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    instrument_obj = instrument_registry[instrument]
+    instrument_obj.load_factories()
+
+    needed = gather_source_names(instrument_obj, 'timeseries')
+    needed = resolve_stream_names(needed, instrument_obj, stream_mapping)
+    scoped = stream_mapping.filtered(needed)
+
     stream_counter = StreamCounter()
     adapter = (
-        RoutingAdapterBuilder(
-            stream_mapping=stream_mapping, stream_counter=stream_counter
-        )
-        .with_logdata_route()
+        RoutingAdapterBuilder(stream_mapping=scoped, stream_counter=stream_counter)
+        .with_routes_from_mapping()
         .with_livedata_commands_route()
         .with_run_control_route()
         .build()
     )
-    instrument_obj = instrument_registry[instrument]
-    instrument_obj.load_factories()
     service_name = 'timeseries'
     preprocessor_factory = LogdataHandlerFactory(
         instrument=instrument_obj,

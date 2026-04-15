@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 KafkaTopic = str
@@ -121,3 +123,32 @@ class StreamMapping:
     def logs(self) -> StreamLUT | None:
         """Returns the mapping for log data."""
         return self._logs
+
+    @property
+    def all_stream_names(self) -> set[str]:
+        """Returns the set of all internal stream names across all LUTs."""
+        names = set(self._detectors.values())
+        names |= set(self._monitors.values())
+        names |= set(self._area_detectors.values())
+        if self._logs is not None:
+            names |= set(self._logs.values())
+        return names
+
+    def filtered(self, needed: set[str]) -> StreamMapping:
+        """Return copy with only entries whose internal names are in ``needed``."""
+        return StreamMapping(
+            instrument=self.instrument,
+            detectors={k: v for k, v in self._detectors.items() if v in needed},
+            monitors={k: v for k, v in self._monitors.items() if v in needed},
+            area_detectors={
+                k: v for k, v in self._area_detectors.items() if v in needed
+            },
+            logs={k: v for k, v in self._logs.items() if v in needed}
+            if self._logs is not None
+            else None,
+            livedata_commands_topic=self._livedata_commands_topic,
+            livedata_data_topic=self._livedata_data_topic,
+            livedata_responses_topic=self._livedata_responses_topic,
+            livedata_roi_topic=self._livedata_roi_topic,
+            livedata_status_topic=self._livedata_status_topic,
+        )

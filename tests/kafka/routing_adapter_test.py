@@ -7,6 +7,7 @@ import pytest
 from ess.livedata.config.instruments import available_instruments
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.kafka.stream_mapping import InputStreamKey, StreamMapping
 
 
 @pytest.mark.parametrize('instrument', available_instruments())
@@ -46,3 +47,102 @@ def test_routing_adapter_builder_all_livedata_routes(instrument: str) -> None:
     assert stream_mapping.livedata_data_topic in adapter._routes
     assert stream_mapping.livedata_roi_topic in adapter._routes
     assert stream_mapping.livedata_status_topic in adapter._routes
+
+
+def _infra_kwargs() -> dict:
+    return {
+        "livedata_commands_topic": "cmd",
+        "livedata_data_topic": "data",
+        "livedata_responses_topic": "resp",
+        "livedata_roi_topic": "roi",
+        "livedata_status_topic": "status",
+    }
+
+
+class TestWithRoutesFromMapping:
+    def test_adds_detector_route_when_detectors_present(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={InputStreamKey(topic="det", source_name="s"): "d"},
+            monitors={},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert "det" in adapter._routes
+
+    def test_adds_monitor_route_when_monitors_present(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={},
+            monitors={InputStreamKey(topic="mon", source_name="s"): "m"},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert "mon" in adapter._routes
+
+    def test_adds_log_route_when_logs_present(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={},
+            monitors={},
+            logs={InputStreamKey(topic="log", source_name="s"): "l"},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert "log" in adapter._routes
+
+    def test_adds_area_detector_route_when_present(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={},
+            monitors={},
+            area_detectors={InputStreamKey(topic="area", source_name="s"): "a"},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert "area" in adapter._routes
+
+    def test_skips_empty_luts(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={},
+            monitors={},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert adapter._routes == {}
+
+    def test_does_not_add_infrastructure_routes(self) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={InputStreamKey(topic="det", source_name="s"): "d"},
+            monitors={},
+            **_infra_kwargs(),
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        assert "cmd" not in adapter._routes
+        assert "roi" not in adapter._routes

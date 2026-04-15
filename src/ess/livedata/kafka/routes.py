@@ -106,6 +106,18 @@ class RoutingAdapterBuilder:
             self._routes[topic] = adapter
         return self
 
+    def with_routes_from_mapping(self) -> Self:
+        """Add data routes for all non-empty LUTs in the stream mapping."""
+        if self._stream_mapping.detector_topics:
+            self.with_detector_route()
+        if self._stream_mapping.area_detector_topics:
+            self.with_area_detector_route()
+        if self._stream_mapping.monitor_topics:
+            self.with_beam_monitor_route()
+        if self._stream_mapping.log_topics:
+            self.with_logdata_route()
+        return self
+
     def with_livedata_data_route(self) -> Self:
         """Adds the livedata data route."""
         self._routes[self._stream_mapping.livedata_data_topic] = ChainedAdapter(
