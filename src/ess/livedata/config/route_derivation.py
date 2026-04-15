@@ -86,6 +86,34 @@ def resolve_stream_names(
     return resolved
 
 
+def scope_stream_mapping(
+    instrument: Instrument,
+    stream_mapping: StreamMapping,
+    namespace: str,
+    source_subset: set[str] | None = None,
+) -> StreamMapping:
+    """Return a stream mapping scoped to the streams needed by ``namespace``.
+
+    Combines :func:`gather_source_names`, :func:`resolve_stream_names`, and
+    :meth:`StreamMapping.filtered` into a single call.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument whose workflow specs to inspect.
+    stream_mapping:
+        The full (unfiltered) stream mapping.
+    namespace:
+        Only consider specs in this namespace (e.g. ``'detector_data'``).
+    source_subset:
+        If given, only include specs whose primary sources overlap with this
+        set. Used for sharding.
+    """
+    needed = gather_source_names(instrument, namespace, source_subset=source_subset)
+    needed = resolve_stream_names(needed, instrument, stream_mapping)
+    return stream_mapping.filtered(needed)
+
+
 def get_source_subset(
     source_names: list[str],
     num_shards: int,

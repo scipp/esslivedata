@@ -4,10 +4,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.route_derivation import (
-    gather_source_names,
-    resolve_stream_names,
-)
+from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -22,9 +19,7 @@ def make_monitor_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
 
-    needed = gather_source_names(instrument_obj, 'monitor_data')
-    needed = resolve_stream_names(needed, instrument_obj, stream_mapping)
-    scoped = stream_mapping.filtered(needed)
+    scoped = scope_stream_mapping(instrument_obj, stream_mapping, 'monitor_data')
 
     stream_counter = StreamCounter()
     adapter = (

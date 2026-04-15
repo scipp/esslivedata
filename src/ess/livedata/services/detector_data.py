@@ -6,11 +6,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.route_derivation import (
-    gather_source_names,
-    get_source_subset,
-    resolve_stream_names,
-)
+from ess.livedata.config.route_derivation import get_source_subset, scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -36,11 +32,9 @@ def make_detector_service_builder(
         if num_shards > 1
         else None
     )
-    needed = gather_source_names(
-        instrument_obj, 'detector_data', source_subset=source_subset
+    scoped = scope_stream_mapping(
+        instrument_obj, stream_mapping, 'detector_data', source_subset=source_subset
     )
-    needed = resolve_stream_names(needed, instrument_obj, stream_mapping)
-    scoped = stream_mapping.filtered(needed)
 
     stream_counter = StreamCounter()
     adapter = (
