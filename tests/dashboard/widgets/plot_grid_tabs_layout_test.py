@@ -48,7 +48,7 @@ class FakePlotter:
     def __init__(self, cached_state=None):
         self._cached_state = cached_state
         self._presenters: list[FakePresenter] = []
-        self.overlay_unit_key = None
+        self.canvas_spec = None
 
     def get_cached_state(self):
         return self._cached_state

@@ -35,7 +35,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
-from ..plots import OverlayUnitKey, validate_cross_layer_units
+from ..plots import CanvasSpec, validate_canvas_spec
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
@@ -941,7 +941,7 @@ class PlotGridTabs:
             Composed plot from session DMaps/elements, or None if none available.
         """
         plots = []
-        unit_keys: list[tuple[str, OverlayUnitKey]] = []
+        overlay_entries: list[tuple[str, CanvasSpec]] = []
         has_layout = False
         for layer in cell.layers:
             layer_id = layer.layer_id
@@ -969,17 +969,18 @@ class PlotGridTabs:
                     has_layout = True
                 plots.append(dmap)
 
-                # Collect unit key for cross-layer validation
+                # Collect overlay units for cross-layer validation
+                # (only data-carrying plotters set canvas_spec)
                 if state is not None and state.plotter is not None:
-                    key = state.plotter.overlay_unit_key
-                    if key is not None:
-                        unit_keys.append((layer.config.plot_name, key))
+                    units = state.plotter.canvas_spec
+                    if units is not None:
+                        overlay_entries.append((layer.config.plot_name, units))
 
         if not plots:
             return None
 
         # Validate cross-layer unit compatibility before composing
-        error = validate_cross_layer_units(unit_keys)
+        error = validate_canvas_spec(overlay_entries)
         if error is not None:
             return hv.Text(0.5, 0.5, f"Error: {error}").opts(
                 text_align='center', text_baseline='middle'

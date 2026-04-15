@@ -424,10 +424,10 @@ class TestPlotterCompatibility:
         assert 'lines' in compatible
 
 
-class TestROIReadbackOverlayUnitKey:
-    """Tests for ROI readback plotter overlay unit key extraction."""
+class TestROIReadbackOverlayValidation:
+    """ROI readback plotters are exempt from overlay unit validation."""
 
-    def test_rectangles_readback_stores_kdim_units(self, result_key):
+    def test_rectangles_readback_does_not_set_canvas_spec(self, result_key):
         roi = RectangleROI(
             x=Interval(min=0.0, max=1.0, unit='m'),
             y=Interval(min=0.0, max=1.0, unit='m'),
@@ -435,12 +435,9 @@ class TestROIReadbackOverlayUnitKey:
         da = RectangleROI.to_concatenated_data_array({0: roi})
         plotter = RectanglesReadbackPlotter(RectanglesReadbackParams())
         plotter.compute({result_key: da})
-        key = plotter.overlay_unit_key
-        assert key is not None
-        assert key.kdim_units == (('x', 'm'), ('y', 'm'))
-        assert key.vdim_unit is None
+        assert plotter.canvas_spec is None
 
-    def test_polygons_readback_stores_kdim_units(self, result_key):
+    def test_polygons_readback_does_not_set_canvas_spec(self, result_key):
         roi = PolygonROI(
             x=[0.0, 1.0, 1.0, 0.0],
             y=[0.0, 0.0, 1.0, 1.0],
@@ -450,7 +447,4 @@ class TestROIReadbackOverlayUnitKey:
         da = PolygonROI.to_concatenated_data_array({0: roi})
         plotter = PolygonsReadbackPlotter(PolygonsReadbackParams())
         plotter.compute({result_key: da})
-        key = plotter.overlay_unit_key
-        assert key is not None
-        assert key.kdim_units == (('x', 'mm'), ('y', 'mm'))
-        assert key.vdim_unit is None
+        assert plotter.canvas_spec is None

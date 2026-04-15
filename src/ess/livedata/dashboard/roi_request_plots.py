@@ -48,7 +48,7 @@ from ess.livedata.config.roi_names import (
     get_roi_mapper,
 )
 
-from .plots import OverlayUnitKey, Plotter, PresenterBase
+from .plots import Plotter, PresenterBase
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
 if TYPE_CHECKING:
@@ -533,6 +533,8 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     skip logic, publishing) is handled via a closure-based edit callback.
     """
 
+    participates_in_overlay_validation = False
+
     def __init__(
         self,
         params: ParamsType,
@@ -625,16 +627,6 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             if 'y' in da.coords and da.coords['y'].unit
             else None
         )
-
-        # Build overlay unit key from ROI coordinate units
-        kdim_units = tuple(
-            sorted(
-                (name, unit)
-                for name, unit in [('x', self._x_unit), ('y', self._y_unit)]
-                if unit is not None
-            )
-        )
-        self._overlay_unit_key = OverlayUnitKey(kdim_units=kdim_units, vdim_unit=None)
 
         # Forward data (presenter may use in future)
         self._set_cached_state(data)

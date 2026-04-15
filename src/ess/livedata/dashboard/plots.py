@@ -7,6 +7,7 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any, ClassVar, cast
 
 import holoviews as hv
@@ -216,117 +217,66 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
 
 
 @dataclass(frozen=True)
-class OverlayUnitKey:
-    """Unit signature for cross-layer overlay validation.
+class CanvasSpec:
+    """Unit metadata extracted from a scipp DataArray for overlay validation.
 
-    Captures the units of all plotting dimensions and (optionally) the value
-    dimension.  Two keys are compatible when every shared kdim label has the
-    same unit string and, if both keys carry a vdim unit, those match too.
+    Captures coordinate units (keyed by dimension name) and the value unit.
+    Two overlays are compatible when they share the same coordinate dimensions
+    with matching units and matching value units.
     """
 
-    kdim_units: tuple[tuple[str, str | None], ...] = ()
-    vdim_unit: str | None = None
+    coord_units: dict[str, sc.Unit] = dataclass_field(default_factory=dict)
+    value_unit: sc.Unit = dataclass_field(default=sc.units.dimensionless)
 
     @classmethod
-    def from_data_array(
-        cls,
-        da: sc.DataArray,
-        *,
-        include_vdim: bool = True,
-    ) -> OverlayUnitKey:
-        """Build a key from a scipp DataArray using its dimension coordinates."""
-        kdim_units = tuple(
-            sorted(
-                (dim, _unit_str(da.coords[dim].unit))
-                for dim in da.dims
-                if dim in da.coords
-            )
+    def from_data_array(cls, da: sc.DataArray) -> CanvasSpec:
+        """Build from a scipp DataArray using its dimension coordinates."""
+        return cls(
+            coord_units={
+                dim: da.coords[dim].unit for dim in da.dims if dim in da.coords
+            },
+            value_unit=da.unit,
         )
-        vdim_unit = _unit_str(da.unit) if include_vdim else None
-        return cls(kdim_units=kdim_units, vdim_unit=vdim_unit)
 
 
-def _unit_str(unit: sc.Unit | None) -> str | None:
-    """Convert a scipp unit to its string representation, or None."""
-    return str(unit) if unit is not None else None
-
-
-def _validate_overlay_units(data: dict[ResultKey, sc.DataArray]) -> None:
-    """Validate that all DataArrays in an overlay share compatible units.
-
-    Raises
-    ------
-    ValueError
-        If dimension names, coordinate units, or value units do not match.
-    """
-    if len(data) < 2:
-        return
-
-    items = iter(data.items())
-    ref_key, ref = next(items)
-    ref_source = ref_key.job_id.source_name
-
-    for key, da in items:
-        source = key.job_id.source_name
-        if ref.dims != da.dims:
-            raise ValueError(
-                f"Cannot overlay '{ref_source}' and '{source}': "
-                f"dimension mismatch ({ref.dims} vs {da.dims})"
-            )
-        for dim in ref.dims:
-            if dim in ref.coords and dim in da.coords:
-                u_ref = ref.coords[dim].unit
-                u_da = da.coords[dim].unit
-                if u_ref != u_da:
-                    raise ValueError(
-                        f"Cannot overlay '{ref_source}' and '{source}': "
-                        f"unit mismatch for coordinate '{dim}' "
-                        f"({u_ref} vs {u_da})"
-                    )
-        if ref.unit != da.unit:
-            raise ValueError(
-                f"Cannot overlay '{ref_source}' and '{source}': "
-                f"value unit mismatch ({ref.unit} vs {da.unit})"
-            )
-
-
-def validate_cross_layer_units(
-    keys: list[tuple[str, OverlayUnitKey]],
+def validate_canvas_spec(
+    entries: list[tuple[str, CanvasSpec]],
 ) -> str | None:
-    """Check overlay unit keys from multiple layers for compatibility.
+    """Check that overlay entries share compatible units.
 
     Parameters
     ----------
-    keys:
-        Pairs of (layer label, unit key) for each data-carrying layer.
+    entries:
+        Pairs of (label, units) for each data-carrying element or layer.
 
     Returns
     -------
     :
         An error message if units are incompatible, or None if compatible.
     """
-    if len(keys) < 2:
+    if len(entries) < 2:
         return None
 
-    ref_label, ref_key = keys[0]
-    ref_kdims = dict(ref_key.kdim_units)
-
-    for label, key in keys[1:]:
-        other_kdims = dict(key.kdim_units)
-        for dim_label, ref_unit in ref_kdims.items():
-            if dim_label in other_kdims and ref_unit != other_kdims[dim_label]:
+    ref_label, ref = entries[0]
+    for label, other in entries[1:]:
+        if ref.coord_units.keys() != other.coord_units.keys():
+            return (
+                f"Cannot overlay '{ref_label}' and '{label}': "
+                f"dimension mismatch "
+                f"({set(ref.coord_units)} vs {set(other.coord_units)})"
+            )
+        for dim, ref_unit in ref.coord_units.items():
+            if ref_unit != other.coord_units[dim]:
                 return (
-                    f"Cannot overlay layers '{ref_label}' and '{label}': "
-                    f"unit mismatch for coordinate '{dim_label}' "
-                    f"({ref_unit} vs {other_kdims[dim_label]})"
+                    f"Cannot overlay '{ref_label}' and '{label}': "
+                    f"unit mismatch for coordinate '{dim}' "
+                    f"({ref_unit} vs {other.coord_units[dim]})"
                 )
-        if ref_key.vdim_unit is not None and key.vdim_unit is not None:
-            if ref_key.vdim_unit != key.vdim_unit:
-                return (
-                    f"Cannot overlay layers '{ref_label}' and '{label}': "
-                    f"value unit mismatch "
-                    f"({ref_key.vdim_unit} vs {key.vdim_unit})"
-                )
+        if ref.value_unit != other.value_unit:
+            return (
+                f"Cannot overlay '{ref_label}' and '{label}': "
+                f"value unit mismatch ({ref.value_unit} vs {other.value_unit})"
+            )
     return None
 
 
@@ -337,6 +287,8 @@ class Plotter:
     Tracks presenters via WeakSet and marks them dirty when state changes.
     This enables efficient polling-based update detection.
     """
+
+    participates_in_overlay_validation: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -361,7 +313,7 @@ class Plotter:
         """
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
-        self._overlay_unit_key: OverlayUnitKey | None = None
+        self.canvas_spec: CanvasSpec | None = None
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
@@ -373,25 +325,6 @@ class Plotter:
         # HoloViews' own aspect/data_aspect opts are not set — they conflict
         # with responsive mode in Panel containers (upstream bug).
         self._sizing_opts: dict[str, Any] = {'responsive': True}
-
-    @property
-    def overlay_unit_key(self) -> OverlayUnitKey | None:
-        """Unit signature from the last compute(), for cross-layer validation."""
-        return self._overlay_unit_key
-
-    def _extract_overlay_unit_key(
-        self, data: dict[ResultKey, sc.DataArray]
-    ) -> OverlayUnitKey | None:
-        """Extract an overlay unit key from input data.
-
-        Default implementation uses dimension coordinates and value unit from the
-        first DataArray. Subclasses with non-standard coordinate structures (e.g.,
-        ROI plotters) should override this method.
-        """
-        if not data:
-            return None
-        da = next(iter(data.values()))
-        return OverlayUnitKey.from_data_array(da)
 
     @staticmethod
     def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
@@ -566,13 +499,19 @@ class Plotter:
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
-        self._overlay_unit_key = self._extract_overlay_unit_key(data)
-
         resolver = title_resolver or TitleResolver()
         plots: list[hv.Element] = []
         try:
-            if self.layout_params.combine_mode == 'overlay':
-                _validate_overlay_units(data)
+            if self.participates_in_overlay_validation and data:
+                entries = [
+                    (key.job_id.source_name, CanvasSpec.from_data_array(da))
+                    for key, da in data.items()
+                ]
+                if self.layout_params.combine_mode == 'overlay':
+                    error = validate_canvas_spec(entries)
+                    if error is not None:
+                        raise ValueError(error)
+                self.canvas_spec = entries[0][1]
             for data_key, da in data.items():
                 label = resolver.get_legend_label(
                     data_key.job_id.source_name, data_key.output_name
