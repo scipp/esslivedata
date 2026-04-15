@@ -21,7 +21,7 @@ def test_routing_adapter_builder_with_livedata_roi_route(instrument: str) -> Non
         .build()
     )
 
-    expected_topic = stream_mapping.livedata_roi_topic
+    expected_topic = stream_mapping.topics.livedata_roi
     assert expected_topic in adapter._routes, (
         f"ROI topic '{expected_topic}' not found in adapter routes. "
         f"Available routes: {list(adapter._routes.keys())}"
@@ -43,10 +43,10 @@ def test_routing_adapter_builder_all_livedata_routes(instrument: str) -> None:
     )
 
     # Check all livedata topics are routed
-    assert stream_mapping.livedata_commands_topic in adapter._routes
-    assert stream_mapping.livedata_data_topic in adapter._routes
-    assert stream_mapping.livedata_roi_topic in adapter._routes
-    assert stream_mapping.livedata_status_topic in adapter._routes
+    assert stream_mapping.topics.livedata_commands in adapter._routes
+    assert stream_mapping.topics.livedata_data in adapter._routes
+    assert stream_mapping.topics.livedata_roi in adapter._routes
+    assert stream_mapping.topics.livedata_status in adapter._routes
 
 
 def _infra_kwargs() -> dict:

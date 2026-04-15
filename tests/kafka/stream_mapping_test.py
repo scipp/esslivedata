@@ -66,11 +66,11 @@ class TestStreamMappingFiltered:
     def test_preserves_infrastructure_topics(self) -> None:
         m = _make_mapping()
         f = m.filtered(set())
-        assert f.livedata_commands_topic == "cmd"
-        assert f.livedata_data_topic == "data"
-        assert f.livedata_responses_topic == "resp"
-        assert f.livedata_roi_topic == "roi"
-        assert f.livedata_status_topic == "status"
+        assert f.topics.livedata_commands == "cmd"
+        assert f.topics.livedata_data == "data"
+        assert f.topics.livedata_responses == "resp"
+        assert f.topics.livedata_roi == "roi"
+        assert f.topics.livedata_status == "status"
         assert f.instrument == "test"
 
     def test_logs_none_preserved(self) -> None:

@@ -120,7 +120,7 @@ class RoutingAdapterBuilder:
 
     def with_livedata_data_route(self) -> Self:
         """Adds the livedata data route."""
-        self._routes[self._stream_mapping.livedata_data_topic] = ChainedAdapter(
+        self._routes[self._stream_mapping.topics.livedata_data] = ChainedAdapter(
             first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_DATA),
             second=Da00ToScippAdapter(),
         )
@@ -128,17 +128,19 @@ class RoutingAdapterBuilder:
 
     def with_livedata_commands_route(self) -> Self:
         """Adds the livedata commands route."""
-        self._routes[self._stream_mapping.livedata_commands_topic] = CommandsAdapter()
+        self._routes[self._stream_mapping.topics.livedata_commands] = CommandsAdapter()
         return self
 
     def with_livedata_responses_route(self) -> Self:
         """Adds the livedata responses route."""
-        self._routes[self._stream_mapping.livedata_responses_topic] = ResponsesAdapter()
+        self._routes[self._stream_mapping.topics.livedata_responses] = (
+            ResponsesAdapter()
+        )
         return self
 
     def with_livedata_roi_route(self) -> Self:
         """Adds the livedata ROI route."""
-        self._routes[self._stream_mapping.livedata_roi_topic] = ChainedAdapter(
+        self._routes[self._stream_mapping.topics.livedata_roi] = ChainedAdapter(
             first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_ROI),
             second=Da00ToScippAdapter(),
         )
@@ -146,10 +148,12 @@ class RoutingAdapterBuilder:
 
     def with_run_control_route(self) -> Self:
         """Adds the run control route for filewriter run start/stop messages."""
-        self._routes[self._stream_mapping.filewriter_topic] = RunControlAdapter()
+        self._routes[self._stream_mapping.topics.filewriter] = RunControlAdapter()
         return self
 
     def with_livedata_status_route(self) -> Self:
         """Adds the livedata status route for job and service heartbeats."""
-        self._routes[self._stream_mapping.livedata_status_topic] = X5f2ToStatusAdapter()
+        self._routes[self._stream_mapping.topics.livedata_status] = (
+            X5f2ToStatusAdapter()
+        )
         return self
