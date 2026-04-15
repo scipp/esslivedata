@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 def gather_source_names(
     instrument: Instrument,
     namespace: str,
-    source_subset: set[str] | None = None,
 ) -> set[str]:
     """Collect internal stream names that specs in ``namespace`` depend on.
 
@@ -24,19 +23,12 @@ def gather_source_names(
         Instrument whose workflow specs to inspect.
     namespace:
         Only consider specs in this namespace (e.g. ``'detector_data'``).
-    source_subset:
-        If given, only include specs whose primary sources overlap with this
-        set. Their full dependencies (including aux sources) are still added.
-        Use this for per-source service splits (sharding).
     """
     names: set[str] = set()
     for spec in instrument.workflow_factory.values():
         if spec.namespace != namespace:
             continue
-        spec_sources = set(spec.source_names)
-        if source_subset is not None and not (spec_sources & source_subset):
-            continue
-        names |= spec_sources
+        names.update(spec.source_names)
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
@@ -90,7 +82,6 @@ def scope_stream_mapping(
     instrument: Instrument,
     stream_mapping: StreamMapping,
     namespace: str,
-    source_subset: set[str] | None = None,
 ) -> StreamMapping:
     """Return a stream mapping scoped to the streams needed by ``namespace``.
 
@@ -105,31 +96,7 @@ def scope_stream_mapping(
         The full (unfiltered) stream mapping.
     namespace:
         Only consider specs in this namespace (e.g. ``'detector_data'``).
-    source_subset:
-        If given, only include specs whose primary sources overlap with this
-        set. Used for sharding.
     """
-    needed = gather_source_names(instrument, namespace, source_subset=source_subset)
+    needed = gather_source_names(instrument, namespace)
     needed = resolve_stream_names(needed, instrument, stream_mapping)
     return stream_mapping.filtered(needed)
-
-
-def get_source_subset(
-    source_names: list[str],
-    num_shards: int,
-    shard: int,
-) -> set[str]:
-    """Compute the source subset for a given shard.
-
-    Parameters
-    ----------
-    source_names:
-        Ordered list of primary source names (e.g. detector names).
-    num_shards:
-        Total number of shards.
-    shard:
-        Zero-based shard index.
-    """
-    if shard >= num_shards:
-        raise ValueError(f"shard={shard} must be less than num_shards={num_shards}")
-    return set(sorted(source_names)[shard::num_shards])

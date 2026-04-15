@@ -5,7 +5,6 @@ import pytest
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.route_derivation import (
     gather_source_names,
-    get_source_subset,
     resolve_stream_names,
 )
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources, DefaultOutputs
@@ -86,73 +85,10 @@ class TestGatherSourceNames:
         result = gather_source_names(instrument_with_specs, "monitor_data")
         assert result == {"mon_1", "mon_2"}
 
-    def test_source_subset_filters_by_primary_sources(
-        self, instrument_with_specs: Instrument
-    ) -> None:
-        result = gather_source_names(
-            instrument_with_specs, "detector_data", source_subset={"det_a"}
-        )
-        # projection spec matches (det_a in source_names) -> adds all its sources + aux
-        # special_view spec matches (det_a in source_names) -> adds det_a
-        assert result == {"det_a", "det_b", "det_c", "motor_x", "motor_y"}
-
-    def test_source_subset_excludes_unrelated_specs(
-        self, instrument_with_specs: Instrument
-    ) -> None:
-        result = gather_source_names(
-            instrument_with_specs, "data_reduction", source_subset={"det_a"}
-        )
-        # reduction spec matches (det_a in source_names) -> adds det_a, det_b, mon_1,
-        # mon_2
-        assert result == {"det_a", "det_b", "mon_1", "mon_2"}
-
-    def test_source_subset_no_match(self, instrument_with_specs: Instrument) -> None:
-        result = gather_source_names(
-            instrument_with_specs, "detector_data", source_subset={"nonexistent"}
-        )
-        assert result == set()
-
     def test_no_specs(self) -> None:
         instrument = Instrument(name="empty")
         result = gather_source_names(instrument, "detector_data")
         assert result == set()
-
-
-class TestGetSourceSubset:
-    def test_single_shard(self) -> None:
-        names = ["a", "b", "c", "d", "e"]
-        result = get_source_subset(names, num_shards=1, shard=0)
-        assert result == {"a", "b", "c", "d", "e"}
-
-    def test_two_shards(self) -> None:
-        names = ["c", "a", "b", "d"]
-        shard_0 = get_source_subset(names, num_shards=2, shard=0)
-        shard_1 = get_source_subset(names, num_shards=2, shard=1)
-        # sorted: a, b, c, d -> shard 0 gets a, c; shard 1 gets b, d
-        assert shard_0 == {"a", "c"}
-        assert shard_1 == {"b", "d"}
-
-    def test_shards_are_disjoint_and_complete(self) -> None:
-        names = ["e", "d", "c", "b", "a"]
-        all_shards = [get_source_subset(names, num_shards=3, shard=i) for i in range(3)]
-        union = set().union(*all_shards)
-        assert union == set(names)
-        for i in range(3):
-            for j in range(i + 1, 3):
-                assert all_shards[i].isdisjoint(all_shards[j])
-
-    def test_shard_out_of_range(self) -> None:
-        with pytest.raises(ValueError, match="shard=2 must be less than num_shards=2"):
-            get_source_subset(["a", "b"], num_shards=2, shard=2)
-
-    def test_more_shards_than_sources(self) -> None:
-        names = ["a", "b"]
-        shard_0 = get_source_subset(names, num_shards=5, shard=0)
-        shard_1 = get_source_subset(names, num_shards=5, shard=1)
-        shard_2 = get_source_subset(names, num_shards=5, shard=2)
-        assert shard_0 == {"a"}
-        assert shard_1 == {"b"}
-        assert shard_2 == set()
 
 
 class TestResolveStreamNames:

@@ -6,7 +6,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.route_derivation import get_source_subset, scope_stream_mapping
+from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -20,21 +20,12 @@ def make_detector_service_builder(
     dev: bool = True,
     log_level: int = logging.INFO,
     group_by_pixel: bool = True,
-    num_shards: int = 1,
-    shard: int = 0,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
 
-    source_subset = (
-        get_source_subset(instrument_obj.detector_names, num_shards, shard)
-        if num_shards > 1
-        else None
-    )
-    scoped = scope_stream_mapping(
-        instrument_obj, stream_mapping, 'detector_data', source_subset=source_subset
-    )
+    scoped = scope_stream_mapping(instrument_obj, stream_mapping, 'detector_data')
 
     stream_counter = StreamCounter()
     adapter = (
@@ -69,18 +60,6 @@ def main() -> NoReturn:
         action='store_false',
         default=True,
         help='Disable pixel grouping in the preprocessor',
-    )
-    runner.parser.add_argument(
-        '--num-shards',
-        type=int,
-        default=1,
-        help='Total number of shards (1 = no sharding)',
-    )
-    runner.parser.add_argument(
-        '--shard',
-        type=int,
-        default=0,
-        help='Zero-based shard index',
     )
     runner.run()
 

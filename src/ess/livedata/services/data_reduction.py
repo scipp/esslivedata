@@ -6,7 +6,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.route_derivation import get_source_subset, scope_stream_mapping
+from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -20,21 +20,12 @@ def make_reduction_service_builder(
     dev: bool = True,
     log_level: int = logging.INFO,
     group_by_pixel: bool = True,
-    num_shards: int = 1,
-    shard: int = 0,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     instrument_config = instrument_registry[instrument]
     instrument_config.load_factories()
 
-    source_subset = (
-        get_source_subset(instrument_config.detector_names, num_shards, shard)
-        if num_shards > 1
-        else None
-    )
-    scoped = scope_stream_mapping(
-        instrument_config, stream_mapping, 'data_reduction', source_subset=source_subset
-    )
+    scoped = scope_stream_mapping(instrument_config, stream_mapping, 'data_reduction')
 
     stream_counter = StreamCounter()
     adapter = (
@@ -68,18 +59,6 @@ def main() -> NoReturn:
         action='store_false',
         default=True,
         help='Disable pixel grouping in the preprocessor',
-    )
-    runner.parser.add_argument(
-        '--num-shards',
-        type=int,
-        default=1,
-        help='Total number of shards (1 = no sharding)',
-    )
-    runner.parser.add_argument(
-        '--shard',
-        type=int,
-        default=0,
-        help='Zero-based shard index',
     )
     runner.run()
 
