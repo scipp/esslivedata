@@ -230,7 +230,7 @@ class AdaptiveMessageBatcher(MessageBatcher):
 
     The asymmetric step sizes mean two de-escalation steps undo one escalation,
     providing natural damping.  Batch lengths are quantized to integer multiples
-    of the ESS pulse period (1/14 s), ensuring clean message counts for
+    of PULSE_RATE_HZ, ensuring clean message counts for
     pulse-aligned producers.
 
     Idle periods also trigger de-escalation via a wall-clock fallback.
