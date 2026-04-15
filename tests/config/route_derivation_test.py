@@ -12,8 +12,9 @@ from ess.livedata.config.workflow_spec import AuxInput, AuxSources, DefaultOutpu
 from ess.livedata.kafka.stream_mapping import InputStreamKey, StreamMapping
 
 
-def _make_instrument_with_specs() -> Instrument:
-    """Create an instrument with specs across multiple namespaces."""
+@pytest.fixture
+def instrument_with_specs() -> Instrument:
+    """Instrument with specs across multiple namespaces."""
     instrument = Instrument(
         name="test",
         detector_names=["det_a", "det_b", "det_c"],
@@ -67,48 +68,47 @@ def _make_instrument_with_specs() -> Instrument:
 
 
 class TestGatherSourceNames:
-    def test_returns_empty_for_unknown_namespace(self) -> None:
-        instrument = _make_instrument_with_specs()
-        result = gather_source_names(instrument, "nonexistent")
+    def test_returns_empty_for_unknown_namespace(
+        self, instrument_with_specs: Instrument
+    ) -> None:
+        result = gather_source_names(instrument_with_specs, "nonexistent")
         assert result == set()
 
-    def test_detector_data_namespace(self) -> None:
-        instrument = _make_instrument_with_specs()
-        result = gather_source_names(instrument, "detector_data")
+    def test_detector_data_namespace(self, instrument_with_specs: Instrument) -> None:
+        result = gather_source_names(instrument_with_specs, "detector_data")
         assert result == {"det_a", "det_b", "det_c", "motor_x", "motor_y"}
 
-    def test_data_reduction_namespace(self) -> None:
-        instrument = _make_instrument_with_specs()
-        result = gather_source_names(instrument, "data_reduction")
+    def test_data_reduction_namespace(self, instrument_with_specs: Instrument) -> None:
+        result = gather_source_names(instrument_with_specs, "data_reduction")
         assert result == {"det_a", "det_b", "mon_1", "mon_2"}
 
-    def test_monitor_data_namespace(self) -> None:
-        instrument = _make_instrument_with_specs()
-        result = gather_source_names(instrument, "monitor_data")
+    def test_monitor_data_namespace(self, instrument_with_specs: Instrument) -> None:
+        result = gather_source_names(instrument_with_specs, "monitor_data")
         assert result == {"mon_1", "mon_2"}
 
-    def test_source_subset_filters_by_primary_sources(self) -> None:
-        instrument = _make_instrument_with_specs()
+    def test_source_subset_filters_by_primary_sources(
+        self, instrument_with_specs: Instrument
+    ) -> None:
         result = gather_source_names(
-            instrument, "detector_data", source_subset={"det_a"}
+            instrument_with_specs, "detector_data", source_subset={"det_a"}
         )
         # projection spec matches (det_a in source_names) -> adds all its sources + aux
         # special_view spec matches (det_a in source_names) -> adds det_a
         assert result == {"det_a", "det_b", "det_c", "motor_x", "motor_y"}
 
-    def test_source_subset_excludes_unrelated_specs(self) -> None:
-        instrument = _make_instrument_with_specs()
+    def test_source_subset_excludes_unrelated_specs(
+        self, instrument_with_specs: Instrument
+    ) -> None:
         result = gather_source_names(
-            instrument, "data_reduction", source_subset={"det_a"}
+            instrument_with_specs, "data_reduction", source_subset={"det_a"}
         )
         # reduction spec matches (det_a in source_names) -> adds det_a, det_b, mon_1,
         # mon_2
         assert result == {"det_a", "det_b", "mon_1", "mon_2"}
 
-    def test_source_subset_no_match(self) -> None:
-        instrument = _make_instrument_with_specs()
+    def test_source_subset_no_match(self, instrument_with_specs: Instrument) -> None:
         result = gather_source_names(
-            instrument, "detector_data", source_subset={"nonexistent"}
+            instrument_with_specs, "detector_data", source_subset={"nonexistent"}
         )
         assert result == set()
 
@@ -155,18 +155,8 @@ class TestGetSourceSubset:
         assert shard_2 == set()
 
 
-def _infra_kwargs() -> dict:
-    return {
-        "livedata_commands_topic": "cmd",
-        "livedata_data_topic": "data",
-        "livedata_responses_topic": "resp",
-        "livedata_roi_topic": "roi",
-        "livedata_status_topic": "status",
-    }
-
-
 class TestResolveStreamNames:
-    def test_known_names_pass_through(self) -> None:
+    def test_known_names_pass_through(self, infra_kwargs: dict) -> None:
         instrument = Instrument(
             name="test", detector_names=["det_a"], monitors=["mon_1"]
         )
@@ -174,12 +164,14 @@ class TestResolveStreamNames:
             instrument="test",
             detectors={InputStreamKey(topic="t", source_name="s"): "det_a"},
             monitors={InputStreamKey(topic="m", source_name="s"): "mon_1"},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         result = resolve_stream_names({"det_a", "mon_1"}, instrument, mapping)
         assert result == {"det_a", "mon_1"}
 
-    def test_unknown_detector_name_expands_to_all_detectors(self) -> None:
+    def test_unknown_detector_name_expands_to_all_detectors(
+        self, infra_kwargs: dict
+    ) -> None:
         """Bifrost-like case: logical name not in LUT, but in detector_names."""
         instrument = Instrument(name="test", detector_names=["unified"], monitors=[])
         mapping = StreamMapping(
@@ -189,12 +181,14 @@ class TestResolveStreamNames:
                 InputStreamKey(topic="t2", source_name="s"): "phys_1",
             },
             monitors={},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         result = resolve_stream_names({"unified"}, instrument, mapping)
         assert result == {"phys_0", "phys_1"}
 
-    def test_unknown_monitor_name_expands_to_all_monitors(self) -> None:
+    def test_unknown_monitor_name_expands_to_all_monitors(
+        self, infra_kwargs: dict
+    ) -> None:
         instrument = Instrument(
             name="test", detector_names=[], monitors=["logical_mon"]
         )
@@ -205,12 +199,12 @@ class TestResolveStreamNames:
                 InputStreamKey(topic="m1", source_name="s"): "phys_mon_0",
                 InputStreamKey(topic="m2", source_name="s"): "phys_mon_1",
             },
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         result = resolve_stream_names({"logical_mon"}, instrument, mapping)
         assert result == {"phys_mon_0", "phys_mon_1"}
 
-    def test_mix_of_known_and_unknown(self) -> None:
+    def test_mix_of_known_and_unknown(self, infra_kwargs: dict) -> None:
         instrument = Instrument(name="test", detector_names=["unified"], monitors=[])
         mapping = StreamMapping(
             instrument="test",
@@ -219,15 +213,15 @@ class TestResolveStreamNames:
             },
             monitors={},
             logs={InputStreamKey(topic="l", source_name="s"): "motor_x"},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         result = resolve_stream_names({"unified", "motor_x"}, instrument, mapping)
         assert result == {"phys_0", "motor_x"}
 
-    def test_empty_needed(self) -> None:
+    def test_empty_needed(self, infra_kwargs: dict) -> None:
         instrument = Instrument(name="test")
         mapping = StreamMapping(
-            instrument="test", detectors={}, monitors={}, **_infra_kwargs()
+            instrument="test", detectors={}, monitors={}, **infra_kwargs
         )
         result = resolve_stream_names(set(), instrument, mapping)
         assert result == set()

@@ -49,23 +49,15 @@ def test_routing_adapter_builder_all_livedata_routes(instrument: str) -> None:
     assert stream_mapping.topics.livedata_status in adapter._routes
 
 
-def _infra_kwargs() -> dict:
-    return {
-        "livedata_commands_topic": "cmd",
-        "livedata_data_topic": "data",
-        "livedata_responses_topic": "resp",
-        "livedata_roi_topic": "roi",
-        "livedata_status_topic": "status",
-    }
-
-
 class TestWithRoutesFromMapping:
-    def test_adds_detector_route_when_detectors_present(self) -> None:
+    def test_adds_detector_route_when_detectors_present(
+        self, infra_kwargs: dict
+    ) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={InputStreamKey(topic="det", source_name="s"): "d"},
             monitors={},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
@@ -74,12 +66,12 @@ class TestWithRoutesFromMapping:
         )
         assert "det" in adapter._routes
 
-    def test_adds_monitor_route_when_monitors_present(self) -> None:
+    def test_adds_monitor_route_when_monitors_present(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={},
             monitors={InputStreamKey(topic="mon", source_name="s"): "m"},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
@@ -88,13 +80,13 @@ class TestWithRoutesFromMapping:
         )
         assert "mon" in adapter._routes
 
-    def test_adds_log_route_when_logs_present(self) -> None:
+    def test_adds_log_route_when_logs_present(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={},
             monitors={},
             logs={InputStreamKey(topic="log", source_name="s"): "l"},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
@@ -103,13 +95,13 @@ class TestWithRoutesFromMapping:
         )
         assert "log" in adapter._routes
 
-    def test_adds_area_detector_route_when_present(self) -> None:
+    def test_adds_area_detector_route_when_present(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={},
             monitors={},
             area_detectors={InputStreamKey(topic="area", source_name="s"): "a"},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
@@ -118,12 +110,12 @@ class TestWithRoutesFromMapping:
         )
         assert "area" in adapter._routes
 
-    def test_skips_empty_luts(self) -> None:
+    def test_skips_empty_luts(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={},
             monitors={},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
@@ -132,12 +124,12 @@ class TestWithRoutesFromMapping:
         )
         assert adapter._routes == {}
 
-    def test_does_not_add_infrastructure_routes(self) -> None:
+    def test_does_not_add_infrastructure_routes(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
             instrument="test",
             detectors={InputStreamKey(topic="det", source_name="s"): "d"},
             monitors={},
-            **_infra_kwargs(),
+            **infra_kwargs,
         )
         adapter = (
             RoutingAdapterBuilder(stream_mapping=mapping)
