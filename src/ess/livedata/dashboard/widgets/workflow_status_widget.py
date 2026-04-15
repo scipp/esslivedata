@@ -25,6 +25,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
 from ..format_utils import extract_error_summary
+from ..job_orchestrator import StoppedReason
 from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
@@ -737,10 +738,14 @@ class WorkflowStatusWidget:
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
+            reason = self._orchestrator.get_stopped_reason(self._workflow_id)
+            timing = (
+                'Backend shut down' if reason == StoppedReason.backend_shutdown else ''
+            )
             return (
                 'STOPPED',
                 WorkflowWidgetStyles.STATUS_COLORS['stopped'],
-                '',
+                timing,
                 None,
                 [],
             )
@@ -776,11 +781,16 @@ class WorkflowStatusWidget:
                 error_summary=error_summary,
             )
 
-            # Status: priority error > warning > active
+            # Status: priority error > warning > stopped > active
             if job_status.state == JobState.error:
                 worst_state = JobState.error
             elif job_status.state == JobState.warning and worst_state != JobState.error:
                 worst_state = JobState.warning
+            elif job_status.state == JobState.stopped and worst_state not in (
+                JobState.error,
+                JobState.warning,
+            ):
+                worst_state = JobState.stopped
 
             # Timing: track earliest start
             start = job_status.start_time
@@ -830,7 +840,7 @@ class WorkflowStatusWidget:
         if earliest_start is None:
             timing_text = 'Starting...'
         else:
-            start_dt = datetime.fromtimestamp(earliest_start / 1e9, tz=UTC)
+            start_dt = earliest_start.to_datetime(tz=UTC)
             now = datetime.now(tz=UTC)
             duration_secs = int((now - start_dt).total_seconds())
 

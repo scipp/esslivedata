@@ -8,7 +8,15 @@ import pytest
 from streaming_data_types import deserialise_x5f2, serialise_x5f2
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
-from ess.livedata.core.job import JobState, JobStatus, ServiceState, ServiceStatus
+from ess.livedata.core.job import (
+    JobState,
+    JobStatus,
+    ServiceState,
+    ServiceStatus,
+    StreamStat,
+    StreamStats,
+)
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.x5f2_compat import (
     JobStatusJSON,
     JobStatusMessage,
@@ -55,9 +63,8 @@ def make_service_status(**overrides) -> ServiceStatus:
         "namespace": "data_reduction",
         "worker_id": str(uuid.uuid4()),
         "state": ServiceState.running,
-        "started_at": 1000000000,
+        "started_at": Timestamp.from_ns(1000000000),
         "active_job_count": 3,
-        "messages_processed": 5000,
         "error": None,
     }
     defaults.update(overrides)
@@ -170,15 +177,15 @@ class TestJobStatusPayload:
             error="Test error",
             job_id=job_id,
             workflow_id="instrument/namespace/workflow/1",
-            start_time=1000000000,
-            end_time=2000000000,
+            start_time=Timestamp.from_ns(1000000000),
+            end_time=Timestamp.from_ns(2000000000),
         )
 
         assert message.state == JobState.warning
         assert message.warning == "Test warning"
         assert message.error == "Test error"
-        assert message.start_time == 1000000000
-        assert message.end_time == 2000000000
+        assert message.start_time == Timestamp.from_ns(1000000000)
+        assert message.end_time == Timestamp.from_ns(2000000000)
 
 
 class TestJobStatusMessage:
@@ -223,11 +230,16 @@ class TestJobStatusMessage:
 
     def test_from_job_status_with_times(self):
         """Test converting JobStatus with start/end times to JobStatusMessage."""
-        job_status = make_job_status(start_time=1000000000, end_time=2000000000)
+        job_status = make_job_status(
+            start_time=Timestamp.from_ns(1000000000),
+            end_time=Timestamp.from_ns(2000000000),
+        )
         status_msg = JobStatusMessage.from_job_status(job_status)
 
-        assert status_msg.status_json.message.start_time == 1000000000
-        assert status_msg.status_json.message.end_time == 2000000000
+        assert status_msg.status_json.message.start_time == Timestamp.from_ns(
+            1000000000
+        )
+        assert status_msg.status_json.message.end_time == Timestamp.from_ns(2000000000)
 
     def test_to_job_status_minimal(self):
         """Test converting minimal JobStatusMessage to JobStatus."""
@@ -273,8 +285,8 @@ class TestJobStatusMessage:
                     error="Test error",
                     job_id=job_id,
                     workflow_id=str(workflow_id),
-                    start_time=1000000000,
-                    end_time=2000000000,
+                    start_time=Timestamp.from_ns(1000000000),
+                    end_time=Timestamp.from_ns(2000000000),
                 ),
             ),
         )
@@ -286,8 +298,8 @@ class TestJobStatusMessage:
         assert job_status.state == JobState.warning
         assert job_status.error_message == "Test error"
         assert job_status.warning_message == "Test warning"
-        assert job_status.start_time == 1000000000
-        assert job_status.end_time == 2000000000
+        assert job_status.start_time == Timestamp.from_ns(1000000000)
+        assert job_status.end_time == Timestamp.from_ns(2000000000)
 
     def test_service_id_validation_from_string(self):
         """Test that service_id field accepts string input and converts to ServiceId."""
@@ -401,7 +413,10 @@ class TestRoundTripConversion:
 
     def test_round_trip_with_timestamps(self):
         """Test round-trip conversion with start and end times."""
-        original = make_job_status(start_time=1000000000, end_time=2000000000)
+        original = make_job_status(
+            start_time=Timestamp.from_ns(1000000000),
+            end_time=Timestamp.from_ns(2000000000),
+        )
 
         status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
@@ -482,8 +497,12 @@ class TestX5F2Integration:
     def test_x5f2_round_trip_with_timestamps(self):
         """Test x5f2 round-trip with timestamps."""
         original = make_job_status(
-            start_time=1640995200000000000,  # 2022-01-01 00:00:00 UTC in nanoseconds
-            end_time=1640995800000000000,  # 2022-01-01 00:10:00 UTC in nanoseconds
+            start_time=Timestamp.from_ns(
+                1640995200000000000
+            ),  # 2022-01-01 00:00:00 UTC in nanoseconds
+            end_time=Timestamp.from_ns(
+                1640995800000000000
+            ),  # 2022-01-01 00:10:00 UTC in nanoseconds
         )
 
         x5f2_data = job_status_to_x5f2(original)
@@ -535,7 +554,9 @@ class TestX5F2Integration:
     def test_x5f2_data_compatibility(self):
         """Test that x5f2 data is compatible with direct streaming_data_types usage."""
         job_status = make_job_status(
-            state=JobState.active, start_time=1000000000, end_time=2000000000
+            state=JobState.active,
+            start_time=Timestamp.from_ns(1000000000),
+            end_time=Timestamp.from_ns(2000000000),
         )
 
         # Serialize using our function
@@ -616,10 +637,6 @@ class TestServiceStateToNicosStatus:
             == NicosStatus.OK
         )
         assert (
-            service_state_to_nicos_status_constant(ServiceState.stopping)
-            == NicosStatus.DISABLED
-        )
-        assert (
             service_state_to_nicos_status_constant(ServiceState.error)
             == NicosStatus.ERROR
         )
@@ -656,9 +673,8 @@ class TestServiceServiceId:
             namespace="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
-            started_at=1000000000,
+            started_at=Timestamp.from_ns(1000000000),
             active_job_count=3,
-            messages_processed=1000,
         )
         service_id = ServiceServiceId.from_service_status(status)
 
@@ -705,9 +721,8 @@ class TestServiceStatusPayload:
             namespace="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
-            started_at=1000000000,
+            started_at=Timestamp.from_ns(1000000000),
             active_job_count=5,
-            messages_processed=10000,
             error=None,
         )
 
@@ -725,9 +740,8 @@ class TestServiceStatusPayload:
             namespace="data_reduction",
             worker_id=str(uuid.uuid4()),
             state=ServiceState.error,
-            started_at=1000000000,
+            started_at=Timestamp.from_ns(1000000000),
             active_job_count=0,
-            messages_processed=5000,
             error="Connection lost to Kafka",
         )
 
@@ -776,7 +790,6 @@ class TestServiceStatusMessage:
         assert converted.state == original.state
         assert converted.started_at == original.started_at
         assert converted.active_job_count == original.active_job_count
-        assert converted.messages_processed == original.messages_processed
 
 
 class TestServiceStatusX5F2Integration:
@@ -790,6 +803,38 @@ class TestServiceStatusX5F2Integration:
         assert isinstance(x5f2_data, bytes)
         assert len(x5f2_data) > 0
 
+    def test_service_status_to_x5f2_accepts_timestamp_now(self):
+        """Regression: OrchestratingProcessor builds ServiceStatus with
+        ``Timestamp.now()``. Serialization must accept the real domain type,
+        not only ints. See log at 2026-04-07 where the main loop died on the
+        first heartbeat after PR #829 introduced Timestamp."""
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id=str(uuid.uuid4()),
+            state=ServiceState.running,
+            started_at=Timestamp.now(),
+            active_job_count=0,
+        )
+        # Must not raise.
+        data = service_status_to_x5f2(status)
+        restored = x5f2_to_service_status(data)
+        assert restored.started_at == status.started_at
+        assert isinstance(restored.started_at, Timestamp)
+
+    def test_job_status_to_x5f2_accepts_timestamp_now(self):
+        """Regression sibling for JobStatusPayload start_time/end_time."""
+        status = make_job_status(
+            start_time=Timestamp.now(),
+            end_time=Timestamp.now(),
+        )
+        data = job_status_to_x5f2(status)
+        restored = x5f2_to_job_status(data)
+        assert isinstance(restored.start_time, Timestamp)
+        assert isinstance(restored.end_time, Timestamp)
+        assert restored.start_time == status.start_time
+        assert restored.end_time == status.end_time
+
     def test_service_status_x5f2_round_trip(self):
         """Test round-trip conversion through x5f2."""
         original = make_service_status()
@@ -802,7 +847,7 @@ class TestServiceStatusX5F2Integration:
         assert converted.state == original.state
         assert converted.started_at == original.started_at
         assert converted.active_job_count == original.active_job_count
-        assert converted.messages_processed == original.messages_processed
+
         assert converted.error == original.error
 
     def test_service_status_x5f2_with_error(self):
@@ -864,6 +909,20 @@ class TestServiceStatusX5F2Integration:
             x5f2_data = service_status_to_x5f2(original)
             converted = x5f2_to_service_status(x5f2_data)
             assert converted.state == state, f"Failed for state {state}"
+
+    def test_service_status_x5f2_batch_interval_round_trip(self):
+        """Test that batch_interval_s survives x5f2 encode/decode."""
+        original = make_service_status(batch_interval_s=4.0)
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.batch_interval_s == 4.0
+
+    def test_service_status_x5f2_batch_interval_default(self):
+        """Test that batch_interval_s defaults to 1.0 for backward compatibility."""
+        original = make_service_status()
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.batch_interval_s == 1.0
 
 
 class TestX5f2ToStatusDiscriminator:
@@ -946,9 +1005,8 @@ class TestX5f2ToStatusDiscriminator:
             namespace="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
-            started_at=1000000000,
+            started_at=Timestamp.from_ns(1000000000),
             active_job_count=3,
-            messages_processed=5000,
         )
 
         x5f2_data = service_status_to_x5f2(service_status)
@@ -959,3 +1017,61 @@ class TestX5f2ToStatusDiscriminator:
         assert result.namespace == service_status.namespace
         assert result.worker_id == service_status.worker_id
         assert result.state == service_status.state
+
+
+class TestStreamStatsX5F2RoundTrip:
+    """Test stream_stats field serialization through x5f2."""
+
+    def test_round_trip_with_no_stream_stats(self):
+        """ServiceStatus without stream_stats round-trips with None."""
+        original = make_service_status()
+        assert original.stream_stats is None
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+        assert converted.stream_stats is None
+
+    def test_round_trip_with_stream_stats(self):
+        """ServiceStatus with stream_stats survives x5f2 round-trip."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(topic="t1", source_name="s1", stream="mapped_1", count=100),
+                StreamStat(topic="t2", source_name="s2", stream=None, count=5),
+            ),
+        )
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.window_seconds == 30.0
+        assert len(converted.stream_stats.streams) == 2
+        assert converted.stream_stats.streams[0] == stats.streams[0]
+        assert converted.stream_stats.streams[1] == stats.streams[1]
+
+    def test_round_trip_empty_streams(self):
+        """StreamStats with empty streams list round-trips correctly."""
+        stats = StreamStats(window_seconds=30.0, streams=())
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.streams == ()
+
+    def test_discriminator_preserves_stream_stats(self):
+        """x5f2_to_status discriminator preserves stream_stats on ServiceStatus."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t1", source_name="s1", stream="s1", count=42),),
+        )
+        original = make_service_status(stream_stats=stats)
+        x5f2_data = service_status_to_x5f2(original)
+        result = x5f2_to_status(x5f2_data)
+
+        assert isinstance(result, ServiceStatus)
+        assert result.stream_stats is not None
+        assert result.stream_stats.streams[0].count == 42

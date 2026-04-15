@@ -64,6 +64,10 @@ def test_can_configure_and_stop_detector_workflow(
     # No ack when message_id not set
     assert len(sink.messages) == 0
 
+    if instrument == 'loki':
+        # LOKI rear bank consumes the f144 detector_carriage position;
+        # the workflow refuses to produce output until a value is seen.
+        app.publish_log_message(source_name='detector_carriage', time=1, value=5000.0)
     app.publish_events(size=2000, time=2)
     service.step()
     # Each workflow call returns 10 results: cumulative, current,

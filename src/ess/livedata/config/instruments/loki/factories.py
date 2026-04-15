@@ -22,7 +22,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         TransmissionRun,
     )
-    from ess.reduce.time_of_flight.types import TofLookupTableFilename
+    from ess.reduce.unwrap import LookupTableFilename
     from ess.sans import types as sans_types
     from ess.sans.types import (
         BeamCenter,
@@ -51,11 +51,13 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
+    from .specs import LOKI_DYNAMIC_TRANSFORMS
+
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
-    def _resolve_tof_lookup_table_filename() -> str:
-        """Resolve TOF lookup table filename lazily to avoid eager downloads."""
-        return str(ess.loki.data.loki_tof_lookup_table_no_choppers())
+    def _resolve_lookup_table_filename() -> str:
+        """Resolve lookup table filename lazily to avoid eager downloads."""
+        return str(ess.loki.data.loki_lookup_table_no_choppers())
 
     def _make_base_workflow() -> LokiWorkflow:
         """Create the base LokiWorkflow for I(Q) reduction.
@@ -66,7 +68,7 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        wf[TofLookupTableFilename] = _resolve_tof_lookup_table_filename()
+        wf[LookupTableFilename] = _resolve_lookup_table_filename()
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -100,6 +102,11 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
+        # Drive the rear bank's NeXus 'detector_carriage' transformation
+        # from the live f144 carriage readback. The mapping is shared with
+        # loki/specs.py so the spec routes the stream only to the consuming
+        # source.
+        dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
@@ -109,12 +116,12 @@ def setup_factories(instrument: Instrument) -> None:
         source_name: str, params: DetectorViewParams
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
-        tof_lookup_table_filename = None
-        if params.coordinate_mode.mode in ('tof', 'wavelength'):
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+        lookup_table_filename = None
+        if params.coordinate_mode.mode == 'wavelength':
+            lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
-            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
@@ -122,18 +129,14 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
-        """Factory for LOKI monitor workflow with TOF lookup table support."""
+        """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
-        if mode == 'wavelength':
-            raise NotImplementedError(
-                "wavelength mode not yet implemented for monitors"
-            )
 
-        tof_lookup_table_filename = None
+        lookup_table_filename = None
         geometry_filename = None
 
-        if mode == 'tof':
-            tof_lookup_table_filename = _resolve_tof_lookup_table_filename()
+        if mode == 'wavelength':
+            lookup_table_filename = _resolve_lookup_table_filename()
             geometry_filename = _nexus_geometry_filename
 
         return create_monitor_workflow(
@@ -141,7 +144,7 @@ def setup_factories(instrument: Instrument) -> None:
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            tof_lookup_table_filename=tof_lookup_table_filename,
+            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 

@@ -15,6 +15,8 @@ from typing import Any, TypeVar
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ess.livedata.core.timestamp import Timestamp
+
 T = TypeVar('T')
 
 JobNumber = uuid.UUID
@@ -354,8 +356,8 @@ class JobSchedule:
     of the raw data being processed (as opposed to when it should be processed).
     """
 
-    start_time: int | None = None  # When job should start processing
-    end_time: int | None = None  # When job should stop (None = no limit)
+    start_time: Timestamp | None = None  # When job should start processing
+    end_time: Timestamp | None = None  # When job should stop (None = no limit)
 
     def __post_init__(self) -> None:
         """Validate the schedule configuration."""
@@ -369,7 +371,7 @@ class JobSchedule:
                 f"{self.start_time}, or start_time must be None (immediate start)"
             )
 
-    def should_start(self, current_time: int) -> bool:
+    def should_start(self, current_time: Timestamp) -> bool:
         """
         Check if the job should start based on the current time.
 

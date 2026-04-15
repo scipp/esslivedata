@@ -27,9 +27,15 @@ def test_sync_scheduler_flag_is_registered():
     assert args.sync_scheduler is True
 
 
-def test_sync_scheduler_flag_defaults_to_false():
+def test_sync_scheduler_flag_defaults_to_true():
     runner = _make_runner()
     args = runner.parser.parse_args(['--instrument', 'dummy'])
+    assert args.sync_scheduler is True
+
+
+def test_sync_scheduler_can_be_disabled():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--no-sync-scheduler', '--instrument', 'dummy'])
     assert args.sync_scheduler is False
 
 
@@ -44,10 +50,10 @@ def test_job_threads_flag_is_registered():
     assert args.job_threads == 5
 
 
-def test_job_threads_flag_defaults_to_one():
+def test_job_threads_flag_defaults_to_five():
     runner = _make_runner()
     args = runner.parser.parse_args(['--instrument', 'dummy'])
-    assert args.job_threads == 1
+    assert args.job_threads == 5
 
 
 def test_sciline_with_sync_pool_runs_on_calling_thread():

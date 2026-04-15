@@ -10,7 +10,7 @@ from pathlib import Path
 import panel as pn
 from holoviews import Dimension
 
-from ess.livedata import ServiceBase
+from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
@@ -208,8 +208,14 @@ class DashboardBase(ServiceBase, ABC):
         # browser heartbeat JavaScript to run). Placing it in the sidebar
         # avoids adding a wrapping Column around the main content, which
         # causes layout overflow and a vertical scrollbar.
+        version_label = pn.pane.HTML(
+            f'<div style="font-size: 11px; color: #888; padding: 10px;">'
+            f'v{format_version(__version__)}</div>',
+        )
         sidebar_with_heartbeat = pn.Column(
             sidebar_content,
+            pn.Spacer(),
+            version_label,
             session_updater.heartbeat_widget,
         )
 

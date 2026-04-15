@@ -14,6 +14,7 @@ from ess.livedata.handlers.detector_data_handler import (
     get_nexus_geometry_filename,
 )
 from ess.livedata.handlers.group_by_pixel import GroupByPixel
+from ess.livedata.handlers.to_nxlog import ToNXlog
 
 
 def get_instrument(instrument_name: str) -> Instrument:
@@ -117,11 +118,6 @@ def test_factory_returns_none_for_unknown_stream_kinds() -> None:
     instrument = get_instrument('dummy')
     factory = DetectorHandlerFactory(instrument=instrument)
 
-    # Try various stream kinds that should not be handled
-    unknown_stream_id = StreamId(kind=StreamKind.LOG, name='some_log')
-    preprocessor = factory.make_preprocessor(unknown_stream_id)
-    assert preprocessor is None
-
     config_stream_id = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='config')
     preprocessor = factory.make_preprocessor(config_stream_id)
     assert preprocessor is None
@@ -144,3 +140,42 @@ def test_factory_returns_none_for_unconfigured_detectors() -> None:
 
     # Should return None to indicate this detector should be skipped
     assert preprocessor is None
+
+
+class TestDetectorHandlerFactoryLogStreams:
+    """Tests for StreamKind.LOG handling in DetectorHandlerFactory."""
+
+    @pytest.fixture
+    def instrument_with_logs(self):
+        instrument = Instrument(name='test_instrument', detector_names=['det1'])
+        instrument.configure_detector(
+            'det1',
+            detector_number=sc.arange('detector_number', 0, 10, unit=None),
+        )
+        instrument.f144_attribute_registry = {
+            'position_sensor': {
+                'value': {'shape': [], 'dtype': 'float'},
+                'timestamp': {'shape': [], 'dtype': 'uint64'},
+                'offset': 0.0,
+            },
+        }
+        return instrument
+
+    def test_log_configured_returns_to_nxlog(self, instrument_with_logs):
+        factory = DetectorHandlerFactory(instrument=instrument_with_logs)
+        stream_id = StreamId(kind=StreamKind.LOG, name='position_sensor')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert isinstance(preprocessor, ToNXlog)
+
+    def test_log_unconfigured_returns_none(self, instrument_with_logs):
+        factory = DetectorHandlerFactory(instrument=instrument_with_logs)
+        stream_id = StreamId(kind=StreamKind.LOG, name='unknown_sensor')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert preprocessor is None
+
+    def test_log_returns_none_when_no_registry(self):
+        instrument = get_instrument('dummy')
+        factory = DetectorHandlerFactory(instrument=instrument)
+        stream_id = StreamId(kind=StreamKind.LOG, name='some_log')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert preprocessor is None

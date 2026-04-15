@@ -180,7 +180,7 @@ class TestFullHistoryExtractor:
         # The datetime should be shifted by the local timezone offset
         tz_offset_ns = get_local_timezone_offset_ns()
         expected_first = sc.epoch(unit='ns') + sc.scalar(
-            ns_epoch + tz_offset_ns, unit='ns', dtype='int64'
+            ns_epoch + tz_offset_ns.to_ns(), unit='ns', dtype='int64'
         )
         assert result.coords['time'][0] == expected_first
 

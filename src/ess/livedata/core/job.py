@@ -5,19 +5,20 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import scipp as sc
 
 from ess.livedata.handlers.workflow_factory import Workflow
 
 from ..config.workflow_spec import JobId, ResultKey, WorkflowId
+from .timestamp import Timestamp
 
 
 @dataclass(slots=True, kw_only=True)
 class JobData:
-    start_time: int
-    end_time: int
+    start_time: Timestamp
+    end_time: Timestamp
     primary_data: dict[str, Any]
     aux_data: dict[str, Any]
 
@@ -35,8 +36,8 @@ class JobResult:
     job_id: JobId
     workflow_id: WorkflowId
     # Should this be included in the data instead?
-    start_time: int | None
-    end_time: int | None
+    start_time: Timestamp | None
+    end_time: Timestamp | None
     data: sc.DataGroup | None = None
     error_message: str | None = None
     warning_message: str | None = None
@@ -63,8 +64,8 @@ class JobStatus:
     state: JobState
     error_message: str | None = None
     warning_message: str | None = None
-    start_time: int | None = None
-    end_time: int | None = None
+    start_time: Timestamp | None = None
+    end_time: Timestamp | None = None
 
     @property
     def has_error(self) -> bool:
@@ -96,6 +97,7 @@ class JobState(StrEnum):
     finishing = "finishing"
     error = "error"
     warning = "warning"
+    stopped = "stopped"
 
 
 class ServiceState(StrEnum):
@@ -103,9 +105,35 @@ class ServiceState(StrEnum):
 
     starting = auto()  # Service initializing
     running = auto()  # Normal operation
-    stopping = auto()  # Graceful shutdown in progress
-    stopped = auto()  # Graceful shutdown completed
+    stopped = auto()  # Service shut down
     error = auto()  # Service encountered fatal error
+
+
+@dataclass(frozen=True, slots=True)
+class StreamStat:
+    """Message count for a single (topic, source_name) combination."""
+
+    topic: str
+    source_name: str
+    stream: str | None  # Resolved stream name, or None if unmapped
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StreamStats:
+    """Per-stream message counts collected over a time window."""
+
+    window_seconds: float
+    streams: tuple[StreamStat, ...]
+
+
+@runtime_checkable
+class StreamStatsProvider(Protocol):
+    """Provides accumulated per-stream message counts."""
+
+    def drain(self, window_seconds: float) -> StreamStats:
+        """Return accumulated stats and reset counters."""
+        ...
 
 
 @dataclass
@@ -116,14 +144,16 @@ class ServiceStatus:
     namespace: str
     worker_id: str  # UUID as string
     state: ServiceState
-    started_at: int  # Nanoseconds since epoch
+    started_at: Timestamp
     active_job_count: int
-    messages_processed: int
+    version: str = '0.0.0'
     error: str | None = None
+    batch_interval_s: float = 1.0
+    stream_stats: StreamStats | None = None
 
 
 def _add_time_coords(
-    data: sc.DataGroup, start_time: int | None, end_time: int | None
+    data: sc.DataGroup, start_time: Timestamp | None, end_time: Timestamp | None
 ) -> sc.DataGroup:
     """
     Add start_time and end_time as 0-D coordinates to all DataArrays in a DataGroup.
@@ -131,20 +161,32 @@ def _add_time_coords(
     These coordinates provide temporal provenance for each output, enabling lag
     calculation in the dashboard (lag = current_time - end_time).
 
-    DataArrays that already have start_time or end_time coordinates are skipped.
-    This allows workflows to set their own time coords for outputs that represent
-    different time ranges (e.g., "current" outputs that only cover the period
-    since the last finalize, not the entire job duration).
+    DataArrays are skipped in two cases:
+
+    - Already have start_time or end_time coordinates. This allows workflows to
+      set their own time coords for outputs that represent different time ranges
+      (e.g., "current" outputs that only cover the period since the last finalize,
+      not the entire job duration).
+    - Have a 'time' coordinate. A 'time' coordinate means the data carries its
+      own timestamps (e.g., timeseries log data), making start_time/end_time
+      redundant. Adding scalar start_time/end_time to such data would also cause
+      a dimension mismatch in TemporalBuffer, which accumulates data along the
+      'time' dimension.
     """
     if start_time is None or end_time is None:
         return data
-    start_coord = sc.scalar(start_time, unit='ns')
-    end_coord = sc.scalar(end_time, unit='ns')
+    start_coord = start_time.to_scipp()
+    end_coord = end_time.to_scipp()
 
     def maybe_add_coords(val: sc.DataArray) -> sc.DataArray:
         # Skip if workflow already set time coords - we have no idea what they
         # mean, and adding our own would create an inconsistent pair.
         if 'start_time' in val.coords or 'end_time' in val.coords:
+            return val
+        # Skip if data carries a 'time' coordinate. A 'time' coordinate means
+        # the data has its own timestamps (e.g., timeseries log data), making
+        # start_time/end_time redundant.
+        if 'time' in val.coords:
             return val
         return val.assign_coords(start_time=start_coord, end_time=end_coord)
 
@@ -189,8 +231,8 @@ class Job:
         self._job_id = job_id
         self._workflow_id = workflow_id
         self._processor = processor
-        self._start_time: int | None = None
-        self._end_time: int | None = None
+        self._start_time: Timestamp | None = None
+        self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
@@ -215,11 +257,11 @@ class Job:
         return self._workflow_id
 
     @property
-    def start_time(self) -> int | None:
+    def start_time(self) -> Timestamp | None:
         return self._start_time
 
     @property
-    def end_time(self) -> int | None:
+    def end_time(self) -> Timestamp | None:
         return self._end_time
 
     @property

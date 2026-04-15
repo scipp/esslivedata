@@ -5,14 +5,19 @@ import uuid
 import pytest
 
 from ess.livedata.config.instrument import Instrument
-from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.config.workflow_spec import AuxSources, JobId
 from ess.livedata.handlers.detector_view_specs import (
     CoordinateModeSettings,
     DetectorROIAuxSources,
     DetectorViewParams,
 )
 from ess.livedata.handlers.workflow_factory import SpecHandle
-from ess.livedata.parameter_models import TimeUnit, TOARange, TOFRange
+from ess.livedata.parameter_models import (
+    TimeUnit,
+    TOARange,
+    WavelengthRangeFilter,
+    WavelengthUnit,
+)
 
 
 class TestRegisterDetectorViewSpecs:
@@ -189,6 +194,38 @@ class TestRegisterDetectorViewSpecs:
         assert 'ess.reduce.live' not in sys.modules
         assert 'ess.reduce.live.raw' not in sys.modules
 
+    def test_default_uses_detector_roi_aux_sources(self):
+        """Test that not passing aux_sources defaults to DetectorROIAuxSources."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
+
+    def test_custom_aux_sources_overrides_default(self):
+        """Test that passing aux_sources uses the provided spec."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        custom_aux = AuxSources({'position': 'trans_20'})
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+            aux_sources=custom_aux,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.aux_sources is custom_aux
+
 
 class TestDetectorROIAuxSources:
     """Tests for DetectorROIAuxSources auxiliary source model."""
@@ -280,12 +317,14 @@ class TestDetectorViewParamsGetActiveRange:
         assert high.unit == unit.value
 
     @pytest.mark.parametrize(
-        'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
+        'unit', [WavelengthUnit.ANGSTROM, WavelengthUnit.NANOMETER]
     )
-    def test_tof_range_preserves_user_unit(self, unit: TimeUnit):
+    def test_wavelength_range_preserves_user_unit(self, unit: WavelengthUnit):
         params = DetectorViewParams(
-            coordinate_mode=CoordinateModeSettings(mode='tof'),
-            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=unit),
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+            wavelength_range=WavelengthRangeFilter(
+                enabled=True, start=1.0, stop=5.0, unit=unit
+            ),
         )
         range_filter = params.get_active_range()
         assert range_filter is not None

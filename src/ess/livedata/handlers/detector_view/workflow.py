@@ -10,10 +10,12 @@ workflow for detector view data reduction.
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Literal
 
 import sciline
 import scipp as sc
+import scippnexus as snx
 from ess.reduce.live.raw import (
     DetectorViewResolution,
     PositionNoiseReplicaCount,
@@ -25,8 +27,9 @@ from ess.reduce.live.raw import (
     position_noise_for_cylindrical_pixel,
     position_with_noisy_replicas,
 )
-from ess.reduce.nexus.types import SampleRun
-from ess.reduce.time_of_flight import GenericTofWorkflow
+from ess.reduce.nexus.types import NeXusComponent, NeXusTransformationChain, SampleRun
+from ess.reduce.nexus.workflow import get_transformation_chain
+from ess.reduce.unwrap import GenericUnwrapWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
 from .providers import (
@@ -38,7 +41,7 @@ from .providers import (
     detector_image,
     get_screen_metadata,
     project_raw_detector,
-    project_tof_detector,
+    project_wavelength_detector,
 )
 from .roi import (
     precompute_roi_polygon_masks,
@@ -56,8 +59,64 @@ from .types import (
     LogicalTransform,
     ProjectionType,
     ReductionDim,
+    TransformName,
+    TransformValue,
+    TransformValueLog,
     UsePixelWeighting,
 )
+
+
+def get_transformation_chain_with_value(
+    detector: NeXusComponent[snx.NXdetector, SampleRun],
+    transform_value: TransformValue,
+) -> NeXusTransformationChain[snx.NXdetector, SampleRun]:
+    """Inject a live value into one entry of the detector transformation chain.
+
+    Replaces essreduce's ``get_transformation_chain`` so that a runtime
+    f144 stream value drives the detector position. The baked-in value
+    from the reference geometry file is intentionally never used: it may
+    be stale or invalid, and a wrong result is worse than no result.
+    """
+    chain = get_transformation_chain(detector)
+    if transform_value.name not in chain.transformations:
+        raise KeyError(
+            f"Transformation entry {transform_value.name!r} not found in chain. "
+            f"Available entries: {sorted(chain.transformations.keys())}"
+        )
+    # Copy so we don't leak changes back into the cached NeXusComponent.
+    chain = deepcopy(chain)
+    chain.transformations[transform_value.name].value = transform_value.value
+    return chain
+
+
+def transform_value_from_log(
+    log: TransformValueLog,
+    name: TransformName,
+) -> TransformValue:
+    """Build a TransformValue from the latest sample of an NXlog DataArray.
+
+    The ``log`` arrives via ``set_context`` from the ``ToNXlog``
+    accumulator. We extract the most recent value as a scalar
+    ``sc.Variable`` so the downstream ``to_transformation`` time-filter
+    branch is bypassed (see ``ess.reduce.nexus.workflow.to_transformation``).
+
+    Before the first ``set_context`` call the parameter is ``None``;
+    after it, it is an NXlog that may still be empty if no f144 message
+    has arrived yet. Both cases raise, so the workflow reports "no value
+    yet" rather than silently falling back to the reference file's
+    baked-in value (which may be stale or invalid).
+
+    Raises
+    ------
+    ValueError
+        If the log is ``None`` or has not yet received any samples.
+    """
+    if log is None or log.sizes.get('time', 0) == 0:
+        raise ValueError(
+            f"No samples yet for transformation {name!r}: f144 stream has not "
+            "produced a value."
+        )
+    return TransformValue(name=name, value=log['time', -1].data)
 
 
 def create_base_workflow(
@@ -84,30 +143,26 @@ def create_base_workflow(
     coordinate_mode:
         Coordinate system for event data:
         - 'toa': Time-of-arrival (uses GenericNeXusWorkflow, RawDetector)
-        - 'tof': Time-of-flight (uses GenericTofWorkflow, TofDetector)
-        - 'wavelength': Wavelength (uses GenericTofWorkflow, WavelengthDetector)
-        For 'tof' and 'wavelength', caller must configure lookup table provider.
+        - 'wavelength': Wavelength (uses GenericUnwrapWorkflow, WavelengthDetector)
+        For 'wavelength', caller must configure lookup table provider.
 
     Returns
     -------
     :
         Sciline pipeline with detector view providers.
     """
-    # GenericTofWorkflow extends GenericNeXusWorkflow with TOF providers, so it can
-    # be used for all coordinate modes. The coordinate mode determines which
+    # GenericUnwrapWorkflow extends GenericNeXusWorkflow with unwrap providers, so it
+    # can be used for all coordinate modes. The coordinate mode determines which
     # projection provider to use.
-    workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
+    workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
 
     # Select projection provider based on coordinate mode
     if coordinate_mode == 'toa':
         workflow.insert(project_raw_detector)
-    elif coordinate_mode == 'tof':
-        workflow.insert(project_tof_detector)
     elif coordinate_mode == 'wavelength':
-        # Future: would use WavelengthDetector-based provider
-        raise NotImplementedError("wavelength mode is not yet implemented")
+        workflow.insert(project_wavelength_detector)
     else:
-        raise ValueError(f"Unknown coordinate_mode: {coordinate_mode}")
+        raise ValueError(f"Unsupported coordinate mode: {coordinate_mode!r}")
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)
@@ -136,6 +191,33 @@ def create_base_workflow(
     workflow[HistogramSlice] = histogram_slice
 
     return workflow
+
+
+def add_dynamic_transform(
+    workflow: sciline.Pipeline,
+    *,
+    transform_name: str,
+) -> None:
+    """
+    Patch the workflow to drive a NeXus transformation from a live f144 stream.
+
+    Replaces essreduce's ``get_transformation_chain`` provider so that the
+    detector's transformation chain picks up the latest value from an
+    ``NXlog`` context stream. Only call this for sources that have a
+    dynamic geometry configured; otherwise the workflow uses the file's
+    baked-in transformation unchanged.
+
+    Parameters
+    ----------
+    workflow:
+        Sciline pipeline to configure.
+    transform_name:
+        Name of the entry inside the detector's ``depends_on`` chain whose
+        value is driven by the f144 stream.
+    """
+    workflow.insert(get_transformation_chain_with_value)
+    workflow.insert(transform_value_from_log)
+    workflow[TransformName] = TransformName(transform_name)
 
 
 def add_geometric_projection(

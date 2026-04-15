@@ -9,6 +9,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobSchedule, WorkflowId
 from ess.livedata.core.job import Job, JobData, JobId, JobResult
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.workflow_factory import Workflow
 
 
@@ -26,8 +27,8 @@ class TestJobResult:
         result = JobResult(
             job_id=job_id,
             workflow_id=workflow_id,
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             data=sc.DataGroup({'out': sc.DataArray(sc.scalar(3.14))}),
             error_message=None,
         )
@@ -106,8 +107,8 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
 @pytest.fixture
 def sample_job_data():
     return JobData(
-        start_time=100,
-        end_time=200,
+        start_time=Timestamp.from_ns(100),
+        end_time=Timestamp.from_ns(200),
         primary_data={"test_source": sc.scalar(42.0)},
         aux_data={"aux_source": sc.scalar(10.0)},
     )
@@ -116,20 +117,24 @@ def sample_job_data():
 class TestJobSchedule:
     def test_valid_schedule_with_start_and_end(self):
         """Test creating a valid schedule with start and end times."""
-        schedule = JobSchedule(start_time=100, end_time=200)
-        assert schedule.start_time == 100
-        assert schedule.end_time == 200
+        schedule = JobSchedule(
+            start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
+        )
+        assert schedule.start_time == Timestamp.from_ns(100)
+        assert schedule.end_time == Timestamp.from_ns(200)
 
     def test_valid_schedule_with_immediate_start_and_end(self):
         """Test creating a valid schedule with immediate start (-1) and end time."""
-        schedule = JobSchedule(start_time=-1, end_time=100)
-        assert schedule.start_time == -1
-        assert schedule.end_time == 100
+        schedule = JobSchedule(
+            start_time=Timestamp.from_ns(-1), end_time=Timestamp.from_ns(100)
+        )
+        assert schedule.start_time == Timestamp.from_ns(-1)
+        assert schedule.end_time == Timestamp.from_ns(100)
 
     def test_valid_schedule_with_no_end_time(self):
         """Test creating a valid schedule with no end time (None)."""
-        schedule = JobSchedule(start_time=100, end_time=None)
-        assert schedule.start_time == 100
+        schedule = JobSchedule(start_time=Timestamp.from_ns(100), end_time=None)
+        assert schedule.start_time == Timestamp.from_ns(100)
         assert schedule.end_time is None
 
     def test_valid_schedule_defaults(self):
@@ -142,31 +147,39 @@ class TestJobSchedule:
         """Test that end_time < start_time raises ValueError."""
         with pytest.raises(
             ValueError,
-            match="Job end_time=100 must be greater than start_time=200",
+            match=r"Job end_time=Timestamp.*must be greater than start_time",
         ):
-            JobSchedule(start_time=200, end_time=100)
+            JobSchedule(
+                start_time=Timestamp.from_ns(200), end_time=Timestamp.from_ns(100)
+            )
 
     def test_invalid_schedule_end_equals_start(self):
         """Test that end_time == start_time raises ValueError."""
         with pytest.raises(
             ValueError,
-            match="Job end_time=100 must be greater than start_time=100",
+            match=r"Job end_time=Timestamp.*must be greater than start_time",
         ):
-            JobSchedule(start_time=100, end_time=100)
+            JobSchedule(
+                start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(100)
+            )
 
     def test_valid_schedule_negative_start_times_other_than_minus_one(self):
         """Test that negative start times other than -1 are treated as regular times."""
-        schedule = JobSchedule(start_time=-100, end_time=200)
-        assert schedule.start_time == -100
-        assert schedule.end_time == 200
+        schedule = JobSchedule(
+            start_time=Timestamp.from_ns(-100), end_time=Timestamp.from_ns(200)
+        )
+        assert schedule.start_time == Timestamp.from_ns(-100)
+        assert schedule.end_time == Timestamp.from_ns(200)
 
     def test_invalid_schedule_negative_start_with_equal_end(self):
         """Test that negative start time (not -1) with equal end time still raises."""
         with pytest.raises(
             ValueError,
-            match="Job end_time=-50 must be greater than start_time=-50",
+            match=r"Job end_time=Timestamp.*must be greater than start_time",
         ):
-            JobSchedule(start_time=-50, end_time=-50)
+            JobSchedule(
+                start_time=Timestamp.from_ns(-50), end_time=Timestamp.from_ns(-50)
+            )
 
 
 class TestJob:
@@ -181,39 +194,39 @@ class TestJob:
 
         assert not status.has_error
         assert status.error_message is None
-        assert sample_job.start_time == 100
-        assert sample_job.end_time == 200
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(200)
 
     def test_add_data_multiple_times_updates_end_time(self, sample_job):
         """Test that adding data multiple times only updates end time."""
         data1 = JobData(
-            start_time=100,
-            end_time=150,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(150),
             primary_data={"test_source": sc.scalar(10.0)},
             aux_data={},
         )
         data2 = JobData(
-            start_time=120,
-            end_time=250,
+            start_time=Timestamp.from_ns(120),
+            end_time=Timestamp.from_ns(250),
             primary_data={"test_source": sc.scalar(20.0)},
             aux_data={},
         )
 
         status1 = sample_job.add(data1)
         assert not status1.has_error
-        assert sample_job.start_time == 100
-        assert sample_job.end_time == 150
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(150)
 
         status2 = sample_job.add(data2)
         assert not status2.has_error
-        assert sample_job.start_time == 100  # Should not change
-        assert sample_job.end_time == 250  # Should update
+        assert sample_job.start_time == Timestamp.from_ns(100)  # Should not change
+        assert sample_job.end_time == Timestamp.from_ns(250)  # Should update
 
     def test_add_data_processes_all_provided_data(self, sample_job, fake_processor):
         """Test that add() processes all provided data."""
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={"aux_source": sc.scalar(10.0)},
         )
@@ -233,8 +246,8 @@ class TestJob:
     def test_add_data_with_no_primary_data_does_not_set_times(self, sample_job):
         """Test that adding data with no primary data doesn't set start/end times."""
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={},
             aux_data={"aux_source": sc.scalar(10.0)},
         )
@@ -259,8 +272,8 @@ class TestJob:
         fake_processor.should_fail_accumulate = True
 
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -282,8 +295,8 @@ class TestJob:
         )
 
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -313,8 +326,8 @@ class TestJob:
         assert result.job_id.source_name == "test_source"
         assert result.job_id.job_number == 1
         assert result.workflow_id.name == "test_workflow"
-        assert result.start_time == 100
-        assert result.end_time == 200
+        assert result.start_time == Timestamp.from_ns(100)
+        assert result.end_time == Timestamp.from_ns(200)
         assert isinstance(result.data, sc.DataGroup)
         assert result.error_message is None
 
@@ -337,8 +350,8 @@ class TestJob:
 
         # Add data to set job times
         data = JobData(
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -385,8 +398,8 @@ class TestJob:
 
         # Add data to set job times (different from workflow times)
         data = JobData(
-            start_time=1000,
-            end_time=2000,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -403,6 +416,79 @@ class TestJob:
         cumulative = result.data["cumulative_output"]
         assert cumulative.coords["start_time"].value == 1000
         assert cumulative.coords["end_time"].value == 2000
+
+    def test_get_does_not_add_time_coords_to_data_with_time_coordinate(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Data with a 'time' coordinate already carries its own timestamps.
+
+        Adding start_time/end_time would be redundant and causes structural
+        issues in TemporalBuffer (scalar coord vs multi-element time dim).
+        """
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        # Timeseries-like output: data indexed by wall-clock timestamps
+        fake_processor.data = {
+            "delta": sc.DataArray(
+                data=sc.array(dims=["time"], values=[1.0, 2.0, 3.0]),
+                coords={
+                    "time": sc.array(dims=["time"], values=[100, 200, 300], unit="ns")
+                },
+            ),
+        }
+
+        data = JobData(
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        result = job.get()
+        output = result.data["delta"]
+
+        assert "start_time" not in output.coords
+        assert "end_time" not in output.coords
+
+    def test_get_does_not_add_time_coords_to_data_with_scalar_time_coordinate(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Even a scalar 'time' coordinate signals timestamped data."""
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        fake_processor.data = {
+            "delta": sc.DataArray(
+                data=sc.scalar(1.0),
+                coords={"time": sc.scalar(100, unit="ns")},
+            ),
+        }
+
+        data = JobData(
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        result = job.get()
+        output = result.data["delta"]
+
+        assert "start_time" not in output.coords
+        assert "end_time" not in output.coords
 
     def test_get_does_not_add_time_coords_when_no_data_added(
         self, fake_processor, sample_workflow_id
@@ -445,8 +531,8 @@ class TestJob:
 
         # Add some data successfully
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -480,8 +566,8 @@ class TestJob:
 
         # Add some data successfully
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -509,8 +595,8 @@ class TestJob:
     ):
         """Test that reset() clears processor and resets times."""
         sample_job.add(sample_job_data)
-        assert sample_job.start_time == 100
-        assert sample_job.end_time == 200
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(200)
 
         sample_job.reset()
 
@@ -531,8 +617,8 @@ class TestJob:
         # Cause an error
         fake_processor.should_fail_accumulate = True
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
@@ -564,8 +650,8 @@ class TestJobAuxSourceMapping:
 
         # Send data with stream names (monitor1, monitor2)
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
             aux_data={
                 "monitor1": sc.scalar(10.0),  # Stream name
@@ -601,8 +687,8 @@ class TestJobAuxSourceMapping:
 
         # Send data with stream names
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
             aux_data={
                 "monitor1": sc.scalar(10.0),
@@ -655,8 +741,8 @@ class TestJobAuxSourceMapping:
         assert job.aux_source_names == []
 
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
             aux_data={},
         )
@@ -698,8 +784,8 @@ class TestJobAuxSourceMapping:
 
         # Send data with only one of the two aux sources
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
             aux_data={
                 "monitor1": sc.scalar(10.0),  # Only monitor1, not monitor2
@@ -732,8 +818,8 @@ class TestJobAuxSourceMapping:
 
         # Send data with the multiplexed stream
         data = JobData(
-            start_time=100,
-            end_time=200,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
             aux_data={
                 "monitor1": sc.scalar(10.0),  # One stream

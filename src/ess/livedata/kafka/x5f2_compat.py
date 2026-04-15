@@ -19,7 +19,10 @@ from ess.livedata.core.job import (
     JobStatus,
     ServiceState,
     ServiceStatus,
+    StreamStat,
+    StreamStats,
 )
+from ess.livedata.core.timestamp import Timestamp
 
 
 class ServiceId(pydantic.BaseModel):
@@ -79,11 +82,11 @@ class JobStatusPayload(pydantic.BaseModel):
     error: str | None = pydantic.Field(default=None, description="Error message if any")
     job_id: JobId = pydantic.Field(description="Job identifier")
     workflow_id: str = pydantic.Field(description="Workflow identifier as string")
-    start_time: int | None = pydantic.Field(
-        default=None, description="Job start time in nanoseconds since epoch"
+    start_time: Timestamp | None = pydantic.Field(
+        default=None, description="Job start time"
     )
-    end_time: int | None = pydantic.Field(
-        default=None, description="Job end time in nanoseconds since epoch"
+    end_time: Timestamp | None = pydantic.Field(
+        default=None, description="Job end time"
     )
 
 
@@ -120,8 +123,6 @@ def service_state_to_nicos_status_constant(state: ServiceState) -> NicosStatus:
             return NicosStatus.DISABLED
         case ServiceState.running:
             return NicosStatus.OK
-        case ServiceState.stopping:
-            return NicosStatus.DISABLED
         case ServiceState.stopped:
             return NicosStatus.DISABLED
         case ServiceState.error:
@@ -177,6 +178,22 @@ class ServiceServiceId(pydantic.BaseModel):
         return self.to_string()
 
 
+class StreamStatModel(pydantic.BaseModel):
+    """Pydantic model for a single stream's message count."""
+
+    topic: str
+    source_name: str
+    stream: str | None
+    count: int
+
+
+class StreamStatsModel(pydantic.BaseModel):
+    """Pydantic model for per-stream message counts over a time window."""
+
+    window_seconds: float
+    streams: list[StreamStatModel]
+
+
 class ServiceStatusPayload(pydantic.BaseModel):
     """The 'message' field within status_json for service heartbeats."""
 
@@ -187,12 +204,16 @@ class ServiceStatusPayload(pydantic.BaseModel):
     namespace: str = pydantic.Field(description="Service namespace")
     worker_id: str = pydantic.Field(description="Worker UUID as string")
     state: ServiceState = pydantic.Field(description="Current state of the service")
-    started_at: int = pydantic.Field(description="Service start time in nanoseconds")
+    started_at: Timestamp = pydantic.Field(description="Service start time")
     active_job_count: int = pydantic.Field(description="Number of active jobs")
-    messages_processed: int = pydantic.Field(
-        description="Total messages processed since startup"
-    )
     error: str | None = pydantic.Field(default=None, description="Error message if any")
+    batch_interval_s: float = pydantic.Field(
+        default=1.0, description="Current batch interval in seconds"
+    )
+    stream_stats: StreamStatsModel | None = pydantic.Field(
+        default=None,
+        description="Per-stream message counts for the last metrics window",
+    )
 
 
 class ServiceStatusJSON(pydantic.BaseModel):
@@ -257,13 +278,13 @@ class ServiceStatusMessage(pydantic.BaseModel):
     def from_service_status(
         status: ServiceStatus,
         *,
-        software_version: str = '0.0.0',
+        software_version: str | None = None,
         host_name: str = '',
         process_id: int = 0,
     ) -> ServiceStatusMessage:
         """Create ServiceStatusMessage from ServiceStatus."""
         return ServiceStatusMessage(
-            software_version=software_version,
+            software_version=software_version or status.version,
             host_name=host_name,
             process_id=process_id,
             service_id=ServiceServiceId.from_service_status(status),
@@ -276,8 +297,9 @@ class ServiceStatusMessage(pydantic.BaseModel):
                     state=status.state,
                     started_at=status.started_at,
                     active_job_count=status.active_job_count,
-                    messages_processed=status.messages_processed,
                     error=status.error,
+                    batch_interval_s=status.batch_interval_s,
+                    stream_stats=_stream_stats_to_model(status.stream_stats),
                 ),
             ),
         )
@@ -292,8 +314,10 @@ class ServiceStatusMessage(pydantic.BaseModel):
             state=message.state,
             started_at=message.started_at,
             active_job_count=message.active_job_count,
-            messages_processed=message.messages_processed,
+            version=self.software_version,
             error=message.error,
+            batch_interval_s=message.batch_interval_s,
+            stream_stats=_model_to_stream_stats(message.stream_stats),
         )
 
 
@@ -418,6 +442,40 @@ def job_status_to_x5f2(
     data['host_name'] = host_name
     data['process_id'] = process_id
     return serialise_x5f2(**data)
+
+
+def _stream_stats_to_model(stats: StreamStats | None) -> StreamStatsModel | None:
+    if stats is None:
+        return None
+    return StreamStatsModel(
+        window_seconds=stats.window_seconds,
+        streams=[
+            StreamStatModel(
+                topic=s.topic,
+                source_name=s.source_name,
+                stream=s.stream,
+                count=s.count,
+            )
+            for s in stats.streams
+        ],
+    )
+
+
+def _model_to_stream_stats(model: StreamStatsModel | None) -> StreamStats | None:
+    if model is None:
+        return None
+    return StreamStats(
+        window_seconds=model.window_seconds,
+        streams=tuple(
+            StreamStat(
+                topic=s.topic,
+                source_name=s.source_name,
+                stream=s.stream,
+                count=s.count,
+            )
+            for s in model.streams
+        ),
+    )
 
 
 def service_status_to_x5f2(

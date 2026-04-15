@@ -494,7 +494,6 @@ class TestOrchestratorServiceStatusRouting:
             state=ServiceState.running,
             started_at=1000000000,
             active_job_count=2,
-            messages_processed=100,
         )
 
         orchestrator.forward(STATUS_STREAM_ID, status)

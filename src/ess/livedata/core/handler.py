@@ -2,10 +2,11 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from ..config.instrument import Instrument
 from .message import StreamId, Tin, Tout
+from .timestamp import Timestamp
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -18,9 +19,30 @@ class Accumulator(Protocol, Generic[T, U]):
 
     Accumulators are used as preprocessors in the message processing pipeline.
     They accumulate data from multiple messages before passing it to workflows.
+
+    The ``get()`` contract varies by implementation: batch-oriented accumulators
+    (e.g., ``ToNXevent_data``, ``Cumulative``) may consume or clear their
+    internal state on ``get()``, while context-oriented accumulators (e.g.,
+    ``ToNXlog``, ``LatestValueHandler``) retain it. Implementations declare
+    which category they belong to via the ``is_context`` class variable.
+
+    Context accumulators (``is_context = True``) are idempotent on ``get()`` —
+    calling it multiple times returns the same data without consuming or
+    clearing it. This property is used by ``MessagePreprocessor.get_context()``
+    to safely read current values for seeding newly activated jobs.
     """
 
-    def add(self, timestamp: int, data: T) -> None: ...
+    is_context: ClassVar[bool] = False
+
+    def add(self, timestamp: Timestamp, data: T) -> bool:
+        """Add data to the accumulator.
+
+        Returns
+        -------
+        :
+            True if the data was accepted, False if it was skipped (e.g., duplicate).
+        """
+        ...
 
     def get(self) -> U: ...
 

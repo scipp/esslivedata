@@ -22,12 +22,19 @@ from .message_adapter import (
     RunControlAdapter,
     X5f2ToStatusAdapter,
 )
+from .stream_counter import StreamCounter
 from .stream_mapping import StreamMapping
 
 
 class RoutingAdapterBuilder:
-    def __init__(self, *, stream_mapping: StreamMapping):
+    def __init__(
+        self,
+        *,
+        stream_mapping: StreamMapping,
+        stream_counter: StreamCounter | None = None,
+    ):
         self._stream_mapping = stream_mapping
+        self._stream_counter = stream_counter
         self._routes: dict[str, MessageAdapter] = {}
 
     def build(self) -> RouteByTopicAdapter:
@@ -39,12 +46,14 @@ class RoutingAdapterBuilder:
         adapter = RouteBySchemaAdapter(
             routes={
                 'ev44': KafkaToMonitorEventsAdapter(
-                    stream_lut=self._stream_mapping.monitors
+                    stream_lut=self._stream_mapping.monitors,
+                    stream_counter=self._stream_counter,
                 ),
                 'da00': ChainedAdapter(
                     first=KafkaToDa00Adapter(
                         stream_lut=self._stream_mapping.monitors,
                         stream_kind=StreamKind.MONITOR_COUNTS,
+                        stream_counter=self._stream_counter,
                     ),
                     second=Da00ToScippAdapter(),
                 ),
@@ -60,6 +69,7 @@ class RoutingAdapterBuilder:
             first=KafkaToEv44Adapter(
                 stream_lut=self._stream_mapping.detectors,
                 stream_kind=StreamKind.DETECTOR_EVENTS,
+                stream_counter=self._stream_counter,
             ),
             second=Ev44ToDetectorEventsAdapter(
                 merge_detectors=self._stream_mapping.instrument == 'bifrost'
@@ -75,6 +85,7 @@ class RoutingAdapterBuilder:
             first=KafkaToAd00Adapter(
                 stream_lut=self._stream_mapping.area_detectors,
                 stream_kind=StreamKind.AREA_DETECTOR,
+                stream_counter=self._stream_counter,
             ),
             second=Ad00ToScippAdapter(),
         )
@@ -85,7 +96,10 @@ class RoutingAdapterBuilder:
     def with_logdata_route(self) -> Self:
         """Adds the logdata route."""
         adapter = ChainedAdapter(
-            first=KafkaToF144Adapter(stream_lut=self._stream_mapping.logs),
+            first=KafkaToF144Adapter(
+                stream_lut=self._stream_mapping.logs,
+                stream_counter=self._stream_counter,
+            ),
             second=F144ToLogDataAdapter(),
         )
         for topic in self._stream_mapping.log_topics:

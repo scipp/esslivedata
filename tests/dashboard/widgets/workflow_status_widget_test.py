@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.widgets.icons import get_icon
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
@@ -417,7 +418,7 @@ class TestWorkflowStatusWidgetWithJobs:
             job_id=job_id,
             workflow_id=workflow_id,
             state=JobState.active,
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -449,7 +450,7 @@ class TestWorkflowStatusWidgetWithJobs:
             workflow_id=workflow_id,
             state=JobState.error,
             error_message='Something went wrong',
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -523,7 +524,7 @@ class TestWorkflowStatusWidgetWithJobs:
             job_id=job_id,
             workflow_id=workflow_id,
             state=JobState.active,
-            start_time=1000000000000,
+            start_time=Timestamp.from_ns(1000000000000),
         )
         job_service.status_updated(job_status)
 
@@ -556,49 +557,6 @@ class TestWorkflowStatusWidgetWithJobs:
         # Should be STOPPED, not PENDING
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
-
-    def test_status_becomes_pending_when_heartbeat_stale(
-        self,
-        workflow_status_widget,
-        job_service,
-        workflow_id,
-        job_orchestrator,
-    ):
-        """Test status transitions from ACTIVE to PENDING when heartbeat stales."""
-        import time
-
-        # Use short timeout for testing (1 second)
-        job_service._heartbeat_timeout_ns = 1_000_000_000
-
-        # Stage and commit to create active job
-        job_orchestrator.stage_config(
-            workflow_id,
-            source_name='source1',
-            params={'threshold': 100.0},
-            aux_source_names={},
-        )
-        job_ids = job_orchestrator.commit_workflow(workflow_id)
-
-        # Backend sends initial status - should be ACTIVE
-        job_id = JobId(source_name='source1', job_number=job_ids[0].job_number)
-        job_status = JobStatus(
-            job_id=job_id,
-            workflow_id=workflow_id,
-            state=JobState.active,
-            start_time=1000000000000,
-        )
-        job_service.status_updated(job_status)
-
-        # Should be ACTIVE initially
-        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
-        assert status == 'ACTIVE'
-
-        # Wait for heartbeat to become stale (> 1 second)
-        time.sleep(1.1)
-
-        # Status should now be PENDING (stale heartbeat)
-        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
-        assert status == 'PENDING'
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
         """Test that is_status_stale returns True for old status."""
@@ -671,7 +629,7 @@ class TestPerSourceStatus:
                     job_id=JobId(source_name=name, job_number=job_number),
                     workflow_id=workflow_id,
                     state=JobState.active,
-                    start_time=1000000000000,
+                    start_time=Timestamp.from_ns(1000000000000),
                 )
             )
 
@@ -711,7 +669,7 @@ class TestPerSourceStatus:
                 job_id=JobId(source_name='source2', job_number=job_number),
                 workflow_id=workflow_id,
                 state=JobState.active,
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
         job_service.status_updated(
@@ -720,7 +678,7 @@ class TestPerSourceStatus:
                 workflow_id=workflow_id,
                 state=JobState.error,
                 error_message='ZeroDivisionError',
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 
@@ -756,7 +714,7 @@ class TestPerSourceStatus:
                 error_message=(
                     'Traceback:\n  File "x.py"\nZeroDivisionError: division by zero'
                 ),
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 
@@ -893,7 +851,7 @@ class TestPerSourceStatus:
                     job_id=JobId(source_name=name, job_number=job_number),
                     workflow_id=workflow_id,
                     state=JobState.active,
-                    start_time=1000000000000,
+                    start_time=Timestamp.from_ns(1000000000000),
                 )
             )
 
@@ -1027,7 +985,7 @@ class TestWorkflowStatusListWidget:
                 workflow_id=workflow_id,
                 job_id=job_id,
                 state=JobState.active,
-                start_time=1000000000000,
+                start_time=Timestamp.from_ns(1000000000000),
             )
         )
 

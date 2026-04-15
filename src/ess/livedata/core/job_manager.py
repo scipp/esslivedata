@@ -25,6 +25,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import RunStart, RunStop, StreamId
+from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -38,8 +39,8 @@ class WorkflowData:
     of the raw data being processed (as opposed to when it was processed).
     """
 
-    start_time: int
-    end_time: int
+    start_time: Timestamp
+    end_time: Timestamp
     data: dict[StreamId, Any]
 
 
@@ -179,8 +180,8 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
-        # Pending reset times (ns since epoch), kept sorted via bisect.insort
-        self._pending_reset_times: list[int] = []
+        # Pending reset times, kept sorted via bisect.insort
+        self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
@@ -209,7 +210,7 @@ class JobManager:
             "job_activated", job_id=str(job_id), workflow_id=str(job.workflow_id)
         )
 
-    def _advance_to_time(self, start_time: int, end_time: int) -> None:
+    def _advance_to_time(self, start_time: Timestamp, end_time: Timestamp) -> None:
         """Fire pending resets, activate jobs, and mark jobs that should finish."""
         self._fire_pending_resets(end_time)
         to_activate = [
@@ -334,10 +335,10 @@ class JobManager:
         logger.info("run_stop", run_name=info.run_name, stop_time=info.stop_time)
         self._schedule_reset(info.stop_time)
 
-    def _schedule_reset(self, time_ns: int) -> None:
+    def _schedule_reset(self, time_ns: Timestamp) -> None:
         bisect.insort(self._pending_reset_times, time_ns)
 
-    def _fire_pending_resets(self, end_time: int) -> None:
+    def _fire_pending_resets(self, end_time: Timestamp) -> None:
         """Fire pending resets whose scheduled time has been reached by data."""
         if not self._pending_reset_times:
             return
@@ -351,8 +352,26 @@ class JobManager:
             if job.reset_on_run_transition:
                 self.reset_job(job.job_id)
 
+    def peek_pending_streams(self, start_time: int) -> set[str]:
+        """Return all stream names needed by jobs that would activate at start_time.
+
+        Includes both primary and auxiliary stream names. This is a read-only
+        query with no side effects. It does not activate jobs or mutate any state.
+        """
+        names: set[str] = set()
+        for job_id, job in self._scheduled_jobs.items():
+            if self._job_schedules[job_id].should_start(start_time):
+                names.update(job.source_names)
+                names.update(job.aux_source_names)
+        return names
+
     def push_data(self, data: WorkflowData) -> list[JobReply]:
-        """Push data into the active jobs and return status for each job."""
+        """Push data into the active jobs and return status for each job.
+
+        Unlike ``process_jobs`` called via ``OrchestratingProcessor.process``,
+        this method does not seed context data for newly activated jobs.
+        Callers are responsible for providing complete ``WorkflowData``.
+        """
         self._advance_to_time(data.start_time, data.end_time)
         replies = []
         for job in self.active_jobs:

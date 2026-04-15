@@ -26,6 +26,7 @@ from .kafka.source import (
     KafkaConsumer,
     KafkaMessageSource,
 )
+from .kafka.stream_counter import StreamCounter
 from .logging_config import configure_logging
 from .sinks import PlotToPngSink
 
@@ -47,7 +48,8 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
-        job_threads: int = 1,
+        job_threads: int = 5,
+        stream_counter: StreamCounter | None = None,
     ) -> None:
         """
         Parameters
@@ -80,6 +82,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
         self._job_threads = job_threads
+        self._stream_counter = stream_counter
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -176,10 +179,12 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
                 source=source,
                 adapter=self._adapter,
                 raise_on_error=raise_on_adapter_error,
+                stream_counter=self._stream_counter,
             ),
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
             job_threads=self._job_threads,
+            stream_stats_provider=self._stream_counter,
         )
         sink.publish_messages(self._startup_messages)
         return Service(
@@ -201,15 +206,15 @@ class DataServiceRunner:
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
             '--sync-scheduler',
-            action='store_true',
-            default=False,
+            action=argparse.BooleanOptionalAction,
+            default=True,
             help='Use synchronous dask scheduler instead of threaded'
             ' (reduces GIL contention)',
         )
         self._parser.add_argument(
             '--job-threads',
             type=int,
-            default=1,
+            default=5,
             help='Number of threads for parallel job execution (1=sequential)',
         )
         self._parser.add_argument(

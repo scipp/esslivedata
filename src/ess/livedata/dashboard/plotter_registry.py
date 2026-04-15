@@ -345,6 +345,9 @@ def _register_all_plotters() -> None:
         factory=LinePlotter.from_params,
     )
 
+    # Uses from_display_params (no window/rate config) because FullHistoryExtractor
+    # collapses start_time/end_time to the full buffer range. Rate normalization
+    # would divide every point by the total buffer duration, giving wrong results.
     plotter_registry.register_plotter(
         name='timeseries',
         title='Timeseries',
@@ -355,7 +358,7 @@ def _register_all_plotters() -> None:
             multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
-        factory=LinePlotter.from_params,
+        factory=LinePlotter.from_display_params,
     )
 
     plotter_registry.register_plotter(

@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
-import time
+from html import escape
 from typing import ClassVar
 
 import panel as pn
 
-from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata import format_version
+from ess.livedata.core.job import ServiceState, ServiceStatus, StreamStats
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 from .buttons import ButtonStyles, create_tool_button
@@ -23,7 +25,6 @@ class WorkerUIConstants:
     COLORS: ClassVar[dict[ServiceState, str]] = {
         ServiceState.starting: StatusColors.MUTED,
         ServiceState.running: StatusColors.SUCCESS,
-        ServiceState.stopping: StatusColors.WARNING,
         ServiceState.stopped: StatusColors.MUTED,
         ServiceState.error: StatusColors.ERROR,
     }
@@ -34,12 +35,12 @@ class WorkerUIConstants:
     NAMESPACE_WIDTH = 200
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
+    VERSION_WIDTH = 200
     UPTIME_WIDTH = 120
-    STATS_WIDTH = 180
-    ROW_HEIGHT = 35
+    STATS_WIDTH = 240
 
     # Margins
-    STANDARD_MARGIN = (5, 5)
+    STANDARD_MARGIN = (2, 5)
     HEADER_MARGIN = (10, 10, 5, 10)
 
 
@@ -76,6 +77,70 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
+def _format_stream_stats_summary(stats: StreamStats | None) -> str:
+    """Format compact stream stats summary for the worker status row."""
+    if stats is None:
+        return "Msgs: -"
+    total = sum(s.count for s in stats.streams)
+    window = f"{stats.window_seconds:.0f}s"
+    return f"Msgs: {_format_messages(total)}/{window}"
+
+
+def _format_stream_stats_details(stats: StreamStats | None) -> str:
+    """Format expandable per-stream details table.
+
+    Always returns visible content so the row height stays consistent
+    regardless of whether stream data has arrived yet.
+    """
+    style = "margin: 0; font-size: 11px;"
+    if stats is None:
+        return (
+            f'<span style="{style}; color: {Colors.TEXT_MUTED}">No stream data</span>'
+        )
+    if not stats.streams:
+        return (
+            f'<details style="{style}">'
+            f"<summary>Streams ({stats.window_seconds:.0f}s window)</summary>"
+            "<i>No streams received</i>"
+            "</details>"
+        )
+    unmapped_count = sum(1 for s in stats.streams if s.stream is None)
+    summary_extra = ""
+    if unmapped_count:
+        summary_extra = (
+            f' — <span style="color: {StatusColors.ERROR}">'
+            f"{unmapped_count} unmapped</span>"
+        )
+    rows = []
+    for s in stats.streams:
+        stream_cell = s.stream or (
+            f'<span style="color: {StatusColors.ERROR}">unmapped</span>'
+        )
+        rows.append(
+            f"<tr><td>{escape(s.topic)}</td><td>{escape(s.source_name)}</td>"
+            f"<td>{stream_cell}</td><td style='text-align:right'>"
+            f"{_format_messages(s.count)}</td></tr>"
+        )
+    header_style = f"text-align:left; border-bottom:1px solid {Colors.BORDER}"
+    count_style = f"text-align:right; border-bottom:1px solid {Colors.BORDER}"
+    table = (
+        '<table style="width:100%; border-collapse:collapse; font-size:11px;">'
+        "<tr>"
+        f'<th style="{header_style}">Topic</th>'
+        f'<th style="{header_style}">Source</th>'
+        f'<th style="{header_style}">Stream</th>'
+        f'<th style="{count_style}">Count</th>'
+        "</tr>" + "".join(rows) + "</table>"
+    )
+    return (
+        f'<details style="{style}">'
+        f"<summary>{len(stats.streams)} streams / "
+        f"{stats.window_seconds:.0f}s window{summary_extra}</summary>"
+        f"{table}"
+        "</details>"
+    )
+
+
 class WorkerStatusRow:
     """Widget to display the status of a single backend worker.
 
@@ -91,39 +156,53 @@ class WorkerStatusRow:
         # Create stable pane references
         self._namespace_pane = pn.pane.HTML(
             width=WorkerUIConstants.NAMESPACE_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._worker_id_pane = pn.pane.HTML(
             width=WorkerUIConstants.WORKER_ID_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._status_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATUS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+        self._version_pane = pn.pane.HTML(
+            width=WorkerUIConstants.VERSION_WIDTH,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._uptime_pane = pn.pane.HTML(
             width=WorkerUIConstants.UPTIME_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._stats_pane = pn.pane.HTML(
             width=WorkerUIConstants.STATS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
 
-        self._panel = pn.Row(
+        row = pn.Row(
             self._namespace_pane,
             self._worker_id_pane,
             self._status_pane,
+            self._version_pane,
             self._uptime_pane,
             self._stats_pane,
-            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
+            margin=0,
         )
+        self._details_pane = pn.pane.HTML(
+            "",
+            sizing_mode="stretch_width",
+            margin=(0, 10, 2, 10),
+        )
+        self._panel = pn.Column(
+            row,
+            self._details_pane,
+            sizing_mode="stretch_width",
+            styles={"border-bottom": f"1px solid {Colors.BORDER}"},
+            margin=0,
+        )
+
+        self._last_stream_stats: StreamStats | None = None
 
         # Set initial content
         self.update(status, is_stale, last_seen_seconds_ago)
@@ -131,8 +210,8 @@ class WorkerStatusRow:
     def _get_status_color(self, status: ServiceStatus, is_stale: bool) -> str:
         """Get color for worker state, considering staleness."""
         if is_stale:
-            # Graceful shutdown (inferred from timed-out stopping): show gray
-            if status.state == ServiceState.stopping:
+            # Graceful shutdown: last heartbeat was 'stopped', show gray not red
+            if status.state == ServiceState.stopped:
                 return WorkerUIConstants.COLORS[ServiceState.stopped]
             return WorkerUIConstants.STALE_COLOR
         return WorkerUIConstants.COLORS.get(
@@ -166,16 +245,18 @@ class WorkerStatusRow:
         status_color = self._get_status_color(status, is_stale)
         if is_stale:
             # Distinguish graceful shutdown from unexpected disappearance
-            is_graceful = status.state == ServiceState.stopping
+            is_graceful = status.state == ServiceState.stopped
             status_text = "STOPPED" if is_graceful else "STALE"
         else:
             status_text = status.state.value.upper()
         status_style = self._create_status_style(status_color)
         self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
 
+        # Version
+        self._version_pane.object = f"<code>{format_version(status.version)}</code>"
+
         # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
         show_last_seen = is_stale or status.state in (
-            ServiceState.stopping,
             ServiceState.stopped,
             ServiceState.error,
         )
@@ -187,19 +268,29 @@ class WorkerStatusRow:
             time_text = f"Up: {_format_duration(uptime)}"
         self._uptime_pane.object = f"<span>{time_text}</span>"
 
+        # Cache stream stats when a new snapshot arrives
+        if status.stream_stats is not None:
+            self._last_stream_stats = status.stream_stats
+
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
-        msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
-        self._stats_pane.object = f"<span>{jobs_text} | {msgs_text}</span>"
+        batch_text = f"Batch: {status.batch_interval_s:.0f}s"
+        msgs_text = _format_stream_stats_summary(self._last_stream_stats)
+        self._stats_pane.object = (
+            f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
+        )
 
-    def _calculate_uptime(self, started_at_ns: int) -> float:
+        # Full-width expandable stream details
+        self._details_pane.object = _format_stream_stats_details(
+            self._last_stream_stats
+        )
+
+    def _calculate_uptime(self, started_at: Timestamp) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
-        current_time_ns = time.time_ns()
-        uptime_ns = current_time_ns - started_at_ns
-        return uptime_ns / 1_000_000_000
+        return (Timestamp.now() - started_at).to_seconds()
 
     @property
-    def panel(self) -> pn.Row:
+    def panel(self) -> pn.Column:
         """Get the panel for this widget."""
         return self._panel
 
@@ -265,6 +356,11 @@ class BackendStatusWidget:
                 margin=WorkerUIConstants.STANDARD_MARGIN,
             ),
             pn.pane.HTML(
+                f'<span style="{header_style}">Version</span>',
+                width=WorkerUIConstants.VERSION_WIDTH,
+                margin=WorkerUIConstants.STANDARD_MARGIN,
+            ),
+            pn.pane.HTML(
                 f'<span style="{header_style}">Uptime</span>',
                 width=WorkerUIConstants.UPTIME_WIDTH,
                 margin=WorkerUIConstants.STANDARD_MARGIN,
@@ -294,7 +390,6 @@ class BackendStatusWidget:
         # Count workers by display state (considering staleness)
         starting_count = 0
         running_count = 0
-        stopping_count = 0
         stopped_count = 0
         stale_count = 0
         error_count = 0
@@ -304,7 +399,7 @@ class BackendStatusWidget:
 
             if is_stale:
                 # Distinguish graceful shutdown from unexpected disappearance
-                if status.state in (ServiceState.stopping, ServiceState.stopped):
+                if status.state == ServiceState.stopped:
                     stopped_count += 1
                 else:
                     stale_count += 1
@@ -312,8 +407,6 @@ class BackendStatusWidget:
                 starting_count += 1
             elif status.state == ServiceState.running:
                 running_count += 1
-            elif status.state == ServiceState.stopping:
-                stopping_count += 1
             elif status.state == ServiceState.stopped:
                 stopped_count += 1
             elif status.state == ServiceState.error:
@@ -330,10 +423,6 @@ class BackendStatusWidget:
             )
         if running_count:
             parts.append(_span(colors[ServiceState.running], running_count, "running"))
-        if stopping_count:
-            parts.append(
-                _span(colors[ServiceState.stopping], stopping_count, "stopping")
-            )
         if stopped_count:
             parts.append(_span(colors[ServiceState.stopped], stopped_count, "stopped"))
         if stale_count:

@@ -33,7 +33,7 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=26.2.1",
+  "essreduce>=26.4.0",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -46,10 +46,10 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = [
-    "essdiffraction>=26.3.0",
-    "essreflectometry>=25.12.0",
+    "essdiffraction>=26.4.0",
+    "essreflectometry>=26.4.0",
     "esssans",
-    "essspectroscopy>=25.11.1",
+    "essspectroscopy>=26.3.0",
     "holoviews",
     "panel",
     "param",
@@ -58,19 +58,22 @@ test = [
     "scippneutron>=25.07.0",
 ]
 bifrost = [
-    "essspectroscopy>=25.11.1",
+    "essspectroscopy>=26.3.0",
 ]
 dream = [
-    "essdiffraction>=26.3.0",
+    "essdiffraction>=26.4.0",
 ]
 loki = [
-    "esssans>=25.11.0",
+    "esssans>=26.4.0",
 ]
 odin = [
-    "essimaging",
+    "essimaging>=26.4.0",
 ]
 estia = [
-    "essreflectometry>=25.12.0",
+    "essreflectometry>=26.4.0",
+]
+nmx = [
+    "essnmx>=26.4.0",
 ]
 dashboard = [
   "bokeh",
@@ -141,6 +144,7 @@ pydocstyle.convention = "numpy"
 # those files have an increased risk of relying on import order
 "tests/*" = [
     "S101",  # asserts are fine in tests
+    "S311",  # deterministic seeded RNG is fine for test simulations
     "B018",  # 'useless expressions' are ok because some tests just check for exceptions
     "TID251",  # tests can use stdlib logging
 ]

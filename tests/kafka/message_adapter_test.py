@@ -21,6 +21,7 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
     Ad00ToScippAdapter,
@@ -44,6 +45,7 @@ from ess.livedata.kafka.message_adapter import (
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
 )
+from ess.livedata.kafka.stream_counter import StreamCounter
 
 
 def make_serialized_ev44() -> bytes:
@@ -127,7 +129,7 @@ class TestKafkaToMonitorEventsAdapter:
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "monitor_0"
         assert result.value.time_of_arrival == [123456]
-        assert result.timestamp == 1234
+        assert result.timestamp == Timestamp.from_ns(1234)
 
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
@@ -140,8 +142,10 @@ class TestKafkaToMonitorEventsAdapter:
             pixel_id=np.array([1]),
         )
 
+        # Realistic broker timestamp: ms since epoch, ~2023-11-14.
+        broker_ts_ms = 1_700_000_000_000
         message = FakeKafkaMessage(
-            value=empty_ref_time_ev44, topic="monitors", timestamp=9999
+            value=empty_ref_time_ev44, topic="monitors", timestamp=broker_ts_ms
         )
 
         adapter = KafkaToMonitorEventsAdapter(
@@ -151,7 +155,10 @@ class TestKafkaToMonitorEventsAdapter:
         )
         result = adapter.adapt(message)
 
-        assert result.timestamp == 9999
+        assert result.timestamp == Timestamp.from_ms(broker_ts_ms)
+        # Guard against reintroducing a ns-vs-ms unit error: the converted value
+        # must land in a realistic epoch-ns range, not ~year 56 or ~1970.
+        assert result.timestamp.to_ns() == broker_ts_ms * 1_000_000
 
     def test_wrong_schema_raises_exception(self, monkeypatch) -> None:
         """Test that providing wrong schema raises exception."""
@@ -181,7 +188,7 @@ class TestKafkaToF144Adapter:
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "temperature1"
         assert result.value.value == 123.45
-        assert result.timestamp == 9876543210
+        assert result.timestamp == Timestamp.from_ns(9876543210)
 
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_f144(), topic="sensors")
@@ -211,7 +218,7 @@ class TestF144ToLogDataAdapter:
         assert result.stream.name == "temperature1"
         assert result.value.value == 123.45
         assert result.value.time == 9876543210
-        assert result.timestamp == 9876543210
+        assert result.timestamp == Timestamp.from_ns(9876543210)
 
 
 class TestKafkaToDa00Adapter:
@@ -222,7 +229,7 @@ class TestKafkaToDa00Adapter:
 
         assert result.stream.kind == StreamKind.MONITOR_COUNTS
         assert result.stream.name == "instrument"
-        assert result.timestamp == 5678
+        assert result.timestamp == Timestamp.from_ns(5678)
         assert len(result.value) == 2  # signal and temperature
         assert {var.name for var in result.value} == {"signal", "temperature"}
 
@@ -246,7 +253,57 @@ class TestKafkaToDa00Adapter:
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == 3000
+        assert result.timestamp == Timestamp.from_ns(3000)
+
+    @pytest.mark.parametrize("dtype", [np.int32, np.int16, np.float32, np.float64])
+    def test_falls_back_to_timestamp_ns_when_reference_time_has_unsafe_dtype(
+        self, dtype: np.dtype
+    ) -> None:
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=dtype),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == Timestamp.from_ns(5678)
+
+    @pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+    def test_uses_reference_time_when_dtype_is_64bit_integer(
+        self, dtype: np.dtype
+    ) -> None:
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=dtype),
+                    axes=["frame"],
+                    unit="ns",
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == Timestamp.from_ns(3000)
 
     def test_uses_timestamp_ns_when_reference_time_is_empty(self) -> None:
         da00_with_empty_ref_time = dataarray_da00.serialise_da00(
@@ -268,7 +325,7 @@ class TestKafkaToDa00Adapter:
         adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == 5678
+        assert result.timestamp == Timestamp.from_ns(5678)
 
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
@@ -311,7 +368,7 @@ class TestKafkaToAd00Adapter:
 
         assert result.stream.kind == StreamKind.AREA_DETECTOR
         assert result.stream.name == "area_detector"
-        assert result.timestamp == 9876
+        assert result.timestamp == Timestamp.from_ns(9876)
         assert result.value.unique_id == 42
         np.testing.assert_array_equal(
             result.value.data.reshape(result.value.dimensions),
@@ -354,7 +411,7 @@ class TestAd00ToScippAdapter:
 class TestEv44ToDetectorEventsAdapter:
     def test_adapter(self) -> None:
         ev44_message = Message(
-            timestamp=1234,
+            timestamp=Timestamp.from_ns(1234),
             stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector1"),
             value=eventdata_ev44.EventData(
                 source_name="detector1",
@@ -368,7 +425,7 @@ class TestEv44ToDetectorEventsAdapter:
         adapter = Ev44ToDetectorEventsAdapter()
         result = adapter.adapt(ev44_message)
 
-        assert result.timestamp == 1234
+        assert result.timestamp == Timestamp.from_ns(1234)
         assert result.stream.kind == StreamKind.DETECTOR_EVENTS
         assert result.stream.name == "detector1"
         assert isinstance(result.value, DetectorEvents)
@@ -377,7 +434,7 @@ class TestEv44ToDetectorEventsAdapter:
 
     def test_adapter_merge_detectors(self) -> None:
         ev44_message = Message(
-            timestamp=1234,
+            timestamp=Timestamp.from_ns(1234),
             stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector2"),
             value=eventdata_ev44.EventData(
                 source_name="detector2",
@@ -481,7 +538,7 @@ class TestKafkaToEv44Adapter:
         assert result.stream.kind == StreamKind.MONITOR_EVENTS
         assert result.stream.name == "mapped_monitor1"
         assert result.value.time_of_flight == [123456]
-        assert result.timestamp == 1234
+        assert result.timestamp == Timestamp.from_ns(1234)
 
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
@@ -494,14 +551,19 @@ class TestKafkaToEv44Adapter:
             pixel_id=np.array([1]),
         )
 
+        # Realistic broker timestamp: ms since epoch, ~2023-11-14.
+        broker_ts_ms = 1_700_000_000_000
         message = FakeKafkaMessage(
-            value=empty_ref_time_ev44, topic="monitors", timestamp=9999
+            value=empty_ref_time_ev44, topic="monitors", timestamp=broker_ts_ms
         )
 
         adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
         result = adapter.adapt(message)
 
-        assert result.timestamp == 9999
+        assert result.timestamp == Timestamp.from_ms(broker_ts_ms)
+        # Guard against reintroducing a ns-vs-ms unit error: the converted value
+        # must land in a realistic epoch-ns range, not ~year 56 or ~1970.
+        assert result.timestamp.to_ns() == broker_ts_ms * 1_000_000
 
 
 class TestAdaptingMessageSource:
@@ -518,7 +580,7 @@ class TestAdaptingMessageSource:
         assert messages[0].stream.kind == StreamKind.MONITOR_EVENTS
         assert messages[0].stream.name == "monitor1"
         assert messages[0].value.time_of_arrival == [123456]
-        assert messages[0].timestamp == 1234
+        assert messages[0].timestamp == Timestamp.from_ns(1234)
 
     def test_unknown_schema_is_logged_and_skipped(self) -> None:
         from structlog.testing import capture_logs
@@ -568,9 +630,42 @@ class TestAdaptingMessageSource:
         assert len(exception_logs) == 1
         assert "error adapting message" in exception_logs[0]['event'].lower()
 
+    def test_unmapped_stream_does_not_double_count(self) -> None:
+        """UnmappedStreamError is already recorded by get_stream_id, so
+        AdaptingMessageSource must not record a second '<error>' entry."""
+        f144_bytes = logdata_f144.serialise_f144(
+            source_name="PV:Mtr.RBV", value=1.0, timestamp_unix_ns=1000
+        )
+
+        class Source(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return [FakeKafkaMessage(value=f144_bytes, topic="motion")]
+
+        stream_counter = StreamCounter()
+        adapter = KafkaToF144Adapter(
+            stream_lut={},  # empty LUT → every source is unmapped
+            stream_counter=stream_counter,
+        )
+        adapting_source = AdaptingMessageSource(
+            source=Source(),
+            adapter=ChainedAdapter(first=adapter, second=F144ToLogDataAdapter()),
+            stream_counter=stream_counter,
+        )
+
+        messages = adapting_source.get_messages()
+        assert len(messages) == 0
+
+        stats = stream_counter.drain(window_seconds=30.0)
+        # Only one entry (the real source), no '<error>' duplicate
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "PV:Mtr.RBV"
+        assert stats.streams[0].stream is None
+
 
 def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
-    return Message(timestamp=1234, stream=StreamId(name="dummy"), value=value)
+    return Message(
+        timestamp=Timestamp.from_ns(1234), stream=StreamId(name="dummy"), value=value
+    )
 
 
 class TestCommandsAdapter:

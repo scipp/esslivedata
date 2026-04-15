@@ -104,6 +104,38 @@ class TestGeometricProjector:
         event_data = result.bins.constituents['data']
         assert 'event_time_offset' in event_data.coords
 
+    def test_scalar_coords_from_projected_datagroup_are_stamped(self):
+        """Scalar entries in the projection DataGroup become output coords."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+        # Add a scalar reference coord mimicking the 'z' returned by
+        # make_xy_plane_coords or the 'r' returned by make_cylinder_mantle_coords.
+        coords['z'] = sc.scalar(5.0, unit='m')
+
+        projector = GeometricProjector(coords, edges)
+        result = projector.project_events(data)
+
+        assert 'z' in result.coords
+        assert result.coords['z'].ndim == 0
+        assert result.coords['z'].value == 5.0
+        assert result.coords['z'].unit == sc.Unit('m')
+
+    def test_non_scalar_projection_entries_are_not_stamped(self):
+        """Per-pixel entries in the DataGroup must not leak onto the output."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+        # A per-pixel (1-d) entry that is not a projection reference scalar.
+        coords['pixel_id'] = sc.arange('pixel', n_pixels, unit=None)
+
+        projector = GeometricProjector(coords, edges)
+        result = projector.project_events(data)
+
+        assert 'pixel_id' not in result.coords
+
     def test_project_events_cycles_replicas(self):
         """Test that projector cycles through replicas."""
         n_pixels = 16

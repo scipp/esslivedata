@@ -9,7 +9,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import WorkflowOutputsBase
+from ..config.workflow_spec import AuxSources, WorkflowOutputsBase
 from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
@@ -100,22 +100,6 @@ class MonitorDataParams(pydantic.BaseModel):
         description="Time of arrival range filter for TOA mode.",
         default=parameter_models.TOARange(),
     )
-    # TOF (time-of-flight) settings
-    tof_edges: parameter_models.TOFEdges = pydantic.Field(
-        title="Time of Flight Edges",
-        description="Time of flight edges for histogramming in TOF mode.",
-        default=parameter_models.TOFEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-    tof_range: parameter_models.TOFRange = pydantic.Field(
-        title="Time of Flight Range",
-        description="Time of flight range filter for TOF mode.",
-        default=parameter_models.TOFRange(),
-    )
     # Wavelength settings
     wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
         title="Wavelength Edges",
@@ -138,8 +122,6 @@ class MonitorDataParams(pydantic.BaseModel):
         match self.coordinate_mode.mode:
             case 'toa':
                 return self.toa_edges.get_edges()
-            case 'tof':
-                return self.tof_edges.get_edges()
             case 'wavelength':
                 return self.wavelength_edges.get_edges()
 
@@ -148,8 +130,6 @@ class MonitorDataParams(pydantic.BaseModel):
         match self.coordinate_mode.mode:
             case 'toa':
                 return self.toa_range.range if self.toa_range.enabled else None
-            case 'tof':
-                return self.tof_range.range if self.tof_range.enabled else None
             case 'wavelength':
                 return (
                     self.wavelength_range.range
@@ -214,6 +194,7 @@ def register_monitor_workflow_specs(
     instrument: Instrument,
     source_names: list[str],
     params: type[MonitorDataParams] = MonitorDataParams,
+    aux_sources: AuxSources | None = None,
 ) -> SpecHandle | None:
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
@@ -229,6 +210,10 @@ def register_monitor_workflow_specs(
         Parameter model class for the workflow. Defaults to MonitorDataParams.
         Instruments can provide a subclass with additional fields (e.g., for
         instrument-specific configuration like chopper mode selection).
+    aux_sources
+        Optional auxiliary source specification for position or other dynamic data
+        streams. Instruments with movable monitors can provide an AuxSources spec
+        that maps logical names to f144 position streams.
 
     Returns
     -------
@@ -245,6 +230,7 @@ def register_monitor_workflow_specs(
         description="Histogrammed and time-integrated beam monitor data. The monitor "
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
+        aux_sources=aux_sources,
         params=params,
         outputs=MonitorHistogramOutputs,
     )
@@ -261,8 +247,6 @@ def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams)
     from .monitor_workflow import create_monitor_workflow
 
     mode = params.coordinate_mode.mode
-    if mode == 'wavelength':
-        raise NotImplementedError("wavelength mode not yet implemented for monitors")
 
     return create_monitor_workflow(
         source_name=source_name,

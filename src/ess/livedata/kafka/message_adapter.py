@@ -20,6 +20,7 @@ from streaming_data_types import (
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus, ServiceStatus
+from ess.livedata.core.timestamp import Timestamp
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
@@ -38,6 +39,7 @@ from ..handlers.accumulators import LogData
 from ..handlers.to_nxevent_data import DetectorEvents, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
+from .stream_counter import StreamCounter
 from .stream_mapping import InputStreamKey, StreamLUT
 from .x5f2_compat import x5f2_to_status
 
@@ -93,6 +95,14 @@ class FakeKafkaMessage(KafkaMessage):
         return self._value == other._value and self._topic == other._topic
 
 
+class UnmappedStreamError(KeyError):
+    """Raised when a (topic, source_name) pair has no mapping in the stream LUT.
+
+    Already recorded as unmapped in the stream counter before raising, so
+    callers should not record a second ``<error>`` entry.
+    """
+
+
 class MessageAdapter(Protocol, Generic[T, U]):
     def adapt(self, message: T) -> U: ...
 
@@ -107,16 +117,33 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
     the Kafka topics.
     """
 
-    def __init__(self, *, stream_lut: StreamLUT | None = None, stream_kind: StreamKind):
+    def __init__(
+        self,
+        *,
+        stream_lut: StreamLUT | None = None,
+        stream_kind: StreamKind,
+        stream_counter: StreamCounter | None = None,
+    ):
         self._stream_lut = stream_lut
         self._stream_kind = stream_kind
+        self._stream_counter = stream_counter
 
     def get_stream_id(self, topic: str, source_name: str) -> StreamId:
         if self._stream_lut is None:
-            # Assume the source name is unique
-            return StreamId(kind=self._stream_kind, name=source_name)
-        input_key = InputStreamKey(topic=topic, source_name=source_name)
-        return StreamId(kind=self._stream_kind, name=self._stream_lut[input_key])
+            resolved = source_name
+            stream_id = StreamId(kind=self._stream_kind, name=resolved)
+        else:
+            input_key = InputStreamKey(topic=topic, source_name=source_name)
+            try:
+                resolved = self._stream_lut[input_key]
+            except KeyError:
+                if self._stream_counter is not None:
+                    self._stream_counter.record(topic, source_name, None)
+                raise UnmappedStreamError(source_name) from None
+            stream_id = StreamId(kind=self._stream_kind, name=resolved)
+        if self._stream_counter is not None:
+            self._stream_counter.record(topic, source_name, resolved)
+        return stream_id
 
 
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
@@ -125,25 +152,29 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
         # A fallback, useful in particular for testing so serialized data can be reused.
         if ev44.reference_time.size > 0:
-            timestamp = ev44.reference_time[-1]
+            timestamp = Timestamp.from_ns(ev44.reference_time[-1])
         else:
-            timestamp = message.timestamp()[1]
+            timestamp = Timestamp.from_ms(message.timestamp()[1])
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
 def _extract_reference_time(
     variables: list[dataarray_da00.Variable],
-) -> int | None:
+) -> Timestamp | None:
     """Extract the last reference_time value from da00 variables.
 
     Mirrors the ev44 convention of using ``reference_time[-1]`` as the message
     timestamp, providing data-derived timestamps for consistent batching.
+
+    Only int64 and uint64 arrays are accepted. Smaller integer types (e.g.,
+    int32) cannot represent nanosecond-epoch timestamps without overflow and
+    are silently ignored, falling back to the top-level ``timestamp_ns``.
     """
     for var in variables:
         if var.name == 'reference_time':
             data = np.asarray(var.data)
-            if data.size > 0:
-                return int(data[-1])
+            if data.size > 0 and data.dtype in (np.int64, np.uint64):
+                return Timestamp.from_ns(int(data[-1]))
     return None
 
 
@@ -155,20 +186,31 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         # Prefer reference_time from the data variables (mirroring ev44 behavior)
         # over the opaque top-level timestamp_ns whose semantics are unspecified.
         ref_time = _extract_reference_time(da00.data)
-        timestamp = ref_time if ref_time is not None else da00.timestamp_ns
+        timestamp = (
+            ref_time if ref_time is not None else Timestamp.from_ns(da00.timestamp_ns)
+        )
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
-    def __init__(self, *, stream_lut: StreamLUT | None = None):
-        super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.LOG)
+    def __init__(
+        self,
+        *,
+        stream_lut: StreamLUT | None = None,
+        stream_counter: StreamCounter | None = None,
+    ):
+        super().__init__(
+            stream_lut=stream_lut,
+            stream_kind=StreamKind.LOG,
+            stream_counter=stream_counter,
+        )
 
     def adapt(self, message: KafkaMessage) -> Message[logdata_f144.ExtractedLogData]:
         log_data = logdata_f144.deserialise_f144(message.value())
         key = self.get_stream_id(
             topic=message.topic(), source_name=log_data.source_name
         )
-        timestamp = log_data.timestamp_unix_ns
+        timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 
@@ -209,7 +251,7 @@ class X5f2ToStatusAdapter(
 
     def adapt(self, message: KafkaMessage) -> Message[JobStatus | ServiceStatus]:
         return Message(
-            timestamp=message.timestamp()[1],
+            timestamp=Timestamp.from_ms(message.timestamp()[1]),
             stream=STATUS_STREAM_ID,
             value=x5f2_to_status(message.value()),
         )
@@ -222,25 +264,25 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
     (domain convention) at the adapter boundary.
     """
 
-    _MS_TO_NS = 1_000_000
-
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
         schema = streaming_data_types.utils.get_schema(buf)
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
-            stop_time = None if info.stop_time == 0 else info.stop_time * self._MS_TO_NS
+            stop_time = (
+                None if info.stop_time == 0 else Timestamp.from_ms(info.stop_time)
+            )
             value: RunStart | RunStop = RunStart(
                 run_name=info.run_name,
-                start_time=info.start_time * self._MS_TO_NS,
+                start_time=Timestamp.from_ms(info.start_time),
                 stop_time=stop_time,
             )
         elif schema == '6s4t':
             info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
             value = RunStop(
                 run_name=info.run_name,
-                stop_time=info.stop_time * self._MS_TO_NS,
+                stop_time=Timestamp.from_ms(info.stop_time),
             )
         else:
             raise streaming_data_types.exceptions.WrongSchemaException(
@@ -259,8 +301,17 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
     yields better performance.
     """
 
-    def __init__(self, stream_lut: StreamLUT):
-        super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.MONITOR_EVENTS)
+    def __init__(
+        self,
+        stream_lut: StreamLUT,
+        *,
+        stream_counter: StreamCounter | None = None,
+    ):
+        super().__init__(
+            stream_lut=stream_lut,
+            stream_kind=StreamKind.MONITOR_EVENTS,
+            stream_counter=stream_counter,
+        )
 
     def adapt(self, message: KafkaMessage) -> Message[MonitorEvents]:
         buffer = message.value()
@@ -274,9 +325,9 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
 
         # A fallback, useful in particular for testing so serialized data can be reused.
         if reference_time.size > 0:
-            timestamp = reference_time[-1]
+            timestamp = Timestamp.from_ns(reference_time[-1])
         else:
-            timestamp = message.timestamp()[1]
+            timestamp = Timestamp.from_ms(message.timestamp()[1])
         return Message(
             timestamp=timestamp,
             stream=stream,
@@ -329,7 +380,7 @@ class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
         ad00 = area_detector_ad00.deserialise_ad00(message.value())
         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
-        timestamp = ad00.timestamp_ns
+        timestamp = Timestamp.from_ns(ad00.timestamp_ns)
         return Message(timestamp=timestamp, stream=key, value=ad00)
 
 
@@ -356,7 +407,7 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         # Livedata configuration uses a compacted Kafka topic. The Kafka message key
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
@@ -367,7 +418,7 @@ class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgeme
     """Adapts Kafka messages from the livedata responses topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[CommandAcknowledgement]:
-        timestamp = message.timestamp()[1]
+        timestamp = Timestamp.from_ms(message.timestamp()[1])
         ack = CommandAcknowledgement.model_validate_json(message.value())
         return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 
@@ -442,6 +493,7 @@ class AdaptingMessageSource(MessageSource[U]):
         source: MessageSource[T],
         adapter: MessageAdapter[T, U],
         raise_on_error: bool = False,
+        stream_counter: StreamCounter | None = None,
     ):
         """
         Parameters
@@ -453,10 +505,13 @@ class AdaptingMessageSource(MessageSource[U]):
         raise_on_error
             If True, exceptions during adaptation will be re-raised. If False,
             they will be logged and the message will be skipped.
+        stream_counter
+            Optional counter for recording per-stream message counts.
         """
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
+        self._stream_counter = stream_counter
 
     def get_messages(self) -> Sequence[U]:
         raw_messages = self._source.get_messages()
@@ -464,12 +519,23 @@ class AdaptingMessageSource(MessageSource[U]):
         for msg in raw_messages:
             try:
                 adapted.append(self._adapter.adapt(msg))
+            except UnmappedStreamError:
+                # Already recorded in the stream counter by get_stream_id.
+                if self._raise_on_error:
+                    raise
             except streaming_data_types.exceptions.WrongSchemaException:
                 logger.warning('Message %s has an unknown schema. Skipping.', msg)
+                self._record_error(msg)
                 if self._raise_on_error:
                     raise
             except Exception as e:
                 logger.exception('Error adapting message %s: %s', msg, e)
+                self._record_error(msg)
                 if self._raise_on_error:
                     raise
         return adapted
+
+    def _record_error(self, msg: T) -> None:
+        """Record an adaptation error in the stream counter if available."""
+        if self._stream_counter is not None and hasattr(msg, 'topic'):
+            self._stream_counter.record(msg.topic(), '<error>', None)

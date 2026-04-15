@@ -13,6 +13,7 @@ from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
 from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
+from .to_nxlog import ToNXlog
 
 _GEOMETRY_RELEASE_URL = (
     'https://github.com/scipp/esslivedata/releases/download/geometry-v0/'
@@ -51,6 +52,11 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
                 return LatestValueHandler()
+            case StreamKind.LOG:
+                attrs = self._instrument.f144_attribute_registry.get(key.name)
+                if attrs is None:
+                    return None
+                return ToNXlog(attrs=attrs)
             case _:
                 return None
 
@@ -68,6 +74,7 @@ _registry = {
     'geometry-loki-2026-02-11.nxs': 'md5:0b40ba0ec640f1c497ec02b233f42ec6',
     'geometry-loki-2026-02-23.nxs': 'md5:5110801aa7c7d79a32cb73b9fb71f167',
     'geometry-loki-2026-03-11.nxs': 'md5:fc0dafdea9a3f66b3003a5d5b7e66698',
+    'geometry-loki-2026-04-13.nxs': 'md5:5c4a6883cf34cee9836f543f4d70ae5c',
     'geometry-bifrost-2025-01-01.nxs': 'md5:ae3caa99dd56de9495b9321eea4e4fef',
     'geometry-odin-2025-09-25.nxs': 'md5:5615a6203813b4ab84a191f7478ceb3c',
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',

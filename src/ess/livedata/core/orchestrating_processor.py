@@ -5,13 +5,24 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any, Generic
 
 import structlog
 
+from ess.livedata import __version__
+
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
-from .job import JobResult, JobStatus, ServiceState, ServiceStatus
+from .job import (
+    JobResult,
+    JobState,
+    JobStatus,
+    ServiceState,
+    ServiceStatus,
+    StreamStats,
+    StreamStatsProvider,
+)
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
@@ -28,7 +39,12 @@ from .message import (
     Tin,
     Tout,
 )
-from .message_batcher import MessageBatch, MessageBatcher, SimpleMessageBatcher
+from .message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatch,
+    MessageBatcher,
+)
+from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -54,11 +70,18 @@ class MessagePreprocessor(Generic[Tin, Tout]):
 
     def _preprocess_stream(
         self, messages: list[Message[Tin]], accumulator: Accumulator[Tin, Tout]
-    ) -> Tout:
-        """Preprocess messages for a single stream using the given accumulator."""
+    ) -> Tout | None:
+        """Preprocess messages for a single stream using the given accumulator.
+
+        Returns None if no messages were accepted by the accumulator (e.g., all
+        duplicates), signalling that the stream should be excluded from workflow data.
+        """
+        any_accepted = False
         for message in messages:
-            accumulator.add(message.timestamp, message.value)
-        # We assume the accumulator is cleared in `get`.
+            if accumulator.add(message.timestamp, message.value) is not False:
+                any_accepted = True
+        if not any_accepted:
+            return None
         return accumulator.get()
 
     def release_buffers(self) -> None:
@@ -70,6 +93,29 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         for accumulator in self._accumulators.values():
             if hasattr(accumulator, 'release_buffers'):
                 accumulator.release_buffers()
+
+    def get_context(self, names: set[str]) -> dict[StreamId, Any]:
+        """Read current values from context accumulators for the given stream names.
+
+        Only reads from accumulators that have ``is_context = True`` and that
+        have received at least one message. Accumulators that have no data yet
+        are silently skipped — this is a normal startup condition (stream
+        mapping registered the accumulator before any message arrived).
+
+        Must be called before ``process_jobs`` to ensure no concurrent access
+        to preprocessor-level accumulators from worker threads.
+        """
+        result: dict[StreamId, Any] = {}
+        for stream_id, accumulator in self._accumulators.items():
+            if accumulator.is_context and stream_id.name in names:
+                try:
+                    result[stream_id] = accumulator.get()
+                except (RuntimeError, ValueError):
+                    logger.debug(
+                        'context_accumulator_empty',
+                        stream_id=str(stream_id),
+                    )
+        return result
 
     def preprocess_messages(self, batch: MessageBatch) -> WorkflowData:
         """
@@ -86,7 +132,9 @@ class MessagePreprocessor(Generic[Tin, Tout]):
                 logger.debug('no_preprocessor', stream_id=str(key))
                 continue
             try:
-                data[key] = self._preprocess_stream(messages, accumulator)
+                result = self._preprocess_stream(messages, accumulator)
+                if result is not None:
+                    data[key] = result
             except Exception:
                 logger.exception('preprocessing_error', stream_id=str(key))
         return WorkflowData(
@@ -103,6 +151,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
+        stream_stats_provider: StreamStatsProvider | None = None,
     ) -> None:
         self._source = source
         self._sink = sink
@@ -112,29 +161,31 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             job_factory=JobFactory(instrument=instrument), job_threads=job_threads
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
-        self._message_batcher = message_batcher or SimpleMessageBatcher()
+        self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = ConfigProcessor(
             job_manager_adapter=self._job_manager_adapter
         )
-        self._last_status_update: int | None = None
-        self._status_update_interval = 2_000_000_000  # 2 seconds
+        self._last_status_update: Timestamp | None = None
+        self._status_update_interval = Duration.from_seconds(2)
 
         # Service heartbeat state
         self._instrument = instrument.name
         self._namespace = instrument.active_namespace or "unknown"
         self._worker_id = str(uuid.uuid4())
-        self._started_at = time.time_ns()
-        self._messages_processed = 0
+        self._started_at = Timestamp.now()
         self._service_state = ServiceState.starting
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
-        # Metrics tracking
-        self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
-        self._last_metrics_time: int | None = None
+        # Metrics and stream stats tracking
+        self._metrics_interval = Duration.from_seconds(30)
+        self._last_metrics_time: Timestamp | None = None
         self._batches_processed = 0
         self._empty_batches = 0
         self._errors_since_last_metrics = 0
+        self._stream_stats_provider = stream_stats_provider
+        self._pending_stream_stats: StreamStats | None = None
+        self._finalized = False
 
     def process(self) -> None:
         # Transition from starting to running on first process cycle
@@ -144,7 +195,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             logger.info('service_running')
 
         messages = self._source.get_messages()
-        self._messages_processed += len(messages)
         config_messages: list[Message[Tin]] = []
         run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
@@ -172,6 +222,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
+            self._message_batcher.report_batch(None, processing_time_s=0.0)
             self._empty_batches += 1
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
@@ -182,8 +233,25 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 time.sleep(0.1)
             return
 
+        batch_start = time.monotonic()
+
         # Pre-process message batch
         workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
+
+        # Seed context data for jobs about to activate.
+        # peek uses the batch start_time to predict which jobs will activate
+        # in the upcoming process_jobs call (which uses the same start_time).
+        # This covers both auxiliary streams (e.g., log data for detector
+        # workflows) and primary streams (e.g., log data for the timeseries
+        # service). Without primary stream seeding, a timeseries job that
+        # activates after its data was already consumed will never receive
+        # historical data from the preprocessor's context accumulators.
+        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
+        if needed:
+            missing = needed - {s.name for s in workflow_data.data}
+            if missing:
+                context = self._message_preprocessor.get_context(missing)
+                workflow_data.data.update(context)
 
         # Push data into jobs and compute results in a single pass.
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -220,6 +288,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             else:
                 valid_results.append(result)
 
+        processing_time_s = time.monotonic() - batch_start
+        self._message_batcher.report_batch(
+            len(message_batch.messages), processing_time_s=processing_time_s
+        )
         self._batches_processed += 1
         self._maybe_log_metrics()
 
@@ -229,7 +301,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_status_update is not None:
             if timestamp - self._last_status_update < self._status_update_interval:
                 return
@@ -250,6 +322,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
         """Get the current service status for heartbeat publishing."""
+        stream_stats = self._pending_stream_stats
+        self._pending_stream_stats = None
         return ServiceStatus(
             instrument=self._instrument,
             namespace=self._namespace,
@@ -257,76 +331,79 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             state=self._service_state,
             started_at=self._started_at,
             active_job_count=len(job_statuses),
-            messages_processed=self._messages_processed,
+            version=__version__,
             error=self._service_error,
+            batch_interval_s=self._message_batcher.batch_length_s,
+            stream_stats=stream_stats,
         )
 
     def _maybe_log_metrics(self) -> None:
         """Log processor metrics if the interval has elapsed."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         if self._last_metrics_time is None:
             self._last_metrics_time = timestamp
             return
 
-        if timestamp - self._last_metrics_time >= self._metrics_interval:
+        elapsed = timestamp - self._last_metrics_time
+        if elapsed >= self._metrics_interval:
+            window_seconds = elapsed.to_seconds()
             active_jobs = len(self._job_manager.active_jobs)
+
+            # Drain stream stats from the counter
+            if self._stream_stats_provider is not None:
+                self._pending_stream_stats = self._stream_stats_provider.drain(
+                    window_seconds
+                )
+
             logger.info(
                 'processor_metrics',
-                messages=self._messages_processed,
                 batches=self._batches_processed,
                 empty_batches=self._empty_batches,
                 active_jobs=active_jobs,
                 errors=self._errors_since_last_metrics,
-                interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
+                interval_seconds=window_seconds,
+                stream_stats=self._pending_stream_stats,
             )
-            # Reset counters (except messages_processed which is cumulative for service)
             self._batches_processed = 0
             self._empty_batches = 0
             self._errors_since_last_metrics = 0
             self._last_metrics_time = timestamp
 
-    def shutdown(self) -> None:
-        """Transition to stopping state and send heartbeat.
+    def finalize(self, *, error: str | None = None) -> None:
+        """Mark jobs as stopped, send final heartbeat, and shut down.
 
-        Called by Service at the beginning of graceful shutdown to notify the
-        dashboard that this worker is shutting down intentionally.
+        Called by Service after the worker thread has joined, so job states
+        can be safely transitioned without racing with the processing loop.
+        Idempotent — safe to call more than once.
         """
-        logger.info('service_shutting_down')
-        self._service_state = ServiceState.stopping
-        self._send_final_heartbeat()
-        self._job_manager.shutdown()
+        if self._finalized:
+            return
+        self._finalized = True
 
-    def report_stopped(self) -> None:
-        """Transition to stopped state and send final heartbeat.
+        if error is not None:
+            logger.error('service_error', error=error)
+            self._service_state = ServiceState.error
+            self._service_error = error
+        else:
+            logger.info('service_stopped')
+            self._service_state = ServiceState.stopped
 
-        Called by Service after worker thread has stopped to notify the
-        dashboard that shutdown completed successfully.
-        """
-        logger.info('service_stopped')
-        self._service_state = ServiceState.stopped
-        self._send_final_heartbeat()
-
-    def report_error(self, error_message: str) -> None:
-        """Transition to error state and send final heartbeat.
-
-        Called by Service when an unhandled exception occurs to notify the
-        dashboard that this worker encountered a fatal error.
-        """
-        logger.error('service_error', error=error_message)
-        self._service_state = ServiceState.error
-        self._service_error = error_message
-        self._send_final_heartbeat()
-
-    def _send_final_heartbeat(self) -> None:
-        """Send a final service heartbeat with current state."""
-        timestamp = time.time_ns()
+        timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
+        messages = [
+            _job_status_to_message(
+                replace(status, state=JobState.stopped), timestamp=timestamp
+            )
+            for status in job_statuses
+        ]
         service_status = self._get_service_status(job_statuses)
-        message = _service_status_to_message(service_status, timestamp=timestamp)
+        messages.append(_service_status_to_message(service_status, timestamp=timestamp))
         try:
-            self._sink.publish_messages([message])
+            self._sink.publish_messages(messages)
         except Exception:
             logger.exception('Failed to send final heartbeat')
+
+        self._job_manager.shutdown()
 
 
 def _job_result_to_message(result: JobResult) -> Message:
@@ -337,15 +414,15 @@ def _job_result_to_message(result: JobResult) -> Message:
     identify the job in the frontend.
     """
     return Message(
-        timestamp=result.start_time or 0,
+        timestamp=result.start_time or Timestamp.from_ns(0),
         stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
         value=result.data,
     )
 
 
-def _job_status_to_message(status: JobStatus, timestamp: int) -> Message:
+def _job_status_to_message(status: JobStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
 
 
-def _service_status_to_message(status: ServiceStatus, timestamp: int) -> Message:
+def _service_status_to_message(status: ServiceStatus, timestamp: Timestamp) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)

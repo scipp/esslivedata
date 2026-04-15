@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
-from ess.reduce.time_of_flight.types import TofLookupTableFilename
+from ess.reduce.unwrap import LookupTableFilename
+from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
 
 from ..accumulators import make_no_copy_accumulator_pair
@@ -35,10 +36,13 @@ from .types import (
     ROIRectangleReadback,
     ROIRectangleRequest,
     ROISpectra,
+    TransformValueLog,
+    TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
 from .workflow import (
+    add_dynamic_transform,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -66,6 +70,14 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
+    dynamic_transforms:
+        Optional mapping ``source_name -> TransformValueStream`` binding a
+        NeXus transformation entry of the detector's chain to the f144
+        stream that supplies its live values. ``aux_stream`` is the
+        logical name of the auxiliary input delivering the NXlog
+        DataArray (must match the corresponding ``AuxSources`` entry).
+        ``transform_name`` is the entry of ``chain.transformations``
+        whose ``.value`` will be replaced with the latest sample.
     """
 
     def __init__(
@@ -73,9 +85,11 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
+        dynamic_transforms: dict[str, TransformValueStream] | None = None,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
+        self._dynamic_transforms = dynamic_transforms or {}
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -87,7 +101,7 @@ class DetectorViewFactory:
         self,
         source_name: str,
         params: DetectorViewParams,
-        tof_lookup_table_filename: str | None = None,
+        lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -98,10 +112,10 @@ class DetectorViewFactory:
             Name of the detector source (e.g., 'panel_0').
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
-        tof_lookup_table_filename:
-            Path to TOF lookup table file. Required for 'tof' and 'wavelength'
-            coordinate modes. The caller (instrument factory) is responsible
-            for resolving this from instrument-specific params.
+        lookup_table_filename:
+            Path to lookup table file. Required for 'wavelength' coordinate mode.
+            The caller (instrument factory) is responsible for resolving this
+            from instrument-specific params.
 
         Returns
         -------
@@ -110,10 +124,10 @@ class DetectorViewFactory:
         """
         mode = params.coordinate_mode.mode
 
-        # Validate TOF/wavelength mode requirements
-        if mode in ('tof', 'wavelength'):
-            if tof_lookup_table_filename is None:
-                raise ValueError(f"{mode} mode requires tof_lookup_table_filename")
+        # Validate wavelength mode requirements
+        if mode == 'wavelength':
+            if lookup_table_filename is None:
+                raise ValueError(f"{mode} mode requires lookup_table_filename")
             if isinstance(self._data_source, DetectorNumberSource):
                 raise ValueError(
                     f"{mode} mode requires geometry for Ltotal computation; "
@@ -123,7 +137,6 @@ class DetectorViewFactory:
         # Get mode-specific event coordinate
         event_coord = {
             'toa': 'event_time_offset',
-            'tof': 'tof',
             'wavelength': 'wavelength',
         }[mode]
 
@@ -142,9 +155,10 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # Set lookup table filename for TOF/wavelength modes
-        if mode in ('tof', 'wavelength'):
-            workflow[TofLookupTableFilename] = tof_lookup_table_filename
+        # Set lookup table filename and error threshold for wavelength mode
+        if mode == 'wavelength':
+            workflow[LookupTableFilename] = lookup_table_filename
+            workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)
@@ -221,6 +235,13 @@ class DetectorViewFactory:
                 'counts_in_toa_range',
                 'roi_spectra_current',
             )
+
+        # Wire dynamic detector geometry (f144 NXlog stream) if configured for
+        # this source.
+        value_stream = self._dynamic_transforms.get(source_name)
+        if value_stream is not None:
+            add_dynamic_transform(workflow, transform_name=value_stream.transform_name)
+            context_keys[value_stream.aux_stream] = TransformValueLog
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

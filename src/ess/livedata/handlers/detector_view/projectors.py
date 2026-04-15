@@ -67,10 +67,25 @@ class GeometricProjector:
         self._replica_dim = 'replica'
         self._replicas = coords.sizes.get(self._replica_dim, 1)
         self._current = 0
+        # Scalar reference coords from the projection DataGroup (e.g. the
+        # ``z``-plane distance for ``xy_plane`` or the cylinder ``r`` for
+        # ``cylinder_mantle_z``). These encode the detector position in a
+        # single number per projection and are stamped onto every projected
+        # output. Downstream scipp propagates scalar coords through hist,
+        # sum, and slicing; the EternalAccumulator then uses them as a
+        # robust, projection-independent "has the geometry changed?" guard.
+        self._scalar_coords: dict[str, sc.Variable] = {
+            key: coords[key] for key in coords.keys() if coords[key].ndim == 0
+        }
         self._screen_metadata = ScreenMetadata(
             coords={dim: sc.midpoints(edges[dim]) for dim in edges.keys()},
             sizes={dim: len(edges[dim]) - 1 for dim in edges.keys()},
         )
+
+    @property
+    def scalar_coords(self) -> dict[str, sc.Variable]:
+        """Scalar reference coords describing the projection geometry."""
+        return self._scalar_coords
 
     @property
     def screen_metadata(self) -> ScreenMetadata:
@@ -149,7 +164,7 @@ class GeometricProjector:
         )
 
         # Bin by screen coordinates (preserving events)
-        return flat_events.bin(self._edges)
+        return flat_events.bin(self._edges).assign_coords(self._scalar_coords)
 
     def compute_weights(self) -> sc.DataArray:
         """
