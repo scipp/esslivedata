@@ -8,6 +8,7 @@ from typing import Any
 
 import structlog
 
+from ess.livedata.core.constants import PULSE_RATE_HZ
 from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Duration, Timestamp
 
@@ -66,11 +67,13 @@ class NaiveMessageBatcher(MessageBatcher):
     """
 
     def __init__(
-        self, batch_length_s: float = 1.0, pulse_length_s: float = 1.0 / 14
+        self,
+        batch_length_s: float = 1.0,
+        pulse_rate_hz: float = PULSE_RATE_HZ,
     ) -> None:
         # Batch length is currently ignored.
         self._batch_length = Duration.from_seconds(batch_length_s)
-        self._pulse_length = Duration.from_seconds(pulse_length_s)
+        self._pulse_length = Duration.from_seconds(1.0 / pulse_rate_hz)
 
     @property
     def batch_length_s(self) -> float:
@@ -197,6 +200,18 @@ DEESCALATION_IDLE_WINDOWS = 3
 _SQRT2 = 2**0.5
 
 
+def _compute_pulse_grid(
+    base_batch_length_s: float, max_half_steps: int, pulse_rate_hz: float
+) -> list[int]:
+    """Precompute pulse-quantized batch lengths for each half-step level.
+
+    Returns a list of integer pulse counts.  The batch length for half-step *n*
+    is ``pulse_counts[n] / pulse_rate_hz`` seconds.
+    """
+    base_pulses = base_batch_length_s * pulse_rate_hz
+    return [round(base_pulses * _SQRT2**n) for n in range(max_half_steps + 1)]
+
+
 @dataclass(frozen=True)
 class AdaptiveBatcherState:
     """State snapshot of an AdaptiveMessageBatcher for status reporting."""
@@ -214,8 +229,9 @@ class AdaptiveMessageBatcher(MessageBatcher):
     with headroom, it de-escalates by a factor of 1/sqrt(2) (-1 half-step).
 
     The asymmetric step sizes mean two de-escalation steps undo one escalation,
-    providing natural damping.  The batch window is always on the grid
-    ``base * sqrt(2)^n``, avoiding floating-point drift.
+    providing natural damping.  Batch lengths are quantized to integer multiples
+    of the ESS pulse period (1/14 s), ensuring clean message counts for
+    pulse-aligned producers.
 
     Idle periods also trigger de-escalation via a wall-clock fallback.
     """
@@ -225,15 +241,19 @@ class AdaptiveMessageBatcher(MessageBatcher):
         base_batch_length_s: float = 1.0,
         max_level: int = 3,
         clock: Callable[[], float] = time.monotonic,
+        pulse_rate_hz: float = PULSE_RATE_HZ,
     ) -> None:
-        self._base_batch_length_s = base_batch_length_s
         self._max_half_steps = max_level * 2
+        self._pulse_rate_hz = pulse_rate_hz
+        self._pulse_counts = _compute_pulse_grid(
+            base_batch_length_s, self._max_half_steps, pulse_rate_hz
+        )
         self._half_step = 0
         self._consecutive_overloaded = 0
         self._consecutive_underloaded = 0
         self._last_nonempty_batch_time: float | None = None
         self._clock = clock
-        self._inner = SimpleMessageBatcher(batch_length_s=base_batch_length_s)
+        self._inner = SimpleMessageBatcher(batch_length_s=self.batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         return self._inner.batch(messages)
@@ -305,7 +325,7 @@ class AdaptiveMessageBatcher(MessageBatcher):
 
     @property
     def batch_length_s(self) -> float:
-        return self._base_batch_length_s * _SQRT2**self._half_step
+        return self._pulse_counts[self._half_step] / self._pulse_rate_hz
 
     @property
     def state(self) -> AdaptiveBatcherState:
