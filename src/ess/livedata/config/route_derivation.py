@@ -70,9 +70,13 @@ def resolve_stream_names(
     unknown = needed - known
     if not unknown:
         return resolved
-    # Logical names not in any LUT — include all physical names from the
-    # matching category. E.g. Bifrost's 'unified_detector' is a logical
-    # name that maps to 45 physical streams.
+    # Bifrost compatibility: its specs use logical name 'unified_detector', but the
+    # StreamMapping LUT contains 45 physical stream names (arc0_triplet0, ...) that
+    # get merged at the route level (merge_detectors=True). When a logical name from
+    # instrument.detector_names is not found in any LUT, we include all physical
+    # names from that category. This is safe because Bifrost is the only instrument
+    # with this many-physical-to-one-logical pattern; all others have a 1:1 mapping
+    # between spec source_names and StreamMapping LUT values.
     logical_detectors = set(instrument.detector_names)
     logical_monitors = set(instrument.monitors)
     if unknown & logical_detectors:
