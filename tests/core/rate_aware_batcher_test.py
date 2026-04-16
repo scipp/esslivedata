@@ -760,16 +760,13 @@ class TestEnvelopeBoundaries:
         assert len(result.messages) == 16  # 14 + 2 late
 
     def test_sub_hz_stream_does_not_gate(self):
-        """A stream where expected_count rounds to 0 doesn't participate in gating.
+        """A sub-Hz stream never gets a grid (zero integer rate) and doesn't gate.
 
         With a 14 Hz detector also present, the detector gates; the sub-Hz
         stream's messages are included but don't affect completion.
         """
         clock = FakeClock()
         SUB_HZ = StreamId(kind=StreamKind.MONITOR_EVENTS, name="sub_hz")
-
-        # Converge both streams. The sub-Hz stream gets expected_count=0
-        # after convergence, so it should not block the detector gate.
         batcher = RateAwareMessageBatcher(
             batch_length_s=1.0, clock=clock, ema_alpha=1.0, timeout_s=999.0
         )
@@ -790,7 +787,7 @@ class TestEnvelopeBoundaries:
             batcher.batch([])
 
         # Post-convergence: detector-only should complete
-        # (sub-Hz has expected_count=0, doesn't gate)
+        # (sub-Hz has no grid, doesn't gate)
         t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
         det = msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
         result = batcher.batch(det)
@@ -798,13 +795,13 @@ class TestEnvelopeBoundaries:
         assert len(result.messages) == 14
 
     def test_high_rate_short_batch(self):
-        """14 Hz with 0.1s batch: expected_count=1, single-slot behavior."""
+        """14 Hz with 0.1s batch: slots_per_batch=1, single-slot behavior."""
         clock = FakeClock()
         batcher, t0 = make_converged_batcher(
             rate_hz=14.0, batch_length_s=0.1, clock=clock
         )
 
-        # At 14 Hz with 0.1s batch, expected_count = round(14 * 0.1) = round(1.4) = 1
+        # At 14 Hz with 0.1s batch, slots_per_batch = round(14 * 0.1) = round(1.4) = 1
         # So the batcher expects 1 message per batch.
         # Feeding 1 message should complete immediately.
         result = batcher.batch([msg(t0)])
@@ -819,7 +816,7 @@ class TestEnvelopeBoundaries:
         )
 
         # Two messages within 0.1s at 14 Hz spacing (0.0714s apart)
-        # expected_count = 1, so second message overflows
+        # slots_per_batch = 1, so second message overflows
         period = 1.0 / 14.0
         result = batcher.batch([msg(t0), msg(t0 + period)])
         # First message completes batch (slot 0 = last slot for expected=1),

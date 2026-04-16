@@ -25,7 +25,6 @@ class TestStreamRateEstimator:
         assert est.rate_hz is None
         assert not est.converged
         assert est.integer_rate_hz is None
-        assert est.expected_count(1.0) == 0
 
     def test_first_update_sets_rate(self):
         est = StreamRateEstimator()
@@ -61,38 +60,26 @@ class TestStreamRateEstimator:
         est.rate_hz = 14.6
         assert est.integer_rate_hz == 15
 
-    def test_expected_count_14hz_1s(self):
-        est = StreamRateEstimator(rate_hz=14.0, observation_count=MIN_BATCHES_FOR_GATE)
-        assert est.expected_count(1.0) == 14
-
-    def test_expected_count_14hz_2s(self):
-        est = StreamRateEstimator(rate_hz=14.0, observation_count=MIN_BATCHES_FOR_GATE)
-        assert est.expected_count(2.0) == 28
-
-    def test_expected_count_1hz_1s(self):
-        est = StreamRateEstimator(rate_hz=1.0, observation_count=MIN_BATCHES_FOR_GATE)
-        assert est.expected_count(1.0) == 1
-
 
 # --- PulseGrid ---
 
 
 class TestPulseGrid:
     def test_pulse_index_at_origin(self):
-        grid = PulseGrid(origin_ns=1000, period_ns=100)
+        grid = PulseGrid(origin_ns=1000, period_ns=100, slots_per_batch=14)
         assert grid.pulse_index(Timestamp.from_ns(1000)) == 0
 
     def test_pulse_index_one_period_from_origin(self):
-        grid = PulseGrid(origin_ns=1000, period_ns=100)
+        grid = PulseGrid(origin_ns=1000, period_ns=100, slots_per_batch=14)
         assert grid.pulse_index(Timestamp.from_ns(1100)) == 1
 
     def test_pulse_index_negative(self):
-        grid = PulseGrid(origin_ns=1000, period_ns=100)
+        grid = PulseGrid(origin_ns=1000, period_ns=100, slots_per_batch=14)
         assert grid.pulse_index(Timestamp.from_ns(900)) == -1
 
     def test_pulse_index_with_jitter_rounds_correctly(self):
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         jitter = period_ns // 4
         # Pulse 5 with positive jitter
         assert grid.pulse_index(Timestamp.from_ns(5 * period_ns + jitter)) == 5
@@ -101,25 +88,25 @@ class TestPulseGrid:
 
     def test_slot_in_batch_first_pulse(self):
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(100 * period_ns)
         assert grid.slot_in_batch(Timestamp.from_ns(100 * period_ns), batch_start) == 0
 
     def test_slot_in_batch_last_pulse_14hz(self):
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(100 * period_ns)
         assert grid.slot_in_batch(Timestamp.from_ns(113 * period_ns), batch_start) == 13
 
     def test_slot_in_batch_negative_for_late_arrival(self):
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(100 * period_ns)
         assert grid.slot_in_batch(Timestamp.from_ns(99 * period_ns), batch_start) == -1
 
     def test_split_messages_same_slot(self):
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(0)
         t = Timestamp.from_ns(5 * period_ns)
         assert grid.slot_in_batch(t, batch_start) == grid.slot_in_batch(t, batch_start)
@@ -127,26 +114,26 @@ class TestPulseGrid:
     def test_omitted_messages_do_not_affect_indices(self):
         """Pulse indices are absolute — gaps don't shift later indices."""
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(0)
         # Even if pulses 3,4,5 are missing, pulse 6 is still slot 6
         assert grid.slot_in_batch(Timestamp.from_ns(6 * period_ns), batch_start) == 6
 
     def test_batch_base_index_at_origin(self):
-        grid = PulseGrid(origin_ns=0, period_ns=100)
+        grid = PulseGrid(origin_ns=0, period_ns=100, slots_per_batch=14)
         assert grid.batch_base_index(Timestamp.from_ns(0)) == 0
 
     def test_batch_base_index_between_pulses(self):
         """Clearly between pulses: snaps to next pulse."""
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         # 40% into the period — clearly past
         assert grid.batch_base_index(Timestamp.from_ns(period_ns * 4 // 10)) == 1
 
     def test_batch_base_index_absorbs_rounding_drift(self):
         """Tiny remainder from period*rate != batch_length stays at current pulse."""
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         # 14 * period = 999999994, batch_length = 1e9 → 6ns past pulse 14
         batch_start = Timestamp.from_ns(14 * period_ns + 6)
         assert grid.batch_base_index(batch_start) == 14
@@ -157,7 +144,7 @@ class TestPulseGrid:
         This is the key property that eliminates per-batch phase drift.
         """
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
 
         for batch_idx in range(10):
             batch_start = Timestamp.from_ns(batch_idx * 14 * period_ns)
@@ -174,7 +161,7 @@ class TestPulseGrid:
         """
         period_ns = round(1e9 / 14)
         offset_ns = period_ns * 4 // 10  # 40% of period
-        grid = PulseGrid(origin_ns=offset_ns, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=offset_ns, period_ns=period_ns, slots_per_batch=14)
 
         for batch_idx in range(10):
             # batch_start is NOT aligned to pulses
@@ -188,7 +175,7 @@ class TestPulseGrid:
     def test_jitter_tolerance_within_half_period(self):
         """Jitter up to period/2 - 1ns maps to the correct slot."""
         period_ns = round(1e9 / 14)
-        grid = PulseGrid(origin_ns=0, period_ns=period_ns)
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
         batch_start = Timestamp.from_ns(0)
         max_jitter = period_ns // 2 - 1
 
@@ -204,6 +191,6 @@ class TestPulseGrid:
             )
 
     def test_frozen(self):
-        grid = PulseGrid(origin_ns=0, period_ns=100)
+        grid = PulseGrid(origin_ns=0, period_ns=100, slots_per_batch=14)
         with pytest.raises(AttributeError):
             grid.origin_ns = 1  # type: ignore[misc]

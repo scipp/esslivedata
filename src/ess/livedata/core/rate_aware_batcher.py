@@ -60,11 +60,6 @@ class StreamRateEstimator:
         """
         return None if self.rate_hz is None else round(self.rate_hz)
 
-    def expected_count(self, batch_length_s: float) -> int:
-        if self.integer_rate_hz is None:
-            return 0
-        return round(self.integer_rate_hz * batch_length_s)
-
     def update(self, message_count: int, batch_length_s: float, alpha: float) -> None:
         observed = message_count / batch_length_s
         if self.rate_hz is None:
@@ -88,6 +83,7 @@ class PulseGrid:
 
     origin_ns: int
     period_ns: int
+    slots_per_batch: int
 
     def pulse_index(self, timestamp: Timestamp) -> int:
         """Global absolute pulse index for a timestamp."""
@@ -234,7 +230,7 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _route_message(self, msg: Message[Any]) -> None:
         if self._active_batch is None:
             raise RuntimeError("No active batch when routing message")
-        estimator = self._ensure_stream(msg.stream)
+        self._ensure_stream(msg.stream)
 
         if not self._is_gated(msg.stream):
             self._add_to_active_batch(msg)
@@ -243,20 +239,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         tracker = self._batch_trackers.setdefault(msg.stream, _BatchStreamTracker())
         grid = self._grids.get(msg.stream)
 
-        # Before convergence or without a grid: include everything
-        if not estimator.converged or grid is None:
-            self._add_to_active_batch(msg)
-            tracker.add(msg, slot=-1)
-            return
-
-        expected = estimator.expected_count(self.batch_length_s)
-        if expected <= 0:
+        if grid is None:
             self._add_to_active_batch(msg)
             tracker.add(msg, slot=-1)
             return
 
         slot = grid.slot_in_batch(msg.timestamp, self._active_batch.start_time)
-        if slot >= expected:
+        if slot >= grid.slots_per_batch:
             self._overflow.append(msg)
         else:
             self._add_to_active_batch(msg)
@@ -277,30 +266,27 @@ class RateAwareMessageBatcher(MessageBatcher):
             if elapsed >= self._timeout_s:
                 return True
 
-        # Check all gated converged streams
-        gated_converged = {
-            sid: est
-            for sid, est in self._estimators.items()
-            if self._is_gated(sid) and est.converged
+        # Check all gated streams that have a grid (i.e., converged)
+        gated_grids = {
+            sid: grid for sid, grid in self._grids.items() if self._is_gated(sid)
         }
 
-        if not gated_converged:
+        if not gated_grids:
             return False
 
-        for sid, est in gated_converged.items():
+        for sid, grid in gated_grids.items():
             tracker = self._batch_trackers.get(sid)
             if tracker is None or tracker.max_slot < 0:
                 return False
-            expected = est.expected_count(self.batch_length_s)
-            if tracker.max_slot < expected - 1:
+            if tracker.max_slot < grid.slots_per_batch - 1:
                 return False
 
         return True
 
     def _active_batch_has_no_gated_messages(self) -> bool:
-        """True if no gated converged stream has messages in the active batch."""
-        for sid, est in self._estimators.items():
-            if self._is_gated(sid) and est.converged:
+        """True if no gated stream with a grid has messages in the active batch."""
+        for sid in self._grids:
+            if self._is_gated(sid):
                 tracker = self._batch_trackers.get(sid)
                 if tracker is not None and tracker.count > 0:
                     return False
@@ -340,12 +326,18 @@ class RateAwareMessageBatcher(MessageBatcher):
                 old_int_rate = estimator.integer_rate_hz
                 estimator.update(tracker.count, self.batch_length_s, self._ema_alpha)
                 new_int_rate = estimator.integer_rate_hz
-                if estimator.converged and new_int_rate is not None:
+                if (
+                    estimator.converged
+                    and new_int_rate is not None
+                    and new_int_rate > 0
+                ):
                     if sid not in self._grids or old_int_rate != new_int_rate:
                         period_ns = round(1e9 / new_int_rate)
                         origin = self._grid_origin(tracker, batch.start_time)
                         self._grids[sid] = PulseGrid(
-                            origin_ns=origin, period_ns=period_ns
+                            origin_ns=origin,
+                            period_ns=period_ns,
+                            slots_per_batch=round(new_int_rate * self.batch_length_s),
                         )
 
         # Track absence and evict streams missing for too long
@@ -361,10 +353,19 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._grids.pop(sid, None)
             self._absent_batches.pop(sid, None)
 
-        # Apply pending batch length change
+        # Apply pending batch length change and rebuild grids
         if self._pending_batch_length is not None:
             self._batch_length = self._pending_batch_length
             self._pending_batch_length = None
+            for sid, grid in self._grids.items():
+                est = self._estimators[sid]
+                int_rate = est.integer_rate_hz
+                if int_rate is not None and int_rate > 0:
+                    self._grids[sid] = PulseGrid(
+                        origin_ns=grid.origin_ns,
+                        period_ns=grid.period_ns,
+                        slots_per_batch=round(int_rate * self.batch_length_s),
+                    )
 
         # Set up next batch
         next_start = batch.end_time
