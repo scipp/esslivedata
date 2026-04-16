@@ -11,6 +11,7 @@ batch window — not when a fixed message count is reached.
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -151,7 +152,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._clock = clock
         self._ema_alpha = ema_alpha
 
-        self._estimators: dict[StreamId, StreamRateEstimator] = {}
+        self._estimators: defaultdict[StreamId, StreamRateEstimator] = defaultdict(
+            StreamRateEstimator
+        )
         self._grids: dict[StreamId, PulseGrid] = {}
         self._absent_batches: dict[StreamId, int] = {}
 
@@ -189,7 +192,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             # Collect messages already in the active batch (non-converged
             # streams routed before the gap was detected) so they aren't
             # lost when _advance_past_gap replaces the batch.
-            stashed = self._active_batch.messages if self._active_batch else []
+            stashed = self._active_batch.messages
             self._advance_past_gap()
             for msg in stashed + self._overflow:
                 self._route_message(msg)
@@ -215,14 +218,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             messages=[],
         )
         self._batch_start_wall = self._clock()
-        for msg in messages:
-            self._ensure_stream(msg.stream)
         return batch
-
-    def _ensure_stream(self, stream_id: StreamId) -> StreamRateEstimator:
-        if stream_id not in self._estimators:
-            self._estimators[stream_id] = StreamRateEstimator()
-        return self._estimators[stream_id]
 
     def _is_gated(self, stream_id: StreamId) -> bool:
         return stream_id.kind in GATED_STREAM_KINDS
@@ -230,17 +226,16 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _route_message(self, msg: Message[Any]) -> None:
         if self._active_batch is None:
             raise RuntimeError("No active batch when routing message")
-        self._ensure_stream(msg.stream)
 
         if not self._is_gated(msg.stream):
-            self._add_to_active_batch(msg)
+            self._active_batch.messages.append(msg)
             return
 
         tracker = self._batch_trackers.setdefault(msg.stream, _BatchStreamTracker())
         grid = self._grids.get(msg.stream)
 
         if grid is None:
-            self._add_to_active_batch(msg)
+            self._active_batch.messages.append(msg)
             tracker.add(msg, slot=-1)
             return
 
@@ -248,13 +243,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         if slot >= grid.slots_per_batch:
             self._overflow.append(msg)
         else:
-            self._add_to_active_batch(msg)
+            self._active_batch.messages.append(msg)
             tracker.add(msg, slot)
-
-    def _add_to_active_batch(self, msg: Message[Any]) -> None:
-        if self._active_batch is None:
-            raise RuntimeError("No active batch when adding message")
-        self._active_batch.messages.append(msg)
 
     def _is_batch_complete(self) -> bool:
         if self._active_batch is None:
@@ -266,15 +256,10 @@ class RateAwareMessageBatcher(MessageBatcher):
             if elapsed >= self._timeout_s:
                 return True
 
-        # Check all gated streams that have a grid (i.e., converged)
-        gated_grids = {
-            sid: grid for sid, grid in self._grids.items() if self._is_gated(sid)
-        }
-
-        if not gated_grids:
+        if not self._grids:
             return False
 
-        for sid, grid in gated_grids.items():
+        for sid, grid in self._grids.items():
             tracker = self._batch_trackers.get(sid)
             if tracker is None or tracker.max_slot < 0:
                 return False
@@ -284,12 +269,11 @@ class RateAwareMessageBatcher(MessageBatcher):
         return True
 
     def _active_batch_has_no_gated_messages(self) -> bool:
-        """True if no gated stream with a grid has messages in the active batch."""
+        """True if no stream with a grid has messages in the active batch."""
         for sid in self._grids:
-            if self._is_gated(sid):
-                tracker = self._batch_trackers.get(sid)
-                if tracker is not None and tracker.count > 0:
-                    return False
+            tracker = self._batch_trackers.get(sid)
+            if tracker is not None and tracker.count > 0:
+                return False
         return True
 
     def _advance_past_gap(self) -> None:
@@ -319,7 +303,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         # Update rate estimates and build/rebuild grids
         present_streams: set[StreamId] = set()
         for sid, tracker in self._batch_trackers.items():
-            if self._is_gated(sid) and tracker.messages:
+            if tracker.messages:
                 present_streams.add(sid)
                 self._absent_batches[sid] = 0
                 estimator = self._estimators[sid]
@@ -343,7 +327,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         # Track absence and evict streams missing for too long
         to_evict: list[StreamId] = []
         for sid in self._estimators:
-            if self._is_gated(sid) and sid not in present_streams:
+            if sid not in present_streams:
                 absent = self._absent_batches.get(sid, 0) + 1
                 self._absent_batches[sid] = absent
                 if absent >= ABSENT_BATCHES_FOR_EVICTION:
