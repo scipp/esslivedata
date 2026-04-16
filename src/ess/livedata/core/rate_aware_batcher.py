@@ -10,9 +10,7 @@ batch window — not when a fixed message count is reached.
 
 from __future__ import annotations
 
-import time
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -144,12 +142,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         self,
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
-        clock: Callable[[], float] = time.monotonic,
         ema_alpha: float = 0.05,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
-        self._timeout_s = timeout_s if timeout_s is not None else batch_length_s * 1.5
-        self._clock = clock
+        self._timeout = Duration.from_seconds(
+            timeout_s if timeout_s is not None else batch_length_s * 0.8
+        )
         self._ema_alpha = ema_alpha
 
         self._estimators: defaultdict[StreamId, StreamRateEstimator] = defaultdict(
@@ -161,7 +159,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._pending_batch_length: Duration | None = None
         self._active_batch: MessageBatch | None = None
         self._batch_trackers: dict[StreamId, _BatchStreamTracker] = {}
-        self._batch_start_wall: float | None = None
+        self._high_water_mark: Timestamp | None = None
         self._overflow: list[Message[Any]] = []
 
     @property
@@ -178,6 +176,11 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
+
+        if messages:
+            latest = max(m.timestamp for m in messages)
+            if self._high_water_mark is None or self._high_water_mark < latest:
+                self._high_water_mark = latest
 
         if self._active_batch is None:
             return self._start_first_batch(messages)
@@ -217,7 +220,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             end_time=next_start + self._batch_length,
             messages=[],
         )
-        self._batch_start_wall = self._clock()
         return batch
 
     def _is_gated(self, stream_id: StreamId) -> bool:
@@ -250,10 +252,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         if self._active_batch is None:
             return False
 
-        # Timeout fallback
-        if self._batch_start_wall is not None:
-            elapsed = self._clock() - self._batch_start_wall
-            if elapsed >= self._timeout_s:
+        # Logical-clock timeout: high-water mark past batch start + timeout
+        if self._high_water_mark is not None:
+            threshold = self._active_batch.start_time + self._timeout
+            if not self._high_water_mark < threshold:
                 return True
 
         if not self._grids:
@@ -293,7 +295,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             messages=[],
         )
         self._batch_trackers = {}
-        self._batch_start_wall = self._clock()
 
     def _close_batch(self) -> MessageBatch:
         if self._active_batch is None:
@@ -359,7 +360,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             messages=[],
         )
         self._batch_trackers = {}
-        self._batch_start_wall = self._clock()
 
         return batch
 
