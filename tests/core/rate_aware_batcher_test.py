@@ -245,6 +245,23 @@ class TestOverflow:
         assert batch2 is not None
         assert len(batch2.messages) == 14
 
+    def test_overflow_completes_batch_with_missing_last_slot(self):
+        """A future message proves the batch window passed, even if the last
+        slot was never delivered. Completion should be immediate (slot-based),
+        not delayed until the high-water-mark timeout fires."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0, timeout_s=999.0)
+
+        # All 14 messages except the last one, plus one future message
+        all_msgs = msgs_at(14.0, start=t0, duration=1.0)
+        missing_last = all_msgs[:-1]  # 13 messages, last slot absent
+        future = [msg(t0 + 1.5)]  # clearly in next batch
+        result = batcher.batch(missing_last + future)
+        assert result is not None, (
+            "Overflow message should trigger slot-based completion "
+            "even when the last slot is missing"
+        )
+        assert len(result.messages) == 13
+
 
 class TestPhaseOffset:
     """Streams whose first pulse doesn't align with batch_start."""

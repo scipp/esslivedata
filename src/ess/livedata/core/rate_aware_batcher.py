@@ -244,6 +244,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         slot = grid.slot_in_batch(msg.timestamp, self._active_batch.start_time)
         if slot >= grid.slots_per_batch:
             self._overflow.append(msg)
+            tracker.max_slot = max(tracker.max_slot, grid.slots_per_batch - 1)
         else:
             self._active_batch.messages.append(msg)
             tracker.add(msg, slot)
