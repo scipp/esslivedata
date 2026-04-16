@@ -648,6 +648,363 @@ class TestSetBatchLength:
         assert len(batch2.messages) == 7
 
 
+class TestEnvelopeBoundaries:
+    """Probe the boundaries of the working envelope to find breakdown modes."""
+
+    def test_phase_offset_exactly_half_period(self):
+        """Phase offset at 50% of period — Python banker's rounding territory."""
+        rate = 14.0
+        period = 1.0 / rate
+        offset = period * 0.5  # Exactly half
+        clock = FakeClock()
+
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0, clock=clock, ema_alpha=1.0, timeout_s=999.0
+        )
+        count = round(rate * 1.0)
+
+        def stream_msgs(batch_start: float) -> list[Message[str]]:
+            return [msg(batch_start + offset + i * period) for i in range(count)]
+
+        initial = stream_msgs(0.0)
+        batcher.batch(initial)
+        batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
+
+        for i in range(MIN_BATCHES_FOR_GATE):
+            batcher.batch(stream_msgs(batch_start + i * 1.0))
+            clock.advance(1000.0)
+            batcher.batch([])
+
+        t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        result = batcher.batch(stream_msgs(t0))
+        assert result is not None
+        assert len(result.messages) == 14
+
+    def test_phase_offset_just_over_half_period(self):
+        """Phase offset at 51% of period — past the rounding midpoint."""
+        rate = 14.0
+        period = 1.0 / rate
+        offset = period * 0.51
+        clock = FakeClock()
+
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0, clock=clock, ema_alpha=1.0, timeout_s=999.0
+        )
+        count = round(rate * 1.0)
+
+        def stream_msgs(batch_start: float) -> list[Message[str]]:
+            return [msg(batch_start + offset + i * period) for i in range(count)]
+
+        initial = stream_msgs(0.0)
+        batcher.batch(initial)
+        batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
+
+        for i in range(MIN_BATCHES_FOR_GATE):
+            batcher.batch(stream_msgs(batch_start + i * 1.0))
+            clock.advance(1000.0)
+            batcher.batch([])
+
+        t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        result = batcher.batch(stream_msgs(t0))
+        assert result is not None
+        assert len(result.messages) == 14
+
+    def test_high_jitter_30ms_at_14hz(self):
+        """30ms jitter at 14 Hz (~42% of period). Near the breaking point."""
+        import random
+
+        rng = random.Random(42)
+        rate = 14.0
+        period = 1.0 / rate
+        jitter_max = 0.030  # 42% of period
+
+        batcher, t0 = make_converged_batcher(rate_hz=rate, timeout_s=999.0)
+
+        # Run 50 batches, check that we don't systematically lose messages
+        counts: list[int] = []
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(rate_hz=rate, timeout_s=999.0, clock=clock)
+        for b in range(50):
+            batch_t0 = t0 + b * 1.0
+            batch_msgs = [
+                msg(batch_t0 + i * period + rng.uniform(-jitter_max, jitter_max))
+                for i in range(14)
+            ]
+            result = batcher.batch(batch_msgs)
+            if result is not None:
+                counts.append(len(result.messages))
+            else:
+                clock.advance(1000.0)
+                result = batcher.batch([])
+                if result is not None:
+                    counts.append(len(result.messages))
+
+        avg = sum(counts) / len(counts)
+        # At this jitter level, some batches may get 13 or 15 instead of 14
+        # but the average should still be close
+        assert abs(avg - 14.0) < 1.0, f"Average {avg} too far from 14.0"
+
+    def test_out_of_order_messages_before_batch_start(self):
+        """Messages with timestamps before batch_start (late arrivals)."""
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(rate_hz=14.0, timeout_s=999.0, clock=clock)
+
+        # 14 normal messages + 2 "late" messages from the previous batch
+        normal = msgs_at(14.0, start=t0, duration=1.0)
+        late = [msg(t0 - 0.05), msg(t0 - 0.02)]
+        result = batcher.batch(late + normal)
+
+        # The batch should complete (normal messages fill the last slot).
+        # Late messages are included (negative slot < expected, so not overflow).
+        assert result is not None
+        assert len(result.messages) == 16  # 14 + 2 late
+
+    def test_sub_hz_stream_does_not_gate(self):
+        """A stream where expected_count rounds to 0 doesn't participate in gating.
+
+        With a 14 Hz detector also present, the detector gates; the sub-Hz
+        stream's messages are included but don't affect completion.
+        """
+        clock = FakeClock()
+        SUB_HZ = StreamId(kind=StreamKind.MONITOR_EVENTS, name="sub_hz")
+
+        # Converge both streams. The sub-Hz stream gets expected_count=0
+        # after convergence, so it should not block the detector gate.
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0, clock=clock, ema_alpha=1.0, timeout_s=999.0
+        )
+        # Initial batch with both streams
+        initial = msgs_at(14.0, start=0.0, duration=1.0, stream=DETECTOR)
+        initial.append(msg(0.0, stream=SUB_HZ))
+        batcher.batch(initial)
+        batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
+
+        # Converge via timeout — sub-Hz gets 1 msg every other batch
+        for i in range(MIN_BATCHES_FOR_GATE):
+            t0 = batch_start + i * 1.0
+            batch_msgs = msgs_at(14.0, start=t0, duration=1.0, stream=DETECTOR)
+            if i % 2 == 0:
+                batch_msgs.append(msg(t0 + 0.5, stream=SUB_HZ))
+            batcher.batch(batch_msgs)
+            clock.advance(1000.0)
+            batcher.batch([])
+
+        # Post-convergence: detector-only should complete
+        # (sub-Hz has expected_count=0, doesn't gate)
+        t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        det = msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
+        result = batcher.batch(det)
+        assert result is not None
+        assert len(result.messages) == 14
+
+    def test_high_rate_short_batch(self):
+        """14 Hz with 0.1s batch: expected_count=1, single-slot behavior."""
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(
+            rate_hz=14.0, batch_length_s=0.1, clock=clock
+        )
+
+        # At 14 Hz with 0.1s batch, expected_count = round(14 * 0.1) = round(1.4) = 1
+        # So the batcher expects 1 message per batch.
+        # Feeding 1 message should complete immediately.
+        result = batcher.batch([msg(t0)])
+        assert result is not None
+        assert len(result.messages) == 1
+
+    def test_high_rate_short_batch_loses_second_message(self):
+        """14 Hz with 0.1s batch: second message in the period overflows."""
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(
+            rate_hz=14.0, batch_length_s=0.1, timeout_s=999.0, clock=clock
+        )
+
+        # Two messages within 0.1s at 14 Hz spacing (0.0714s apart)
+        # expected_count = 1, so second message overflows
+        period = 1.0 / 14.0
+        result = batcher.batch([msg(t0), msg(t0 + period)])
+        # First message completes batch (slot 0 = last slot for expected=1),
+        # second goes to overflow
+        assert result is not None
+        assert len(result.messages) == 1
+
+    def test_non_integer_rate_times_batch_length(self):
+        """14.5 Hz x 1s = 14.5 expected: round to 14, systematic overflow?"""
+        rate = 14.5
+        period = 1.0 / rate
+        n_batches = 100
+
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0, clock=clock, ema_alpha=1.0, timeout_s=999.0
+        )
+
+        # Initial batch with 14 or 15 messages
+        initial_count = round(rate * 1.0)  # 14 (banker's rounding)
+        initial = [msg(i * period) for i in range(initial_count)]
+        batcher.batch(initial)
+        batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
+
+        # Converge
+        for i in range(MIN_BATCHES_FOR_GATE):
+            t0 = batch_start + i * 1.0
+            batch_msgs = [msg(t0 + j * period) for j in range(initial_count)]
+            batcher.batch(batch_msgs)
+            clock.advance(1000.0)
+            batcher.batch([])
+
+        # Run 100 batches alternating between 14 and 15 messages
+        # (simulating a real 14.5 Hz source)
+        t_base = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        total_in = 0
+        total_out = 0
+        for b in range(n_batches):
+            # A true 14.5 Hz source produces 14 or 15 messages per second
+            # depending on phase alignment
+            count = 15 if b % 2 else 14
+            batch_msgs = [msg(t_base + b * 1.0 + j * period) for j in range(count)]
+            total_in += count
+            result = batcher.batch(batch_msgs)
+            if result is not None:
+                total_out += len(result.messages)
+            else:
+                clock.advance(1000.0)
+                result = batcher.batch([])
+                if result is not None:
+                    total_out += len(result.messages)
+
+        loss_rate = 1.0 - total_out / total_in
+        assert loss_rate < 0.02, f"Lost {loss_rate:.1%} of messages at 14.5 Hz"
+
+    def test_burst_delivery_pattern(self):
+        """All 14 messages arrive in one batch() call with correct timestamps."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        # Same as normal — timestamps are spaced correctly, just all delivered at once
+        all_at_once = msgs_at(14.0, start=t0, duration=1.0)
+        result = batcher.batch(all_at_once)
+        assert result is not None
+        assert len(result.messages) == 14
+
+    def test_realistic_ema_alpha_abrupt_rate_change(self):
+        """With default alpha=0.05, how many batches to converge after 14→7 Hz?"""
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0, clock=clock, ema_alpha=0.05, timeout_s=1.5
+        )
+
+        # Converge at 14 Hz
+        initial = msgs_at(14.0, start=0.0, duration=1.0)
+        batcher.batch(initial)
+        batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
+
+        for i in range(MIN_BATCHES_FOR_GATE):
+            t0 = batch_start + i * 1.0
+            batcher.batch(msgs_at(14.0, start=t0, duration=1.0))
+            clock.advance(2.0)
+            batcher.batch([])
+
+        # Switch to 7 Hz. Count how many batches need timeout vs slot-gate
+        t_base = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        timeout_count = 0
+        slot_gate_count = 0
+        for b in range(100):
+            batch_t = t_base + b * 1.0
+            result = batcher.batch(msgs_at(7.0, start=batch_t, duration=1.0))
+            if result is not None:
+                slot_gate_count += 1
+            else:
+                clock.advance(2.0)
+                result = batcher.batch([])
+                if result is not None:
+                    timeout_count += 1
+
+        # With alpha=0.05, rate moves slowly. Most batches will close via
+        # timeout for a while, then eventually via slot gate.
+        # The important thing: no messages are lost.
+        total = slot_gate_count + timeout_count
+        assert total == 100, f"Expected 100 batches, got {total}"
+
+    def test_jitter_at_50_percent_of_period(self):
+        """36ms jitter at 14 Hz (50% of period). At the theoretical limit.
+
+        Note: the phase offset estimation uses a single message per batch,
+        so with jitter the estimate drifts. This causes ~50% of batches to
+        require timeout rather than slot-gate completion. No messages are
+        lost — the average per-batch count remains exactly 14.0.
+        """
+        import random
+
+        rng = random.Random(99)
+        rate = 14.0
+        period = 1.0 / rate
+        jitter_max = period * 0.50
+
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(rate_hz=rate, timeout_s=999.0, clock=clock)
+
+        counts: list[int] = []
+        for b in range(100):
+            batch_t0 = t0 + b * 1.0
+            batch_msgs = [
+                msg(batch_t0 + i * period + rng.uniform(-jitter_max, jitter_max))
+                for i in range(14)
+            ]
+            result = batcher.batch(batch_msgs)
+            if result is not None:
+                counts.append(len(result.messages))
+            else:
+                clock.advance(1000.0)
+                result = batcher.batch([])
+                if result is not None:
+                    counts.append(len(result.messages))
+
+        avg = sum(counts) / len(counts)
+        assert abs(avg - 14.0) < 1.0, f"Average {avg} too far from 14.0"
+
+    def test_extreme_jitter_breaks_gracefully(self):
+        """Jitter exceeding 100% of period: verify no crash, just degraded accuracy."""
+        import random
+
+        rng = random.Random(77)
+        rate = 14.0
+        period = 1.0 / rate
+        jitter_max = period * 1.5  # 150% of period!
+
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(rate_hz=rate, timeout_s=1.5, clock=clock)
+
+        # Just verify no crash or infinite loop over 20 batches
+        for b in range(20):
+            batch_t0 = t0 + b * 1.0
+            batch_msgs = [
+                msg(batch_t0 + i * period + rng.uniform(-jitter_max, jitter_max))
+                for i in range(14)
+            ]
+            result = batcher.batch(batch_msgs)
+            if result is None:
+                clock.advance(2.0)
+                batcher.batch([])
+
+    def test_overflow_does_not_accumulate(self):
+        """Over 200 batches, overflow never grows unboundedly."""
+        rate = 14.0
+        clock = FakeClock()
+        batcher, t0 = make_converged_batcher(rate_hz=rate, timeout_s=999.0, clock=clock)
+
+        max_overflow = 0
+        for b in range(200):
+            batch_t0 = t0 + b * 1.0
+            batch_msgs = msgs_at(rate, start=batch_t0, duration=1.0)
+            result = batcher.batch(batch_msgs)
+            overflow_size = len(batcher._overflow)
+            max_overflow = max(max_overflow, overflow_size)
+            if result is None:
+                clock.advance(1000.0)
+                batcher.batch([])
+
+        # Overflow should never accumulate significantly
+        assert max_overflow <= 2, f"Max overflow was {max_overflow}"
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 

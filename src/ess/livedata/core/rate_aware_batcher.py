@@ -297,7 +297,12 @@ class RateAwareMessageBatcher(MessageBatcher):
                 if state.rate_hz is not None:
                     period_ns = round(1e9 / state.rate_hz)
                     dt_ns = (tracker.messages[0].timestamp - batch.start_time).to_ns()
-                    state.phase_offset_ns = dt_ns % period_ns
+                    residual = dt_ns % period_ns
+                    # Integer truncation in timestamps can make a near-zero
+                    # offset appear as period_ns - 1. Unwrap that case.
+                    if period_ns - residual <= 2:
+                        residual -= period_ns
+                    state.phase_offset_ns = residual
 
         # Track absence and evict streams missing for too long
         to_evict: list[StreamId] = []

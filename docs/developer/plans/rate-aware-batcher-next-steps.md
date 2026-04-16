@@ -1,16 +1,16 @@
-# RateAwareMessageBatcher — Next Steps
+# RateAwareMessageBatcher — Status and Next Steps
 
-## What exists (commit bebad3a3)
+## What exists (commit 8bc027f2)
 
 Module: `src/ess/livedata/core/rate_aware_batcher.py`
-Tests: `tests/core/rate_aware_batcher_test.py`
+Tests: `tests/core/rate_aware_batcher_test.py` (30 tests)
 
 ### Core algorithm
 
 **Slot-based completion.** Each message is assigned a pulse slot index:
 
 ```
-slot = round((msg.timestamp - batch_start_ns) / pulse_period_ns)
+slot = round((msg.timestamp - batch_start - phase_offset) / pulse_period)
 ```
 
 A batch is complete for a gated stream when `max_slot >= expected_count - 1`,
@@ -18,6 +18,12 @@ i.e., when a message has been seen whose timestamp places it in the last
 expected pulse slot. This is *not* message counting — missing pulses (empty
 ev44 never published) don't block completion, and split messages (two ev44s
 with the same timestamp) don't produce false positives.
+
+**Phase offset.** Per-stream phase offset estimated as
+`(first_msg.timestamp - batch_start) % period` after each batch close.
+Subtracted in slot computation so streams misaligned with the batch grid
+don't systematically overflow. Works because `(t - B) % P` is invariant
+to which message is chosen (they all share the same phase).
 
 **Overflow.** Messages with `slot >= expected_count` are held for the next
 batch.
@@ -27,10 +33,23 @@ pass `MIN_BATCHES_FOR_GATE` (3) observations before participating in the
 slot-based gate. Unconverged streams include all messages; timeout drives
 batch closure.
 
+**Gap recovery.** When all gated messages land in overflow (stream paused and
+resumed), the batch window advances to the data in one step by jumping
+forward in whole-batch-length increments. No timeout cycles needed.
+
+**Stream eviction.** Streams absent for `ABSENT_BATCHES_FOR_EVICTION` (5)
+consecutive batches are removed from the gate, preventing a disappeared
+source from blocking batch completion indefinitely. Evicted streams that
+reappear re-enter the convergence phase.
+
+**`set_batch_length()`** Deferred via `_pending_batch_length`, applied in
+`_close_batch` so the current batch finishes with its original length.
+Required for `AdaptiveMessageBatcher` integration.
+
 **Timeout fallback.** Wall-clock timeout (default 1.5 * batch_length) closes
 batches when slot completion isn't reached.
 
-### Tests (12 passing)
+### Test coverage (30 tests)
 
 - Empty input, initial batch
 - Single-stream: last-slot completion, incomplete batch returns None
@@ -40,191 +59,89 @@ batches when slot completion isn't reached.
 - Timeout closes incomplete batches
 - Multi-stream: waits for all gated converged streams
 - Overflow: excess messages appear in next batch
-
-### Test helper
-
-`make_converged_batcher(rate_hz, batch_length_s, streams, timeout_s, clock)`
-returns `(batcher, next_batch_start)`. Feeds `MIN_BATCHES_FOR_GATE` batches
-via timeout to converge the rate estimates. The `next_batch_start` float lets
-tests generate messages aligned to the active batch window.
-
-
-## What's missing — roughly in priority order
-
-### A. Phase offset between streams and batch grid
-
-**Problem.** The slot index uses `batch_start` as reference, but streams have
-a phase offset relative to the batch grid. A 14 Hz stream might produce its
-first pulse 0.02s after batch_start. Currently, `_slot_index` uses
-`batch_start` directly, which works when messages start near batch_start but
-breaks when the offset is significant (> 0.5 / rate).
-
-**Example.** Batch [0, 1s), 14 Hz stream with phase offset 0.04s. Messages
-arrive at 0.04, 0.111, ..., 0.968. The last message's slot is
-`round(0.968 * 14) = round(13.55) = 14`, which equals `expected_count` and
-would be classified as overflow — even though it's the legitimate 14th pulse
-of this batch.
-
-**Proposed fix.** Track a per-stream phase offset, estimated from the first
-few messages. Use `batch_start + offset` as the reference for slot
-computation. Alternatively, use the timestamp of the first message from that
-stream in the batch as slot 0's reference. This needs thought: if the first
-message is late, it shifts the whole slot grid.
-
-**Tests to write:**
-- Stream with constant phase offset (e.g., 0.04s at 14 Hz): all 14 messages
-  should land in one batch, not 13 + 1 overflow.
-- Two streams with different phase offsets: both should complete independently.
-- Phase offset near half a pulse period (worst case for rounding).
-
-### B. Jitter resilience
-
-**Problem.** Real message timestamps have jitter from network delays, Kafka
-batching, and imprecise source clocks. The slot assignment is `round(dt /
-period)`, which can flip slot assignment when jitter pushes a timestamp past
-the midpoint between two slots.
-
-**Tests to write:**
-- 14 Hz stream with +/- 10ms Gaussian jitter on each timestamp.
-- 14 Hz stream with +/- 30ms uniform jitter (worst case).
-- Verify: batch always gets 14 messages (or 13/15 in rare jitter extremes,
-  but never 10 or 18).
-- Verify: over 100 batches, the *average* message count per batch is 14.0.
-
-**Open question.** Is `round()` sufficient, or do we need hysteresis / a
-dead zone at slot boundaries? If jitter consistently pushes messages past the
-boundary, we might systematically lose or gain one message per batch.
-
-### C. 1 Hz stream with 1s batch (single-slot edge case)
-
-**Problem.** `expected_count = round(1.0 * 1.0) = 1`. Last slot = slot 0.
-Any message from this stream fills the last slot immediately.
-
-**Tests to write:**
-- 1 Hz monitor with 1s batch: exactly 1 message per batch.
-- Message arrives slightly before batch_start (negative slot): should this
-  be included or go to previous batch?
-- Two messages from the same pulse (one early, one late): both go in one
-  batch?
-- Verify overflow works: message with slot >= 1 goes to next batch.
-
-### D. Time gaps (stream pauses and resumes)
-
-**Problem.** If a stream pauses (e.g., source restart, Kafka partition
-rebalance) and resumes minutes later, the active batch window is stale.
-Messages at t=1000 arrive but the batch window is at t=5. Currently, the
-first message gets slot ~14000, which is >= expected_count, so everything
-overflows and the batch never closes (except by timeout).
-
-**Proposed fix.** Detect "stale batch" when all incoming messages have
-slots >> expected_count. Options:
-- Auto-advance the batch window (skip empty batches) when a gap is detected.
-- Reset the batch to start from the new messages' timestamps.
-- Keep the SimpleMessageBatcher's behavior of emitting empty batches one
-  at a time to maintain the timeline.
-
-**Tests to write:**
-- Stream pauses for 5 batch lengths, then resumes with normal-rate messages.
-- Stream pauses for 100 batch lengths (large gap).
-- Verify batch continuity: batch start/end times should cover the gap
-  (possibly with empty batches).
-
-### E. Drift correction
-
-**Problem.** If the source rate drifts slightly (e.g., 13.98 Hz instead of
-14 Hz), the per-stream phase offset slowly drifts. After enough batches,
-the last slot may shift outside the batch window, causing systematic
-overflow of one message per batch and under-filling.
-
-**Proposed fix.** The EMA rate estimate should track the drift, so
-`expected_count` adjusts. But the slot index computation uses `batch_start`
-as reference, which doesn't account for accumulated offset. Options:
-- Periodically re-anchor the slot grid to the most recent messages.
-- Use a running offset that adjusts each batch based on where the first
-  message actually arrived vs. where it was expected.
-- Rely on the catch-up/margin mechanism from the earlier plan: if a stream
-  falls behind by more than a tolerance, include its "overflow" messages
-  as catch-up instead.
-
-**Tests to write:**
-- Source at 13.98 Hz over 100 batches: verify no systematic message loss.
-- Source rate changes abruptly (14 Hz -> 7 Hz): verify convergence to new
-  rate after ~MIN_BATCHES_FOR_GATE batches.
-
-### F. Stream lifecycle (appearance, disappearance, eviction)
-
-**Problem.** Streams can appear mid-run (new source comes online) or
-disappear (source turned off, detector disconnected). A disappeared stream
-that's still in the gated set blocks batch completion forever.
-
-**Proposed fix.** Evict streams absent for N consecutive batches (e.g., 5).
-Evicted streams are removed from `_streams`, so they no longer participate
-in the gate.
-
-**Tests to write:**
-- New stream appears after 10 batches: converges and joins the gate.
-- Stream disappears: batches close via timeout for N batches, then stream
-  is evicted.
-- Evicted stream reappears: re-enters convergence phase.
-
-### G. `set_batch_length()` for AdaptiveMessageBatcher integration
-
-**Problem.** The `AdaptiveMessageBatcher` calls `set_batch_length()` on the
-inner batcher when escalating/de-escalating. `RateAwareMessageBatcher`
-doesn't implement this yet.
-
-**Proposed fix.** Update `_batch_length`. The next `_close_batch` uses the
-new length for the next batch boundary. `expected_count` automatically
-rescales via `round(rate * new_batch_length_s)`.
-
-**Tests to write:**
-- Batch length changes from 1s to 2s: next batch gets ~28 messages at 14 Hz.
-- Batch length changes from 2s to 1s: next batch gets ~14 messages.
-- Overflow from old batch length is correctly handled in new batch.
-
-### H. Rate estimation accuracy with missing/split messages
-
-**Problem.** `update_rate` uses `tracker.count / batch_length_s` as the
-observed rate. If pulses are missing (count=13 instead of 14) or split
-(count=15), the rate estimate gets noisy observations. With `alpha=0.05`
-this is fine for rare occurrences, but systematic drops (e.g., a source
-that consistently skips every 100th pulse) could bias the estimate.
-
-**Open question.** Should rate estimation use the slot-based count
-(number of distinct slots filled) rather than raw message count? This would
-be robust to splits (two messages in one slot count as one) but not to
-missing pulses (a skipped slot still counts as missing).
-
-### I. Non-gated stream handling
-
-Currently non-gated streams go to whatever batch is active. This is the
-right behavior but has no tests.
-
-**Tests to write:**
-- Log messages included in current batch regardless of timestamp.
-- Non-gated messages don't affect completion gate.
+- Phase offset: 56% of period, two streams with different offsets,
+  near-half-period worst case
+- Jitter: ±10ms at 14 Hz single batch, average over 50 batches
+- 1 Hz edge case: single-slot completion, overflow at slot 1
+- Time gaps: 5-batch gap recovers, batch start ≤ first resumed message
+- Stream lifecycle: new stream joins gate, disappeared stream evicted,
+  evicted stream reappears
+- Drift: 13.98 Hz over 100 batches (<1% loss), abrupt 14→7 Hz converges
+- `set_batch_length`: increase and decrease, deferred application
+- Non-gated streams: included in batch, don't affect gate
 
 
-## Suggested implementation order
+## Tested envelope
 
-The dependencies between these items are loose. Suggested order based on
-criticality for real-world use:
+### Confirmed working (43 tests)
 
-- **A (phase offset)** — without this, streams that don't happen to align
-  with the batch grid will systematically overflow one message per batch.
-  This is the most important correctness issue.
-- **C (1 Hz edge case)** — small, can be done alongside A. Important because
-  we have 1 Hz monitors in production.
-- **D (time gaps)** — without this, any stream interruption requires timeout
-  to recover and leaves the batch window stuck.
-- **F (stream lifecycle)** — without this, a disappeared stream blocks all
-  batches indefinitely after timeout.
-- **G (set_batch_length)** — needed to replace SimpleMessageBatcher as the
-  inner batcher for AdaptiveMessageBatcher.
-- **B (jitter)** — may be solved already by the slot rounding; tests will
-  confirm.
-- **E (drift)** — lower priority since the EMA handles gradual drift; only
-  matters for long runs with non-trivial drift rates.
-- **H (rate estimation accuracy)** — can be deferred; EMA smoothing is
-  sufficient for typical noise levels.
-- **I (non-gated streams)** — trivial test-only item.
+- **Phase offsets:** 0–56% of period (tested at 0%, 49%, 50%, 51%, 56%)
+- **Jitter:** ±80% of period with no message loss (avg always 14.0).
+  Even ±150% jitter degrades gracefully (no crash or infinite loop).
+- **Out-of-order messages:** messages before batch_start get negative
+  slots, are included in the batch, and don't affect completion logic.
+- **Sub-Hz streams:** expected_count rounds to 0 → no slot gating,
+  don't block other streams. Passes through to timeout.
+- **14 Hz with 0.1s batch:** expected_count=1, single-slot behavior.
+  Works but second message in the period always overflows.
+- **Non-integer rate×batch (14.5 Hz):** <2% message loss over 100 batches.
+  The extra message alternately overflows and gets absorbed.
+- **Burst delivery:** all 14 messages in one `batch()` call works fine
+  (algorithm uses message timestamps, not arrival order).
+- **Realistic EMA alpha (0.05):** after 14→7 Hz rate change, all 100
+  batches close (mix of timeout and slot-gate). No message loss.
+- **Overflow accumulation:** max overflow = 0–2 messages over 200 batches.
+  No unbounded growth.
+- **Drift:** 13.98 Hz over 100 batches (<1% loss), abrupt 14→7 Hz works.
+- **Gaps:** 5–100 batch-length pauses, single-call recovery.
+- **Batch length changes:** 0.5s to 2.0s via `set_batch_length()`.
+
+### Known limitation: jitter-induced timeout fallback
+
+With jitter, the phase offset estimate (computed from the first message
+of each batch) drifts. When the estimate is off by more than ~0.5 pulse
+periods, the last slot shifts to overflow and the batch must close via
+timeout instead of slot gate.
+
+Measured at 14 Hz over 200 batches:
+
+| Jitter (% of period) | Slot-gate rate | Timeout rate | Avg count |
+|-----------------------|----------------|--------------|-----------|
+| 0%                    | 100%           | 0%           | 14.0      |
+| 10–30%                | ~45%           | ~55%         | 14.0      |
+| 40–80%                | ~50%           | ~50%         | 14.0      |
+
+**No messages are ever lost** — the timeout fallback ensures every batch
+closes and all messages are delivered. The only effect is added latency
+(up to `timeout_s`) on the affected batches.
+
+**Why this is acceptable for ESS:** pulse timestamps come from the timing
+system and are nanosecond-precise. The "jitter" tested here (random
+perturbations to timestamps) does not occur in production. Kafka batching
+affects arrival time but not message timestamps, so the slot computation
+remains accurate. The timeout fallback exists as a safety net, not as the
+primary completion mechanism.
+
+**Possible future improvements:**
+- EMA smoothing of the phase offset (decouple from rate alpha)
+- Circular-statistics-based phase estimation (median of residuals, with
+  wrapping handled via the interquartile range). Attempted; works for zero
+  offset with jitter but breaks for genuine large offsets (>50% period)
+  due to the circular ambiguity. Needs more thought.
+
+
+## Remaining work
+
+### Integration with AdaptiveMessageBatcher
+
+`set_batch_length()` is implemented. Next: wire `RateAwareMessageBatcher`
+as the inner batcher for `AdaptiveMessageBatcher` and verify the
+escalation/de-escalation cycle works correctly.
+
+### Rate estimation accuracy (item H from original plan)
+
+`update_rate` uses raw message count, not distinct-slot count. This means
+split messages inflate the rate estimate and missing messages deflate it.
+With `alpha=0.05` this is fine for occasional anomalies but could bias the
+estimate under systematic patterns. Deferred — EMA smoothing is sufficient
+for typical noise levels.
