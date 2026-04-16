@@ -1069,7 +1069,7 @@ class TestSlotBoundaryStability:
         # Run until converged (initial + MIN_BATCHES_FOR_GATE timeout batches)
         deliver_ticks((MIN_BATCHES_FOR_GATE + 2) * 1.5)
 
-        state = batcher._streams[DETECTOR]
+        state = batcher._estimators[DETECTOR]
         assert state.converged
 
         # Inject rate error and freeze it (alpha=0)
