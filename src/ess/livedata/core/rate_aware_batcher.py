@@ -47,10 +47,20 @@ class _StreamState:
             self.observation_count >= MIN_BATCHES_FOR_GATE and self.rate_hz is not None
         )
 
+    @property
+    def integer_rate_hz(self) -> int | None:
+        """Rate rounded to the nearest integer Hz.
+
+        ESS sources publish at integer Hz rates. Rounding eliminates the
+        fractional-Hz EMA noise that otherwise causes slot-boundary
+        oscillation (±1 message per batch).
+        """
+        return None if self.rate_hz is None else round(self.rate_hz)
+
     def expected_count(self, batch_length_s: float) -> int:
-        if self.rate_hz is None:
+        if self.integer_rate_hz is None:
             return 0
-        return round(self.rate_hz * batch_length_s)
+        return round(self.integer_rate_hz * batch_length_s)
 
     def update_rate(
         self, message_count: int, batch_length_s: float, alpha: float
@@ -211,10 +221,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         """Compute which pulse slot a message belongs to within the active batch."""
         if self._active_batch is None:
             raise RuntimeError("No active batch when computing slot index")
-        if stream_state.rate_hz is None:
+        if stream_state.integer_rate_hz is None:
             raise RuntimeError("Stream rate not converged when computing slot index")
         dt_ns = (msg.timestamp - self._active_batch.start_time).to_ns()
-        period_ns = round(1e9 / stream_state.rate_hz)
+        period_ns = round(1e9 / stream_state.integer_rate_hz)
         dt_ns -= stream_state.phase_offset_ns
         return round(dt_ns / period_ns)
 
@@ -294,8 +304,8 @@ class RateAwareMessageBatcher(MessageBatcher):
                 state = self._streams[sid]
                 state.absent_batches = 0
                 state.update_rate(tracker.count, self.batch_length_s, self._ema_alpha)
-                if state.rate_hz is not None:
-                    period_ns = round(1e9 / state.rate_hz)
+                if state.integer_rate_hz is not None:
+                    period_ns = round(1e9 / state.integer_rate_hz)
                     dt_ns = (tracker.messages[0].timestamp - batch.start_time).to_ns()
                     residual = dt_ns % period_ns
                     # Integer truncation in timestamps can make a near-zero

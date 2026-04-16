@@ -1005,6 +1005,95 @@ class TestEnvelopeBoundaries:
         assert max_overflow <= 2, f"Max overflow was {max_overflow}"
 
 
+class TestSlotBoundaryStability:
+    """Rate estimate errors must not cause slot-boundary oscillation.
+
+    A fractional-Hz EMA estimate (e.g. 14.003) makes the estimated period
+    slightly shorter/longer than the true period. Over 14 slots the error
+    accumulates, pushing the boundary message between "included" and
+    "overflow" on alternate batches — producing a 13/15/13/15 pattern
+    instead of a steady 14.
+
+    The bug requires integer-period timestamp spacing (as Kafka sources
+    produce) and tick-based delivery across multiple batch() calls.
+    """
+
+    @staticmethod
+    def _run_integer_period_stream(
+        rate_hz: float = 14.0,
+        rate_error: float = 0.0,
+        n_batches: int = 40,
+    ) -> list[int]:
+        """Converge with integer-period delivery, inject a rate error, run.
+
+        Uses integer-nanosecond period spacing (``int(1e9 / rate_hz)``)
+        throughout, matching how Kafka sources generate timestamps.
+        Delivers messages in 100ms ticks, matching the testbench.
+        """
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=1.0,
+            clock=clock,
+            ema_alpha=1.0,
+            timeout_s=1.5,
+        )
+
+        period_ns = int(1e9 / rate_hz)
+        start_ns = 1_000_000_000_000
+        next_pulse_ns = start_ns
+
+        def deliver_ticks(n_seconds: float) -> list[int]:
+            """Deliver messages in 100ms ticks, return per-batch counts."""
+            nonlocal next_pulse_ns
+            counts: list[int] = []
+            elapsed = 0.0
+            while elapsed < n_seconds:
+                elapsed += 0.1
+                clock.advance(0.1)
+                now_ns = start_ns + int(clock.now * 1e9)
+                msgs = []
+                while next_pulse_ns <= now_ns:
+                    msgs.append(
+                        Message(
+                            timestamp=Timestamp.from_ns(next_pulse_ns),
+                            stream=DETECTOR,
+                            value="",
+                        )
+                    )
+                    next_pulse_ns += period_ns
+                result = batcher.batch(msgs) if msgs else batcher.batch([])
+                if result is not None:
+                    counts.append(len(result.messages))
+            return counts
+
+        # Run until converged (initial + MIN_BATCHES_FOR_GATE timeout batches)
+        deliver_ticks((MIN_BATCHES_FOR_GATE + 2) * 1.5)
+
+        state = batcher._streams[DETECTOR]
+        assert state.converged
+
+        # Inject rate error and freeze it (alpha=0)
+        state.rate_hz = rate_hz + rate_error
+        batcher._ema_alpha = 0.0
+
+        return deliver_ticks(n_batches * 1.1)[:n_batches]
+
+    def test_positive_rate_error_no_oscillation(self):
+        """rate_hz=14.1: integer rounding absorbs the error."""
+        counts = self._run_integer_period_stream(rate_error=+0.1)
+        assert all(c == 14 for c in counts), f"Oscillation: {set(counts)}"
+
+    def test_negative_rate_error_no_oscillation(self):
+        """rate_hz=13.9: integer rounding absorbs the error."""
+        counts = self._run_integer_period_stream(rate_error=-0.1)
+        assert all(c == 14 for c in counts), f"Oscillation: {set(counts)}"
+
+    def test_small_positive_error_no_oscillation(self):
+        """rate_hz=14.001: even tiny errors used to trigger the bug."""
+        counts = self._run_integer_period_stream(rate_error=+0.001)
+        assert all(c == 14 for c in counts), f"Oscillation: {set(counts)}"
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 
