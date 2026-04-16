@@ -1076,7 +1076,12 @@ class TestSlotBoundaryStability:
         state.rate_hz = rate_hz + rate_error
         batcher._ema_alpha = 0.0
 
-        return deliver_ticks(n_batches * 1.1)[:n_batches]
+        # Skip a few batches: the abrupt rate injection changes
+        # integer_rate_hz, which invalidates the current phase offset.
+        # The phase self-corrects within 1-2 batches.
+        warmup = 3
+        all_counts = deliver_ticks((n_batches + warmup) * 1.1)
+        return all_counts[warmup : warmup + n_batches]
 
     def test_positive_rate_error_no_oscillation(self):
         """rate_hz=14.1: integer rounding absorbs the error."""

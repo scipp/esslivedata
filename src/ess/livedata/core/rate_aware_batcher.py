@@ -147,8 +147,12 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._route_message(msg)
 
         if self._overflow and self._active_batch_has_no_gated_messages():
+            # Collect messages already in the active batch (non-converged
+            # streams routed before the gap was detected) so they aren't
+            # lost when _advance_past_gap replaces the batch.
+            stashed = self._active_batch.messages if self._active_batch else []
             self._advance_past_gap()
-            for msg in self._overflow:
+            for msg in stashed + self._overflow:
                 self._route_message(msg)
             self._overflow = []
 
@@ -306,13 +310,18 @@ class RateAwareMessageBatcher(MessageBatcher):
                 state.update_rate(tracker.count, self.batch_length_s, self._ema_alpha)
                 if state.integer_rate_hz is not None:
                     period_ns = round(1e9 / state.integer_rate_hz)
-                    dt_ns = (tracker.messages[0].timestamp - batch.start_time).to_ns()
-                    residual = dt_ns % period_ns
-                    # Integer truncation in timestamps can make a near-zero
-                    # offset appear as period_ns - 1. Unwrap that case.
-                    if period_ns - residual <= 2:
-                        residual -= period_ns
-                    state.phase_offset_ns = residual
+                    # Use the first message that belongs to the current
+                    # batch window (dt >= 0).  messages[0] may be an
+                    # overflow carry-over from the previous batch; its
+                    # negative dt produces a near-period residual that
+                    # corrupts the phase and causes ±1 oscillation.
+                    phase = 0
+                    for m in tracker.messages:
+                        dt = (m.timestamp - batch.start_time).to_ns()
+                        if dt >= 0:
+                            phase = dt % period_ns
+                            break
+                    state.phase_offset_ns = phase
 
         # Track absence and evict streams missing for too long
         to_evict: list[StreamId] = []
