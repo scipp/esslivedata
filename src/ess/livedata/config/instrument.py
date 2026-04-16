@@ -41,7 +41,8 @@ class LogicalViewConfig:
     title: str
     description: str
     source_names: list[str]
-    transform: Callable[[sc.DataArray, str], sc.DataArray]
+    transform: Callable[[sc.DataArray, str], sc.DataArray] | None
+    namespace: str = 'detector_data'
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
@@ -254,7 +255,8 @@ class Instrument:
         title: str,
         description: str,
         source_names: Sequence[str],
-        transform: Callable[[sc.DataArray, str], sc.DataArray],
+        transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
+        namespace: str = 'detector_data',
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -268,13 +270,13 @@ class Instrument:
         Parameters
         ----------
         name:
-            Unique name for the view within the detector_data namespace.
+            Unique name for the view within the given namespace.
         title:
             Human-readable title for the view.
         description:
             Description of the view.
         source_names:
-            List of detector source names this view applies to.
+            List of source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
             Signature: ``(da: DataArray, source_name: str) -> DataArray``.
@@ -283,6 +285,10 @@ class Instrument:
             parameters (e.g., different fold sizes).
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
+            If None, identity (no reshaping).
+        namespace:
+            Service namespace this view belongs to. Determines which service
+            runs the workflow (e.g. ``'detector_data'`` or ``'monitor_data'``).
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
@@ -305,7 +311,7 @@ class Instrument:
 
         outputs = make_detector_view_outputs(output_ndim, roi_support=roi_support)
         handle = self.register_spec(
-            namespace="detector_data",
+            namespace=namespace,
             name=name,
             version=1,
             title=title,
@@ -323,6 +329,7 @@ class Instrument:
                 description=description,
                 source_names=list(source_names),
                 transform=transform,
+                namespace=namespace,
                 roi_support=roi_support,
                 output_ndim=output_ndim,
                 reduction_dim=reduction_dim,

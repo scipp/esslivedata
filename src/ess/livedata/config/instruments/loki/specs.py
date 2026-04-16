@@ -251,6 +251,20 @@ instrument.configure_pixellated_monitor(
 )
 register_counts_per_pixel_specs(instrument)
 
+# Pixellated monitor view: reuse the detector view workflow for beam_monitor_m3.
+# Runs in the monitor_data service since it consumes monitor event streams.
+# The identity logical projection (no transform) gives a 1D view indexed by pixel,
+# with TOA histogramming and range filtering from DetectorViewParams.
+instrument.add_logical_view(
+    name='monitor_pixel_view',
+    title='Pixel View',
+    description='Per-pixel counts from pixellated monitor with TOA histogram support.',
+    source_names=['beam_monitor_m3'],
+    namespace='monitor_data',
+    roi_support=False,
+    output_ndim=1,
+)
+
 xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
