@@ -16,7 +16,7 @@ from ess.livedata.core.rate_aware_batcher import (
     MIN_BATCHES_FOR_GATE,
     RateAwareMessageBatcher,
 )
-from ess.livedata.core.timestamp import Duration, Timestamp
+from ess.livedata.core.timestamp import Timestamp
 
 # --- Helpers ---
 
@@ -105,7 +105,7 @@ def make_converged_batcher(
 
     # Set the caller's requested timeout for post-convergence use.
     if timeout_s is not None:
-        batcher._timeout = Duration.from_seconds(timeout_s)
+        batcher.timeout_factor = timeout_s / batch_length_s
     # else leave the convergence timeout (0.8 * batch_length) — the default
 
     next_batch_start = batch_start + MIN_BATCHES_FOR_GATE * batch_length_s
@@ -303,7 +303,7 @@ class TestPhaseOffset:
             result = batcher.batch(batch_msgs)
             assert result is not None, f"Convergence batch {i} should close"
 
-        batcher._timeout = Duration.from_seconds(timeout_s)
+        batcher.timeout_factor = timeout_s / batch_length_s
         next_start = batch_start + MIN_BATCHES_FOR_GATE * batch_length_s
         return batcher, next_start
 
@@ -354,7 +354,7 @@ class TestPhaseOffset:
             result = batcher.batch(batch_msgs)
             assert result is not None
 
-        batcher._timeout = Duration.from_seconds(999.0)
+        batcher.timeout_factor = 999.0
 
         # Post-convergence: both streams present
         t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
@@ -679,7 +679,7 @@ class TestEnvelopeBoundaries:
             result = batcher.batch(batch_msgs)
             assert result is not None
 
-        batcher._timeout = Duration.from_seconds(999.0)
+        batcher.timeout_factor = 999.0
         t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
         result = batcher.batch(stream_msgs(t0))
         assert result is not None
@@ -711,7 +711,7 @@ class TestEnvelopeBoundaries:
             result = batcher.batch(batch_msgs)
             assert result is not None
 
-        batcher._timeout = Duration.from_seconds(999.0)
+        batcher.timeout_factor = 999.0
         t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
         result = batcher.batch(stream_msgs(t0))
         assert result is not None
@@ -793,7 +793,7 @@ class TestEnvelopeBoundaries:
 
         # Post-convergence: detector-only should complete
         # (sub-Hz has no grid, doesn't gate)
-        batcher._timeout = Duration.from_seconds(999.0)
+        batcher.timeout_factor = 999.0
         t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
         det = msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
         result = batcher.batch(det)
@@ -852,7 +852,7 @@ class TestEnvelopeBoundaries:
             result = batcher.batch(batch_msgs)
             assert result is not None
 
-        batcher._timeout = Duration.from_seconds(timeout)
+        batcher.timeout_factor = timeout
 
         # Run 100 batches alternating between 14 and 15 messages
         # (simulating a real 14.5 Hz source)
@@ -905,7 +905,7 @@ class TestEnvelopeBoundaries:
             assert result is not None
 
         timeout = 1.5
-        batcher._timeout = Duration.from_seconds(timeout)
+        batcher.timeout_factor = timeout
 
         # Switch to 7 Hz. Count how many batches need timeout vs slot-gate
         t_base = batch_start + MIN_BATCHES_FOR_GATE * 1.0
@@ -1164,14 +1164,14 @@ class TestDefaultTimeoutWithSlotGate:
         # Converge cleanly with all-at-once delivery
         batcher, t0 = make_converged_batcher(rate_hz=14.0)
         # Apply the actual constructor default timeout
-        batcher._timeout = RateAwareMessageBatcher()._timeout
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
         counts = self._run_tick_delivery(batcher, 14.0, t0, n_batches=30)
         assert all(c == 14 for c in counts), f"Unsteady counts: {counts}"
 
     def test_steady_count_at_7hz(self):
         """7 Hz with default timeout: every batch should contain 7 messages."""
         batcher, t0 = make_converged_batcher(rate_hz=7.0)
-        batcher._timeout = RateAwareMessageBatcher()._timeout
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
         counts = self._run_tick_delivery(batcher, 7.0, t0, n_batches=30)
         assert all(c == 7 for c in counts), f"Unsteady counts: {counts}"
 

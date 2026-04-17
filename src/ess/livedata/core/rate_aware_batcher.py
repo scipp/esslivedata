@@ -145,8 +145,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         ema_alpha: float = 0.05,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
-        self._timeout = Duration.from_seconds(
-            timeout_s if timeout_s is not None else batch_length_s * 1.2
+        self._timeout_factor = (
+            timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
         self._ema_alpha = ema_alpha
 
@@ -165,6 +165,18 @@ class RateAwareMessageBatcher(MessageBatcher):
     @property
     def batch_length_s(self) -> float:
         return self._batch_length.to_seconds()
+
+    @property
+    def timeout_factor(self) -> float:
+        return self._timeout_factor
+
+    @timeout_factor.setter
+    def timeout_factor(self, value: float) -> None:
+        self._timeout_factor = value
+
+    @property
+    def timeout_s(self) -> float:
+        return self._timeout_factor * self.batch_length_s
 
     def set_batch_length(self, batch_length_s: float) -> None:
         """Update the batch length for future batches.
@@ -255,7 +267,9 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         # Logical-clock timeout: high-water mark past batch start + timeout
         if self._high_water_mark is not None:
-            threshold = self._active_batch.start_time + self._timeout
+            threshold = self._active_batch.start_time + Duration.from_seconds(
+                self.timeout_s
+            )
             if not self._high_water_mark < threshold:
                 return True
 
