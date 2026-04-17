@@ -253,7 +253,7 @@ instrument.configure_pixellated_monitor(
 )
 instrument.add_logical_view(
     name='monitor_counts_per_pixel',
-    title='Beam monitor data: counts per pixel',
+    title='Beam monitor: counts per pixel',
     description='Per-pixel event counts for pixellated beam monitors.',
     source_names=['beam_monitor_m3'],
     namespace='monitor_data',
