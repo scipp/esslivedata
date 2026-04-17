@@ -42,7 +42,6 @@ class LogicalViewConfig:
     description: str
     source_names: list[str]
     transform: Callable[[sc.DataArray, str], sc.DataArray] | None
-    namespace: str = 'detector_data'
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
@@ -328,7 +327,6 @@ class Instrument:
                 description=description,
                 source_names=list(source_names),
                 transform=transform,
-                namespace=namespace,
                 roi_support=roi_support,
                 output_ndim=output_ndim,
                 reduction_dim=reduction_dim,
@@ -462,7 +460,9 @@ class Instrument:
                 try:
                     self._load_detector_from_nexus(name)
                 except (ValueError, KeyError):
-                    # NeXus file not available, or detector_number not in file
+                    # NeXus file not available, or detector_number not found at
+                    # the expected path (e.g., monitors lack a detector_number
+                    # dataset — they must provide it via configure_pixellated_monitor)
                     pass
 
 

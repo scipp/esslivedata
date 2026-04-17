@@ -131,7 +131,7 @@ class FakeMonitorSource(MessageSource[sc.Variable | sc.Dataset]):
     ) -> Message[sc.Variable | sc.Dataset]:
         if self._nexus_data is not None and name in self._nexus_data:
             s = slice(self._offset[name], self._offset[name] + size)
-            time_of_flight = self._nexus_data[name]['event_time_offset'].values[s]
+            toa = self._nexus_data[name]['event_time_offset'].values[s]
             pixel_id = self._nexus_data[name]['event_id'].values[s]
             self._offset[name] += size
             if self._offset[name] >= self._nexus_data[name]['event_id'].size:
@@ -139,7 +139,7 @@ class FakeMonitorSource(MessageSource[sc.Variable | sc.Dataset]):
             ds = sc.Dataset(
                 {
                     'time_of_arrival': sc.array(
-                        dims=['time_of_arrival'], values=time_of_flight, unit='ns'
+                        dims=['time_of_arrival'], values=toa, unit='ns'
                     ),
                     'pixel_id': sc.array(
                         dims=['time_of_arrival'], values=pixel_id, unit=None
@@ -152,10 +152,8 @@ class FakeMonitorSource(MessageSource[sc.Variable | sc.Dataset]):
                 value=ds,
             )
 
-        time_of_flight = self._make_normal(
-            mean=int(1e6 * mean_ms), std=10_000_000, size=size
-        )
-        var = sc.array(dims=['time_of_arrival'], values=time_of_flight, unit='ns')
+        toa = self._make_normal(mean=int(1e6 * mean_ms), std=10_000_000, size=size)
+        var = sc.array(dims=['time_of_arrival'], values=toa, unit='ns')
         return Message(
             timestamp=timestamp,
             stream=StreamId(kind=StreamKind.MONITOR_EVENTS, name=name),
