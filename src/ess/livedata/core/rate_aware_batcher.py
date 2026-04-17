@@ -10,7 +10,7 @@ batch window — not when a fixed message count is reached.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,45 +27,45 @@ GATED_STREAM_KINDS = frozenset(
     }
 )
 
-MIN_BATCHES_FOR_GATE = 3
+MIN_DIFFS_FOR_GATE = 4
+DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
 
 @dataclass
-class StreamRateEstimator:
-    """EMA-based rate estimator for a single stream.
+class StreamPeriodEstimator:
+    """Infers pulse period from inter-arrival times between messages.
 
-    Tracks the message rate via exponential moving average and determines
-    when enough observations have been collected to consider the estimate
-    converged.
+    Accumulates positive timestamp differences across batches. The period
+    is the minimum positive diff — robust to missed pulses (which produce
+    integer-multiple outliers) and split messages (which produce zero
+    diffs and are filtered out). ``integer_rate_hz`` snaps to integer Hz,
+    the rate format published by ESS sources; snapping eliminates sub-ns
+    residuals that would otherwise cause slot-boundary oscillation.
+
+    Convergence requires ``MIN_DIFFS_FOR_GATE`` positive diffs, which can
+    be accumulated within a single batch for high-rate streams or across
+    batches for low-rate streams.
     """
 
-    rate_hz: float | None = None
-    observation_count: int = 0
+    last_ts_ns: int | None = None
+    diffs: deque[int] = field(default_factory=lambda: deque(maxlen=DIFF_BUFFER_SIZE))
 
-    @property
-    def converged(self) -> bool:
-        return (
-            self.observation_count >= MIN_BATCHES_FOR_GATE and self.rate_hz is not None
-        )
+    def observe(self, ts_ns: int) -> None:
+        if self.last_ts_ns is not None:
+            diff = ts_ns - self.last_ts_ns
+            if diff > 0:
+                self.diffs.append(diff)
+        if self.last_ts_ns is None or ts_ns > self.last_ts_ns:
+            self.last_ts_ns = ts_ns
 
     @property
     def integer_rate_hz(self) -> int | None:
-        """Rate rounded to the nearest integer Hz.
-
-        ESS sources publish at integer Hz rates. Rounding eliminates the
-        fractional-Hz EMA noise that otherwise causes slot-boundary
-        oscillation (±1 message per batch).
-        """
-        return None if self.rate_hz is None else round(self.rate_hz)
-
-    def update(self, message_count: int, batch_length_s: float, alpha: float) -> None:
-        observed = message_count / batch_length_s
-        if self.rate_hz is None:
-            self.rate_hz = observed
-        else:
-            self.rate_hz = alpha * observed + (1 - alpha) * self.rate_hz
-        self.observation_count += 1
+        if len(self.diffs) < MIN_DIFFS_FOR_GATE:
+            return None
+        period_ns = min(self.diffs)
+        rate = round(1e9 / period_ns)
+        return rate if rate >= 1 else None
 
 
 @dataclass(frozen=True)
@@ -142,16 +142,14 @@ class RateAwareMessageBatcher(MessageBatcher):
         self,
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
-        ema_alpha: float = 0.05,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout_factor = (
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
-        self._ema_alpha = ema_alpha
 
-        self._estimators: defaultdict[StreamId, StreamRateEstimator] = defaultdict(
-            StreamRateEstimator
+        self._estimators: defaultdict[StreamId, StreamPeriodEstimator] = defaultdict(
+            StreamPeriodEstimator
         )
         self._grids: dict[StreamId, PulseGrid] = {}
         self._absent_batches: dict[StreamId, int] = {}
@@ -220,6 +218,9 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _start_first_batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         if not messages:
             return None
+        for msg in messages:
+            if self._is_gated(msg.stream):
+                self._estimators[msg.stream].observe(msg.timestamp.to_ns())
         start_time = min(msg.timestamp for msg in messages)
         end_time = max(msg.timestamp for msg in messages)
         batch = MessageBatch(
@@ -232,6 +233,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             end_time=next_start + self._batch_length,
             messages=[],
         )
+        self._rebuild_grids()
         return batch
 
     def _is_gated(self, stream_id: StreamId) -> bool:
@@ -245,6 +247,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._active_batch.messages.append(msg)
             return
 
+        self._estimators[msg.stream].observe(msg.timestamp.to_ns())
         tracker = self._batch_trackers.setdefault(msg.stream, _BatchStreamTracker())
         grid = self._grids.get(msg.stream)
 
@@ -316,31 +319,13 @@ class RateAwareMessageBatcher(MessageBatcher):
             raise RuntimeError("No active batch when closing batch")
         batch = self._active_batch
 
-        # Update rate estimates and build/rebuild grids
         present_streams: set[StreamId] = set()
         for sid, tracker in self._batch_trackers.items():
             if tracker.messages:
                 present_streams.add(sid)
                 self._absent_batches[sid] = 0
-                estimator = self._estimators[sid]
-                old_int_rate = estimator.integer_rate_hz
-                estimator.update(tracker.count, self.batch_length_s, self._ema_alpha)
-                new_int_rate = estimator.integer_rate_hz
-                if (
-                    estimator.converged
-                    and new_int_rate is not None
-                    and new_int_rate > 0
-                ):
-                    if sid not in self._grids or old_int_rate != new_int_rate:
-                        period_ns = round(1e9 / new_int_rate)
-                        origin = self._grid_origin(tracker, batch.start_time)
-                        self._grids[sid] = PulseGrid(
-                            origin_ns=origin,
-                            period_ns=period_ns,
-                            slots_per_batch=round(new_int_rate * self.batch_length_s),
-                        )
+                self._update_grid(sid, tracker, batch.start_time)
 
-        # Track absence and evict streams missing for too long
         to_evict: list[StreamId] = []
         for sid in self._estimators:
             if sid not in present_streams:
@@ -353,21 +338,12 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._grids.pop(sid, None)
             self._absent_batches.pop(sid, None)
 
-        # Apply pending batch length change and rebuild grids
         if self._pending_batch_length is not None:
             self._batch_length = self._pending_batch_length
             self._pending_batch_length = None
-            for sid, grid in self._grids.items():
-                est = self._estimators[sid]
-                int_rate = est.integer_rate_hz
-                if int_rate is not None and int_rate > 0:
-                    self._grids[sid] = PulseGrid(
-                        origin_ns=grid.origin_ns,
-                        period_ns=grid.period_ns,
-                        slots_per_batch=round(int_rate * self.batch_length_s),
-                    )
+            for sid in list(self._grids):
+                self._update_grid(sid, self._batch_trackers.get(sid), batch.start_time)
 
-        # Set up next batch
         next_start = batch.end_time
         self._active_batch = MessageBatch(
             start_time=next_start,
@@ -378,10 +354,59 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         return batch
 
-    @staticmethod
-    def _grid_origin(tracker: _BatchStreamTracker, batch_start: Timestamp) -> int:
-        """Pick a grid origin from the first in-window message."""
-        for m in tracker.messages:
-            if not m.timestamp < batch_start:
-                return m.timestamp.to_ns()
-        return tracker.messages[0].timestamp.to_ns()
+    def _rebuild_grids(self) -> None:
+        """Update grids for all observed streams from current estimator state."""
+        if self._active_batch is None:
+            return
+        for sid in list(self._estimators):
+            self._update_grid(
+                sid, self._batch_trackers.get(sid), self._active_batch.start_time
+            )
+
+    def _update_grid(
+        self,
+        sid: StreamId,
+        tracker: _BatchStreamTracker | None,
+        batch_start: Timestamp,
+    ) -> None:
+        """Build or rebuild the pulse grid for a stream from its estimator.
+
+        No-op if the estimator hasn't converged. For existing grids, only
+        rebuilds when period or slots_per_batch changes; the origin is
+        preserved across rebuilds to keep slot assignments stable.
+        """
+        estimator = self._estimators[sid]
+        int_rate = estimator.integer_rate_hz
+        if int_rate is None or int_rate <= 0:
+            return
+        period_ns = round(1e9 / int_rate)
+        slots_per_batch = round(int_rate * self.batch_length_s)
+        existing = self._grids.get(sid)
+        if existing is not None:
+            if (
+                existing.period_ns == period_ns
+                and existing.slots_per_batch == slots_per_batch
+            ):
+                return
+            origin = existing.origin_ns
+        else:
+            origin = self._pick_grid_origin(sid, tracker, batch_start)
+            if origin is None:
+                return
+        self._grids[sid] = PulseGrid(
+            origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
+        )
+
+    def _pick_grid_origin(
+        self,
+        sid: StreamId,
+        tracker: _BatchStreamTracker | None,
+        batch_start: Timestamp,
+    ) -> int | None:
+        """Pick an origin timestamp that lies on the pulse grid."""
+        if tracker is not None and tracker.messages:
+            for m in tracker.messages:
+                if not m.timestamp < batch_start:
+                    return m.timestamp.to_ns()
+            return tracker.messages[0].timestamp.to_ns()
+        return self._estimators[sid].last_ts_ns

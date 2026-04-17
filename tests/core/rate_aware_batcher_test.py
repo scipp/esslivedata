@@ -13,7 +13,7 @@ high-water mark past the threshold.
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.rate_aware_batcher import (
-    MIN_BATCHES_FOR_GATE,
+    MIN_DIFFS_FOR_GATE,
     RateAwareMessageBatcher,
 )
 from ess.livedata.core.timestamp import Timestamp
@@ -77,7 +77,6 @@ def make_converged_batcher(
     convergence_timeout = batch_length_s * 0.8
     batcher = RateAwareMessageBatcher(
         batch_length_s=batch_length_s,
-        ema_alpha=1.0,
         timeout_s=convergence_timeout,
     )
 
@@ -93,8 +92,11 @@ def make_converged_batcher(
     batch_start = max_ts.to_ns() / 1e9
 
     # Feed batches; a trigger message advances the logical clock past the
-    # convergence timeout to close each batch.
-    for i in range(MIN_BATCHES_FOR_GATE):
+    # convergence timeout to close each batch. 1 Hz streams need an extra
+    # iteration because the first batch after initial duplicates the
+    # initial's last timestamp, producing no new diff.
+    warmup_iters = MIN_DIFFS_FOR_GATE + 1
+    for i in range(warmup_iters):
         t0 = batch_start + i * batch_length_s
         batch_msgs: list[Message[str]] = []
         for sid, r in streams.items():
@@ -108,7 +110,7 @@ def make_converged_batcher(
         batcher.timeout_factor = timeout_s / batch_length_s
     # else leave the convergence timeout (0.8 * batch_length) — the default
 
-    next_batch_start = batch_start + MIN_BATCHES_FOR_GATE * batch_length_s
+    next_batch_start = batch_start + warmup_iters * batch_length_s
     return batcher, next_batch_start
 
 
@@ -195,7 +197,6 @@ class TestTimeout:
         batcher = RateAwareMessageBatcher(
             batch_length_s=1.0,
             timeout_s=0.5,
-            ema_alpha=1.0,
         )
         # Initial batch
         batcher.batch([msg(0.0)])
@@ -283,7 +284,6 @@ class TestPhaseOffset:
         convergence_timeout = batch_length_s * 0.8
         batcher = RateAwareMessageBatcher(
             batch_length_s=batch_length_s,
-            ema_alpha=1.0,
             timeout_s=convergence_timeout,
         )
 
@@ -296,7 +296,7 @@ class TestPhaseOffset:
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
         # Converge via timeout
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * batch_length_s
             batch_msgs = stream_msgs(t0)
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -304,7 +304,7 @@ class TestPhaseOffset:
             assert result is not None, f"Convergence batch {i} should close"
 
         batcher.timeout_factor = timeout_s / batch_length_s
-        next_start = batch_start + MIN_BATCHES_FOR_GATE * batch_length_s
+        next_start = batch_start + MIN_DIFFS_FOR_GATE * batch_length_s
         return batcher, next_start
 
     def test_offset_does_not_cause_overflow(self):
@@ -326,7 +326,7 @@ class TestPhaseOffset:
 
         convergence_timeout = 0.8
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=1.0, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
 
         def det_msgs(batch_start: float) -> list[Message[str]]:
@@ -347,7 +347,7 @@ class TestPhaseOffset:
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
         # Converge via timeout
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = det_msgs(t0) + mon_msgs(t0)
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -357,7 +357,7 @@ class TestPhaseOffset:
         batcher.timeout_factor = 999.0
 
         # Post-convergence: both streams present
-        t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t_test = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         result = batcher.batch(det_msgs(t_test) + mon_msgs(t_test))
         assert result is not None
         assert len(result.messages) == 14 + 5
@@ -484,7 +484,7 @@ class TestStreamLifecycle:
 
         # Introduce a second stream (MONITOR at 5 Hz).
         # Detector is already gated, so its slot gate closes each batch.
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             batch_t = t0 + i * 1.0
             det = msgs_at(14.0, start=batch_t, duration=1.0, stream=DETECTOR)
             mon = msgs_at(5.0, start=batch_t, duration=1.0, stream=MONITOR)
@@ -493,7 +493,7 @@ class TestStreamLifecycle:
 
         # Now both streams should be gated — sending only detector should NOT
         # complete the batch (monitor is missing)
-        t_test = t0 + MIN_BATCHES_FOR_GATE * 1.0
+        t_test = t0 + MIN_DIFFS_FOR_GATE * 1.0
         result = batcher.batch(
             msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
         )
@@ -544,14 +544,14 @@ class TestStreamLifecycle:
         # Detector is the only gated stream (monitor was evicted), so its
         # slot gate closes each batch — no timeout trigger needed.
         t = t0 + 200.0
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             det = msgs_at(14.0, start=t + i, duration=1.0, stream=DETECTOR)
             mon = msgs_at(5.0, start=t + i, duration=1.0, stream=MONITOR)
             result = batcher.batch(det + mon)
             assert result is not None
 
         # Now both should be gated again — detector-only should NOT complete
-        t_test = t + MIN_BATCHES_FOR_GATE + 100.0
+        t_test = t + MIN_DIFFS_FOR_GATE + 100.0
         result = batcher.batch(
             msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
         )
@@ -593,9 +593,9 @@ class TestDriftCorrection:
         timeout = 1.5
         batcher, t0 = make_converged_batcher(rate_hz=14.0, timeout_s=timeout)
 
-        # Run at 7 Hz for MIN_BATCHES_FOR_GATE + extra batches
+        # Run at 7 Hz for MIN_DIFFS_FOR_GATE + extra batches
         # First few may timeout (rate mismatch), but should converge
-        n_batches = MIN_BATCHES_FOR_GATE + 5
+        n_batches = MIN_DIFFS_FOR_GATE + 5
         for b in range(n_batches):
             batch_t0 = t0 + b * 1.0
             batch_msgs = msgs_at(7.0, start=batch_t0, duration=1.0)
@@ -661,7 +661,7 @@ class TestEnvelopeBoundaries:
 
         convergence_timeout = 0.8
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=1.0, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
         count = round(rate * 1.0)
 
@@ -672,7 +672,7 @@ class TestEnvelopeBoundaries:
         batcher.batch(initial)
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = stream_msgs(t0)
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -680,7 +680,7 @@ class TestEnvelopeBoundaries:
             assert result is not None
 
         batcher.timeout_factor = 999.0
-        t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t0 = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         result = batcher.batch(stream_msgs(t0))
         assert result is not None
         assert len(result.messages) == 14
@@ -693,7 +693,7 @@ class TestEnvelopeBoundaries:
 
         convergence_timeout = 0.8
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=1.0, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
         count = round(rate * 1.0)
 
@@ -704,7 +704,7 @@ class TestEnvelopeBoundaries:
         batcher.batch(initial)
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = stream_msgs(t0)
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -712,7 +712,7 @@ class TestEnvelopeBoundaries:
             assert result is not None
 
         batcher.timeout_factor = 999.0
-        t0 = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t0 = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         result = batcher.batch(stream_msgs(t0))
         assert result is not None
         assert len(result.messages) == 14
@@ -773,7 +773,7 @@ class TestEnvelopeBoundaries:
         convergence_timeout = 0.8
         SUB_HZ = StreamId(kind=StreamKind.MONITOR_EVENTS, name="sub_hz")
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=1.0, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
         # Initial batch with both streams
         initial = msgs_at(14.0, start=0.0, duration=1.0, stream=DETECTOR)
@@ -782,7 +782,7 @@ class TestEnvelopeBoundaries:
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
         # Converge via timeout — sub-Hz gets 1 msg every other batch
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = msgs_at(14.0, start=t0, duration=1.0, stream=DETECTOR)
             if i % 2 == 0:
@@ -794,7 +794,7 @@ class TestEnvelopeBoundaries:
         # Post-convergence: detector-only should complete
         # (sub-Hz has no grid, doesn't gate)
         batcher.timeout_factor = 999.0
-        t_test = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t_test = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         det = msgs_at(14.0, start=t_test, duration=1.0, stream=DETECTOR)
         result = batcher.batch(det)
         assert result is not None
@@ -835,7 +835,7 @@ class TestEnvelopeBoundaries:
 
         convergence_timeout = 0.8
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=1.0, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
 
         # Initial batch with 14 or 15 messages
@@ -845,7 +845,7 @@ class TestEnvelopeBoundaries:
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
         # Converge
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = [msg(t0 + j * period) for j in range(initial_count)]
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -856,7 +856,7 @@ class TestEnvelopeBoundaries:
 
         # Run 100 batches alternating between 14 and 15 messages
         # (simulating a real 14.5 Hz source)
-        t_base = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t_base = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         total_in = 0
         total_out = 0
         for b in range(n_batches):
@@ -885,11 +885,11 @@ class TestEnvelopeBoundaries:
         assert result is not None
         assert len(result.messages) == 14
 
-    def test_realistic_ema_alpha_abrupt_rate_change(self):
-        """With default alpha=0.05, how many batches to converge after 14→7 Hz?"""
+    def test_abrupt_rate_change_no_loss(self):
+        """Stream switches from 14→7 Hz: no messages lost during transition."""
         convergence_timeout = 0.8
         batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0, ema_alpha=0.05, timeout_s=convergence_timeout
+            batch_length_s=1.0, timeout_s=convergence_timeout
         )
 
         # Converge at 14 Hz
@@ -897,7 +897,7 @@ class TestEnvelopeBoundaries:
         batcher.batch(initial)
         batch_start = max(m.timestamp for m in initial).to_ns() / 1e9
 
-        for i in range(MIN_BATCHES_FOR_GATE):
+        for i in range(MIN_DIFFS_FOR_GATE):
             t0 = batch_start + i * 1.0
             batch_msgs = msgs_at(14.0, start=t0, duration=1.0)
             batch_msgs.append(hwm_trigger(t0 + convergence_timeout + 0.01))
@@ -908,7 +908,7 @@ class TestEnvelopeBoundaries:
         batcher.timeout_factor = timeout
 
         # Switch to 7 Hz. Count how many batches need timeout vs slot-gate
-        t_base = batch_start + MIN_BATCHES_FOR_GATE * 1.0
+        t_base = batch_start + MIN_DIFFS_FOR_GATE * 1.0
         timeout_count = 0
         slot_gate_count = 0
         for b in range(100):
@@ -1033,12 +1033,7 @@ class TestSlotBoundaryStability:
         throughout, matching how Kafka sources generate timestamps.
         Delivers messages in 100ms ticks, matching the testbench.
         """
-        convergence_timeout = 1.5
-        batcher = RateAwareMessageBatcher(
-            batch_length_s=1.0,
-            ema_alpha=1.0,
-            timeout_s=convergence_timeout,
-        )
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=1.5)
 
         period_ns = int(1e9 / rate_hz)
         start_ns = 1_000_000_000_000
@@ -1046,9 +1041,7 @@ class TestSlotBoundaryStability:
         # Track logical time for tick delivery
         tick_time = 0.0
 
-        def deliver_ticks(
-            n_seconds: float, *, with_triggers: bool = False
-        ) -> list[int]:
+        def deliver_ticks(n_seconds: float) -> list[int]:
             """Deliver messages in 100ms ticks, return per-batch counts."""
             nonlocal next_pulse_ns, tick_time
             counts: list[int] = []
@@ -1066,34 +1059,27 @@ class TestSlotBoundaryStability:
                         )
                     )
                     next_pulse_ns += period_ns
-                if with_triggers:
-                    msgs.append(
-                        Message(
-                            timestamp=Timestamp.from_ns(
-                                start_ns + int(tick_time * 1e9)
-                            ),
-                            stream=_HWM,
-                            value="",
-                        )
-                    )
                 result = batcher.batch(msgs) if msgs else batcher.batch([])
                 if result is not None:
                     counts.append(len(result.messages))
             return counts
 
-        # Run until converged (initial + MIN_BATCHES_FOR_GATE timeout batches)
-        deliver_ticks((MIN_BATCHES_FOR_GATE + 2) * 1.5, with_triggers=True)
+        # Let the estimator converge from the real stream
+        deliver_ticks(3 * 1.5)
+        estimator = batcher._estimators[DETECTOR]
+        assert estimator.integer_rate_hz is not None
 
-        state = batcher._estimators[DETECTOR]
-        assert state.converged
+        # Inject a wrong period: the source keeps emitting at true rate,
+        # but the estimator's diff buffer and the current grid are forced
+        # to a period corresponding to rate_hz + rate_error. The
+        # integer-Hz snap should still recover the correct rate when the
+        # next batch close rebuilds the grid.
+        wrong_period_ns = int(1e9 / (rate_hz + rate_error))
+        estimator.diffs.clear()
+        for _ in range(MIN_DIFFS_FOR_GATE):
+            estimator.diffs.append(wrong_period_ns)
+        batcher._grids.pop(DETECTOR, None)
 
-        # Inject rate error and freeze it (alpha=0)
-        state.rate_hz = rate_hz + rate_error
-        batcher._ema_alpha = 0.0
-
-        # Skip a few batches: the abrupt rate injection changes
-        # integer_rate_hz, which invalidates the current phase offset.
-        # The phase self-corrects within 1-2 batches.
         warmup = 3
         all_counts = deliver_ticks((n_batches + warmup) * 1.1)
         return all_counts[warmup : warmup + n_batches]
