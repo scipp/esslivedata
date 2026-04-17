@@ -98,7 +98,6 @@ class Instrument:
         default_factory=dict, init=False
     )
     _pixellated_monitors: set[str] = field(default_factory=set, init=False)
-    counts_per_pixel_handle: SpecHandle | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -465,18 +464,6 @@ class Instrument:
                 except (ValueError, KeyError):
                     # NeXus file not available, or detector_number not in file
                     pass
-
-        if self.counts_per_pixel_handle is not None:
-            from ess.livedata.handlers.monitor_workflow import (
-                create_counts_per_pixel_workflow,
-            )
-
-            self.counts_per_pixel_handle.attach_factory()(
-                lambda source_name: create_counts_per_pixel_workflow(
-                    source_name,
-                    pixel_ids=self.get_detector_number(source_name),
-                )
-            )
 
 
 instrument_registry = InstrumentRegistry()

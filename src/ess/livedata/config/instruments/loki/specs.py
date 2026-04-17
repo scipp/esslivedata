@@ -19,7 +19,6 @@ from ess.livedata.handlers.detector_view_specs import (
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
-    register_counts_per_pixel_specs,
     register_monitor_workflow_specs,
 )
 
@@ -239,26 +238,23 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# All monitors get the standard TOA histogram. beam_monitor_m3 is additionally
-# pixellated (pixel IDs 4-8) and gets a separate counts-per-pixel workflow.
+# All monitors get the standard TOA histogram.
 monitor_handle = register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
 )
 
+# beam_monitor_m3 is pixellated (pixel IDs 4-8). Reuse the detector view workflow
+# with an identity logical projection to get per-pixel counts with TOA histogramming.
+# detector_number is hard-coded because current NeXus files do not contain
+# pixel IDs for this monitor.
 instrument.configure_pixellated_monitor(
     'beam_monitor_m3',
     detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
 )
-register_counts_per_pixel_specs(instrument)
-
-# Pixellated monitor view: reuse the detector view workflow for beam_monitor_m3.
-# Runs in the monitor_data service since it consumes monitor event streams.
-# The identity logical projection (no transform) gives a 1D view indexed by pixel,
-# with TOA histogramming and range filtering from DetectorViewParams.
 instrument.add_logical_view(
-    name='monitor_pixel_view',
-    title='Pixel View',
-    description='Per-pixel counts from pixellated monitor with TOA histogram support.',
+    name='monitor_counts_per_pixel',
+    title='Beam monitor data: counts per pixel',
+    description='Per-pixel event counts for pixellated beam monitors.',
     source_names=['beam_monitor_m3'],
     namespace='monitor_data',
     roi_support=False,

@@ -190,69 +190,6 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     )
 
 
-class CountsPerPixelOutputs(WorkflowOutputsBase):
-    """Outputs for the counts-per-pixel workflow."""
-
-    counts_per_pixel: sc.DataArray = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['event_id'], shape=[0], unit='counts'),
-        ),
-        title='Counts per pixel (cumulative)',
-        description=(
-            'Total event counts per detector pixel, accumulated since the '
-            'start of the run.'
-        ),
-    )
-    counts_per_pixel_current: sc.DataArray = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['event_id'], shape=[0], unit='counts'),
-        ),
-        title='Counts per pixel (current)',
-        description=(
-            'Event counts per detector pixel for the latest update interval. '
-            'Resets each update interval.'
-        ),
-    )
-
-
-def register_counts_per_pixel_specs(
-    instrument: Instrument,
-) -> SpecHandle | None:
-    """Register a counts-per-pixel workflow spec for pixellated monitors.
-
-    Uses ``instrument.pixellated_monitor_sources`` as source names, so
-    ``configure_pixellated_monitor`` must be called first.
-
-    Parameters
-    ----------
-    instrument
-        The instrument to register the workflow specs for.
-
-    Returns
-    -------
-    SpecHandle, or None if no pixellated monitors.
-    """
-    source_names = sorted(instrument.pixellated_monitor_sources)
-    if not source_names:
-        return None
-
-    handle = instrument.register_spec(
-        namespace='monitor_data',
-        name='monitor_counts_per_pixel',
-        version=1,
-        title="Beam monitor data: counts per pixel",
-        description=(
-            "Per-pixel event counts for pixellated beam monitors. "
-            "Counts events by pixel ID without histogramming or "
-            "wavelength conversion."
-        ),
-        source_names=source_names,
-        outputs=CountsPerPixelOutputs,
-    )
-    instrument.counts_per_pixel_handle = handle
-    return handle
-
-
 def register_monitor_workflow_specs(
     instrument: Instrument,
     source_names: list[str],

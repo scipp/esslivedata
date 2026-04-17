@@ -21,12 +21,6 @@ WindowMonitorHistogram = NewType('WindowMonitorHistogram', sc.DataArray)
 MonitorCountsTotal = NewType('MonitorCountsTotal', sc.DataArray)
 MonitorCountsInRange = NewType('MonitorCountsInRange', sc.DataArray)
 
-# Per-pixel types for pixellated monitors (intermediate + routed outputs)
-MonitorCountsPerPixel = NewType('MonitorCountsPerPixel', sc.DataArray)
-CumulativeCountsPerPixel = NewType('CumulativeCountsPerPixel', sc.DataArray)
-WindowCountsPerPixel = NewType('WindowCountsPerPixel', sc.DataArray)
-MonitorPixelIds = NewType('MonitorPixelIds', sc.Variable)
-
 # Configuration types (mode-agnostic names)
 HistogramEdges = NewType('HistogramEdges', sc.Variable)
 HistogramRangeLow = NewType('HistogramRangeLow', sc.Variable)

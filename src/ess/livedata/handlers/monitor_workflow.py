@@ -21,17 +21,13 @@ from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, Wavelengt
 from scippnexus import NXmonitor
 
 from .monitor_workflow_types import (
-    CumulativeCountsPerPixel,
     CumulativeMonitorHistogram,
     HistogramEdges,
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorCountsInRange,
-    MonitorCountsPerPixel,
     MonitorCountsTotal,
     MonitorHistogram,
-    MonitorPixelIds,
-    WindowCountsPerPixel,
     WindowMonitorHistogram,
 )
 
@@ -263,84 +259,4 @@ def create_monitor_workflow(
             WindowMonitorHistogram: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
-    )
-
-
-def monitor_counts_per_pixel(
-    data: NeXusData[NXmonitor, SampleRun],
-    pixel_ids: MonitorPixelIds,
-) -> MonitorCountsPerPixel:
-    """Count events per pixel from preprocessed monitor data with event_id.
-
-    Operates on the raw preprocessed data (before assembly) so no sciline graph
-    machinery for NXdetector assembly or grouping is needed. The ``event_id``
-    coordinate is populated by ``ToNXevent_data`` when fed ``DetectorEvents``.
-
-    Uses ``np.bincount`` for a fixed-shape output indexed by ``pixel_ids``,
-    which is required for cumulative accumulation across cycles.
-    """
-    import numpy as np
-
-    event_table = data.bins.constituents['data']
-    event_id = event_table.coords['event_id'].values
-    counts = np.bincount(event_id, minlength=int(pixel_ids.values[-1]) + 1)
-    return MonitorCountsPerPixel(
-        sc.DataArray(
-            sc.array(
-                dims=['event_id'],
-                values=counts[pixel_ids.values].astype('float64'),
-                unit='counts',
-            ),
-            coords={'event_id': pixel_ids},
-        )
-    )
-
-
-def cumulative_counts_per_pixel(
-    counts: MonitorCountsPerPixel,
-) -> CumulativeCountsPerPixel:
-    """Identity transform for routing to cumulative accumulator."""
-    return CumulativeCountsPerPixel(counts)
-
-
-def window_counts_per_pixel(counts: MonitorCountsPerPixel) -> WindowCountsPerPixel:
-    """Identity transform for routing to window accumulator."""
-    return WindowCountsPerPixel(counts)
-
-
-def create_counts_per_pixel_workflow(source_name: str, *, pixel_ids: sc.Variable):
-    """Factory for a lightweight counts-per-pixel workflow.
-
-    Parameters
-    ----------
-    source_name:
-        Monitor source name.
-    pixel_ids:
-        Known pixel IDs for the monitor. Ensures consistent output shape
-        across accumulation cycles.
-    """
-    from .accumulators import make_no_copy_accumulator_pair
-    from .stream_processor_workflow import StreamProcessorWorkflow
-
-    workflow = sciline.Pipeline(
-        providers=[
-            monitor_counts_per_pixel,
-            cumulative_counts_per_pixel,
-            window_counts_per_pixel,
-        ]
-    )
-    workflow[MonitorPixelIds] = pixel_ids
-    cumulative, window = make_no_copy_accumulator_pair()
-    return StreamProcessorWorkflow(
-        workflow,
-        dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
-        target_keys={
-            'counts_per_pixel': CumulativeCountsPerPixel,
-            'counts_per_pixel_current': WindowCountsPerPixel,
-        },
-        accumulators={
-            CumulativeCountsPerPixel: cumulative,
-            WindowCountsPerPixel: window,
-        },
-        window_outputs=['counts_per_pixel_current'],
     )
