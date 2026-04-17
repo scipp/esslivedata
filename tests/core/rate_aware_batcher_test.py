@@ -11,6 +11,10 @@ fallback, they feed a non-gated "trigger" message whose timestamp advances the
 high-water mark past the threshold.
 """
 
+import random
+
+import pytest
+
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.rate_aware_batcher import (
     MIN_DIFFS_FOR_GATE,
@@ -1527,6 +1531,173 @@ class TestDefaultTimeoutWithSlotGate:
         counts = self._run_tick_delivery(batcher, 1.0, t0, n_batches=30, stream=MONITOR)
         assert all(c == 1 for c in counts), f"Unsteady counts: {counts}"
         assert MONITOR in batcher._estimators, "MON evicted during steady 1 Hz"
+
+
+class TestMultiRateRobustness:
+    """Multi-rate streams with realistic jitter: no loss, no eviction.
+
+    Covers production rate combinations (including the 1 Hz + 1 Hz, 1 Hz + N
+    cases that trip the single-slot edge case) under 100 ms tick-based
+    delivery with bounded jitter.
+    """
+
+    @staticmethod
+    def _run(
+        rates: dict[StreamId, float],
+        *,
+        jitter_s: float,
+        n_batches: int,
+        seed: int,
+    ) -> tuple[int, int, set[StreamId]]:
+        """Tick-based delivery with jitter; returns (in, out, evicted)."""
+        batcher, t0 = make_converged_batcher(streams=rates)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        rng = random.Random(seed)
+        period_ns = {sid: int(1e9 / r) for sid, r in rates.items()}
+        jitter_ns = int(jitter_s * 1e9)
+        start_ns = int(t0 * 1e9)
+        next_pulse_ns = dict.fromkeys(rates, start_ns)
+        tick_ns = start_ns
+        total_in = 0
+        total_out = 0
+        closed = 0
+        budget_ns = start_ns + (n_batches + 20) * 1_000_000_000
+        while closed < n_batches and tick_ns < budget_ns:
+            tick_ns += 100_000_000
+            batch_msgs: list[Message[str]] = []
+            for sid, p in period_ns.items():
+                while next_pulse_ns[sid] <= tick_ns:
+                    j = rng.randint(-jitter_ns, jitter_ns) if jitter_ns else 0
+                    batch_msgs.append(msg((next_pulse_ns[sid] + j) / 1e9, stream=sid))
+                    total_in += 1
+                    next_pulse_ns[sid] += p
+            r = batcher.batch(batch_msgs)
+            if r is not None:
+                closed += 1
+                total_out += sum(1 for m in r.messages if m.stream in rates)
+        # Drain: advance the logical clock far past any in-flight messages so
+        # remaining batches close via timeout.
+        for _ in range(4):
+            tick_ns += 2_000_000_000
+            r = batcher.batch([hwm_trigger(tick_ns / 1e9)])
+            if r is not None:
+                total_out += sum(1 for m in r.messages if m.stream in rates)
+        evicted = {sid for sid in rates if sid not in batcher._estimators}
+        return total_in, total_out, evicted
+
+    @pytest.mark.parametrize(
+        "rates",
+        [
+            {MONITOR: 1.0},
+            {DETECTOR: 1.0, MONITOR: 1.0},
+            {DETECTOR: 2.0, MONITOR: 1.0},
+            {DETECTOR: 3.0, MONITOR: 1.0},
+            {DETECTOR: 7.0, MONITOR: 1.0},
+            {DETECTOR: 14.0, MONITOR: 1.0},
+            {DETECTOR: 7.0, MONITOR: 2.0},
+            {DETECTOR: 14.0, MONITOR: 7.0},
+        ],
+    )
+    def test_no_loss_with_jitter(self, rates):
+        """2 ms jitter (~0.2% at 1 Hz, ~3% at 14 Hz): nothing dropped."""
+        total_in, total_out, evicted = self._run(
+            rates, jitter_s=0.002, n_batches=20, seed=42
+        )
+        assert not evicted, f"Streams evicted: {evicted}"
+        assert total_out == total_in, (
+            f"Lost {total_in - total_out} of {total_in} ({rates})"
+        )
+
+    @pytest.mark.parametrize(
+        "rates",
+        [
+            {MONITOR: 1.0},
+            {DETECTOR: 1.0, MONITOR: 1.0},
+            {DETECTOR: 14.0, MONITOR: 1.0},
+            {DETECTOR: 7.0, MONITOR: 2.0},
+        ],
+    )
+    def test_no_loss_without_jitter(self, rates):
+        """Baseline (no jitter) counterpart: nothing dropped."""
+        total_in, total_out, evicted = self._run(
+            rates, jitter_s=0.0, n_batches=20, seed=0
+        )
+        assert not evicted, f"Streams evicted: {evicted}"
+        assert total_out == total_in, (
+            f"Lost {total_in - total_out} of {total_in} ({rates})"
+        )
+
+    @pytest.mark.parametrize(
+        "rates",
+        [
+            # Single-stream cases: bad origin on the only stream.
+            {MONITOR: 1.0},
+            {DETECTOR: 1.0},
+            # Mixed: bad MON origin alongside higher-rate DET.
+            {DETECTOR: 1.0, MONITOR: 1.0},
+            {DETECTOR: 2.0, MONITOR: 1.0},
+            {DETECTOR: 3.0, MONITOR: 1.0},
+            {DETECTOR: 7.0, MONITOR: 1.0},
+            {DETECTOR: 14.0, MONITOR: 1.0},
+        ],
+    )
+    def test_no_loss_with_bad_origin_across_all_streams(self, rates):
+        """Pathological origin (5 ms before batch_start) on every stream.
+
+        Regression for the production dropout — ``_pick_grid_origin``'s
+        fallback path can choose an origin just below ``batch_start``,
+        which the old symmetric tolerance in ``batch_base_index`` turned
+        into a 100% loss at ``slots_per_batch = 1`` and a 1-batch delay
+        at higher slot counts.
+        """
+        batcher, t0 = make_converged_batcher(streams=rates)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        # Seed each stream's grid with a pathological origin.
+        current_start = batcher._active_batch.start_time.to_ns()
+        for sid in rates:
+            g = batcher._grids[sid]
+            batcher._grids[sid] = PulseGrid(
+                origin_ns=current_start - 5_000_000,
+                period_ns=g.period_ns,
+                slots_per_batch=g.slots_per_batch,
+            )
+
+        # Feed pulses shifted by 0.995 relative to each stream's nominal
+        # grid so they land just inside each batch's last slot — the
+        # position that overflows under the pre-fix code.
+        tick_ns = int(t0 * 1e9)
+        period_ns = {sid: int(1e9 / r) for sid, r in rates.items()}
+        next_pulse_ns = {
+            sid: int(t0 * 1e9) + period_ns[sid] - 5_000_000 for sid in rates
+        }
+        total_in = 0
+        total_out = 0
+        closed = 0
+        n_batches = 20
+        budget_ns = int(t0 * 1e9) + (n_batches + 20) * 1_000_000_000
+        while closed < n_batches and tick_ns < budget_ns:
+            tick_ns += 100_000_000
+            batch_msgs: list[Message[str]] = []
+            for sid, p in period_ns.items():
+                while next_pulse_ns[sid] <= tick_ns:
+                    batch_msgs.append(msg(next_pulse_ns[sid] / 1e9, stream=sid))
+                    total_in += 1
+                    next_pulse_ns[sid] += p
+            r = batcher.batch(batch_msgs)
+            if r is not None:
+                closed += 1
+                total_out += sum(1 for m in r.messages if m.stream in rates)
+        # Drain any in-flight messages via timeout.
+        for _ in range(4):
+            tick_ns += 2_000_000_000
+            r = batcher.batch([hwm_trigger(tick_ns / 1e9)])
+            if r is not None:
+                total_out += sum(1 for m in r.messages if m.stream in rates)
+        evicted = {sid for sid in rates if sid not in batcher._estimators}
+        assert not evicted, f"Streams evicted: {evicted}"
+        assert total_out == total_in, (
+            f"Lost {total_in - total_out} of {total_in} ({rates})"
+        )
 
 
 class TestNonGatedStreams:
