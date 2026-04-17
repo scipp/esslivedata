@@ -15,6 +15,7 @@ from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.rate_aware_batcher import (
     MIN_DIFFS_FOR_GATE,
     RateAwareMessageBatcher,
+    StreamPeriodEstimator,
 )
 from ess.livedata.core.timestamp import Timestamp
 
@@ -115,6 +116,141 @@ def make_converged_batcher(
 
 
 # --- Tests ---
+
+
+class TestStreamPeriodEstimator:
+    """Period estimator: unbiased under jitter, robust to missed pulses."""
+
+    @staticmethod
+    def _feed(estimator: StreamPeriodEstimator, timestamps_ns: list[int]) -> None:
+        for t in timestamps_ns:
+            estimator.observe(t)
+
+    @staticmethod
+    def _simulate_pulses(
+        rate_hz: float,
+        jitter_ms: float,
+        p_missing: float,
+        n_samples: int,
+        seed: int,
+    ) -> list[int]:
+        """Realistic pulse timestamps: periodic + Gaussian jitter + dropouts.
+
+        Generates enough nominal pulses to collect ``n_samples`` surviving
+        timestamps after applying the missing-pulse fraction.
+        """
+        import random
+
+        rng = random.Random(seed)
+        period_ns = int(1e9 / rate_hz)
+        jitter_ns = jitter_ms * 1e6
+        timestamps: list[int] = []
+        i = 0
+        while len(timestamps) < n_samples:
+            i += 1
+            if rng.random() < p_missing:
+                continue
+            timestamps.append(i * period_ns + int(rng.gauss(0, jitter_ns)))
+        return timestamps
+
+    def test_clean_integer_period_recovered(self):
+        est = StreamPeriodEstimator()
+        period = int(1e9 / 14)
+        self._feed(est, [i * period for i in range(32)])
+        assert est.integer_rate_hz == 14
+
+    def test_missed_pulses_handled_via_integer_multiples(self):
+        """Outlier diffs that are k·P still contribute a per-pulse estimate."""
+        est = StreamPeriodEstimator()
+        period = int(1e9 / 14)
+        ts_ns: list[int] = []
+        t = 0
+        for i in range(40):
+            if i % 4 != 3:
+                ts_ns.append(t)
+            t += period
+        self._feed(est, ts_ns)
+        assert est.integer_rate_hz == 14
+
+    def test_split_messages_filtered(self):
+        """Zero diffs (split messages at same timestamp) don't break estimation."""
+        est = StreamPeriodEstimator()
+        period = int(1e9 / 14)
+        ts_ns: list[int] = []
+        for i in range(32):
+            ts_ns.append(i * period)
+            ts_ns.append(i * period)
+        self._feed(est, ts_ns)
+        assert est.integer_rate_hz == 14
+
+    def test_heavy_jitter_at_14hz(self):
+        """14 Hz with 6.5ms jitter: ~9% of period, regression for `min` bias."""
+        successes = 0
+        trials = 200
+        for seed in range(trials):
+            est = StreamPeriodEstimator()
+            ts = self._simulate_pulses(
+                rate_hz=14.0,
+                jitter_ms=6.5,
+                p_missing=0.0,
+                n_samples=32,
+                seed=seed,
+            )
+            self._feed(est, ts)
+            if est.integer_rate_hz == 14:
+                successes += 1
+        assert successes >= trials * 0.9, (
+            f"Only {successes}/{trials} trials recovered 14 Hz"
+        )
+
+    def test_tight_snap_at_high_rate_with_small_jitter(self):
+        """100 Hz has ~0.5% snap tolerance — where `min` bias catastrophically fails."""
+        successes = 0
+        trials = 200
+        for seed in range(trials):
+            est = StreamPeriodEstimator()
+            ts = self._simulate_pulses(
+                rate_hz=100.0,
+                jitter_ms=0.1,  # 1% of period
+                p_missing=0.0,
+                n_samples=32,
+                seed=seed,
+            )
+            self._feed(est, ts)
+            if est.integer_rate_hz == 100:
+                successes += 1
+        assert successes >= trials * 0.95, (
+            f"Only {successes}/{trials} trials recovered 100 Hz"
+        )
+
+    def test_jitter_with_missing_pulses(self):
+        """Combined stress: moderate jitter + 20% missing pulses at 14 Hz."""
+        successes = 0
+        trials = 200
+        for seed in range(trials):
+            est = StreamPeriodEstimator()
+            ts = self._simulate_pulses(
+                rate_hz=14.0,
+                jitter_ms=3.0,
+                p_missing=0.2,
+                n_samples=32,
+                seed=seed,
+            )
+            self._feed(est, ts)
+            if est.integer_rate_hz == 14:
+                successes += 1
+        assert successes >= trials * 0.95, (
+            f"Only {successes}/{trials} trials recovered 14 Hz"
+        )
+
+    def test_low_rate_1hz_with_jitter(self):
+        """1 Hz stream (monitor): must converge despite slow diff accumulation."""
+        est = StreamPeriodEstimator()
+        ts = self._simulate_pulses(
+            rate_hz=1.0, jitter_ms=5.0, p_missing=0.0, n_samples=32, seed=0
+        )
+        self._feed(est, ts)
+        assert est.integer_rate_hz == 1
 
 
 class TestEmptyInput:

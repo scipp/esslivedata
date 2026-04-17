@@ -10,6 +10,7 @@ batch window — not when a fixed message count is reached.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,12 +37,18 @@ ABSENT_BATCHES_FOR_EVICTION = 5
 class StreamPeriodEstimator:
     """Infers pulse period from inter-arrival times between messages.
 
-    Accumulates positive timestamp differences across batches. The period
-    is the minimum positive diff — robust to missed pulses (which produce
-    integer-multiple outliers) and split messages (which produce zero
-    diffs and are filtered out). ``integer_rate_hz`` snaps to integer Hz,
-    the rate format published by ESS sources; snapping eliminates sub-ns
-    residuals that would otherwise cause slot-boundary oscillation.
+    Accumulates positive timestamp differences across batches in a bounded
+    ring buffer. The period is derived in two steps: the median of all
+    diffs is used as a seed (unbiased under symmetric jitter as long as
+    single-period diffs are a majority), then each diff is snapped to its
+    nearest integer multiple of the seed and divided back to a per-pulse
+    estimate; the median of these is the final period. This is robust to
+    missed pulses (integer-multiple outliers), split messages (zero diffs
+    filtered out), out-of-order arrivals, and timestamp jitter. Unlike a
+    bare ``min``, jitter bias scales as ``s/√N`` rather than
+    ``-s·√(2 ln N)``, which matters at high rates where the integer-Hz
+    snap has a sub-percent tolerance. ``integer_rate_hz`` snaps to integer
+    Hz, the rate format published by ESS sources.
 
     Convergence requires ``MIN_DIFFS_FOR_GATE`` positive diffs, which can
     be accumulated within a single batch for high-rate streams or across
@@ -63,7 +70,9 @@ class StreamPeriodEstimator:
     def integer_rate_hz(self) -> int | None:
         if len(self.diffs) < MIN_DIFFS_FOR_GATE:
             return None
-        period_ns = min(self.diffs)
+        seed = statistics.median(self.diffs)
+        per_pulse = [d / k for d in self.diffs if (k := round(d / seed)) >= 1]
+        period_ns = statistics.median(per_pulse) if per_pulse else seed
         rate = round(1e9 / period_ns)
         return rate if rate >= 1 else None
 
