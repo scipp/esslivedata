@@ -785,6 +785,85 @@ class TestSetBatchLength:
         assert batch2 is not None
         assert len(batch2.messages) == 7
 
+    def test_repeated_calls_last_value_wins(self):
+        """Multiple set_batch_length calls before a close collapse to last value."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.set_batch_length(2.0)
+        batcher.set_batch_length(4.0)
+        batcher.set_batch_length(0.5)
+
+        # Close the current (1s) batch — applies the pending change
+        current = msgs_at(14.0, start=t0, duration=1.0)
+        batch1 = batcher.batch(current)
+        assert batch1 is not None
+        assert batcher.batch_length_s == 0.5
+
+        # Next batch should be 0.5s long (7 messages at 14 Hz)
+        next_start = batch1.end_time.to_ns() / 1e9
+        next_msgs = msgs_at(14.0, start=next_start, duration=0.5)
+        batch2 = batcher.batch(next_msgs)
+        assert batch2 is not None
+        assert len(batch2.messages) == 7
+
+    def test_multistream_slots_per_batch_updates(self):
+        """Grids for all converged streams recompute slots_per_batch on resize."""
+        streams = {DETECTOR: 14.0, MONITOR: 5.0}
+        batcher, t0 = make_converged_batcher(streams=streams, timeout_s=999.0)
+        assert batcher._grids[DETECTOR].slots_per_batch == 14
+        assert batcher._grids[MONITOR].slots_per_batch == 5
+
+        batcher.set_batch_length(2.0)
+        det = msgs_at(14.0, start=t0, duration=1.0, stream=DETECTOR)
+        mon = msgs_at(5.0, start=t0, duration=1.0, stream=MONITOR)
+        batch1 = batcher.batch(det + mon)
+        assert batch1 is not None
+
+        assert batcher.batch_length_s == 2.0
+        assert batcher._grids[DETECTOR].slots_per_batch == 28
+        assert batcher._grids[MONITOR].slots_per_batch == 10
+
+        # And the 2s batch actually completes with the expected counts.
+        next_start = batch1.end_time.to_ns() / 1e9
+        det_next = msgs_at(14.0, start=next_start, duration=2.0, stream=DETECTOR)
+        mon_next = msgs_at(5.0, start=next_start, duration=2.0, stream=MONITOR)
+        batch2 = batcher.batch(det_next + mon_next)
+        assert batch2 is not None
+        assert len(batch2.messages) == 28 + 10
+
+    def test_timeout_scales_with_batch_length(self):
+        """timeout_s = timeout_factor * batch_length_s tracks the window size."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0, timeout_s=0.5)
+        assert batcher.timeout_factor == 0.5
+        assert batcher.timeout_s == 0.5
+
+        batcher.set_batch_length(2.0)
+        # Close the current 1s batch to apply the pending change
+        batch1 = batcher.batch(msgs_at(14.0, start=t0, duration=1.0))
+        assert batch1 is not None
+
+        assert batcher.batch_length_s == 2.0
+        assert batcher.timeout_factor == 0.5
+        assert batcher.timeout_s == 1.0
+
+    def test_grid_origin_preserved_across_size_change(self):
+        """Grid origin must survive a resize so phase alignment is stable."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        original_origin = batcher._grids[DETECTOR].origin_ns
+
+        batcher.set_batch_length(2.0)
+        batch1 = batcher.batch(msgs_at(14.0, start=t0, duration=1.0))
+        assert batch1 is not None
+        assert batcher.batch_length_s == 2.0
+        assert batcher._grids[DETECTOR].origin_ns == original_origin
+
+        # De-escalate back and verify origin still stable.
+        batcher.set_batch_length(1.0)
+        next_start = batch1.end_time.to_ns() / 1e9
+        batch2 = batcher.batch(msgs_at(14.0, start=next_start, duration=2.0))
+        assert batch2 is not None
+        assert batcher.batch_length_s == 1.0
+        assert batcher._grids[DETECTOR].origin_ns == original_origin
+
 
 class TestEnvelopeBoundaries:
     """Probe the boundaries of the working envelope to find breakdown modes."""
