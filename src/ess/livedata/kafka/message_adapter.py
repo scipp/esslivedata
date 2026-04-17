@@ -292,19 +292,24 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
         return Message(timestamp=timestamp, stream=RUN_CONTROL_STREAM_ID, value=value)
 
 
-class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
+class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
     """
-    Directly adapts a Kafka message to MonitorEvents.
+    Directly adapts a Kafka message to MonitorEvents or DetectorEvents.
 
     This bypasses an intermediate eventdata_ev44.EventData object, which would require
     decoding unused fields. If we know the ev44 is for a monitor then avoiding this
     yields better performance.
+
+    For pixellated monitors (those with meaningful per-pixel event IDs), the adapter
+    produces DetectorEvents instead of MonitorEvents, preserving the pixel_id field.
+    The stream kind stays MONITOR_EVENTS so the standard preprocessor handles it.
     """
 
     def __init__(
         self,
         stream_lut: StreamLUT,
         *,
+        pixellated_sources: frozenset[str] = frozenset(),
         stream_counter: StreamCounter | None = None,
     ):
         super().__init__(
@@ -312,8 +317,9 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
             stream_kind=StreamKind.MONITOR_EVENTS,
             stream_counter=stream_counter,
         )
+        self._pixellated_sources = pixellated_sources
 
-    def adapt(self, message: KafkaMessage) -> Message[MonitorEvents]:
+    def adapt(self, message: KafkaMessage) -> Message[MonitorEvents | DetectorEvents]:
         buffer = message.value()
         eventdata_ev44.check_schema_identifier(buffer, eventdata_ev44.FILE_IDENTIFIER)
         event = Event44Message.Event44Message.GetRootAs(buffer, 0)
@@ -328,11 +334,16 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
             timestamp = Timestamp.from_ns(reference_time[-1])
         else:
             timestamp = Timestamp.from_ms(message.timestamp()[1])
-        return Message(
-            timestamp=timestamp,
-            stream=stream,
-            value=MonitorEvents(time_of_arrival=time_of_arrival, unit='ns'),
-        )
+
+        if stream.name in self._pixellated_sources:
+            value: MonitorEvents | DetectorEvents = DetectorEvents(
+                pixel_id=event.PixelIdAsNumpy(),
+                time_of_arrival=time_of_arrival,
+                unit='ns',
+            )
+        else:
+            value = MonitorEvents(time_of_arrival=time_of_arrival, unit='ns')
+        return Message(timestamp=timestamp, stream=stream, value=value)
 
 
 class Ev44ToDetectorEventsAdapter(

@@ -162,6 +162,28 @@ class TestInstrument:
             instrument.get_detector_number("detector2"), detector2_number
         )
 
+    def test_configure_pixellated_monitor(self):
+        instrument = Instrument(name="test_instrument", monitors=["mon1", "mon2"])
+        det_num = sc.array(dims=['event_id'], values=[4, 5, 6], unit=None)
+        instrument.configure_pixellated_monitor("mon1", detector_number=det_num)
+
+        assert instrument.pixellated_monitor_sources == frozenset({"mon1"})
+        assert sc.identical(instrument.get_detector_number("mon1"), det_num)
+
+    def test_configure_pixellated_monitor_without_detector_number(self):
+        instrument = Instrument(name="test_instrument", monitors=["mon1"])
+        instrument.configure_pixellated_monitor("mon1")
+
+        assert instrument.pixellated_monitor_sources == frozenset({"mon1"})
+        with pytest.raises(KeyError):
+            instrument.get_detector_number("mon1")
+
+    def test_configure_pixellated_monitor_fails_if_not_in_monitors(self):
+        instrument = Instrument(name="test_instrument", monitors=["mon1"])
+
+        with pytest.raises(ValueError, match="not in declared monitors"):
+            instrument.configure_pixellated_monitor("nonexistent")
+
     def test_register_spec_and_attach_factory(self):
         """Test two-phase spec registration and factory attachment."""
         instrument = Instrument(name="test_instrument")

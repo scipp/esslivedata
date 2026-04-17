@@ -41,7 +41,7 @@ class LogicalViewConfig:
     title: str
     description: str
     source_names: list[str]
-    transform: Callable[[sc.DataArray, str], sc.DataArray]
+    transform: Callable[[sc.DataArray, str], sc.DataArray] | None
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
@@ -96,6 +96,7 @@ class Instrument:
     _logical_view_handles: dict[str, SpecHandle] = field(
         default_factory=dict, init=False
     )
+    _pixellated_monitors: set[str] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -179,6 +180,38 @@ class Instrument:
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
 
+    def configure_pixellated_monitor(
+        self,
+        name: str,
+        detector_number: sc.Variable | None = None,
+    ) -> None:
+        """Mark a monitor as pixellated (has meaningful per-pixel event IDs).
+
+        This tells the adapter to emit ``DetectorEvents`` (preserving pixel_id)
+        instead of plain ``MonitorEvents`` for this source.
+
+        Parameters
+        ----------
+        name
+            Name of the monitor (must be in self.monitors).
+        detector_number
+            Optional explicit detector_number array. If not provided,
+            ``load_factories`` will attempt to load it from the NeXus file.
+        """
+        if name not in self.monitors:
+            raise ValueError(
+                f"Source '{name}' not in declared monitors. "
+                f"Available monitors: {self.monitors}"
+            )
+        self._pixellated_monitors.add(name)
+        if detector_number is not None:
+            self._detector_numbers[name] = detector_number
+
+    @property
+    def pixellated_monitor_sources(self) -> frozenset[str]:
+        """Source names of monitors registered as pixellated."""
+        return frozenset(self._pixellated_monitors)
+
     def get_source_title(self, source_name: str) -> str:
         """Get display title for a source, falling back to source_name.
 
@@ -220,7 +253,8 @@ class Instrument:
         title: str,
         description: str,
         source_names: Sequence[str],
-        transform: Callable[[sc.DataArray, str], sc.DataArray],
+        transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
+        namespace: str = 'detector_data',
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -234,13 +268,13 @@ class Instrument:
         Parameters
         ----------
         name:
-            Unique name for the view within the detector_data namespace.
+            Unique name for the view within the given namespace.
         title:
             Human-readable title for the view.
         description:
             Description of the view.
         source_names:
-            List of detector source names this view applies to.
+            List of source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
             Signature: ``(da: DataArray, source_name: str) -> DataArray``.
@@ -249,6 +283,10 @@ class Instrument:
             parameters (e.g., different fold sizes).
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
+            If None, identity (no reshaping).
+        namespace:
+            Service namespace this view belongs to. Determines which service
+            runs the workflow (e.g. ``'detector_data'`` or ``'monitor_data'``).
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
@@ -271,7 +309,7 @@ class Instrument:
 
         outputs = make_detector_view_outputs(output_ndim, roi_support=roi_support)
         handle = self.register_spec(
-            namespace="detector_data",
+            namespace=namespace,
             name=name,
             version=1,
             title=title,
@@ -417,12 +455,14 @@ class Instrument:
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
 
-        for name in self.detector_names:
+        for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
                 try:
                     self._load_detector_from_nexus(name)
-                except ValueError:
-                    # Nexus file not available or detector not in file
+                except (ValueError, KeyError):
+                    # NeXus file not available, or detector_number not found at
+                    # the expected path (e.g., monitors lack a detector_number
+                    # dataset — they must provide it via configure_pixellated_monitor)
                     pass
 
 

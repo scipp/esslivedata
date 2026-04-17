@@ -238,8 +238,27 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
+# All monitors get the standard TOA histogram.
 monitor_handle = register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
+)
+
+# beam_monitor_m3 is pixellated (pixel IDs 4-8). Reuse the detector view workflow
+# with an identity logical projection to get per-pixel counts with TOA histogramming.
+# detector_number is hard-coded because current NeXus files do not contain
+# pixel IDs for this monitor.
+instrument.configure_pixellated_monitor(
+    'beam_monitor_m3',
+    detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
+)
+instrument.add_logical_view(
+    name='monitor_counts_per_pixel',
+    title='Beam monitor: counts per pixel',
+    description='Per-pixel event counts for pixellated beam monitors.',
+    source_names=['beam_monitor_m3'],
+    namespace='monitor_data',
+    roi_support=False,
+    output_ndim=1,
 )
 
 xy_projection_handle = register_detector_view_spec(
