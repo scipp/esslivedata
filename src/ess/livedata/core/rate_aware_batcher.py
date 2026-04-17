@@ -146,7 +146,7 @@ class RateAwareMessageBatcher(MessageBatcher):
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout = Duration.from_seconds(
-            timeout_s if timeout_s is not None else batch_length_s * 0.8
+            timeout_s if timeout_s is not None else batch_length_s * 1.2
         )
         self._ema_alpha = ema_alpha
 

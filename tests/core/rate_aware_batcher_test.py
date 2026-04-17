@@ -1114,6 +1114,68 @@ class TestSlotBoundaryStability:
         assert all(c == 14 for c in counts), f"Oscillation: {set(counts)}"
 
 
+class TestDefaultTimeoutWithSlotGate:
+    """Default timeout must not preempt slot-gate completion.
+
+    When timeout < batch_length, tick-based delivery triggers the timeout
+    before the last slot's message arrives — producing short batches, biasing
+    the rate estimate downward, and causing oscillation.  This requires
+    tick-based delivery (multiple batch() calls per batch window) because
+    all-at-once delivery routes every message before the completion check.
+
+    Convergence uses all-at-once delivery (like real Kafka bursts) to get a
+    correct rate estimate; the post-convergence phase switches to 100ms ticks.
+    """
+
+    @staticmethod
+    def _run_tick_delivery(
+        batcher: RateAwareMessageBatcher,
+        rate_hz: float,
+        start: float,
+        n_batches: int,
+    ) -> list[int]:
+        """Deliver messages in 100ms ticks, return per-batch message counts."""
+        period_ns = int(1e9 / rate_hz)
+        start_ns = int(start * 1e9)
+        next_pulse_ns = start_ns
+        tick_time_ns = start_ns
+
+        counts: list[int] = []
+        target_ns = start_ns + int(n_batches * 1.1 * 1e9)
+        while tick_time_ns < target_ns:
+            tick_time_ns += 100_000_000  # 100ms ticks
+            batch_msgs: list[Message[str]] = []
+            while next_pulse_ns <= tick_time_ns:
+                batch_msgs.append(
+                    Message(
+                        timestamp=Timestamp.from_ns(next_pulse_ns),
+                        stream=DETECTOR,
+                        value="",
+                    )
+                )
+                next_pulse_ns += period_ns
+            result = batcher.batch(batch_msgs) if batch_msgs else batcher.batch([])
+            if result is not None:
+                counts.append(len(result.messages))
+        return counts[:n_batches]
+
+    def test_steady_count_at_14hz(self):
+        """14 Hz with default timeout: every batch should contain 14 messages."""
+        # Converge cleanly with all-at-once delivery
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        # Apply the actual constructor default timeout
+        batcher._timeout = RateAwareMessageBatcher()._timeout
+        counts = self._run_tick_delivery(batcher, 14.0, t0, n_batches=30)
+        assert all(c == 14 for c in counts), f"Unsteady counts: {counts}"
+
+    def test_steady_count_at_7hz(self):
+        """7 Hz with default timeout: every batch should contain 7 messages."""
+        batcher, t0 = make_converged_batcher(rate_hz=7.0)
+        batcher._timeout = RateAwareMessageBatcher()._timeout
+        counts = self._run_tick_delivery(batcher, 7.0, t0, n_batches=30)
+        assert all(c == 7 for c in counts), f"Unsteady counts: {counts}"
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 
