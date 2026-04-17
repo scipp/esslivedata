@@ -32,6 +32,12 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
+# Small absolute tolerance for integer-Hz rounding drift.  Per-batch
+# drift is at most a few ns (|batch_length_ns - slots_per_batch *
+# period_ns|); 1 ms covers many hours of accumulated drift while still
+# refusing to absorb true phase offsets at low rates.
+_DRIFT_TOLERANCE_NS = 1_000_000
+
 
 @dataclass
 class StreamPeriodEstimator:
@@ -100,18 +106,25 @@ class PulseGrid:
     def batch_base_index(self, batch_start: Timestamp) -> int:
         """Index of the first pulse that belongs to a batch.
 
-        If ``batch_start`` is close to a pulse (within 1 % of the period),
-        that pulse is the base.  Otherwise the next pulse is used.
+        Ceiling division of ``(batch_start - origin) / period`` with a
+        narrow symmetric tolerance for integer-Hz rounding drift.  Per
+        batch, the drift is at most a few ns (difference between
+        ``slots_per_batch * period_ns`` and the actual batch length);
+        a small absolute tolerance absorbs that while still flagging
+        true phase offsets (milliseconds) as out-of-window.
 
-        The tolerance absorbs the small per-batch drift caused by
-        ``round(1e9 / rate) * rate != 1e9``.  Without it, a strict
-        ceiling division would overshoot by one pulse after each batch.
+        A wide symmetric tolerance would misclassify a pulse that sits
+        a few ms *before* ``batch_start`` (a phase offset, not drift)
+        as the batch's first pulse, pushing the real first in-window
+        pulse into overflow.  At ``slots_per_batch = 1`` that silently
+        drops every batch's only pulse.
         """
         delta = batch_start.to_ns() - self.origin_ns
         quotient, remainder = divmod(delta, self.period_ns)
-        if remainder > self.period_ns // 100:
-            return quotient + 1
-        return quotient
+        tolerance = min(_DRIFT_TOLERANCE_NS, self.period_ns // 2)
+        if remainder <= tolerance:
+            return quotient
+        return quotient + 1
 
     def slot_in_batch(self, timestamp: Timestamp, batch_start: Timestamp) -> int:
         """Pulse slot relative to the batch start."""
@@ -215,10 +228,11 @@ class RateAwareMessageBatcher(MessageBatcher):
             # streams routed before the gap was detected) so they aren't
             # lost when _advance_past_gap replaces the batch.
             stashed = self._active_batch.messages
-            self._advance_past_gap()
-            for msg in stashed + self._overflow:
-                self._route_message(msg)
+            pending = self._overflow
             self._overflow = []
+            self._advance_past_gap(pending)
+            for msg in stashed + pending:
+                self._route_message(msg)
 
         if self._is_batch_complete():
             return self._close_batch()
@@ -305,15 +319,22 @@ class RateAwareMessageBatcher(MessageBatcher):
                 return False
         return True
 
-    def _advance_past_gap(self) -> None:
-        """Skip the batch window forward to where the overflow messages are."""
-        if self._active_batch is None or not self._overflow:
+    def _advance_past_gap(self, pending: list[Message[Any]]) -> None:
+        """Skip the batch window forward to where the pending messages are.
+
+        No-op when ``pending`` fits entirely inside the current window
+        (``steps == 0``): in that case the caller is expected to re-route
+        the messages against the existing window, and any re-generated
+        overflow must be preserved rather than dropped.
+        """
+        if self._active_batch is None or not pending:
             return
-        earliest = min(m.timestamp for m in self._overflow)
-        # Align to a batch boundary: advance in whole batch lengths
+        earliest = min(m.timestamp for m in pending)
         gap_ns = (earliest - self._active_batch.start_time).to_ns()
         batch_ns = self._batch_length.to_ns()
         steps = gap_ns // batch_ns
+        if steps == 0:
+            return
         advance = Duration.from_ns(steps * batch_ns)
         new_start = self._active_batch.start_time + advance
         self._active_batch = MessageBatch(

@@ -14,6 +14,7 @@ high-water mark past the threshold.
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.rate_aware_batcher import (
     MIN_DIFFS_FOR_GATE,
+    PulseGrid,
     RateAwareMessageBatcher,
     StreamPeriodEstimator,
 )
@@ -251,6 +252,68 @@ class TestStreamPeriodEstimator:
         )
         self._feed(est, ts)
         assert est.integer_rate_hz == 1
+
+
+class TestPulseGrid:
+    """Grid-level slot assignment: no pulse inside [batch_start, batch_end)
+    may be classified as slot < 0 or slot >= slots_per_batch.
+    """
+
+    def test_origin_just_before_batch_start_in_window_pulse_at_slot_0(self):
+        """Origin within 1% of period before batch_start: the in-window pulse
+        (just before batch_end) is slot 0, not slot 1.
+
+        At slots_per_batch=1 this is catastrophic: mis-classifying slot 0
+        as slot 1 puts the only in-window pulse in overflow.
+        """
+        period_ns = 1_000_000_000
+        grid = PulseGrid(
+            origin_ns=-5_000_000,  # 5 ms before batch_start=0
+            period_ns=period_ns,
+            slots_per_batch=1,
+        )
+        # Pulse at 0.995 s lies inside batch window [0, 1 s).
+        pulse = Timestamp.from_ns(995_000_000)
+        batch_start = Timestamp.from_ns(0)
+        assert grid.slot_in_batch(pulse, batch_start) == 0
+
+    def test_batch_start_past_origin_pulse_by_phase_offset(self):
+        """batch_start 5 ms past a pulse: the pre-window pulse is slot -1,
+        and the next pulse becomes slot 0.
+        """
+        period_ns = 1_000_000_000
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=2)
+        batch_start = Timestamp.from_ns(5_000_000)
+        assert grid.slot_in_batch(Timestamp.from_ns(0), batch_start) == -1
+        assert grid.slot_in_batch(Timestamp.from_ns(period_ns), batch_start) == 0
+        assert grid.slot_in_batch(Timestamp.from_ns(2 * period_ns), batch_start) == 1
+
+    def test_batch_start_just_after_origin_pulse_absorbs_drift(self):
+        """Integer-Hz rounding drift (a few ns past a pulse) is absorbed:
+        that pulse is still slot 0.
+        """
+        period_ns = 71_428_571  # 14 Hz integer period
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=14)
+        # After N batches of 1 s, drift is ~6*N ns (well under 1 ms for
+        # realistic N). 100 ns chosen to exercise the tolerance band.
+        batch_start = Timestamp.from_ns(100)
+        assert grid.slot_in_batch(Timestamp.from_ns(0), batch_start) == 0
+
+    def test_batch_start_just_before_next_pulse_snaps_forward(self):
+        """batch_start within 1% of the next pulse: that pulse is slot 0."""
+        period_ns = 1_000_000_000
+        tolerance = period_ns // 100  # 10 ms
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=1)
+        # batch_start = 1 s - 5 ms: pulse at 1 s (inside tolerance ahead) is slot 0.
+        batch_start = Timestamp.from_ns(period_ns - tolerance // 2)
+        assert grid.slot_in_batch(Timestamp.from_ns(period_ns), batch_start) == 0
+
+    def test_batch_start_exactly_on_pulse(self):
+        period_ns = 1_000_000_000
+        grid = PulseGrid(origin_ns=0, period_ns=period_ns, slots_per_batch=2)
+        batch_start = Timestamp.from_ns(period_ns)
+        assert grid.slot_in_batch(Timestamp.from_ns(period_ns), batch_start) == 0
+        assert grid.slot_in_batch(Timestamp.from_ns(2 * period_ns), batch_start) == 1
 
 
 class TestEmptyInput:
@@ -579,6 +642,81 @@ class TestOneHzEdgeCase:
         result = batcher.batch([msg(t0), msg(t0 + 1.0)])
         assert result is not None
         assert len(result.messages) == 1
+
+    def test_overflow_message_not_silently_dropped_when_gap_has_zero_steps(self):
+        """A mis-rounded overflow whose ts lies inside the current batch
+        window (gap_ns < batch_ns) must not be silently dropped.
+
+        ``_advance_past_gap`` runs with ``steps=0`` in that case; the
+        re-routed message overflows again, and the old unconditional
+        ``self._overflow = []`` wiped it.
+        """
+        batcher, t0 = make_converged_batcher(
+            rate_hz=1.0, streams={MONITOR: 1.0}, timeout_s=999.0
+        )
+        # Pulse at batch_start + 0.6 s: ``pulse_index`` rounds to 1,
+        # slot 1 = overflow at ``slots_per_batch = 1``.  No other gated
+        # stream has routed messages, so ``_advance_past_gap`` fires
+        # with ``steps = 0``.
+        stray_ts = t0 + 0.6
+        stray = msg(stray_ts, stream=MONITOR)
+        r1 = batcher.batch([stray])
+        # Drive one real pulse + timeout tick — the stray must appear
+        # in one of these batches, not be silently dropped.
+        r2 = batcher.batch([msg(t0 + 1.0, stream=MONITOR)])
+        r3 = batcher.batch([hwm_trigger(t0 + 999.01)])
+
+        stray_seen = sum(
+            any(m.timestamp == ts(stray_ts) for m in r.messages)
+            for r in (r1, r2, r3)
+            if r is not None
+        )
+        assert stray_seen == 1, "Stray overflow was silently dropped"
+
+    def test_1hz_tick_delivery_bad_origin_no_eviction_or_loss(self):
+        """Regression test for production 1 Hz dropout.
+
+        At slots_per_batch=1, if the grid origin sits a few ms before
+        batch_start (as happens when ``_pick_grid_origin`` picks a msg
+        with ts just before batch_start), every in-window pulse must
+        still map to slot 0 — not overflow to slot 1.  If it overflows,
+        ``_advance_past_gap`` runs with steps=0 and silently drops the
+        message; after 5 batches the stream is evicted.
+        """
+        batcher, t0 = make_converged_batcher(
+            rate_hz=1.0, streams={MONITOR: 1.0}, timeout_s=999.0
+        )
+        # Seed the pathological grid: origin 5 ms before current batch_start,
+        # mimicking the fallback path picking a tracker msg with ts slightly
+        # below batch_start.
+        original = batcher._grids[MONITOR]
+        current_start = batcher._active_batch.start_time.to_ns()
+        batcher._grids[MONITOR] = PulseGrid(
+            origin_ns=current_start - 5_000_000,
+            period_ns=original.period_ns,
+            slots_per_batch=original.slots_per_batch,
+        )
+
+        n_batches = 20
+        total_in = 0
+        total_out = 0
+        # Pulses arrive near the end of each batch window (995 ms offset),
+        # matching the production MON phase.
+        for i in range(n_batches):
+            pulse_t = t0 + i + 0.995
+            total_in += 1
+            r = batcher.batch([msg(pulse_t, stream=MONITOR)])
+            if r is not None:
+                total_out += sum(1 for m in r.messages if m.stream == MONITOR)
+            # Trigger timeout close on a logical-clock tick.
+            r2 = batcher.batch([hwm_trigger(t0 + i + 999.01)])
+            if r2 is not None:
+                total_out += sum(1 for m in r2.messages if m.stream == MONITOR)
+
+        assert MONITOR in batcher._estimators, "MON evicted despite active stream"
+        assert total_in == total_out, (
+            f"Lost {total_in - total_out} of {total_in} MON messages"
+        )
 
 
 class TestTimeGaps:
@@ -1334,6 +1472,7 @@ class TestDefaultTimeoutWithSlotGate:
         rate_hz: float,
         start: float,
         n_batches: int,
+        stream: StreamId = DETECTOR,
     ) -> list[int]:
         """Deliver messages in 100ms ticks, return per-batch message counts."""
         period_ns = int(1e9 / rate_hz)
@@ -1350,7 +1489,7 @@ class TestDefaultTimeoutWithSlotGate:
                 batch_msgs.append(
                     Message(
                         timestamp=Timestamp.from_ns(next_pulse_ns),
-                        stream=DETECTOR,
+                        stream=stream,
                         value="",
                     )
                 )
@@ -1375,6 +1514,19 @@ class TestDefaultTimeoutWithSlotGate:
         batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
         counts = self._run_tick_delivery(batcher, 7.0, t0, n_batches=30)
         assert all(c == 7 for c in counts), f"Unsteady counts: {counts}"
+
+    def test_steady_count_at_1hz_monitor_only(self):
+        """Monitor-only 1 Hz service: every batch must contain exactly 1 message.
+
+        Regression for the production dropout: at ``slots_per_batch = 1``,
+        any slot mis-classification is a 100% loss for the batch, and 5
+        absent batches in a row evict the stream entirely.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=1.0, streams={MONITOR: 1.0})
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        counts = self._run_tick_delivery(batcher, 1.0, t0, n_batches=30, stream=MONITOR)
+        assert all(c == 1 for c in counts), f"Unsteady counts: {counts}"
+        assert MONITOR in batcher._estimators, "MON evicted during steady 1 Hz"
 
 
 class TestNonGatedStreams:
