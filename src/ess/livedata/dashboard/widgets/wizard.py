@@ -52,32 +52,13 @@ class WizardStep(ABC, Generic[TInput, TOutput]):
         """Optional description text shown below the step header."""
         return None
 
-    def render(self, step_number: int) -> pn.Column:
-        """
-        Render the step's UI with automatic header generation.
-
-        Parameters
-        ----------
-        step_number:
-            The 1-based step number to display in the header
-
-        Returns
-        -------
-        :
-            Column containing header and step content
-        """
+    def render_header(self, step_number: int) -> pn.pane.HTML:
+        """Render the sticky header (step number, name, description)."""
         self._step_number = step_number
-
-        # Build header
-        header_parts = [f"<h3>Step {step_number}: {self.name}</h3>"]
+        parts = [f"<h3>Step {step_number}: {self.name}</h3>"]
         if self.description:
-            header_parts.append(f"<p>{self.description}</p>")
-
-        return pn.Column(
-            pn.pane.HTML("".join(header_parts)),
-            self.render_content(),
-            sizing_mode='stretch_width',
-        )
+            parts.append(f"<p>{self.description}</p>")
+        return pn.pane.HTML("".join(parts), sizing_mode='stretch_width')
 
     @abstractmethod
     def render_content(self) -> pn.Column | pn.viewable.Viewable:
@@ -177,8 +158,7 @@ class Wizard:
         )
         self._cancel_button.on_click(self._on_cancel_clicked)
 
-        # Content container - stretch both to fill modal and allow proper scrolling
-        self._content = pn.Column(sizing_mode='stretch_both')
+        self._content = pn.Column(sizing_mode='stretch_width')
 
     def advance(self) -> None:
         """Move to next step if current step is valid."""
@@ -323,15 +303,16 @@ class Wizard:
         # Create navigation button row (fixed at bottom)
         nav_row = pn.Row(*nav_buttons, sizing_mode='stretch_width', margin=(10, 0))
 
-        # Create scrollable content area
-        # Use scroll=True to enable scrolling when content exceeds available space
+        # Sticky header + scrollable body + sticky nav row
+        sticky_header = self._current_step.render_header(self._current_step_index + 1)
         scrollable_content = pn.Column(
-            self._current_step.render(self._current_step_index + 1),
-            sizing_mode='stretch_both',
+            self._current_step.render_content(),
+            sizing_mode='stretch_width',
+            max_height=650,
             scroll=True,
         )
 
-        # Layout: scrollable content above fixed buttons
+        self._content.append(sticky_header)
         self._content.append(scrollable_content)
         self._content.append(nav_row)
 

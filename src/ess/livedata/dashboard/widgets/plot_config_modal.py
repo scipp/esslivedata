@@ -1213,6 +1213,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._config_panel = ConfigurationPanel(config=config_adapter)
 
         self._panel_container.clear()
+        self._panel_container.append(self._config_panel.title_pane)
         self._panel_container.append(self._config_panel.panel)
 
     def _on_config_collected(
@@ -1338,7 +1339,7 @@ class PlotConfigModal:
             name=modal_title,
             margin=20,
             width=800,
-            height=800,
+            max_height=800,
         )
 
         # Watch for modal close events

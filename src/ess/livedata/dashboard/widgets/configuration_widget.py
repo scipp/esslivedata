@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import panel as pn
 import pydantic
@@ -12,7 +13,19 @@ from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
-from .styles import ErrorBox, StatusColors
+from .styles import Colors, ErrorBox, StatusColors
+
+_VTABS_STYLESHEET = f"""
+.bk-tab {{
+    border-right: 1px solid {Colors.TAB_BORDER} !important;
+    text-align: left !important;
+}}
+.bk-tab.bk-active {{
+    background-color: {Colors.TAB_ACTIVE_BG} !important;
+    border: 1px solid {Colors.TAB_BORDER} !important;
+    border-right: none !important;
+}}
+"""
 
 
 class ConfigurationWidget:
@@ -30,8 +43,15 @@ class ConfigurationWidget:
         self._config = config
         self._source_selector = self._create_source_selector()
         self._aux_sources_widget = self._create_aux_sources_widget()
-        self._model_widget = self._create_model_widget()
         self._source_error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
+        self._model_widget = self._create_model_widget()
+        self._tabs = self._build_tabs()
+        self._tab_field_order: list[str | None] = self._compute_tab_field_order()
+        self._title_pane = pn.pane.HTML(
+            f"<h2 style='margin:0 0 4px 0;'>{self._config.title}</h2>"
+            f"<p style='margin:0; color:#666;'>{self._config.description}</p>",
+            sizing_mode='stretch_width',
+        )
         self._widget = self._create_widget()
 
     def _create_source_selector(self) -> pn.widgets.MultiChoice | None:
@@ -62,7 +82,6 @@ class ConfigurationWidget:
             value=sorted(initial_source_names),
             placeholder="Select source names to apply workflow to",
             sizing_mode='stretch_width',
-            margin=(0, 0, 0, 0),
         )
 
     def _create_aux_sources_widget(self) -> AuxSourcesWidget | None:
@@ -104,57 +123,79 @@ class ConfigurationWidget:
                 model_class=model_class,
                 initial_values=self._config.initial_parameter_values,
                 show_descriptions=True,
-                cards_collapsed=False,
                 hidden_fields=self._config.hidden_fields,
             )
 
+    def _build_general_tab(self) -> pn.Column:
+        """Build the 'General' tab content: sources + aux dropdowns."""
+        items: list[Any] = []
+        if self._source_selector is not None:
+            items.append(self._source_selector)
+            items.append(self._source_error_pane)
+        if self._aux_sources_widget is not None:
+            items.append(self._aux_sources_widget.panel)
+        if isinstance(self._model_widget, ErrorWidget):
+            items.append(self._model_widget.widget)
+        if not items:
+            items.append(
+                pn.pane.HTML(
+                    "<p style='color: #666; font-style: italic;'>"
+                    "No general settings.</p>"
+                )
+            )
+        return pn.Column(*items, sizing_mode='stretch_width', margin=(10, 10))
+
+    def _build_tabs(self) -> pn.Tabs:
+        """Build the vertical tabs: General first, then one per param group."""
+        tabs: list[tuple[str, pn.Column]] = [('General', self._build_general_tab())]
+        for _, title, content in self._model_widget.param_group_tabs:
+            tabs.append((title, content))
+        return pn.Tabs(
+            *tabs,
+            tabs_location='left',
+            dynamic=True,
+            sizing_mode='stretch_width',
+            min_height=350,
+            stylesheets=[_VTABS_STYLESHEET],
+        )
+
+    def _compute_tab_field_order(self) -> list[str | None]:
+        """Return the field name (or None for 'General') of each tab index."""
+        order: list[str | None] = [None]
+        for field_name, _, _ in self._model_widget.param_group_tabs:
+            order.append(field_name)
+        return order
+
     def _on_aux_source_changed(self, event) -> None:
         """Handle auxiliary source selection change."""
-        # Recreate model widget with new model class
-        old_widget = self._model_widget
         self._model_widget = self._create_model_widget()
-
-        # Replace widget in the column
-        # Batch the widget replacement to avoid multiple render cycles
         with pn.io.hold():
-            widget_index = None
+            new_tabs = self._build_tabs()
+            new_order = self._compute_tab_field_order()
             for i, item in enumerate(self._widget.objects):
-                if item is old_widget.widget:
-                    widget_index = i
+                if item is self._tabs:
+                    self._widget.objects = [
+                        *self._widget.objects[:i],
+                        new_tabs,
+                        *self._widget.objects[i + 1 :],
+                    ]
                     break
-
-            if widget_index is not None:
-                self._widget.objects = [
-                    *self._widget.objects[:widget_index],
-                    self._model_widget.widget,
-                    *self._widget.objects[widget_index + 1 :],
-                ]
+            self._tabs = new_tabs
+            self._tab_field_order = new_order
 
     def _create_widget(self) -> pn.Column:
-        """Create the main configuration widget."""
-        components = [
-            pn.pane.HTML(
-                f"<h1>{self._config.title}</h1><p>{self._config.description}</p>"
-            ),
-        ]
-
-        # Add source selector only if there are sources to select
-        if self._source_selector is not None:
-            components.append(self._source_selector)
-            components.append(self._source_error_pane)
-
-        # Add auxiliary sources widget if it exists
-        if self._aux_sources_widget is not None:
-            components.append(self._aux_sources_widget.panel)
-
-        components.append(self._model_widget.widget)
-
-        return pn.Column(*components)
+        """Create the main configuration widget body (tabs only; title is separate)."""
+        return pn.Column(self._tabs, sizing_mode='stretch_both')
 
     @property
     def widget(self) -> pn.Column:
-        """Get the Panel widget."""
+        """Get the Panel widget body (tabs, no title)."""
         return self._widget
+
+    @property
+    def title_pane(self) -> pn.pane.HTML:
+        """Get the title/description pane so callers can place it where appropriate."""
+        return self._title_pane
 
     @property
     def selected_sources(self) -> list[str]:
@@ -218,6 +259,27 @@ class ConfigurationWidget:
         self._highlight_source_error(False)
         self._model_widget.clear_validation_errors()
 
+    def activate_first_error_tab(self) -> None:
+        """Switch to the first tab containing a validation error.
+
+        Source errors and whole-model errors resolve to the 'General' tab.
+        Per-field errors resolve to the tab owning that field.
+        """
+        if self._source_selector is not None and len(self.selected_sources) == 0:
+            self._tabs.active = 0
+            return
+        if isinstance(self._model_widget, ErrorWidget):
+            self._tabs.active = 0
+            return
+        failing = self._model_widget.get_failing_field_names()
+        if not failing:
+            return
+        first = failing[0]
+        for i, field_name in enumerate(self._tab_field_order):
+            if field_name == first:
+                self._tabs.active = i
+                return
+
 
 class ConfigurationPanel:
     """Reusable configuration panel with validation and action execution."""
@@ -241,11 +303,17 @@ class ConfigurationPanel:
         self._panel = self._create_panel()
 
     def _create_panel(self) -> pn.Column:
-        """Create the configuration panel."""
+        """Create the configuration panel body (tabs + error pane)."""
         return pn.Column(
             self._config_widget.widget,
             self._error_pane,
+            sizing_mode='stretch_both',
         )
+
+    @property
+    def title_pane(self) -> pn.pane.HTML:
+        """Title/description pane for the underlying configuration widget."""
+        return self._config_widget.title_pane
 
     def validate(self) -> tuple[bool, list[str]]:
         """
@@ -263,6 +331,7 @@ class ConfigurationPanel:
 
         if not is_valid:
             self._show_validation_errors(errors)
+            self._config_widget.activate_first_error_tab()
 
         return is_valid, errors
 
@@ -383,29 +452,34 @@ class ConfigurationModal:
         self._modal = self._create_modal()
 
     def _create_modal(self) -> pn.Modal:
-        """Create the modal dialog."""
-        # Combine panel with buttons
-        content = pn.Column(
-            self._panel.panel,
-            pn.Row(
-                pn.Spacer(),
-                self._cancel_button,
-                self._start_button,
-                margin=(10, 0),
-            ),
+        """Create the modal dialog with sticky header + footer."""
+        footer = pn.Row(
+            pn.Spacer(),
+            self._cancel_button,
+            self._start_button,
+            margin=(10, 0),
+            sizing_mode='stretch_width',
         )
-
+        scroll_body = pn.Column(
+            self._panel.panel,
+            sizing_mode='stretch_width',
+            max_height=650,
+            scroll=True,
+        )
+        content = pn.Column(
+            self._panel.title_pane,
+            scroll_body,
+            footer,
+            sizing_mode='stretch_width',
+        )
         modal = pn.Modal(
             content,
             name=f"Configure {self._config.title}",
             margin=20,
             width=800,
-            height=800,
         )
 
-        # Watch for modal close events to clean up
         modal.param.watch(self._on_modal_closed, 'open')
-
         return modal
 
     def _on_start_clicked(self, event) -> None:
@@ -503,6 +577,11 @@ class NoParamsWidget:
         )
 
     @property
+    def param_group_tabs(self) -> list[tuple[str, str, pn.Column]]:
+        """No parameter groups when the model has no fields."""
+        return []
+
+    @property
     def parameter_values(self) -> pydantic.BaseModel:
         """Return empty model serializing to empty dict."""
         return self.EmptyModel()
@@ -510,6 +589,10 @@ class NoParamsWidget:
     def validate_parameters(self) -> tuple[bool, list[str]]:
         """Always valid when no parameters."""
         return True, []
+
+    def get_failing_field_names(self) -> list[str]:
+        """No fields to fail."""
+        return []
 
     def clear_validation_errors(self) -> None:
         """No-op for no parameters."""
@@ -532,6 +615,11 @@ class ErrorWidget:
         )
 
     @property
+    def param_group_tabs(self) -> list[tuple[str, str, pn.Column]]:
+        """No tabs when the model failed to build."""
+        return []
+
+    @property
     def parameter_values(self) -> None:
         """Return None when in error state."""
         return None
@@ -541,6 +629,10 @@ class ErrorWidget:
         return False, [
             "Configuration error - please check auxiliary source selections."
         ]
+
+    def get_failing_field_names(self) -> list[str]:
+        """The error is a whole-model error, not a per-field error."""
+        return []
 
     def clear_validation_errors(self) -> None:
         """No-op for error widget."""

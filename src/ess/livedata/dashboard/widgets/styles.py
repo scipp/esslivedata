@@ -38,6 +38,8 @@ class Colors:
     TEXT_DARK = "#212529"
     TEXT = "#495057"
     TEXT_MUTED = "#6c757d"
+    TAB_BORDER = "#2c5aa0"
+    TAB_ACTIVE_BG = "#e8f4f8"
 
 
 class ErrorBox:
