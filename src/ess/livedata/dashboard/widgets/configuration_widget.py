@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import html
 from collections.abc import Callable
 from typing import Any
 
@@ -123,12 +122,15 @@ class ConfigurationWidget:
         )
 
     def _create_title_pane(self) -> pn.pane.HTML:
-        """Build the title/description pane with HTML-escaped text."""
-        title = html.escape(self._config.title)
-        description = html.escape(self._config.description)
+        """Build the title/description pane.
+
+        Title and description come from source-controlled specs, not user input,
+        so HTML in descriptions (e.g. ``<br>``, ``<ul>``) is rendered as markup.
+        """
         return pn.pane.HTML(
-            f"<h2 style='margin:0 0 4px 0;'>{title}</h2>"
-            f"<p style='margin:0; color:{Colors.TEXT_MUTED};'>{description}</p>",
+            f"<h2 style='margin:0 0 4px 0;'>{self._config.title}</h2>"
+            "<p style='margin:0; "
+            f"color:{Colors.TEXT_MUTED};'>{self._config.description}</p>",
             sizing_mode='stretch_width',
         )
 
