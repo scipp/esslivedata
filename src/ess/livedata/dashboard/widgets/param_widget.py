@@ -35,9 +35,9 @@ class ParamWidget:
 
     def _create_layout(self):
         """Create the layout with widgets and error pane."""
-        widget_row = pn.Row(*self.widgets.values(), sizing_mode='stretch_width')
+        widget_column = pn.Column(*self.widgets.values(), sizing_mode='stretch_width')
         self.layout = pn.Column(
-            widget_row, self._error_pane, sizing_mode='stretch_width'
+            widget_column, self._error_pane, sizing_mode='stretch_width'
         )
 
     def _create_widget_for_field(
@@ -66,7 +66,7 @@ class ParamWidget:
             'name': display_name,
             'description': description,
             'sizing_mode': 'stretch_width',
-            'margin': (0, 5),
+            'margin': (5, 5),
             'disabled': field_info.frozen or False,
         }
 
