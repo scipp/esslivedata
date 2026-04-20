@@ -56,21 +56,8 @@ class DataService(MutableMapping[K, V]):
     that returns the latest value for each key.
     """
 
-    def __init__(
-        self,
-        buffer_manager: TemporalBufferManager | None = None,
-    ) -> None:
-        """
-        Initialize DataService.
-
-        Parameters
-        ----------
-        buffer_manager:
-            Manager for buffer sizing. If None, creates a new TemporalBufferManager.
-        """
-        if buffer_manager is None:
-            buffer_manager = TemporalBufferManager()
-        self._buffer_manager = buffer_manager
+    def __init__(self) -> None:
+        self._buffer_manager = TemporalBufferManager()
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[DataServiceSubscriber[K]] = []
         self._pending_updates: set[K] = set()
