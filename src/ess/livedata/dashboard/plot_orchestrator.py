@@ -26,6 +26,7 @@ import structlog
 from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     JobNumber,
+    ResultKey,
     WorkflowId,
     WorkflowSpec,
 )
@@ -868,7 +869,7 @@ class PlotOrchestrator:
         self,
         layer_id: LayerId,
         plotter: Any,
-        data: dict,
+        data: dict[str, dict[ResultKey, Any]],
     ) -> None:
         """
         Compute plot state and transition layer to READY.
@@ -883,7 +884,8 @@ class PlotOrchestrator:
         plotter
             The plotter instance to compute with.
         data
-            Data dict to pass to plotter.compute(). Empty dict for static plotters.
+            Role-grouped data to pass to plotter.compute(). Empty dict for
+            static plotters.
         """
         if layer_id not in self._layer_to_cell:
             return
@@ -1093,16 +1095,12 @@ class PlotOrchestrator:
         Use this to convert cells from templates or persisted configurations
         into typed objects that can be passed to :py:meth:`add_cell`.
 
-        Supports two formats:
-        - Legacy format: 'geometry' + 'config' (single layer)
-        - New format: 'geometry' + 'layers' (multiple layers)
-
         Parameters
         ----------
         cell_data
-            Cell configuration dict with 'geometry' and either 'config' or 'layers'.
-            Each layer/config must contain: workflow_id, source_names, plot_name.
-            Optional: output_name, params.
+            Cell configuration dict with 'geometry' and 'layers'. Each layer
+            must contain: data_sources (dict keyed by role), plot_name, and
+            optionally params.
 
         Returns
         -------
@@ -1116,18 +1114,8 @@ class PlotOrchestrator:
             col_span=cell_data['geometry']['col_span'],
         )
 
-        # Handle both legacy 'config' and new 'layers' format
-        if 'layers' in cell_data:
-            raw_layers = cell_data['layers']
-        elif 'config' in cell_data:
-            # Legacy format: wrap single config in list
-            raw_layers = [cell_data['config']]
-        else:
-            self._logger.warning('Cell has neither config nor layers, skipping')
-            return None
-
         layers: list[Layer] = []
-        for layer_data in raw_layers:
+        for layer_data in cell_data['layers']:
             layer = self._parse_raw_layer(layer_data)
             if layer is not None:
                 layers.append(layer)
@@ -1141,16 +1129,11 @@ class PlotOrchestrator:
         """
         Parse a raw layer dict into a typed Layer.
 
-        Supports two formats for backward compatibility:
-        - New format: 'data_sources' list containing workflow_id, source_names,
-          output_name
-        - Old format: 'workflow_id', 'source_names', 'output_name' at top level
-
         Parameters
         ----------
         layer_data
-            Layer configuration dict. Must contain 'plot_name' and either
-            'data_sources' (new format) or 'workflow_id' (old format).
+            Layer configuration dict. Must contain 'plot_name' and
+            'data_sources' (dict keyed by role: primary, x_axis, ...).
 
         Returns
         -------
@@ -1164,51 +1147,14 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        # Parse data sources: support dict, list, and legacy formats
-        data_sources: dict[str, DataSourceConfig]
-        if 'data_sources' in layer_data:
-            raw_sources = layer_data['data_sources']
-            if isinstance(raw_sources, dict):
-                # New format: data_sources dict with role keys
-                data_sources = {
-                    role: DataSourceConfig(
-                        workflow_id=WorkflowId.from_string(ds['workflow_id']),
-                        source_names=ds['source_names'],
-                        output_name=ds.get('output_name', 'result'),
-                    )
-                    for role, ds in raw_sources.items()
-                }
-            else:
-                # Legacy format: data_sources list (first entry is primary)
-                data_sources = (
-                    {
-                        PRIMARY: DataSourceConfig(
-                            workflow_id=WorkflowId.from_string(
-                                raw_sources[0]['workflow_id']
-                            ),
-                            source_names=raw_sources[0]['source_names'],
-                            output_name=raw_sources[0].get('output_name', 'result'),
-                        )
-                    }
-                    if raw_sources
-                    else {}
-                )
-        elif 'workflow_id' in layer_data:
-            # Legacy format: single workflow at top level
-            data_sources = {
-                PRIMARY: DataSourceConfig(
-                    workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
-                    source_names=layer_data['source_names'],
-                    output_name=layer_data.get('output_name', 'result'),
-                )
-            }
-        else:
-            # Fallback for templates missing workflow specification.
-            # Note: This creates an invalid config - static overlays should use
-            # the data_sources format with a synthetic workflow ID. This branch
-            # exists for robustness but templates should always specify workflow_id
-            # or data_sources.
-            data_sources = {}
+        data_sources: dict[str, DataSourceConfig] = {
+            role: DataSourceConfig(
+                workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                source_names=ds['source_names'],
+                output_name=ds.get('output_name', 'result'),
+            )
+            for role, ds in layer_data['data_sources'].items()
+        }
 
         supports_windowing = _resolve_supports_windowing(
             data_sources, self._job_orchestrator.get_workflow_registry()

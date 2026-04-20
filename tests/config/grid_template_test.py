@@ -172,15 +172,17 @@ class TestLoadRawGridTemplates:
         templates = load_raw_grid_templates('nonexistent_instrument_xyz')
         assert templates == []
 
-    def test_loaded_cells_have_geometry_and_config(self):
-        """Loaded template cells have geometry and config dicts."""
+    def test_loaded_cells_have_geometry_and_layers(self):
+        """Loaded template cells have geometry dict and layers list."""
         templates = load_raw_grid_templates('dummy')
         assert len(templates) >= 1
         template = templates[0]
         assert len(template['cells']) >= 1
         cell = template['cells'][0]
         assert 'geometry' in cell
-        assert 'config' in cell
+        assert 'layers' in cell
+        assert isinstance(cell['layers'], list)
+        assert len(cell['layers']) >= 1
         geometry = cell['geometry']
         assert 'row' in geometry
         assert 'col' in geometry

@@ -170,7 +170,7 @@ class AxisSpec:
 class CorrelationHistogramPlotter:
     """Base plotter for correlation histograms with arbitrary number of axes.
 
-    Receives pre-structured data from DataSubscriber (multi-role assembly):
+    Receives role-grouped data from DataSubscriber:
     - "primary": dict[ResultKey, DataArray] - data to histogram
     - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
     """
@@ -201,7 +201,7 @@ class CorrelationHistogramPlotter:
         Parameters
         ----------
         data
-            Structured data from DataSubscriber with "primary" role and axis roles.
+            Role-grouped data with "primary" role and axis roles.
         title_resolver
             Resolves source/output names to display titles.
         """
@@ -246,7 +246,7 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        self._renderer.compute(histograms, title_resolver=title_resolver)
+        self._renderer.compute({PRIMARY: histograms}, title_resolver=title_resolver)
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""

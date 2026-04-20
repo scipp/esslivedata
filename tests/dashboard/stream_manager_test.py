@@ -86,9 +86,9 @@ class TestStreamManager:
         # Publish data
         data_service[key] = sample_data
 
-        # Verify data received
+        # Verify data received (grouped by role)
         assert len(received_data) == 1
-        assert_dict_equal_with_scipp(received_data[0], {key: sample_data})
+        assert_dict_equal_with_scipp(received_data[0]['primary'], {key: sample_data})
 
     def test_multiple_sources_data_flow(self, data_service, sample_data, workflow_id):
         """Test data flow with multiple sources in single role."""
@@ -113,10 +113,11 @@ class TestStreamManager:
         # Should receive data for both keys
         assert len(received_data) == 2
         # First call has only key1
-        assert_dict_equal_with_scipp(received_data[0], {key1: sample_data})
+        assert_dict_equal_with_scipp(received_data[0]['primary'], {key1: sample_data})
         # Second call has both keys
         assert_dict_equal_with_scipp(
-            received_data[1], {key1: sample_data, key2: sample_data2}
+            received_data[1]['primary'],
+            {key1: sample_data, key2: sample_data2},
         )
 
     def test_partial_data_updates(self, data_service, sample_data, workflow_id):
@@ -133,11 +134,12 @@ class TestStreamManager:
         # Send data for only one key
         data_service[key1] = sample_data
 
-        # Should receive partial data
+        # Should receive partial data (grouped by role)
         assert len(received_data) == 1
-        assert key1 in received_data[0]
-        assert key2 not in received_data[0]
-        assert_identical(received_data[0][key1], sample_data)
+        primary = received_data[0]['primary']
+        assert key1 in primary
+        assert key2 not in primary
+        assert_identical(primary[key1], sample_data)
 
     def test_stream_independence(self, data_service, sample_data, workflow_id):
         """Test that multiple streams operate independently."""
@@ -190,10 +192,10 @@ class TestStreamManager:
         )
         data_service[key] = updated_data
 
-        # Should receive both updates
+        # Should receive both updates (grouped by role)
         assert len(received_data) == 2
-        assert_dict_equal_with_scipp(received_data[0], {key: sample_data})
-        assert_dict_equal_with_scipp(received_data[1], {key: updated_data})
+        assert_dict_equal_with_scipp(received_data[0]['primary'], {key: sample_data})
+        assert_dict_equal_with_scipp(received_data[1]['primary'], {key: updated_data})
 
     def test_unrelated_key_filtering(self, data_service, sample_data, workflow_id):
         """Test that unrelated keys are filtered out."""
@@ -216,9 +218,11 @@ class TestStreamManager:
         # Publish data for target key
         data_service[target_key] = sample_data
 
-        # Should receive data now
+        # Should receive data now (grouped by role)
         assert len(received_data) == 1
-        assert_dict_equal_with_scipp(received_data[0], {target_key: sample_data})
+        assert_dict_equal_with_scipp(
+            received_data[0]['primary'], {target_key: sample_data}
+        )
 
 
 class TestStreamManagerMultiRole:
