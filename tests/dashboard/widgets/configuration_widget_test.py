@@ -77,17 +77,17 @@ def _param_tab_index(widget: ConfigurationWidget, field_name: str) -> int:
     return widget._tab_field_order.index(field_name)
 
 
-class TestTitlePaneEscaping:
-    def test_title_and_description_are_html_escaped(self) -> None:
+class TestTitlePane:
+    def test_description_html_is_rendered_not_escaped(self) -> None:
+        """Descriptions come from source-controlled specs and may contain HTML
+        (e.g. ``<br>``, ``<ul>``) that is intended to render as markup."""
         adapter = _Adapter(
-            title='Evil <script>alert(1)</script>',
-            description='Also "quoted" & stuff',
+            title='Image',
+            description='Plot image data.<br><br>Second paragraph.',
         )
         widget = ConfigurationWidget(adapter)
         html_text = widget.title_pane.object
-        assert '<script>' not in html_text
-        assert '&lt;script&gt;' in html_text
-        assert '&amp;' in html_text
+        assert '<br><br>' in html_text
 
 
 class TestBodyShape:
