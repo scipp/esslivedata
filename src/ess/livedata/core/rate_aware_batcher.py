@@ -56,6 +56,29 @@ _DRIFT_TOLERANCE_NS = 1_000_000
 # mismatch by many orders of magnitude.
 _MAX_ORIGIN_OFFSET_BATCHES = 1000
 
+# Max distance ``_high_water_mark`` is allowed to sit past
+# ``active_batch.start_time``, in multiples of batch_length.  Protects
+# against a single malformed timestamp (e.g. upstream epoch bug
+# producing a value years ahead) permanently pinning the HWM in the
+# future, which would otherwise force every subsequent ``batch()`` call
+# to close a batch via the timeout path for millions of iterations --
+# effectively a DoS until the process restarts.
+#
+# Bounding HWM relative to the active window (rather than to the prior
+# HWM) keeps HWM self-healing: each batch close advances the window by
+# one batch_length, so after a bounded number of cascading empty
+# closures the HWM is no longer past the timeout threshold and timeout
+# firing stops on its own.  An absolute per-call cap doesn't self-heal
+# because the window keeps moving away from the clamped HWM.
+#
+# Must be >= ``timeout_factor`` (default 1.2) for the timeout path to
+# ever fire -- and comfortably above that for sub-Hz-only streams whose
+# sparse arrivals rely on multi-batch HWM jumps to trigger cascading
+# timeout closes of empty batches between pulses.  Three batches allows
+# one pulse's worth of HWM advance to cover the preceding empty batch,
+# matching the natural cadence of 0.5 Hz-and-below gated streams.
+_MAX_HWM_PAST_WINDOW_BATCHES = 3
+
 
 @dataclass
 class StreamPeriodEstimator:
@@ -234,8 +257,10 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         if messages:
             latest = max(m.timestamp for m in messages)
-            if self._high_water_mark is None or self._high_water_mark < latest:
+            if self._high_water_mark is None:
                 self._high_water_mark = latest
+            elif self._high_water_mark < latest:
+                self._high_water_mark = self._clamped_hwm(latest)
 
         if self._active_batch is None:
             return self._start_first_batch(messages)
@@ -268,6 +293,24 @@ class RateAwareMessageBatcher(MessageBatcher):
         if self._is_batch_complete():
             return self._close_batch()
         return None
+
+    def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
+        """Clamp an HWM update to a bounded distance past the active window.
+
+        See ``_MAX_HWM_PAST_WINDOW_BATCHES``.  When no active batch is
+        present (the first-batch path handles its own bootstrap), the
+        latest timestamp is accepted as-is.  The clamp is floored at the
+        current HWM to preserve monotonicity: a window advance (close or
+        gap advance) may briefly leave HWM past ``start + cap``, which
+        the next update would otherwise regress.
+        """
+        if self._active_batch is None or self._high_water_mark is None:
+            return latest
+        cap = Duration.from_ns(
+            _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length.to_ns()
+        )
+        max_allowed = self._active_batch.start_time + cap
+        return min(latest, max(max_allowed, self._high_water_mark))
 
     def _start_first_batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         if not messages:

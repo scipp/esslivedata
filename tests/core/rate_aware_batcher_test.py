@@ -2344,6 +2344,39 @@ class TestBrokenTimestampStream:
                 closed += 1
         assert closed >= 8, f"Batcher hung with single broken stream: closed={closed}"
 
+    def test_far_future_outlier_does_not_permanently_elevate_hwm(self):
+        """A single far-future timestamp must not DoS the batcher via HWM.
+
+        Prior to the HWM cap, one malformed message (e.g. epoch bug upstream
+        producing a timestamp ~1 year ahead) would permanently pin the
+        high-water mark in the future.  Every subsequent call -- including
+        empty ones -- would then close a batch via the timeout path, burning
+        CPU producing millions of empty batches and flooding downstream
+        until the batcher's window drifted up to the bogus HWM (~1 year).
+        """
+        batcher, _ = make_converged_batcher(rate_hz=14.0, timeout_s=0.8)
+
+        # Malformed non-gated message ~1 year in the future.
+        one_year_s = 365 * 24 * 3600.0
+        batcher.batch([hwm_trigger(one_year_s)])
+
+        # After the outlier, call ``batch([])`` many times.  Without the cap,
+        # every call closes an empty batch because HWM is pinned ~1 year past
+        # any plausible threshold; the DoS would keep firing for ~3.15e7
+        # iterations.  With the cap, HWM is kept within
+        # ``_MAX_HWM_PAST_WINDOW_BATCHES`` of the active window, so cascading
+        # empty closures self-halt after a handful of cycles.
+        n_probes = 10_000
+        empty_closes = sum(1 for _ in range(n_probes) if batcher.batch([]) is not None)
+
+        # With the cap, cascading empty closures terminate after a handful
+        # of cycles.  Without the cap, every probe closes a batch.
+        assert empty_closes < 10, (
+            f"Outlier permanently elevated HWM: {empty_closes}/{n_probes} empty "
+            f"closures triggered (batcher will keep producing empty batches "
+            f"until window catches up to the bogus HWM)"
+        )
+
 
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
