@@ -439,14 +439,19 @@ class RateAwareMessageBatcher(MessageBatcher):
         below one pulse per batch (``int_rate * batch_length_s < 1``)
         cannot reliably fill a slot per batch; any prior grid is dropped
         and the stream reverts to opportunistic (non-gated) delivery.
-        A new grid is also rejected if its origin is absurdly far from
-        ``batch_start`` (see ``_MAX_ORIGIN_OFFSET_BATCHES``): this
-        catches streams with broken-epoch timestamps that would
-        otherwise veto every slot-gate closure.  In both cases the
-        estimator keeps running so the stream can re-gate if conditions
-        change.  For existing grids, only rebuilds when period or
-        slots_per_batch changes; the origin is preserved across
-        rebuilds to keep slot assignments stable.
+        A grid (new or existing) is also rejected if its origin is
+        absurdly far from ``batch_start`` (see
+        ``_MAX_ORIGIN_OFFSET_BATCHES``): this catches streams with
+        broken-epoch timestamps, either at gridding time (schema bug
+        present from the start) or after post-gridding epoch drift
+        (clock reset, producer replaying an old topic).  For a healthy
+        long-running stream the check also fires periodically as
+        ``batch_start`` naturally drifts from the fixed origin; the
+        grid is then re-created from current tracker messages, which
+        lie on the same pulse lattice as the old origin, so slot
+        assignments are unaffected.  For existing grids, only rebuilds
+        when period or slots_per_batch changes; the origin is preserved
+        across rebuilds while the stream stays within the offset bound.
         """
         estimator = self._estimators[sid]
         int_rate = estimator.integer_rate_hz
@@ -459,22 +464,35 @@ class RateAwareMessageBatcher(MessageBatcher):
         slots_per_batch = round(int_rate * self.batch_length_s)
         existing = self._grids.get(sid)
         if existing is not None:
+            origin = existing.origin_ns
+            if self._origin_too_far(origin, batch_start):
+                self._grids.pop(sid, None)
+                return
             if (
                 existing.period_ns == period_ns
                 and existing.slots_per_batch == slots_per_batch
             ):
                 return
-            origin = existing.origin_ns
         else:
             origin = self._pick_grid_origin(sid, tracker, batch_start)
             if origin is None:
                 return
-            max_offset_ns = _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length.to_ns()
-            if abs(origin - batch_start.to_ns()) > max_offset_ns:
+            if self._origin_too_far(origin, batch_start):
                 return
         self._grids[sid] = PulseGrid(
             origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
         )
+
+    def _origin_too_far(self, origin_ns: int, batch_start: Timestamp) -> bool:
+        """True if ``origin_ns`` is implausibly far from ``batch_start``.
+
+        Guards against streams whose timestamps live in a disjoint epoch
+        (§ ``_MAX_ORIGIN_OFFSET_BATCHES``).  Applied at both grid creation
+        and subsequent updates, so post-gridding epoch drift cannot keep
+        a stale origin around forever.
+        """
+        max_offset_ns = _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length.to_ns()
+        return abs(origin_ns - batch_start.to_ns()) > max_offset_ns
 
     def _pick_grid_origin(
         self,

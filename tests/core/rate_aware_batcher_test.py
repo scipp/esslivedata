@@ -2224,6 +2224,86 @@ class TestBrokenTimestampStream:
             f"broken stream is re-overflowing every batch"
         )
 
+    def test_post_gridding_epoch_drift_drops_grid(self):
+        """Stream gridded normally, then timestamps switch to a broken epoch.
+
+        A stream that was healthy at grid-creation time may later begin
+        emitting timestamps in a disjoint epoch (schema regression, clock
+        reset, producer replaying an old topic).  Its existing grid keeps
+        the original (good-epoch) origin; new messages map to slot
+        ``very_negative`` (past-epoch: appended as late arrivals,
+        ``tracker.max_slot`` stuck at -1) or slot ``very_positive``
+        (future-epoch: overflow + clamp).  In the past-epoch case the
+        stream keeps delivering messages to the active batch, so it is
+        never marked absent and never evicted, while its ``max_slot = -1``
+        vetoes every slot-gate closure for the whole batcher.
+
+        The fix: ``_update_grid`` re-validates ``existing.origin_ns``
+        against the current batch_start on every update.  Once batch_start
+        has drifted ``_MAX_ORIGIN_OFFSET_BATCHES`` batches away from the
+        fixed origin, the grid is dropped and the stream reverts to the
+        no-grid path (still visible, but no longer gating closures).
+        """
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=0.8)
+        # Warm both streams up in a shared good epoch.
+        _, _ = self._seed_and_drive(
+            batcher,
+            broken_offset_ns=0,
+            warmup_batches=8,
+            measured_batches=0,
+        )
+        assert self.GOOD in batcher._grids
+        assert self.BROKEN in batcher._grids
+        # _seed_and_drive disables timeout before the measurement phase;
+        # re-enable it so the broken stream's max_slot=-1 veto is broken
+        # by the timeout path (the whole point: the broken stream still
+        # needs closures to happen to trigger the origin re-check).
+        batcher.timeout_factor = 0.8
+
+        # Switch BROKEN to the far-past epoch.  Drive enough batches that
+        # batch_start drifts more than _MAX_ORIGIN_OFFSET_BATCHES * 1 s
+        # away from the (now-stale) broken origin.  GOOD keeps producing
+        # in the good epoch, driving slot-gate (or timeout) closures.
+        base_ns = batcher._active_batch.start_time.to_ns()
+        n_batches = 1100  # > _MAX_ORIGIN_OFFSET_BATCHES (= 1000)
+        closed = 0
+        for k in range(n_batches):
+            batch0 = base_ns + k * 1_000_000_000
+            good_msgs = [
+                Message(
+                    timestamp=Timestamp.from_ns(batch0 + i * self._GOOD_PERIOD_NS),
+                    stream=self.GOOD,
+                    value="",
+                )
+                for i in range(14)
+            ]
+            broken_msg = Message(
+                timestamp=Timestamp.from_ns(batch0 - self._FAR_OFFSET_NS + 500_000_000),
+                stream=self.BROKEN,
+                value=f"b_{k}",
+            )
+            r = batcher.batch([*good_msgs, broken_msg])
+            if r is not None:
+                closed += 1
+
+        assert self.BROKEN not in batcher._grids, (
+            "Broken stream's grid must be dropped once batch_start has "
+            "drifted beyond _MAX_ORIGIN_OFFSET_BATCHES from the stale origin"
+        )
+        # GOOD remains gridded and is still driving closures.  Its
+        # origin may have been refreshed as the run crossed
+        # _MAX_ORIGIN_OFFSET_BATCHES boundaries, but a new origin
+        # picked from healthy tracker messages lies on the same pulse
+        # lattice, so slot assignments are unaffected.
+        assert self.GOOD in batcher._grids
+        assert batcher._grids[self.GOOD].period_ns == round(1e9 / 14)
+        # Most batches closed, proving the broken stream is not blocking
+        # the rest of the batcher.
+        assert closed > n_batches - 100, (
+            f"Batcher closed only {closed}/{n_batches} batches — "
+            f"broken stream appears to be blocking the rest"
+        )
+
     def test_single_broken_stream_alone_does_not_hang(self):
         """Instrument with only a broken stream still makes progress via timeout.
 
