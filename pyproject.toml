@@ -32,6 +32,7 @@ requires-python = ">=3.11"
 dependencies = [
   "PyYAML",
   "confluent_kafka",
+  "dask>=2026.3.0",
   "ess-streaming-data-types",
   "essreduce>=26.4.0",
   "jinja2",
