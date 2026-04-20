@@ -1,34 +1,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import importlib.metadata
-import os
-import socket
 import time
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
 
 import confluent_kafka as kafka
 import scipp as sc
 import structlog
-from streaming_data_types import dataarray_da00, logdata_f144
 
-from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
-from ..core.job import ServiceStatus
-from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
-from .scipp_da00_compat import scipp_to_da00
-from .x5f2_compat import job_status_to_x5f2, service_status_to_x5f2
+from ..core.message import Message, MessageSink
 
 logger = structlog.get_logger(__name__)
-
-
-def _get_software_version() -> str:
-    """Get the software version for x5f2 messages."""
-    try:
-        return importlib.metadata.version('esslivedata')
-    except importlib.metadata.PackageNotFoundError:
-        return '0.0.0'
 
 
 T = TypeVar("T")
@@ -38,62 +23,59 @@ class SerializationError(Exception):
     """Raised when serialization of a message fails."""
 
 
-class Serializer(Protocol, Generic[T]):
-    def __call__(self, value: Message[T]) -> bytes: ...
+@dataclass(frozen=True, slots=True)
+class SerializedMessage:
+    """
+    The result of serializing a :class:`Message` for publication to Kafka.
+
+    Contains everything the sink needs to call ``producer.produce``: the destination
+    topic, an optional Kafka message key, and the serialized value bytes.
+    """
+
+    topic: str
+    key: bytes | None
+    value: bytes
 
 
-def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
-    try:
-        # We use the payload timestamp, which in turn was set from the result's
-        # `start_time`. Depending on whether the result is a cumulative result or a
-        # delta result, this is either the time of the first event in the result, or
-        # the time of the first event since the last result was produced.
-        da00 = dataarray_da00.serialise_da00(
-            source_name=msg.stream.name,
-            timestamp_ns=msg.timestamp.to_ns(),
-            data=scipp_to_da00(msg.value),
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize message: {e}") from None
-    return da00
+class MessageSerializer(Protocol, Generic[T]):
+    """
+    Protocol for converting a domain :class:`Message` into a :class:`SerializedMessage`.
 
+    Mirrors the source-side :class:`~ess.livedata.kafka.message_adapter.MessageAdapter`
+    protocol. Implementations are responsible for choosing the destination topic and
+    producing the key/value bytes; :class:`KafkaSink` only handles producer I/O.
+    """
 
-def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
-    try:
-        da = msg.value
-        f144 = logdata_f144.serialise_f144(
-            source_name=msg.stream.name,
-            value=da.values,
-            timestamp_unix_ns=da.coords['time'].to(unit='ns', copy=False).value,
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize message: {e}") from None
-    return f144
+    def serialize(self, message: Message[T]) -> SerializedMessage: ...
 
 
 class KafkaSink(MessageSink[T]):
+    """
+    Publishes :class:`Message` instances to Kafka.
+
+    Encoding is fully delegated to the injected :class:`MessageSerializer`, which
+    produces a :class:`SerializedMessage` (topic + optional key + value bytes).
+    This class only handles producer lifecycle, I/O, error logging, and metrics.
+    """
+
     def __init__(
         self,
         *,
-        instrument: str,
         kafka_config: dict[str, Any],
-        serializer: Serializer[T] = serialize_dataarray_to_da00,
+        serializer: MessageSerializer[T],
+        producer_factory: Callable[[dict[str, Any]], kafka.Producer] = kafka.Producer,
     ):
         self._kafka_config = kafka_config
         self._producer: kafka.Producer | None = None
+        self._producer_factory = producer_factory
         self._serializer = serializer
-        self._instrument = instrument
-        # Cache x5f2 metadata for status messages
-        self._software_version = _get_software_version()
-        self._host_name = socket.gethostname()
-        self._process_id = os.getpid()
         # Metrics tracking
         self._messages_published = 0
         self._publish_errors = 0
         self._last_metrics_time = time.monotonic()
         self._metrics_interval = 30.0
 
-    def publish_messages(self, messages: Message[T]) -> None:
+    def publish_messages(self, messages: list[Message[T]]) -> None:
         if self._producer is None:
             raise RuntimeError("KafkaSink must be used as a context manager")
 
@@ -105,53 +87,20 @@ class KafkaSink(MessageSink[T]):
         logger.debug("Publishing %d messages", len(messages))
         for msg in messages:
             try:
-                topic = stream_kind_to_topic(
-                    instrument=self._instrument, kind=msg.stream.kind
-                )
-                if msg.stream.kind == StreamKind.LIVEDATA_COMMANDS:
-                    key_bytes = str(msg.value.config_key).encode('utf-8')
-                    value = msg.value.value.model_dump_json().encode('utf-8')
-                elif msg.stream.kind == StreamKind.LIVEDATA_RESPONSES:
-                    # Acknowledgements are events, not state - no key needed
-                    key_bytes = None
-                    value = msg.value.model_dump_json().encode('utf-8')
-                elif msg.stream == STATUS_STREAM_ID:
-                    key_bytes = None
-                    if isinstance(msg.value, ServiceStatus):
-                        value = service_status_to_x5f2(
-                            msg.value,
-                            software_version=self._software_version,
-                            host_name=self._host_name,
-                            process_id=self._process_id,
-                        )
-                    else:
-                        value = job_status_to_x5f2(
-                            msg.value,
-                            software_version=self._software_version,
-                            host_name=self._host_name,
-                            process_id=self._process_id,
-                        )
-                else:
-                    key_bytes = None
-                    value = self._serializer(msg)
+                serialized = self._serializer.serialize(msg)
             except SerializationError as e:
                 logger.error("Failed to serialize message: %s", e)
-            else:
-                try:
-                    if key_bytes is None:
-                        self._producer.produce(
-                            topic=topic, value=value, callback=delivery_callback
-                        )
-                    else:
-                        self._producer.produce(
-                            topic=topic,
-                            key=key_bytes,
-                            value=value,
-                            callback=delivery_callback,
-                        )
-                    self._producer.poll(0)
-                except kafka.KafkaException as e:
-                    logger.error("Failed to publish message to %s: %s", topic, e)
+                continue
+            try:
+                self._producer.produce(
+                    topic=serialized.topic,
+                    key=serialized.key,
+                    value=serialized.value,
+                    callback=delivery_callback,
+                )
+                self._producer.poll(0)
+            except kafka.KafkaException as e:
+                logger.error("Failed to publish message to %s: %s", serialized.topic, e)
 
         try:
             self._producer.flush(timeout=3)
@@ -187,7 +136,7 @@ class KafkaSink(MessageSink[T]):
 
     def __enter__(self) -> 'KafkaSink[T]':
         """Enter context manager - initialize the Kafka producer."""
-        self._producer = kafka.Producer(self._kafka_config)
+        self._producer = self._producer_factory(self._kafka_config)
         return self
 
     def __exit__(
