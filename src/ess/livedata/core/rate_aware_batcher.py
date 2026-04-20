@@ -259,6 +259,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._batch_trackers: dict[StreamId, _BatchStreamTracker] = {}
         self._high_water_mark: Timestamp | None = None
         self._overflow: list[Message[Any]] = []
+        self._overflow_needs_rerouting: bool = False
 
     @property
     def batch_length_s(self) -> float:
@@ -309,8 +310,18 @@ class RateAwareMessageBatcher(MessageBatcher):
         if self._active_batch is None:
             return self._start_first_batch(messages)
 
-        all_messages = self._overflow + messages
-        self._overflow = []
+        # Overflow only needs draining when the active window has moved since
+        # overflow was populated (i.e. after _close_batch).  Otherwise every
+        # overflow message would recompute to the same out-of-window slot and
+        # land right back in _overflow — wasted work on every cycle while the
+        # batch is waiting to complete.  The gap-recovery path below drains
+        # overflow itself, so it does not rely on this.
+        if self._overflow_needs_rerouting:
+            all_messages = self._overflow + messages
+            self._overflow = []
+            self._overflow_needs_rerouting = False
+        else:
+            all_messages = messages
 
         for msg in all_messages:
             self._route_message(msg)
@@ -502,6 +513,10 @@ class RateAwareMessageBatcher(MessageBatcher):
             messages=[],
         )
         self._batch_trackers = {}
+        # Overflow timestamps were beyond the old window; the new window
+        # starts where the old one ended, so most overflow messages now fit.
+        # Re-route on the next call.
+        self._overflow_needs_rerouting = bool(self._overflow)
 
         return batch
 

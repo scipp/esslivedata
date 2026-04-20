@@ -1536,6 +1536,43 @@ class TestEnvelopeBoundaries:
         # Overflow should never accumulate significantly
         assert max_overflow <= 2, f"Max overflow was {max_overflow}"
 
+    def test_overflow_not_re_routed_while_window_unchanged(self):
+        """Overflow messages sitting across poll cycles must not be
+        re-routed each time. Re-evaluating stable overflow against the
+        same window every cycle is wasted work proportional to overflow
+        size times cycles-until-batch-close.
+        """
+        # Two gated streams: DETECTOR keeps the current batch open (no
+        # overflow, incomplete gate), MONITOR produces overflow from the
+        # next window. Gap-recovery cannot fire because DETECTOR has
+        # in-window messages.
+        batcher, t0 = make_converged_batcher(
+            rate_hz=14.0, streams={DETECTOR: 14.0, MONITOR: 14.0}, timeout_s=999.0
+        )
+        # One DETECTOR pulse at slot 0 — incomplete gate for DETECTOR.
+        batcher.batch([msg(t0 + 0.05, stream=DETECTOR)])
+
+        # Two MONITOR messages in the *next* window; they land in overflow.
+        batcher.batch([msg(t0 + 1.1, stream=MONITOR), msg(t0 + 1.2, stream=MONITOR)])
+        assert len(batcher._overflow) == 2
+
+        # Idle polls must not re-route overflow against the same window.
+        # Route calls are invisible from outside, so spy on _route_message.
+        route_calls = 0
+        original_route = batcher._route_message
+
+        def counting_route(msg):
+            nonlocal route_calls
+            route_calls += 1
+            original_route(msg)
+
+        batcher._route_message = counting_route
+        for _ in range(5):
+            batcher.batch([])
+        assert route_calls == 0, (
+            f"Overflow was re-routed {route_calls} times while window unchanged"
+        )
+
 
 class TestSlotBoundaryStability:
     """Rate estimate errors must not cause slot-boundary oscillation.
