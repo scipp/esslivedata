@@ -184,7 +184,9 @@ class MonitorEv44Serializer(MessageSerializer[sc.Variable | sc.Dataset]):
     def __init__(self, *, instrument: str) -> None:
         self._instrument = instrument
 
-    def serialize(self, message: Message[sc.Variable | sc.Dataset]) -> SerializedMessage:
+    def serialize(
+        self, message: Message[sc.Variable | sc.Dataset]
+    ) -> SerializedMessage:
         if isinstance(message.value, sc.Dataset):
             toa = message.value['time_of_arrival']
             pixel_id = message.value['pixel_id'].values
