@@ -101,7 +101,6 @@ addopts = """
 --benchmark-skip
 -m "not integration and not slow"
 -ra
--v
 """
 testpaths = "tests"
 markers = [
