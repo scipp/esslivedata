@@ -318,6 +318,38 @@ class TestStreamPeriodEstimator:
         self._feed(est, ts)
         assert est.integer_rate_hz is None
 
+    def test_near_1hz_non_integer_rate_rejected(self):
+        """True 0.85 Hz producer: 15% off from 1 Hz.
+
+        A pure-relative 20% tolerance accepts this as "1 Hz" and puts
+        slot math 17% wrong — the stream then never gates cleanly.
+        An absolute tolerance at low rates must reject it.
+        """
+        est = StreamPeriodEstimator()
+        ts = self._simulate_pulses(
+            rate_hz=0.85, jitter_ms=5.0, p_missing=0.0, n_samples=32, seed=0
+        )
+        self._feed(est, ts)
+        assert est.integer_rate_hz is None
+
+    def test_clean_1hz_snaps(self):
+        """Pulse-aligned 1 Hz stream still snaps to 1 Hz under the tighter tolerance."""
+        est = StreamPeriodEstimator()
+        period = int(1e9)
+        self._feed(est, [i * period for i in range(32)])
+        assert est.integer_rate_hz == 1
+
+    def test_14hz_with_realistic_jitter_still_snaps(self):
+        """14 Hz with ±1 ms jitter must still snap — absolute tolerance floor
+        must not starve high-rate streams whose estimator noise scales with rate.
+        """
+        est = StreamPeriodEstimator()
+        ts = self._simulate_pulses(
+            rate_hz=14.0, jitter_ms=1.0, p_missing=0.0, n_samples=32, seed=0
+        )
+        self._feed(est, ts)
+        assert est.integer_rate_hz == 14
+
 
 class TestPulseGrid:
     """Grid-level slot assignment: no pulse inside [batch_start, batch_end)

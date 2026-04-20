@@ -32,12 +32,19 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
-# Maximum relative error between the raw rate and its nearest integer
-# before ``integer_rate_hz`` refuses to snap.  Protects against reporting
-# a non-integer producer (e.g. true 0.7 Hz or 1.4 Hz) as an integer-Hz
-# stream, which would force gated inclusion of a stream that cannot
-# deliver one pulse per batch.
-_INTEGER_SNAP_TOLERANCE = 0.2
+# Tolerance for snapping the raw rate to its nearest integer Hz.  Uses
+# the larger of a relative bound and an absolute floor: relative scales
+# the allowed deviation with the rate so high-rate estimator noise
+# (~1%-2% residual after median-of-32 with millisecond jitter) doesn't
+# veto legitimate snaps, while the absolute floor tightens low-rate
+# behaviour where a flat 20% relative bound pathologically accepts
+# non-integer neighbours -- e.g. a true 0.85 Hz stream snaps to 1 Hz
+# with 15% error, then slot math places pulses in the wrong slots and
+# the stream never gates cleanly.  0.1 Hz absolute rejects anything
+# more than ~10% off 1 Hz while staying wide enough for 5 ms jitter
+# median noise (<0.01 Hz in practice).
+_INTEGER_SNAP_RELATIVE_TOLERANCE = 0.1
+_INTEGER_SNAP_ABSOLUTE_TOLERANCE_HZ = 0.1
 
 # Small absolute tolerance for integer-Hz rounding drift.  Per-batch
 # drift is at most a few ns (|batch_length_ns - slots_per_batch *
@@ -124,7 +131,11 @@ class StreamPeriodEstimator:
         rate = round(raw_rate)
         if rate < 1:
             return None
-        if abs(raw_rate - rate) / rate > _INTEGER_SNAP_TOLERANCE:
+        tolerance_hz = max(
+            _INTEGER_SNAP_RELATIVE_TOLERANCE * rate,
+            _INTEGER_SNAP_ABSOLUTE_TOLERANCE_HZ,
+        )
+        if abs(raw_rate - rate) > tolerance_hz:
             return None
         return rate
 
