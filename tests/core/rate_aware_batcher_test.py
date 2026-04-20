@@ -1922,6 +1922,120 @@ class TestSubHzGatedStream:
         assert self.MON_HALF not in batcher._grids
 
 
+class TestSubRateExclusion:
+    """Streams whose integer rate is below 1 pulse / batch_length are excluded.
+
+    The estimator may still report an integer rate (e.g. 1 Hz), but if
+    ``int_rate * batch_length_s < 1`` the stream cannot reliably fill a
+    slot per batch and must not gate closure.  Such streams deliver
+    opportunistically via the non-gated path.
+
+    Distinct from ``TestSubHzGatedStream`` (integer-snap returns None);
+    here the snap succeeds but the product with the current batch length
+    is below the gating floor.
+    """
+
+    def test_shrink_batch_length_demotes_1hz_stream(self):
+        """1 Hz MON gridded at 1 s batch.  Shrink to 0.6 s → excluded from grids."""
+        streams = {DETECTOR: 14.0, MONITOR: 1.0}
+        batcher, t0 = make_converged_batcher(
+            batch_length_s=1.0, streams=streams, timeout_s=999.0
+        )
+        assert MONITOR in batcher._grids
+
+        batcher.set_batch_length(0.6)
+        det = msgs_at(14.0, start=t0, duration=1.0)
+        result = batcher.batch([*det, msg(t0, stream=MONITOR)])
+        assert result is not None
+
+        assert batcher.batch_length_s == pytest.approx(0.6)
+        assert MONITOR not in batcher._grids, "Sub-rate stream must be excluded"
+        assert MONITOR in batcher._estimators, "Estimator must stay live"
+        assert batcher._estimators[MONITOR].integer_rate_hz == 1
+
+    def test_grow_batch_length_regates_previously_excluded_stream(self):
+        """Restoring 1 s batch length re-admits the 1 Hz stream to gating."""
+        streams = {DETECTOR: 14.0, MONITOR: 1.0}
+        batcher, t0 = make_converged_batcher(
+            batch_length_s=1.0, streams=streams, timeout_s=999.0
+        )
+        # Shrink: MON excluded.
+        batcher.set_batch_length(0.6)
+        det = msgs_at(14.0, start=t0, duration=1.0)
+        batch1 = batcher.batch([*det, msg(t0, stream=MONITOR)])
+        assert batch1 is not None
+        assert MONITOR not in batcher._grids
+
+        # Close one 0.6 s batch to free the shrink transition from the path.
+        t1 = batch1.end_time.to_ns() / 1e9
+        det2 = msgs_at(14.0, start=t1, duration=0.6)
+        batch2 = batcher.batch(det2)
+        assert batch2 is not None
+
+        # Grow back.  The pending length applies at the next close.
+        batcher.set_batch_length(1.0)
+        t2 = batch2.end_time.to_ns() / 1e9
+        det3 = msgs_at(14.0, start=t2, duration=1.0)
+        mon_msg = msg(t2, stream=MONITOR)
+        batch3 = batcher.batch([*det3, mon_msg])
+        assert batch3 is not None
+        assert batcher.batch_length_s == pytest.approx(1.0)
+        assert MONITOR in batcher._grids, "Stream must re-gate when batch grows"
+
+    def test_excluded_stream_does_not_block_closure(self):
+        """14 Hz DET + 1 Hz MON at 0.6 s batch: DET slot gate closes every batch.
+
+        Timeout fallback would deliver < 8 DET per batch on the tail of the
+        window; a clean 8-per-batch signature proves MON did not block.
+        """
+        streams = {DETECTOR: 14.0, MONITOR: 1.0}
+        batcher, t0 = make_converged_batcher(batch_length_s=1.0, streams=streams)
+        # Apply the shrink: close one batch at 1 s length.
+        det0 = msgs_at(14.0, start=t0, duration=1.0)
+        batcher.set_batch_length(0.6)
+        batcher.batch([*det0, msg(t0, stream=MONITOR)])
+        assert MONITOR not in batcher._grids
+
+        # Drive 10 batches of 0.6 s with DET at 14 Hz + MON at true 1 Hz.
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor  # 1.2
+        n = 10
+        det_period = int(1e9 / 14.0)
+        mon_period = 1_000_000_000
+        start_ns = int((t0 + 1.0) * 1e9)
+        det_msgs_total = 14 * n  # plenty to cover 10 * 0.6 s = 6 s
+        schedule = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(det_msgs_total)
+        ] + [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * mon_period),
+                stream=MONITOR,
+                value="",
+            )
+            for k in range(6)  # 6 MON pulses across the 6 s window
+        ]
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+        closed = _run_ticks(batcher, t0 + 1.0, schedule, n_batches=n, tick_s=0.05)
+        assert len(closed) == n
+
+        det_per_batch = [
+            sum(1 for m in b.messages if m.stream == DETECTOR) for b in closed
+        ]
+        # 14 Hz * 0.6 s = 8.4 pulses/batch → batches see 8 or 9.  Either way
+        # the last-filled slot is slot 7 (= slots_per_batch - 1), i.e. the slot
+        # gate closed the batch.  Timeout fallback would produce a ragged
+        # distribution keyed off arrival time rather than the {8, 9} pattern.
+        assert all(c in {8, 9} for c in det_per_batch), (
+            f"Timeout fallback fired: {det_per_batch}"
+        )
+        mon_out = sum(1 for b in closed for m in b.messages if m.stream == MONITOR)
+        assert mon_out == 6
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 

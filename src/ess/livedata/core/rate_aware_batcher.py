@@ -387,7 +387,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         if self._pending_batch_length is not None:
             self._batch_length = self._pending_batch_length
             self._pending_batch_length = None
-            for sid in list(self._grids):
+            # Iterate all known estimators: growing the batch length can
+            # promote a previously-demoted sub-rate stream back into the
+            # grid, and that stream is not in ``self._grids``.
+            for sid in list(self._estimators):
                 self._update_grid(sid, self._batch_trackers.get(sid), batch.start_time)
 
         next_start = batch.end_time
@@ -417,13 +420,21 @@ class RateAwareMessageBatcher(MessageBatcher):
     ) -> None:
         """Build or rebuild the pulse grid for a stream from its estimator.
 
-        No-op if the estimator hasn't converged. For existing grids, only
-        rebuilds when period or slots_per_batch changes; the origin is
-        preserved across rebuilds to keep slot assignments stable.
+        No-op if the estimator hasn't converged.  Streams whose rate is
+        below one pulse per batch (``int_rate * batch_length_s < 1``)
+        cannot reliably fill a slot per batch; any prior grid is dropped
+        and the stream reverts to opportunistic (non-gated) delivery.
+        The estimator keeps running so the stream can re-gate if the
+        batch length later grows.  For existing grids, only rebuilds
+        when period or slots_per_batch changes; the origin is preserved
+        across rebuilds to keep slot assignments stable.
         """
         estimator = self._estimators[sid]
         int_rate = estimator.integer_rate_hz
         if int_rate is None or int_rate <= 0:
+            return
+        if int_rate * self.batch_length_s < 1.0:
+            self._grids.pop(sid, None)
             return
         period_ns = round(1e9 / int_rate)
         slots_per_batch = round(int_rate * self.batch_length_s)
