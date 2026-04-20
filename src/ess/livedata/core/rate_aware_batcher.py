@@ -258,6 +258,10 @@ class RateAwareMessageBatcher(MessageBatcher):
             pending = self._overflow
             self._overflow = []
             self._advance_past_gap(pending)
+            # Trackers reflect the pre-detach routing; clear them so that
+            # re-routing ``stashed`` does not double-count tracker state.
+            # _advance_past_gap clears trackers only at steps > 0.
+            self._batch_trackers = {}
             for msg in stashed + pending:
                 self._route_message(msg)
 

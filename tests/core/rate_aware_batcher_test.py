@@ -830,6 +830,38 @@ class TestOneHzEdgeCase:
             f"Unconverged gated message duplicated (count={slow_count})"
         )
 
+    def test_tracker_not_duplicated_in_zero_step_gap_recovery(self):
+        """Internal tracker state must not diverge from published messages
+        after zero-step gap recovery.
+
+        Scenario mirrors
+        ``test_unconverged_gated_not_duplicated_in_zero_step_gap_recovery``
+        but adds a second gridded stream (DETECTOR) that does not send a
+        message this call, preventing the slot gate from closing the batch
+        during the same ``batch()`` invocation.  That lets us inspect
+        tracker state before ``_close_batch`` wipes it.
+
+        Without clearing ``_batch_trackers`` before re-routing ``stashed``,
+        the tracker for the unconverged-gated stream receives its message
+        twice: once from the initial route, once again from the re-route.
+        Published output is clean (messages detached), but any consumer of
+        ``tracker.count`` or ``tracker.messages`` would silently double-count.
+        """
+        slow_mon = StreamId(kind=StreamKind.MONITOR_COUNTS, name="slow_mon")
+        batcher, t0 = make_converged_batcher(
+            rate_hz=1.0,
+            streams={MONITOR: 1.0, DETECTOR: 1.0},
+            timeout_s=999.0,
+        )
+        slow_msg = msg(t0 + 0.3, stream=slow_mon, value="slow_first")
+        stray = msg(t0 + 0.6, stream=MONITOR, value="mon_stray")
+        batcher.batch([slow_msg, stray])
+        tracker = batcher._batch_trackers[slow_mon]
+        assert tracker.count == 1, (
+            f"Tracker for unconverged-gated stream double-counted "
+            f"(count={tracker.count}, expected 1)"
+        )
+
 
 class TestTimeGaps:
     """Stream pauses and resumes — batch window must advance past gaps."""
