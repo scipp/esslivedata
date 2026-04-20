@@ -56,3 +56,11 @@ class WarningBox:
     BG = "#fff3cd"
     BORDER = "#ffc107"
     TEXT = "#856404"
+
+
+class ModalSizing:
+    """Shared sizing constants for modal dialogs with sticky header/footer."""
+
+    WIDTH = 800
+    MAX_HEIGHT = 800
+    SCROLL_BODY_MAX_HEIGHT = 650

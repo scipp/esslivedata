@@ -10,6 +10,8 @@ from typing import Any, Generic, TypeVar
 
 import panel as pn
 
+from .styles import ModalSizing
+
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
 
@@ -308,7 +310,7 @@ class Wizard:
         scrollable_content = pn.Column(
             self._current_step.render_content(),
             sizing_mode='stretch_width',
-            max_height=650,
+            max_height=ModalSizing.SCROLL_BODY_MAX_HEIGHT,
             scroll=True,
         )
 

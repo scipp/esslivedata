@@ -40,7 +40,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
-from .styles import Colors
+from .styles import Colors, ModalSizing
 from .wizard import Wizard, WizardStep
 
 logger = structlog.get_logger(__name__)
@@ -1213,7 +1213,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._config_panel = ConfigurationPanel(config=config_adapter)
 
         self._panel_container.clear()
-        self._panel_container.append(self._config_panel.title_pane)
         self._panel_container.append(self._config_panel.panel)
 
     def _on_config_collected(
@@ -1338,8 +1337,8 @@ class PlotConfigModal:
             self._wizard.render(),
             name=modal_title,
             margin=20,
-            width=800,
-            max_height=800,
+            width=ModalSizing.WIDTH,
+            max_height=ModalSizing.MAX_HEIGHT,
         )
 
         # Watch for modal close events

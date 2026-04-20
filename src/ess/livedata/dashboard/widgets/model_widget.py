@@ -65,6 +65,7 @@ class ModelWidget:
         self._hidden_fields = hidden_fields
         self._parameter_widgets: dict[str, ParamWidget] = {}
         self._tab_entries: list[tuple[str, str, pn.Column]] = []
+        self._failing_field_names: list[str] = []
         try:
             self._build_tabs()
         except Exception as e:
@@ -151,25 +152,24 @@ class ModelWidget:
             (is_valid, list_of_error_messages)
         """
         errors = []
+        self._failing_field_names = []
         for field_name, widget in self._parameter_widgets.items():
             is_valid, error_msg = widget.validate()
             if not is_valid:
                 errors.append(f"{field_name}: {error_msg}")
+                self._failing_field_names.append(field_name)
                 widget.set_error_state(True, error_msg)
             else:
                 widget.set_error_state(False, "")
         return len(errors) == 0, errors
 
     def get_failing_field_names(self) -> list[str]:
-        """Return field names whose widget currently fails validation."""
-        return [
-            name
-            for name, widget in self._parameter_widgets.items()
-            if not widget.validate()[0]
-        ]
+        """Return field names that failed the most recent validate_parameters call."""
+        return list(self._failing_field_names)
 
     def clear_validation_errors(self) -> None:
         """Clear all validation error states."""
+        self._failing_field_names = []
         for widget in self._parameter_widgets.values():
             widget.set_error_state(False, "")
 
