@@ -61,8 +61,8 @@ class _TopicResolvingSerializer(MessageSerializer[T]):
         ------
         :
             Any exception from the underlying encoding library; the base class
-            catches ``(AttributeError, ValueError, TypeError)`` and wraps them
-            in :class:`SerializationError`.
+            catches ``(AttributeError, KeyError, ValueError, TypeError)`` and
+            wraps them in :class:`SerializationError`.
         """
         raise NotImplementedError
 
@@ -70,7 +70,7 @@ class _TopicResolvingSerializer(MessageSerializer[T]):
         topic = stream_kind_to_topic(self._instrument, message.stream.kind)
         try:
             key, value = self._encode(message)
-        except (AttributeError, ValueError, TypeError) as e:
+        except (AttributeError, KeyError, ValueError, TypeError) as e:
             raise SerializationError(f"Failed to serialize message: {e}") from None
         return SerializedMessage(topic=topic, key=key, value=value)
 

@@ -211,7 +211,7 @@ class TestF144Serializer:
             stream=StreamId(kind=StreamKind.LOG, name='log1'),
             value=sc.DataArray(data=sc.array(dims=[], values=1.0, unit='K')),
         )
-        with pytest.raises((SerializationError, KeyError)):
+        with pytest.raises(SerializationError):
             F144Serializer(instrument=INSTRUMENT).serialize(msg)
 
 
@@ -423,7 +423,7 @@ class TestRouteByStreamKindSerializer:
         assert len(a.calls) == 1
         assert len(b.calls) == 1
 
-    def test_unknown_kind_raises(self) -> None:
+    def test_unknown_kind_raises_serialization_error(self) -> None:
         router = RouteByStreamKindSerializer(
             {StreamKind.LIVEDATA_DATA: _FixedSerializer('a')}
         )
@@ -432,7 +432,7 @@ class TestRouteByStreamKindSerializer:
             stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name='y'),
             value=None,
         )
-        with pytest.raises(KeyError, match='No serializer configured'):
+        with pytest.raises(SerializationError, match='No serializer configured'):
             router.serialize(msg)
 
 

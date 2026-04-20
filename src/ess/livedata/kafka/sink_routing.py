@@ -13,7 +13,7 @@ from typing import Generic, TypeVar
 
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import Message, StreamKind
-from .sink import MessageSerializer, SerializedMessage
+from .sink import MessageSerializer, SerializationError, SerializedMessage
 
 T = TypeVar('T')
 
@@ -31,7 +31,7 @@ class RouteByStreamKindSerializer(Generic[T]):
         try:
             serializer = self._routes[kind]
         except KeyError:
-            raise KeyError(
+            raise SerializationError(
                 f"No serializer configured for stream kind {kind!r}. "
                 f"Configured kinds: {list(self._routes.keys())}"
             ) from None
