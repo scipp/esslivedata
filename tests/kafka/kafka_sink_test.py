@@ -17,6 +17,7 @@ import json
 import pytest
 import scipp as sc
 from confluent_kafka import KafkaException
+from pydantic import BaseModel
 from streaming_data_types import dataarray_da00
 
 from ess.livedata.config.models import ConfigKey
@@ -107,11 +108,11 @@ def _data_message(name: str = 'detector') -> Message[sc.DataArray]:
     )
 
 
-def _command_message() -> Message[ConfigUpdate]:
-    class _Payload:
-        def model_dump_json(self) -> str:
-            return json.dumps({'foo': 'bar'})
+class _Payload(BaseModel):
+    foo: str
 
+
+def _command_message() -> Message[ConfigUpdate]:
     return Message(
         timestamp=Timestamp.from_ns(0),
         stream=COMMANDS_STREAM_ID,
@@ -121,7 +122,7 @@ def _command_message() -> Message[ConfigUpdate]:
                 service_name='data_reduction',
                 key='workflow',
             ),
-            value=_Payload(),
+            value=_Payload(foo='bar'),
         ),
     )
 

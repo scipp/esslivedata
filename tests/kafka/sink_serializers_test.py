@@ -19,6 +19,7 @@ import uuid
 import numpy as np
 import pytest
 import scipp as sc
+from pydantic import BaseModel
 from streaming_data_types import dataarray_da00
 
 from ess.livedata.config.acknowledgement import (
@@ -318,14 +319,9 @@ class TestJobStatusToX5f2Serializer:
         assert decoded_status.job_id == status.job_id
 
 
-class _DummyCommandPayload:
-    """Minimal stand-in for a pydantic command payload."""
-
-    def __init__(self, value: dict) -> None:
-        self._value = value
-
-    def model_dump_json(self) -> str:
-        return json.dumps(self._value)
+class _CommandPayload(BaseModel):
+    hello: str
+    n: int
 
 
 class TestCommandSerializer:
@@ -333,7 +329,7 @@ class TestCommandSerializer:
         config_key = ConfigKey(
             source_name='detector_1', service_name='data_reduction', key='workflow'
         )
-        payload = _DummyCommandPayload({'hello': 'world', 'n': 7})
+        payload = _CommandPayload(hello='world', n=7)
         update = ConfigUpdate(config_key=config_key, value=payload)
         msg = Message(
             timestamp=Timestamp.from_ns(0),

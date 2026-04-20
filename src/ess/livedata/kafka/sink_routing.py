@@ -9,16 +9,12 @@ Mirrors the source-side routers in :mod:`ess.livedata.kafka.message_adapter`
 
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import Message, StreamKind
 from .sink import MessageSerializer, SerializationError, SerializedMessage
 
-T = TypeVar('T')
 
-
-class RouteByStreamKindSerializer(Generic[T]):
+class RouteByStreamKindSerializer:
     """
     Routes a message to one of several serializers based on ``message.stream.kind``.
     """
@@ -26,7 +22,7 @@ class RouteByStreamKindSerializer(Generic[T]):
     def __init__(self, routes: dict[StreamKind, MessageSerializer]) -> None:
         self._routes = routes
 
-    def serialize(self, message: Message[T]) -> SerializedMessage:
+    def serialize(self, message: Message) -> SerializedMessage:
         kind = message.stream.kind
         try:
             serializer = self._routes[kind]

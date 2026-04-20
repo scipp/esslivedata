@@ -193,9 +193,11 @@ def make_default_sink_serializer(
     Build the routing serializer used by production services.
 
     Dispatches by stream kind to the appropriate encoder: ``data_serializer`` for
-    all data-carrying streams (results, ROIs, monitor counts, area detector,
-    log-data), the command/response encoders for the livedata control topics,
-    and the x5f2 encoders for service/job heartbeats.
+    all data-carrying streams (results, ROIs, monitor counts, area detector),
+    the command/response encoders for the livedata control topics, and the
+    x5f2 encoders for service/job heartbeats. Log streams are not routed here;
+    producers that emit ``StreamKind.LOG`` wire an :class:`F144Serializer`
+    directly into their sink.
 
     Environment-dependent metadata for status messages (software version,
     hostname, process id) is resolved **once** here at factory time, so the
@@ -239,6 +241,5 @@ def make_default_sink_serializer(
             StreamKind.MONITOR_EVENTS: data_serializer,
             StreamKind.DETECTOR_EVENTS: data_serializer,
             StreamKind.AREA_DETECTOR: data_serializer,
-            StreamKind.LOG: data_serializer,
         }
     )
