@@ -16,6 +16,7 @@ import random
 import pytest
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
+from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
     MIN_DIFFS_FOR_GATE,
     PulseGrid,
@@ -118,6 +119,39 @@ def make_converged_batcher(
 
     next_batch_start = batch_start + warmup_iters * batch_length_s
     return batcher, next_batch_start
+
+
+def _run_ticks(
+    batcher: RateAwareMessageBatcher,
+    start: float,
+    schedule: list[Message[str]],
+    n_batches: int,
+    tick_s: float = 0.1,
+    max_run_s: float = 120.0,
+) -> list[MessageBatch]:
+    """Deliver a pre-sorted message schedule via fixed-size ticks.
+
+    No ``hwm_trigger`` is injected -- closures are driven solely by real
+    message arrivals (slot gate) or by the high-water mark advancing past
+    the timeout threshold via real timestamps.  Useful for verifying that
+    a setup can close batches without timeout-fallback help.
+    """
+    tick_step = int(tick_s * 1e9)
+    start_ns = int(start * 1e9)
+    now_ns = start_ns
+    idx = 0
+    closed: list[MessageBatch] = []
+    budget_ns = start_ns + int(max_run_s * 1e9)
+    while len(closed) < n_batches and now_ns < budget_ns:
+        now_ns += tick_step
+        batch_msgs: list[Message[str]] = []
+        while idx < len(schedule) and schedule[idx].timestamp.to_ns() <= now_ns:
+            batch_msgs.append(schedule[idx])
+            idx += 1
+        r = batcher.batch(batch_msgs) if batch_msgs else batcher.batch([])
+        if r is not None:
+            closed.append(r)
+    return closed
 
 
 # --- Tests ---
@@ -1700,6 +1734,120 @@ class TestMultiRateRobustness:
         )
 
 
+class TestSubHzGatedStream:
+    """Sub-Hz gated streams (< 1 Hz): rate rounds to 0 so no grid is built.
+
+    The stream is observed via the estimator and delivered via the no-grid
+    path in ``_route_message``, but never drives or blocks batch completion.
+    A higher-rate gated stream closes each batch via the slot gate; the
+    sub-Hz stream rides along without triggering timeout fallbacks.
+    """
+
+    MON_HALF = StreamId(kind=StreamKind.MONITOR_EVENTS, name="mon_half_hz")
+
+    def test_slot_gate_closes_alongside_high_rate_gated_stream(self):
+        """0.5 Hz MON + 14 Hz DET: every batch closes via detector slot gate.
+
+        "Every batch full" (14 det msgs each) is the slot-gate signature;
+        a timeout fallback fires before the last tick of the window and
+        would produce < 14.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor  # 1.2
+        n = 20
+        det_period = int(1e9 / 14.0)
+        mon_period = 2_000_000_000
+        start_ns = int(t0 * 1e9)
+
+        schedule = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(14 * n)
+        ] + [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * mon_period),
+                stream=self.MON_HALF,
+                value="",
+            )
+            for k in range(n // 2)
+        ]
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+
+        closed = _run_ticks(batcher, t0, schedule, n_batches=n)
+        assert len(closed) == n
+
+        det_per_batch = [
+            sum(1 for m in b.messages if m.stream == DETECTOR) for b in closed
+        ]
+        assert all(c == 14 for c in det_per_batch), (
+            f"Timeout fallback fired (uneven det counts): {det_per_batch}"
+        )
+        mon_out = sum(
+            1 for b in closed for m in b.messages if m.stream == self.MON_HALF
+        )
+        assert mon_out == n // 2
+
+        assert self.MON_HALF not in batcher._grids, "Sub-Hz must not be gridded"
+        assert self.MON_HALF in batcher._estimators, "Sub-Hz must not be evicted"
+        assert batcher._estimators[self.MON_HALF].integer_rate_hz is None
+
+    def test_no_eviction_at_05hz_over_many_batches(self):
+        """Absent/present cadence at 0.5 Hz keeps counter under eviction threshold."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        n = 50
+        det_period = int(1e9 / 14.0)
+        mon_period = 2_000_000_000
+        start_ns = int(t0 * 1e9)
+
+        schedule = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(14 * n)
+        ] + [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * mon_period),
+                stream=self.MON_HALF,
+                value="",
+            )
+            for k in range(n // 2)
+        ]
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+        closed = _run_ticks(batcher, t0, schedule, n_batches=n, max_run_s=n + 10)
+        assert len(closed) == n
+        assert self.MON_HALF in batcher._estimators
+
+    def test_sub_hz_alone_delivered_via_timeout(self):
+        """Sub-Hz-only service: timeout drives closure; nothing dropped."""
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0)  # default timeout
+        n = 10
+        mon_period = 2_000_000_000
+        # 6 pulses covers 10 closures under the empty/with-msg alternation that
+        # sub-Hz-only delivery produces past the first two batches.
+        pulse_count = n // 2 + 1
+        schedule = [
+            Message(
+                timestamp=Timestamp.from_ns(k * mon_period),
+                stream=self.MON_HALF,
+                value="",
+            )
+            for k in range(pulse_count)
+        ]
+        closed = _run_ticks(batcher, 0.0, schedule, n_batches=n, max_run_s=30.0)
+        assert len(closed) == n
+        mon_out = sum(
+            1 for b in closed for m in b.messages if m.stream == self.MON_HALF
+        )
+        assert mon_out == pulse_count
+        assert self.MON_HALF not in batcher._grids
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 
@@ -1719,3 +1867,154 @@ class TestNonGatedStreams:
         # Only log messages, no detector — gate not satisfied
         result = batcher.batch([msg(t0 + 0.5, stream=self.LOG)])
         assert result is None
+
+    def test_slot_gate_closes_with_non_gated_stream_present(self):
+        """LOG at 2 Hz + 14 Hz DET: slot gate closes every batch, nothing lost.
+
+        The non-gated LOG stream never touches the estimator or the grid,
+        so its presence must not bias completion one way or the other.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        n = 20
+        det_period = int(1e9 / 14.0)
+        log_period = 500_000_000  # 2 Hz
+        start_ns = int(t0 * 1e9)
+
+        schedule = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(14 * n)
+        ] + [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * log_period),
+                stream=self.LOG,
+                value="",
+            )
+            for k in range(2 * n)
+        ]
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+
+        closed = _run_ticks(batcher, t0, schedule, n_batches=n)
+        assert len(closed) == n
+        det_per_batch = [
+            sum(1 for m in b.messages if m.stream == DETECTOR) for b in closed
+        ]
+        assert all(c == 14 for c in det_per_batch), (
+            f"Timeout fallback fired: {det_per_batch}"
+        )
+        log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
+        assert log_out == 2 * n
+        assert self.LOG not in batcher._grids
+        assert self.LOG not in batcher._estimators
+
+    def test_irregular_bursts_alongside_gated(self):
+        """LOG alternates between a >1 Hz burst and a <1 Hz quiet phase.
+
+        Bursty non-gated traffic must not perturb the gated stream's slot
+        gate or the non-gated delivery path.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        n = 20
+        det_period = int(1e9 / 14.0)
+        start_ns = int(t0 * 1e9)
+
+        schedule: list[Message[str]] = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(14 * n)
+        ]
+        # Even seconds: 5-msg burst at ~20 Hz local rate.
+        # Odd seconds: silent (gap between bursts is ~1.5 s, sub-Hz).
+        log_expected = 0
+        for sec in range(n):
+            if sec % 2 == 0:
+                for k in range(5):
+                    t_ns = start_ns + sec * 1_000_000_000 + k * 50_000_000 + 100_000_000
+                    schedule.append(
+                        Message(
+                            timestamp=Timestamp.from_ns(t_ns),
+                            stream=self.LOG,
+                            value="",
+                        )
+                    )
+                    log_expected += 1
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+
+        closed = _run_ticks(batcher, t0, schedule, n_batches=n)
+        assert len(closed) == n
+        det_per_batch = [
+            sum(1 for m in b.messages if m.stream == DETECTOR) for b in closed
+        ]
+        assert all(c == 14 for c in det_per_batch), (
+            f"Timeout fallback fired: {det_per_batch}"
+        )
+        log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
+        assert log_out == log_expected
+        assert self.LOG not in batcher._grids
+        assert self.LOG not in batcher._estimators
+
+    def test_compound_non_gated_plus_sub_hz_plus_gated(self):
+        """Non-gated LOG + sub-Hz MON + 14 Hz DET: slot gate closes cleanly."""
+        MON_HALF = StreamId(kind=StreamKind.MONITOR_EVENTS, name="mon_half_hz")
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
+        n = 20
+        det_period = int(1e9 / 14.0)
+        mon_period = 2_000_000_000
+        start_ns = int(t0 * 1e9)
+
+        schedule: list[Message[str]] = [
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * det_period),
+                stream=DETECTOR,
+                value="",
+            )
+            for k in range(14 * n)
+        ]
+        schedule.extend(
+            Message(
+                timestamp=Timestamp.from_ns(start_ns + k * mon_period),
+                stream=MON_HALF,
+                value="",
+            )
+            for k in range(n // 2)
+        )
+        log_expected = 0
+        for sec in range(n):
+            if sec % 3 == 0:
+                for k in range(4):
+                    t_ns = start_ns + sec * 1_000_000_000 + k * 60_000_000 + 200_000_000
+                    schedule.append(
+                        Message(
+                            timestamp=Timestamp.from_ns(t_ns),
+                            stream=self.LOG,
+                            value="",
+                        )
+                    )
+                    log_expected += 1
+        schedule.sort(key=lambda m: m.timestamp.to_ns())
+
+        closed = _run_ticks(batcher, t0, schedule, n_batches=n)
+        assert len(closed) == n
+        det_per_batch = [
+            sum(1 for m in b.messages if m.stream == DETECTOR) for b in closed
+        ]
+        assert all(c == 14 for c in det_per_batch), (
+            f"Timeout fallback fired: {det_per_batch}"
+        )
+        mon_out = sum(1 for b in closed for m in b.messages if m.stream == MON_HALF)
+        log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
+        assert mon_out == n // 2
+        assert log_out == log_expected
+        assert MON_HALF in batcher._estimators
+        assert MON_HALF not in batcher._grids
+        assert self.LOG not in batcher._estimators
+        assert self.LOG not in batcher._grids
