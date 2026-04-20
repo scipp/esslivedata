@@ -31,6 +31,9 @@ docs/generated/
 .idea/
 .vscode/
 .claude/settings.local.json
+# Git does not show worktrees in status anyway, but tools like ripgrep benefit from the ignore here
+.claude/worktrees/
+docs/reports/
 
 # Data files
 *.data
