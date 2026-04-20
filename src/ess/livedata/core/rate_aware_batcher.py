@@ -219,6 +219,23 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     Streams whose kind is not in ``GATED_STREAM_KINDS`` are included
     opportunistically in whatever batch is active.
+
+    Notes
+    -----
+    Two behaviours differ from :class:`SimpleMessageBatcher` and are worth
+    flagging for downstream consumers:
+
+    - **Long silences emit no placeholder batches.** ``SimpleMessageBatcher``
+      emits one empty batch per skipped window; this batcher's gap-advance
+      path jumps the active window directly to where the next message is.
+      Downstream code that drives UI ticks or heartbeats off batch arrivals
+      will see fewer events during gaps.
+    - **Empty batch on the pulse-slot boundary edge.** For a low-rate stream
+      with ``slots_per_batch == 1``, a message whose pulse slot is ahead of
+      the active batch (e.g. a 1 Hz stray at ``t0 + 0.6`` against origin
+      ``t0``) closes the current batch as empty; the message is delivered
+      in the next window.  Downstream already tolerates empty batches, and
+      no message is lost.
     """
 
     def __init__(
