@@ -2036,6 +2036,203 @@ class TestSubRateExclusion:
         assert mon_out == 6
 
 
+class TestBrokenTimestampStream:
+    """A stream whose timestamps live in a disjoint epoch must not veto
+    completion for the rest of the instrument.
+
+    Production regression (Bifrost): MONITOR_COUNTS arrived with
+    timestamps ~43 years offset from MONITOR_EVENTS.  The broken
+    stream's grid was built in its own epoch, pulse_index(batch_start)
+    yielded a huge negative number, tracker.max_slot stayed at -1
+    forever, and _is_batch_complete vetoed every slot-gate closure.
+
+    Symmetric for far-future timestamps via the ``end_time = max(ts)``
+    seeding of the first active batch's start_time: whichever stream's
+    epoch wins batch_start seeding, the other stream's grid origin ends
+    up implausibly far from it.  The fix rejects both directions by
+    refusing to create a grid whose origin is too many batches away
+    from batch_start at grid-creation time.
+    """
+
+    GOOD = StreamId(kind=StreamKind.MONITOR_EVENTS, name="good")
+    BROKEN = StreamId(kind=StreamKind.MONITOR_COUNTS, name="broken")
+
+    _A_EPOCH_NS = 1_780_000_000_000_000_000  # 2026-ish Unix ns
+    _GOOD_PERIOD_NS = 71_428_571  # 14 Hz
+    _BROKEN_PERIOD_NS = 1_000_000_000  # 1 Hz
+    _FAR_OFFSET_NS = 1_350_000_000_000_000_000  # ~43 years
+
+    def _seed_and_drive(
+        self,
+        batcher: RateAwareMessageBatcher,
+        broken_offset_ns: int,
+        warmup_batches: int,
+        measured_batches: int,
+    ) -> tuple[list[MessageBatch], list[MessageBatch]]:
+        """Seed initial batch + drive warmup and measured batches.
+
+        Returns (warmup_closed, measured_closed).
+        """
+        # Initial batch: both streams present.  max(ts) across the whole
+        # set seeds batch_start for the active (empty) batch.
+        initial = [
+            Message(
+                timestamp=Timestamp.from_ns(
+                    self._A_EPOCH_NS + i * self._GOOD_PERIOD_NS
+                ),
+                stream=self.GOOD,
+                value="",
+            )
+            for i in range(14)
+        ] + [
+            Message(
+                timestamp=Timestamp.from_ns(
+                    self._A_EPOCH_NS + broken_offset_ns + i * self._BROKEN_PERIOD_NS
+                ),
+                stream=self.BROKEN,
+                value=f"b_init_{i}",
+            )
+            for i in range(5)
+        ]
+        batcher.batch(initial)
+
+        # What epoch did batch_start end up in? max(ts).  Drive batches
+        # relative to that so good-stream messages keep arriving with
+        # slots >= 0 once the grid is built.  The broken stream's grid
+        # (if created) lives in the OTHER epoch.
+        if broken_offset_ns > 0:
+            base_ns = self._A_EPOCH_NS + broken_offset_ns + 4 * self._BROKEN_PERIOD_NS
+        else:
+            base_ns = self._A_EPOCH_NS + 13 * self._GOOD_PERIOD_NS
+
+        warmup: list[MessageBatch] = []
+        for k in range(warmup_batches):
+            batch0 = base_ns + (k + 1) * 1_000_000_000
+            good_msgs = [
+                Message(
+                    timestamp=Timestamp.from_ns(batch0 + i * self._GOOD_PERIOD_NS),
+                    stream=self.GOOD,
+                    value="",
+                )
+                for i in range(14)
+            ]
+            broken_msg = Message(
+                timestamp=Timestamp.from_ns(batch0 + broken_offset_ns + 500_000_000),
+                stream=self.BROKEN,
+                value=f"b_warmup_{k}",
+            )
+            r = batcher.batch([*good_msgs, broken_msg])
+            if r is not None:
+                warmup.append(r)
+
+        # Measurement phase: disable timeout, require slot-gate closure.
+        batcher.timeout_factor = 999.0
+        measured: list[MessageBatch] = []
+        offset = (warmup_batches + 1) * 1_000_000_000
+        for k in range(measured_batches):
+            batch0 = base_ns + offset + k * 1_000_000_000
+            good_msgs = [
+                Message(
+                    timestamp=Timestamp.from_ns(batch0 + i * self._GOOD_PERIOD_NS),
+                    stream=self.GOOD,
+                    value="",
+                )
+                for i in range(14)
+            ]
+            broken_msg = Message(
+                timestamp=Timestamp.from_ns(batch0 + broken_offset_ns + 500_000_000),
+                stream=self.BROKEN,
+                value=f"b_meas_{k}",
+            )
+            r = batcher.batch([*good_msgs, broken_msg])
+            if r is not None:
+                measured.append(r)
+        return warmup, measured
+
+    def test_far_past_broken_stream_does_not_veto_slot_gate(self):
+        """Prod regression: broken stream ~43 years in the past."""
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=0.8)
+        _, measured = self._seed_and_drive(
+            batcher,
+            broken_offset_ns=-self._FAR_OFFSET_NS,
+            warmup_batches=8,
+            measured_batches=10,
+        )
+        assert len(measured) == 10, (
+            f"Only {len(measured)}/10 batches closed via slot gate "
+            f"(broken stream vetoed the rest)"
+        )
+        assert self.BROKEN not in batcher._grids
+        broken_out = sum(
+            1 for b in measured for m in b.messages if m.stream == self.BROKEN
+        )
+        assert broken_out == 10, f"Broken stream msg count: {broken_out}"
+
+    def test_far_future_broken_stream_does_not_veto_slot_gate(self):
+        """Symmetric case: broken stream ~43 years in the future.
+
+        ``end_time = max(ts)`` in the initial batch seeds batch_start in
+        the broken (future) epoch; the good stream becomes the one with
+        an implausible grid origin.  Either way, the check must prevent
+        a stream with implausible origin from vetoing every batch.
+        """
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=0.8)
+        _, measured = self._seed_and_drive(
+            batcher,
+            broken_offset_ns=self._FAR_OFFSET_NS,
+            warmup_batches=8,
+            measured_batches=10,
+        )
+        assert len(measured) == 10, (
+            f"Only {len(measured)}/10 batches closed (far-future offset)"
+        )
+        # _overflow must not grow unboundedly across batches.
+        assert len(batcher._overflow) <= 1, (
+            f"Overflow accumulated to {len(batcher._overflow)} — "
+            f"broken stream is re-overflowing every batch"
+        )
+
+    def test_single_broken_stream_alone_does_not_hang(self):
+        """Instrument with only a broken stream still makes progress via timeout.
+
+        No good stream means nothing to seed a plausible batch_start from
+        its own epoch, so the broken stream's origin IS batch_start's
+        epoch and the grid IS created.  That's fine — the stream is
+        self-consistent in its own (broken) frame; downstream will see
+        the bogus timestamps but the batcher must not hang.
+        """
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=0.8)
+        broken_start_ns = 423_000_000_000_000_000  # ~43 years in the past
+        initial = [
+            Message(
+                timestamp=Timestamp.from_ns(
+                    broken_start_ns + i * self._BROKEN_PERIOD_NS
+                ),
+                stream=self.BROKEN,
+                value="",
+            )
+            for i in range(5)
+        ]
+        batcher.batch(initial)
+
+        closed = 0
+        for k in range(10):
+            ts_ns = broken_start_ns + (5 + k) * self._BROKEN_PERIOD_NS
+            r = batcher.batch(
+                [
+                    Message(
+                        timestamp=Timestamp.from_ns(ts_ns),
+                        stream=self.BROKEN,
+                        value="",
+                    ),
+                    hwm_trigger(ts_ns / 1e9 + 0.81),
+                ]
+            )
+            if r is not None:
+                closed += 1
+        assert closed >= 8, f"Batcher hung with single broken stream: closed={closed}"
+
+
 class TestNonGatedStreams:
     """Non-gated streams (e.g., log) are included but don't affect the gate."""
 

@@ -45,6 +45,17 @@ _INTEGER_SNAP_TOLERANCE = 0.2
 # refusing to absorb true phase offsets at low rates.
 _DRIFT_TOLERANCE_NS = 1_000_000
 
+# Max allowed distance between a new grid's origin and the active
+# batch_start, in multiples of batch_length.  Protects against streams
+# whose timestamps live in a disjoint epoch (wrong schema field, unit
+# mismatch, run-local clock): such a stream's grid would place every
+# slot billions of slots away from batch_start, pinning tracker.max_slot
+# at -1 and vetoing every slot-gate closure for the whole batcher.
+# 1000 batches (>=16 min at 1 s batches) is well above any legitimate
+# cold-start or post-eviction origin offset but below any real epoch
+# mismatch by many orders of magnitude.
+_MAX_ORIGIN_OFFSET_BATCHES = 1000
+
 
 @dataclass
 class StreamPeriodEstimator:
@@ -424,10 +435,14 @@ class RateAwareMessageBatcher(MessageBatcher):
         below one pulse per batch (``int_rate * batch_length_s < 1``)
         cannot reliably fill a slot per batch; any prior grid is dropped
         and the stream reverts to opportunistic (non-gated) delivery.
-        The estimator keeps running so the stream can re-gate if the
-        batch length later grows.  For existing grids, only rebuilds
-        when period or slots_per_batch changes; the origin is preserved
-        across rebuilds to keep slot assignments stable.
+        A new grid is also rejected if its origin is absurdly far from
+        ``batch_start`` (see ``_MAX_ORIGIN_OFFSET_BATCHES``): this
+        catches streams with broken-epoch timestamps that would
+        otherwise veto every slot-gate closure.  In both cases the
+        estimator keeps running so the stream can re-gate if conditions
+        change.  For existing grids, only rebuilds when period or
+        slots_per_batch changes; the origin is preserved across
+        rebuilds to keep slot assignments stable.
         """
         estimator = self._estimators[sid]
         int_rate = estimator.integer_rate_hz
@@ -449,6 +464,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         else:
             origin = self._pick_grid_origin(sid, tracker, batch_start)
             if origin is None:
+                return
+            max_offset_ns = _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length.to_ns()
+            if abs(origin - batch_start.to_ns()) > max_offset_ns:
                 return
         self._grids[sid] = PulseGrid(
             origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
