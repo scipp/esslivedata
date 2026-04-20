@@ -32,6 +32,13 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
+# Maximum relative error between the raw rate and its nearest integer
+# before ``integer_rate_hz`` refuses to snap.  Protects against reporting
+# a non-integer producer (e.g. true 0.7 Hz or 1.4 Hz) as an integer-Hz
+# stream, which would force gated inclusion of a stream that cannot
+# deliver one pulse per batch.
+_INTEGER_SNAP_TOLERANCE = 0.2
+
 # Small absolute tolerance for integer-Hz rounding drift.  Per-batch
 # drift is at most a few ns (|batch_length_ns - slots_per_batch *
 # period_ns|); 1 ms covers many hours of accumulated drift while still
@@ -79,8 +86,13 @@ class StreamPeriodEstimator:
         seed = statistics.median(self.diffs)
         per_pulse = [d / k for d in self.diffs if (k := round(d / seed)) >= 1]
         period_ns = statistics.median(per_pulse) if per_pulse else seed
-        rate = round(1e9 / period_ns)
-        return rate if rate >= 1 else None
+        raw_rate = 1e9 / period_ns
+        rate = round(raw_rate)
+        if rate < 1:
+            return None
+        if abs(raw_rate - rate) / rate > _INTEGER_SNAP_TOLERANCE:
+            return None
+        return rate
 
 
 @dataclass(frozen=True)

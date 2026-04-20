@@ -291,6 +291,33 @@ class TestStreamPeriodEstimator:
         self._feed(est, ts)
         assert est.integer_rate_hz == 1
 
+    def test_non_integer_sub_hz_rate_rejected(self):
+        """True 0.7 Hz producer: raw rate snaps to 1 with ~30% error.
+
+        Without a confidence guard, the estimator would falsely report
+        this as a 1 Hz stream, and the batcher would gate-include it
+        even though it delivers far fewer than one pulse per batch.
+        """
+        est = StreamPeriodEstimator()
+        ts = self._simulate_pulses(
+            rate_hz=0.7, jitter_ms=5.0, p_missing=0.0, n_samples=32, seed=0
+        )
+        self._feed(est, ts)
+        assert est.integer_rate_hz is None
+
+    def test_non_integer_rate_between_integers_rejected(self):
+        """True 1.4 Hz producer: raw rate is ~40% away from either 1 or 2.
+
+        Must not snap to either neighbour — return None so the caller
+        keeps the stream out of the gated set.
+        """
+        est = StreamPeriodEstimator()
+        ts = self._simulate_pulses(
+            rate_hz=1.4, jitter_ms=5.0, p_missing=0.0, n_samples=32, seed=0
+        )
+        self._feed(est, ts)
+        assert est.integer_rate_hz is None
+
 
 class TestPulseGrid:
     """Grid-level slot assignment: no pulse inside [batch_start, batch_end)
