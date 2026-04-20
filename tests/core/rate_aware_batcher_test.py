@@ -756,6 +756,53 @@ class TestOneHzEdgeCase:
             f"Lost {total_in - total_out} of {total_in} MON messages"
         )
 
+    def test_non_gated_not_duplicated_in_zero_step_gap_recovery(self):
+        """Non-gated messages in the active batch must not be duplicated when
+        the gap-recovery path fires with ``steps == 0``.
+
+        Pre-fix, ``batch()`` aliased ``self._active_batch.messages`` into a
+        ``stashed`` local, called ``_advance_past_gap`` (which is a no-op at
+        ``steps == 0`` — leaves the active batch in place), then re-routed
+        ``stashed`` through ``_route_message``.  The append landed on the
+        same list, duplicating every stashed message.
+        """
+        log_stream = StreamId(kind=StreamKind.LOG, name="log")
+        batcher, t0 = make_converged_batcher(
+            rate_hz=1.0, streams={MONITOR: 1.0}, timeout_s=999.0
+        )
+        log_msg = Message(timestamp=ts(t0 + 0.3), stream=log_stream, value="log_1")
+        # MON pulse at t0+0.6 s: slot 1 at slots_per_batch=1 → overflow.
+        # No gated-gridded msg has landed in the active batch, so the
+        # gap-recovery path fires; gap_ns < batch_ns → steps == 0.
+        stray = msg(t0 + 0.6, stream=MONITOR, value="mon_stray")
+        r1 = batcher.batch([log_msg, stray])
+        r2 = batcher.batch([msg(t0 + 1.0, stream=MONITOR)])
+        r3 = batcher.batch([hwm_trigger(t0 + 999.01)])
+        results = [r for r in (r1, r2, r3) if r is not None]
+        log_count = sum(1 for r in results for m in r.messages if m.value == "log_1")
+        assert log_count == 1, f"LOG message duplicated (count={log_count})"
+
+    def test_unconverged_gated_not_duplicated_in_zero_step_gap_recovery(self):
+        """Unconverged gated streams (no grid yet) land in the active batch.
+        Same ``steps == 0`` path must not duplicate them either.
+        """
+        slow_mon = StreamId(kind=StreamKind.MONITOR_COUNTS, name="slow_mon")
+        batcher, t0 = make_converged_batcher(
+            rate_hz=1.0, streams={MONITOR: 1.0}, timeout_s=999.0
+        )
+        slow_msg = msg(t0 + 0.3, stream=slow_mon, value="slow_first")
+        stray = msg(t0 + 0.6, stream=MONITOR, value="mon_stray")
+        r1 = batcher.batch([slow_msg, stray])
+        r2 = batcher.batch([msg(t0 + 1.0, stream=MONITOR)])
+        r3 = batcher.batch([hwm_trigger(t0 + 999.01)])
+        results = [r for r in (r1, r2, r3) if r is not None]
+        slow_count = sum(
+            1 for r in results for m in r.messages if m.value == "slow_first"
+        )
+        assert slow_count == 1, (
+            f"Unconverged gated message duplicated (count={slow_count})"
+        )
+
 
 class TestTimeGaps:
     """Stream pauses and resumes — batch window must advance past gaps."""

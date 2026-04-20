@@ -224,10 +224,14 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._route_message(msg)
 
         if self._overflow and self._active_batch_has_no_gated_messages():
-            # Collect messages already in the active batch (non-converged
-            # streams routed before the gap was detected) so they aren't
-            # lost when _advance_past_gap replaces the batch.
+            # Detach messages already in the active batch (non-gated and
+            # unconverged-gated streams routed before the gap was
+            # detected).  _advance_past_gap is a no-op when the pending
+            # messages still fit in the current window (steps == 0), so
+            # without detaching, re-routing would append onto the same
+            # list and duplicate every stashed message.
             stashed = self._active_batch.messages
+            self._active_batch.messages = []
             pending = self._overflow
             self._overflow = []
             self._advance_past_gap(pending)
