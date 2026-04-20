@@ -787,7 +787,7 @@ class TestOneHzEdgeCase:
         # mimicking the fallback path picking a tracker msg with ts slightly
         # below batch_start.
         original = batcher._grids[MONITOR]
-        current_start = batcher._active_batch.start_time.to_ns()
+        current_start = batcher._active_window.start.to_ns()
         batcher._grids[MONITOR] = PulseGrid(
             origin_ns=current_start - 5_000_000,
             period_ns=original.period_ns,
@@ -819,11 +819,9 @@ class TestOneHzEdgeCase:
         """Non-gated messages in the active batch must not be duplicated when
         the gap-recovery path fires with ``steps == 0``.
 
-        Pre-fix, ``batch()`` aliased ``self._active_batch.messages`` into a
-        ``stashed`` local, called ``_advance_past_gap`` (which is a no-op at
-        ``steps == 0`` — leaves the active batch in place), then re-routed
-        ``stashed`` through ``_route_message``.  The append landed on the
-        same list, duplicating every stashed message.
+        At ``steps == 0`` the gap-recovery path keeps the active window in
+        place but must still reset per-stream buckets so that re-routing the
+        stashed messages does not double-add them.
         """
         log_stream = StreamId(kind=StreamKind.LOG, name="log")
         batcher, t0 = make_converged_batcher(
@@ -862,8 +860,8 @@ class TestOneHzEdgeCase:
             f"Unconverged gated message duplicated (count={slow_count})"
         )
 
-    def test_tracker_not_duplicated_in_zero_step_gap_recovery(self):
-        """Internal tracker state must not diverge from published messages
+    def test_bucket_not_duplicated_in_zero_step_gap_recovery(self):
+        """Internal bucket state must not diverge from published messages
         after zero-step gap recovery.
 
         Scenario mirrors
@@ -871,13 +869,11 @@ class TestOneHzEdgeCase:
         but adds a second gridded stream (DETECTOR) that does not send a
         message this call, preventing the slot gate from closing the batch
         during the same ``batch()`` invocation.  That lets us inspect
-        tracker state before ``_close_batch`` wipes it.
+        bucket state before ``_close_batch`` wipes it.
 
-        Without clearing ``_batch_trackers`` before re-routing ``stashed``,
-        the tracker for the unconverged-gated stream receives its message
-        twice: once from the initial route, once again from the re-route.
-        Published output is clean (messages detached), but any consumer of
-        ``tracker.count`` or ``tracker.messages`` would silently double-count.
+        Without resetting buckets before re-routing ``stashed``, the bucket
+        for the unconverged-gated stream would receive its message twice:
+        once from the initial route, once again from the re-route.
         """
         slow_mon = StreamId(kind=StreamKind.MONITOR_COUNTS, name="slow_mon")
         batcher, t0 = make_converged_batcher(
@@ -888,10 +884,10 @@ class TestOneHzEdgeCase:
         slow_msg = msg(t0 + 0.3, stream=slow_mon, value="slow_first")
         stray = msg(t0 + 0.6, stream=MONITOR, value="mon_stray")
         batcher.batch([slow_msg, stray])
-        tracker = batcher._batch_trackers[slow_mon]
-        assert tracker.count == 1, (
-            f"Tracker for unconverged-gated stream double-counted "
-            f"(count={tracker.count}, expected 1)"
+        bucket = batcher._active_window.buckets[slow_mon]
+        assert bucket.count == 1, (
+            f"Bucket for unconverged-gated stream double-counted "
+            f"(count={bucket.count}, expected 1)"
         )
 
 
@@ -1862,7 +1858,7 @@ class TestMultiRateRobustness:
         batcher, t0 = make_converged_batcher(streams=rates)
         batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
         # Seed each stream's grid with a pathological origin.
-        current_start = batcher._active_batch.start_time.to_ns()
+        current_start = batcher._active_window.start.to_ns()
         for sid in rates:
             g = batcher._grids[sid]
             batcher._grids[sid] = PulseGrid(
@@ -2333,7 +2329,7 @@ class TestBrokenTimestampStream:
         # batch_start drifts more than _MAX_ORIGIN_OFFSET_BATCHES * 1 s
         # away from the (now-stale) broken origin.  GOOD keeps producing
         # in the good epoch, driving slot-gate (or timeout) closures.
-        base_ns = batcher._active_batch.start_time.to_ns()
+        base_ns = batcher._active_window.start.to_ns()
         n_batches = 1100  # > _MAX_ORIGIN_OFFSET_BATCHES (= 1000)
         closed = 0
         for k in range(n_batches):
