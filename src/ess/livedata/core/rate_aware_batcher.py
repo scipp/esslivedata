@@ -487,6 +487,29 @@ class RateAwareMessageBatcher(MessageBatcher):
         window = self._active_window
         batch = window.close()
 
+        self._refresh_stream_registry(window)
+
+        new_start = window.end
+        self._active_window = _ActiveWindow(
+            start=new_start, end=new_start + self._batch_length
+        )
+        # Drain overflow into the new window.  Timestamps that still fall
+        # past the last slot land back in ``_overflow`` and wait for the
+        # next close; gap recovery handles jumps larger than one batch.
+        overflow = self._overflow
+        self._overflow = []
+        for msg in overflow:
+            self._route_message(msg)
+
+        return batch
+
+    def _refresh_stream_registry(self, window: _ActiveWindow) -> None:
+        """Update grids, mark absence, evict dead streams, apply batch-length change.
+
+        Runs once per close while the just-closed ``window`` is still
+        available -- the window's buckets feed fresh origins into
+        ``_update_grid``.
+        """
         present_streams: set[StreamId] = set()
         for sid, bucket in window.buckets.items():
             if not self._is_gated(sid) or not bucket.messages:
@@ -515,20 +538,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             # grid, and that stream is not in ``self._grids``.
             for sid in list(self._estimators):
                 self._update_grid(sid, window.buckets.get(sid), window.start)
-
-        new_start = window.end
-        self._active_window = _ActiveWindow(
-            start=new_start, end=new_start + self._batch_length
-        )
-        # Drain overflow into the new window.  Timestamps that still fall
-        # past the last slot land back in ``_overflow`` and wait for the
-        # next close; gap recovery handles jumps larger than one batch.
-        overflow = self._overflow
-        self._overflow = []
-        for msg in overflow:
-            self._route_message(msg)
-
-        return batch
 
     def _rebuild_grids(self) -> None:
         """Update grids for all observed streams from current estimator state."""

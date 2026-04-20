@@ -118,7 +118,33 @@ Build `MessageBatch` only at close. This subsumes:
 
 ## Status
 
-- [ ] Phase A.6 — split `_update_grid`
-- [ ] Phase A.5 — unify hostile-timestamp guards
-- [ ] Phase B — `_ActiveWindow` refactor
-- [ ] Phase C.1 — extract `StreamRegistry`
+- [x] Phase A.6 — split `_update_grid` (commit `c03c5eb7`)
+- [~] Phase A.5 — **skipped**.  On closer inspection the HWM clamp (3
+  batches, tight) and the grid-origin guard (1000 batches, loose) serve
+  different purposes with different thresholds; a single input-stage
+  filter would either compromise one protection or silently drop
+  messages that currently reach downstream consumers.  Reassessed
+  mid-stream and skipped rather than forcing a shoehorn.
+- [x] Phase B — `_ActiveWindow` refactor (commit `3ec0c7e2`).
+  Subsumed the gap-recovery choreography, removed
+  `_overflow_needs_rerouting`, dropped the dead `max_slot < 0` branch,
+  unified routing into a single bucket-lookup entry point.
+- [~] Phase C — **skipped**.  After Phase B the grid cluster
+  (`_update_grid`, `_choose_origin`, `_origin_too_far`,
+  `_pick_grid_origin`, `_rebuild_grids`) sits as a self-contained
+  ~100-line section at the bottom of the file.  Extraction would still
+  need to thread `batch_start`, `bucket`, `sid` through every registry
+  call, tests would need to reach through a passthrough (they currently
+  inject pathological grids via `batcher._grids[X] = ...`), and the
+  net line reduction is roughly zero.  Independent senior-engineer
+  review concurred.  Replaced by a smaller in-class
+  `_refresh_stream_registry` helper that consolidates the
+  grid-update/evict/apply-pending-length block inside `_close_batch`.
+
+## Outcome
+
+Top-level flow (`batch()`) is now a short linear script; gap recovery
+is three steps (flatten, advance, re-route); overflow drains directly
+into the next window at close time; routing has one path instead of
+two.  The file grew slightly (611 → 633 lines) due to new dataclass
+docstrings, but the conceptual surface area shrank.
