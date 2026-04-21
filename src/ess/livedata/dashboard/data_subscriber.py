@@ -5,7 +5,7 @@ Data subscription and assembly for streaming plot updates.
 
 This module provides the core data flow components:
 - DataSubscriber: Connects to DataService, assembles data, invokes callback
-- Assembly is role-aware: single-role outputs flat dict, multi-role outputs grouped dict
+- Output is always role-grouped: dict[role, dict[ResultKey, data]]
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ from ess.livedata.dashboard.extractors import UpdateExtractor
 
 
 class DataSubscriber(DataServiceSubscriber[ResultKey]):
-    """Subscriber that assembles data by role and invokes a callback.
+    """Subscriber that groups data by role and invokes a callback.
 
-    Handles both single-role (standard plots) and multi-role (correlation plots):
-    - Single role: outputs flat dict[ResultKey, data] for backward compatibility
-    - Multiple roles: outputs dict[str, dict[ResultKey, data]] grouped by role
+    Output shape is always ``dict[role, dict[ResultKey, data]]``. Consumers
+    that care about a single role (e.g. standard plotters using ``primary``)
+    extract it explicitly.
 
     The ready_condition is built internally: requires at least one key from each role.
     """
@@ -32,7 +32,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         self,
         keys_by_role: dict[str, list[ResultKey]],
         extractors: Mapping[ResultKey, UpdateExtractor],
-        on_data: Callable[[dict[ResultKey, Any]], None],
+        on_data: Callable[[dict[str, dict[ResultKey, Any]]], None],
     ) -> None:
         """
         Initialize the subscriber.
@@ -46,12 +46,11 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         extractors
             Mapping from keys to their UpdateExtractor instances.
         on_data
-            Callback invoked on every data update with the assembled data.
+            Callback invoked on every data update with the grouped data.
             Called when at least one key from each role has data.
         """
         self._keys_by_role = keys_by_role
         self._all_keys = {key for keys in keys_by_role.values() for key in keys}
-        self._single_role = len(keys_by_role) == 1
 
         # Build ready_condition: need at least one key from each role
         self._key_sets_by_role = [set(keys) for keys in keys_by_role.values()]
@@ -76,31 +75,18 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         """Check if we have at least one key from each role."""
         return all(bool(available_keys & ks) for ks in self._key_sets_by_role)
 
-    def _assemble(self, data: dict[ResultKey, Any]) -> Any:
-        """Assemble data based on role structure.
-
-        Single role: returns flat dict[ResultKey, data] for standard plotters.
-        Multiple roles: returns dict[str, dict[ResultKey, data]] for
-        correlation plotters.
-        """
-        if self._single_role:
-            # Flat output for standard plotters (sorted for deterministic ordering)
+    def _assemble(self, data: dict[ResultKey, Any]) -> dict[str, dict[ResultKey, Any]]:
+        """Group data by role, sorted deterministically within each role."""
+        result: dict[str, dict[ResultKey, Any]] = {}
+        for role, role_keys in self._keys_by_role.items():
             sorted_keys = sorted(
-                (k for k in self._all_keys if k in data),
+                role_keys,
                 key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name),
             )
-            return {k: data[k] for k in sorted_keys}
-        else:
-            # Grouped output for correlation plotters
-            result: dict[str, dict[ResultKey, Any]] = {}
-            for role, role_keys in self._keys_by_role.items():
-                sorted_keys = sorted(
-                    role_keys, key=lambda k: (str(k.workflow_id), str(k.job_id))
-                )
-                role_data = {k: data[k] for k in sorted_keys if k in data}
-                if role_data:
-                    result[role] = role_data
-            return result
+            role_data = {k: data[k] for k in sorted_keys if k in data}
+            if role_data:
+                result[role] = role_data
+        return result
 
     def trigger(self, store: dict[ResultKey, Any]) -> None:
         """Trigger the subscriber with the current data store."""

@@ -171,11 +171,11 @@ class PlotGridTabs:
                     font-weight: bold;
                 }}
                 .bk-tab {{
-                    border-bottom: 1px solid #2c5aa0 !important;
+                    border-bottom: 1px solid {Colors.TAB_BORDER} !important;
                 }}
                 .bk-tab.bk-active {{
-                    background-color: #e8f4f8 !important;
-                    border: 1px solid #2c5aa0 !important;
+                    background-color: {Colors.TAB_ACTIVE_BG} !important;
+                    border: 1px solid {Colors.TAB_BORDER} !important;
                     border-bottom: none !important;
                 }}
                 """

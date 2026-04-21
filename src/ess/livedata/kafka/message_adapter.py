@@ -419,8 +419,8 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
         timestamp = Timestamp.from_ms(message.timestamp()[1])
-        # Livedata configuration uses a compacted Kafka topic. The Kafka message key
-        # is the encoded string representation of a :py:class:`ConfigKey` object.
+        # The Kafka message key is the encoded string representation of a
+        # :py:class:`ConfigKey` object; the value carries the payload JSON.
         item = RawConfigItem(key=message.key(), value=message.value())
         return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=item)
 

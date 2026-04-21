@@ -11,12 +11,27 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
+def _make_updater(
+    session_id: SessionId,
+    registry: SessionRegistry,
+    *,
+    notification_queue: NotificationQueue | None = None,
+    username: str | None = None,
+) -> SessionUpdater:
+    return SessionUpdater(
+        session_id=session_id,
+        session_registry=registry,
+        notification_queue=notification_queue or NotificationQueue(),
+        username=username,
+    )
+
+
 class TestSessionUpdater:
     def test_periodic_update_runs_without_error(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+        updater = _make_updater(session_id, registry)
 
         # Session is registered at construction time (not via heartbeat)
         # periodic_update should run without error
@@ -30,11 +45,7 @@ class TestSessionUpdater:
         registry = SessionRegistry()
         queue = NotificationQueue()
 
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            notification_queue=queue,
-        )
+        updater = _make_updater(session_id, registry, notification_queue=queue)
 
         # Push notification
         queue.push(
@@ -50,7 +61,7 @@ class TestSessionUpdater:
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+        updater = _make_updater(session_id, registry)
 
         # Register custom handler
         calls = []
@@ -65,7 +76,7 @@ class TestSessionUpdater:
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+        updater = _make_updater(session_id, registry)
 
         calls = []
 
@@ -87,11 +98,7 @@ class TestSessionUpdater:
         registry = SessionRegistry()
         queue = NotificationQueue()
 
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            notification_queue=queue,
-        )
+        updater = _make_updater(session_id, registry, notification_queue=queue)
 
         # Push notification
         queue.push(NotificationEvent(message='Before cleanup'))
@@ -108,7 +115,7 @@ class TestSessionUpdater:
         session_id = SessionId('test-session')
         registry = SessionRegistry()
 
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+        updater = _make_updater(session_id, registry)
 
         assert updater.session_id == session_id
 
@@ -116,7 +123,7 @@ class TestSessionUpdater:
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+        updater = _make_updater(session_id, registry)
 
         class FakeCallback:
             def __init__(self):
@@ -132,25 +139,11 @@ class TestSessionUpdater:
 
         assert callback.stopped
 
-    def test_works_without_optional_services(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-
-        # Create with no optional services
-        updater = SessionUpdater(session_id=session_id, session_registry=registry)
-
-        # Should not raise
-        updater.periodic_update()
-
     def test_username_forwarded_to_registry(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
-        SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            username='Simon',
-        )
+        _make_updater(session_id, registry, username='Simon')
 
         info = registry.get_session_info(session_id)
         assert info is not None

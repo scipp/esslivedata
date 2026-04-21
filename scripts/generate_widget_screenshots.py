@@ -92,7 +92,7 @@ def create_widget_app(
     # Create adapter (dummy start callback)
     adapter = WorkflowConfigurationAdapter(
         spec=spec,
-        persistent_config=None,
+        config_state=None,
         start_callback=lambda *args, **kwargs: None,
     )
 

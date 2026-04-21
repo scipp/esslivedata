@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -41,8 +40,8 @@ class Orchestrator:
         data_service: DataService,
         job_service: JobService,
         service_registry: ServiceRegistry,
-        job_orchestrator: JobOrchestrator | None = None,
-        active_job_registry: ActiveJobRegistry | None = None,
+        job_orchestrator: JobOrchestrator,
+        active_job_registry: ActiveJobRegistry,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
@@ -72,12 +71,7 @@ class Orchestrator:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
-        guard = (
-            self._active_job_registry.ingestion_guard()
-            if self._active_job_registry is not None
-            else nullcontext()
-        )
-        with guard:
+        with self._active_job_registry.ingestion_guard():
             with self._data_service.transaction():
                 for message in messages:
                     self.forward(stream_id=message.stream, value=message.value)
@@ -86,9 +80,9 @@ class Orchestrator:
         """
         Forward data to the appropriate data service based on the stream name.
 
-        Data and job status messages are filtered by active job number when an
-        ActiveJobRegistry is available. Messages from unknown or stopped jobs
-        are silently discarded.
+        Data and job status messages are filtered by active job number via the
+        :class:`ActiveJobRegistry`. Messages from unknown or stopped jobs are
+        silently discarded.
 
         Parameters
         ----------
@@ -113,19 +107,11 @@ class Orchestrator:
                 self._data_service[result_key] = value
 
     def _is_active_job(self, job_number: JobNumber) -> bool:
-        """Check if a job_number belongs to an active job.
-
-        Returns True if no ActiveJobRegistry is configured (permissive mode).
-        """
-        if self._active_job_registry is None:
-            return True
+        """Check if a job_number belongs to an active job."""
         return self._active_job_registry.is_active(job_number)
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
         """Process a command acknowledgement from the backend."""
-        if self._job_orchestrator is None:
-            return
-
         self._job_orchestrator.process_acknowledgement(
             message_id=ack.message_id,
             response=ack.response.value,

@@ -16,8 +16,14 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
+from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.sink import KafkaSink, SerializationError
+from ess.livedata.kafka.sink import (
+    KafkaSink,
+    MessageSerializer,
+    SerializationError,
+    SerializedMessage,
+)
 from ess.livedata.logging_config import configure_logging
 
 logger = structlog.get_logger(__name__)
@@ -219,38 +225,51 @@ class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
         )
 
 
-def serialize_detector_events_to_ev44(
-    msg: Message[tuple[sc.Variable, sc.Variable]],
-) -> bytes:
-    if msg.value['time_of_arrival'].unit != 'ns':
-        raise SerializationError(f"Expected unit 'ns', got {msg.value.unit}")
-    try:
-        ev44 = eventdata_ev44.serialise_ev44(
-            source_name=msg.stream.name,
-            message_id=0,
-            reference_time=msg.timestamp,
-            reference_time_index=0,
-            time_of_flight=msg.value['time_of_arrival'].values,
-            pixel_id=msg.value['pixel_id'].values,
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize message: {e}") from None
-    return ev44
+class DetectorEv44Serializer(MessageSerializer):
+    """Serializes fake detector events to ``ev44``."""
+
+    def __init__(self, *, instrument: str) -> None:
+        self._instrument = instrument
+
+    def serialize(self, message: Message[dict[str, sc.Variable]]) -> SerializedMessage:
+        if message.value['time_of_arrival'].unit != 'ns':
+            raise SerializationError(
+                f"Expected unit 'ns', got {message.value['time_of_arrival'].unit}"
+            )
+        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
+        try:
+            value = eventdata_ev44.serialise_ev44(
+                source_name=message.stream.name,
+                message_id=0,
+                reference_time=message.timestamp,
+                reference_time_index=0,
+                time_of_flight=message.value['time_of_arrival'].values,
+                pixel_id=message.value['pixel_id'].values,
+            )
+        except (ValueError, TypeError) as e:
+            raise SerializationError(f"Failed to serialize message: {e}") from None
+        return SerializedMessage(topic=topic, key=None, value=value)
 
 
-def serialize_area_detector_to_ad00(msg: Message[sc.DataArray]) -> bytes:
-    """Serialize area detector data to ad00 format."""
-    data = msg.value.values.astype(np.uint16)
-    try:
-        ad00 = area_detector_ad00.serialise_ad00(
-            source_name=msg.stream.name,
-            unique_id=0,
-            timestamp_ns=msg.timestamp,
-            data=data,
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize ad00 message: {e}") from None
-    return ad00
+class AreaDetectorAd00Serializer(MessageSerializer[sc.DataArray]):
+    """Serializes fake area-detector frames to ``ad00``."""
+
+    def __init__(self, *, instrument: str) -> None:
+        self._instrument = instrument
+
+    def serialize(self, message: Message[sc.DataArray]) -> SerializedMessage:
+        data = message.value.values.astype(np.uint16)
+        topic = stream_kind_to_topic(self._instrument, message.stream.kind)
+        try:
+            value = area_detector_ad00.serialise_ad00(
+                source_name=message.stream.name,
+                unique_id=0,
+                timestamp_ns=message.timestamp,
+                data=data,
+            )
+        except (ValueError, TypeError) as e:
+            raise SerializationError(f"Failed to serialize ad00 message: {e}") from None
+        return SerializedMessage(topic=topic, key=None, value=value)
 
 
 def run_service(
@@ -266,18 +285,18 @@ def run_service(
     name = 'fake_producer'
 
     if mode == 'ad00':
-        serializer = serialize_area_detector_to_ad00
+        serializer: MessageSerializer = AreaDetectorAd00Serializer(
+            instrument=instrument
+        )
         source = FakeAreaDetectorSource(instrument=instrument)
     else:
-        serializer = serialize_detector_events_to_ev44
+        serializer = DetectorEv44Serializer(instrument=instrument)
         source = FakeDetectorSource(instrument=instrument, nexus_file=nexus_file)
 
     resources = ExitStack()
     with resources:
         sink = resources.enter_context(
-            KafkaSink(
-                instrument=instrument, kafka_config=kafka_config, serializer=serializer
-            )
+            KafkaSink(kafka_config=kafka_config, serializer=serializer)
         )
         processor = IdentityProcessor(source=source, sink=sink)
         service = Service(

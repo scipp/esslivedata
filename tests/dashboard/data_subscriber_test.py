@@ -57,8 +57,8 @@ class TestDataSubscriberSingleRole:
 
         assert subscriber.keys == {key1, key2}
 
-    def test_on_data_called_with_assembled_data(self, make_result_key):
-        """Test that on_data callback receives assembled data."""
+    def test_on_data_called_with_grouped_data(self, make_result_key):
+        """on_data receives role-grouped data even for a single role."""
         received_data: list[Any] = []
 
         key1 = make_result_key('detector1')
@@ -75,34 +75,9 @@ class TestDataSubscriberSingleRole:
         subscriber.trigger({key1: 'value1', key2: 'value2'})
 
         assert len(received_data) == 1
-        assert key1 in received_data[0]
-        assert key2 in received_data[0]
-        assert received_data[0][key1] == 'value1'
-        assert received_data[0][key2] == 'value2'
-
-    def test_single_role_assembles_flat_dict(self, make_result_key):
-        """Single role outputs flat dict[ResultKey, data] for standard plotters."""
-        received_data: list[Any] = []
-
-        key1 = make_result_key('detector1')
-        key2 = make_result_key('detector2')
-        keys_by_role = {'primary': [key1, key2]}
-        extractors = {k: LatestValueExtractor() for k in [key1, key2]}
-
-        subscriber = DataSubscriber(
-            keys_by_role=keys_by_role,
-            extractors=extractors,
-            on_data=lambda d: received_data.append(d),
-        )
-
-        subscriber.trigger({key1: 'value1', key2: 'value2'})
-
-        # Should receive flat dict (not grouped by role)
-        data = received_data[0]
-        assert key1 in data
-        assert key2 in data
-        assert data[key1] == 'value1'
-        assert data[key2] == 'value2'
+        primary = received_data[0]['primary']
+        assert primary[key1] == 'value1'
+        assert primary[key2] == 'value2'
 
     def test_multiple_triggers_call_on_data_each_time(self, make_result_key):
         """Test that each trigger calls on_data."""
@@ -123,9 +98,9 @@ class TestDataSubscriberSingleRole:
         subscriber.trigger({key: 'value3'})
 
         assert len(received_data) == 3
-        assert received_data[0][key] == 'value1'
-        assert received_data[1][key] == 'value2'
-        assert received_data[2][key] == 'value3'
+        assert received_data[0]['primary'][key] == 'value1'
+        assert received_data[1]['primary'][key] == 'value2'
+        assert received_data[2]['primary'][key] == 'value3'
 
     def test_partial_data_included(self, make_result_key):
         """Test that partial data is included in assembly."""
@@ -145,9 +120,9 @@ class TestDataSubscriberSingleRole:
         # Only provide data for key1
         subscriber.trigger({key1: 'value1'})
 
-        data = received_data[0]
-        assert key1 in data
-        assert key2 not in data
+        primary = received_data[0]['primary']
+        assert key1 in primary
+        assert key2 not in primary
 
     def test_keys_sorted_deterministically(self, workflow_id):
         """Test that keys are sorted deterministically in output."""
@@ -171,7 +146,7 @@ class TestDataSubscriberSingleRole:
 
         subscriber.trigger({key_a: 'value_a', key_b: 'value_b'})
 
-        result_keys = list(received_data[0].keys())
+        result_keys = list(received_data[0]['primary'].keys())
         # Should be sorted alphabetically by source_name
         assert result_keys[0].job_id.source_name == 'a_detector'
         assert result_keys[1].job_id.source_name == 'b_detector'
