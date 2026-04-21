@@ -11,7 +11,7 @@ batch window — not when a fixed message count is reached.
 from __future__ import annotations
 
 import statistics
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -238,6 +238,70 @@ class _ActiveWindow:
         )
 
 
+@dataclass
+class _GatedStream:
+    """Per-stream persistent state for a gated stream.
+
+    Owns the rate estimator, the pulse grid (absent until the estimator
+    converges), and the consecutive-absent-batches counter driving
+    eviction.  The grid's Optional nature is sealed inside this class:
+    callers observe arrivals, route messages into a bucket, and ask
+    whether the gate is satisfied -- they never branch on ``None``.
+    """
+
+    estimator: StreamPeriodEstimator = field(default_factory=StreamPeriodEstimator)
+    grid: PulseGrid | None = None
+    absent_batches: int = 0
+
+    @property
+    def is_gating(self) -> bool:
+        return self.grid is not None
+
+    def observe(self, msg: Message[Any]) -> None:
+        self.estimator.observe(msg.timestamp.to_ns())
+
+    def route(
+        self, msg: Message[Any], bucket: _StreamBucket, window_start: Timestamp
+    ) -> Message[Any] | None:
+        """Place ``msg`` in ``bucket``; return it unchanged if it overflows.
+
+        Overflow still bumps ``bucket.max_slot`` to the last grid slot so
+        the slot gate observes that the window's final pulse was reached.
+        """
+        if self.grid is None:
+            bucket.add(msg)
+            return None
+        slot = self.grid.slot_in_batch(msg.timestamp, window_start)
+        if slot >= self.grid.slots_per_batch:
+            last = self.grid.slots_per_batch - 1
+            if last > bucket.max_slot:
+                bucket.max_slot = last
+            return msg
+        bucket.add(msg, slot)
+        return None
+
+    def is_gate_satisfied(self, bucket: _StreamBucket | None) -> bool:
+        """True if this stream does not block a batch close.
+
+        Ungridded streams flow opportunistically and never block.  A
+        gridded stream needs a bucket whose highest observed slot has
+        reached the grid's final slot.
+        """
+        if self.grid is None:
+            return True
+        if bucket is None:
+            return False
+        return bucket.max_slot >= self.grid.slots_per_batch - 1
+
+    def mark_present(self) -> None:
+        self.absent_batches = 0
+
+    def mark_absent(self) -> bool:
+        """Increment absence; return True when the stream should be evicted."""
+        self.absent_batches += 1
+        return self.absent_batches >= ABSENT_BATCHES_FOR_EVICTION
+
+
 class RateAwareMessageBatcher(MessageBatcher):
     """A batcher that uses per-stream rate estimation and slot-based completion.
 
@@ -277,11 +341,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
 
-        self._estimators: defaultdict[StreamId, StreamPeriodEstimator] = defaultdict(
-            StreamPeriodEstimator
-        )
-        self._grids: dict[StreamId, PulseGrid] = {}
-        self._absent_batches: dict[StreamId, int] = {}
+        self._streams: dict[StreamId, _GatedStream] = {}
 
         self._pending_batch_length: Duration | None = None
         self._active_window: _ActiveWindow | None = None
@@ -373,35 +433,28 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         for msg in messages:
             if msg.stream.kind in GATED_STREAM_KINDS:
-                self._estimators[msg.stream].observe(msg.timestamp.to_ns())
+                self._stream(msg.stream).observe(msg)
         window = _ActiveWindow(
             start=window_start, end=window_start + self._batch_length
         )
-        for sid in list(self._estimators):
-            self._update_grid(sid, window.buckets.get(sid), window.start)
+        for sid, stream in self._streams.items():
+            self._update_grid(stream, window.buckets.get(sid), window.start)
         return window
+
+    def _stream(self, sid: StreamId) -> _GatedStream:
+        """Return the gated-stream state for ``sid``, creating it on demand."""
+        return self._streams.setdefault(sid, _GatedStream())
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
         bucket = window.bucket(msg.stream)
-
         if msg.stream.kind not in GATED_STREAM_KINDS:
             bucket.add(msg)
             return
-
-        self._estimators[msg.stream].observe(msg.timestamp.to_ns())
-        grid = self._grids.get(msg.stream)
-
-        if grid is None:
-            bucket.add(msg)
-            return
-
-        slot = grid.slot_in_batch(msg.timestamp, window.start)
-        if slot >= grid.slots_per_batch:
-            self._overflow.append(msg)
-            if grid.slots_per_batch - 1 > bucket.max_slot:
-                bucket.max_slot = grid.slots_per_batch - 1
-        else:
-            bucket.add(msg, slot)
+        stream = self._stream(msg.stream)
+        stream.observe(msg)
+        overflow = stream.route(msg, bucket, window.start)
+        if overflow is not None:
+            self._overflow.append(overflow)
 
     def _is_batch_complete(self, window: _ActiveWindow) -> bool:
         if self._high_water_mark is not None:
@@ -409,14 +462,14 @@ class RateAwareMessageBatcher(MessageBatcher):
             if not self._high_water_mark < threshold:
                 return True
 
-        if not self._grids:
-            return False
-
-        for sid, grid in self._grids.items():
-            bucket = window.buckets.get(sid)
-            if bucket is None or bucket.max_slot < grid.slots_per_batch - 1:
+        has_gating = False
+        for sid, stream in self._streams.items():
+            if not stream.is_gating:
+                continue
+            has_gating = True
+            if not stream.is_gate_satisfied(window.buckets.get(sid)):
                 return False
-        return True
+        return has_gating
 
     def _should_recover_from_gap(self, window: _ActiveWindow) -> bool:
         """True if gated overflow exists but no gated stream has contributed.
@@ -428,7 +481,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         if not self._overflow:
             return False
-        for sid in self._grids:
+        for sid, stream in self._streams.items():
+            if not stream.is_gating:
+                continue
             bucket = window.buckets.get(sid)
             if bucket is not None and bucket.messages:
                 return False
@@ -488,38 +543,35 @@ class RateAwareMessageBatcher(MessageBatcher):
         available -- the window's buckets feed fresh origins into
         ``_update_grid``.
         """
-        present_streams: set[StreamId] = set()
+        present: set[StreamId] = set()
         for sid, bucket in window.buckets.items():
             if sid.kind not in GATED_STREAM_KINDS or not bucket.messages:
                 continue
-            present_streams.add(sid)
-            self._absent_batches[sid] = 0
-            self._update_grid(sid, bucket, window.start)
+            stream = self._streams.get(sid)
+            if stream is None:
+                continue
+            present.add(sid)
+            stream.mark_present()
+            self._update_grid(stream, bucket, window.start)
 
-        to_evict: list[StreamId] = []
-        for sid in self._estimators:
-            if sid not in present_streams:
-                absent = self._absent_batches.get(sid, 0) + 1
-                self._absent_batches[sid] = absent
-                if absent >= ABSENT_BATCHES_FOR_EVICTION:
-                    to_evict.append(sid)
-        for sid in to_evict:
-            del self._estimators[sid]
-            self._grids.pop(sid, None)
-            self._absent_batches.pop(sid, None)
+        for sid in list(self._streams):
+            if sid in present:
+                continue
+            if self._streams[sid].mark_absent():
+                del self._streams[sid]
 
         if self._pending_batch_length is not None:
             self._batch_length = self._pending_batch_length
             self._pending_batch_length = None
-            # Iterate all known estimators: growing the batch length can
+            # Iterate all known streams: growing the batch length can
             # promote a previously-demoted sub-rate stream back into the
-            # grid, and that stream is not in ``self._grids``.
-            for sid in list(self._estimators):
-                self._update_grid(sid, window.buckets.get(sid), window.start)
+            # grid, and that stream has ``grid is None``.
+            for sid, stream in self._streams.items():
+                self._update_grid(stream, window.buckets.get(sid), window.start)
 
     def _update_grid(
         self,
-        sid: StreamId,
+        stream: _GatedStream,
         bucket: _StreamBucket | None,
         batch_start: Timestamp,
     ) -> None:
@@ -537,18 +589,18 @@ class RateAwareMessageBatcher(MessageBatcher):
         origin exists (e.g. the stream's timestamps live in a disjoint
         epoch) the grid is dropped.
         """
-        int_rate = self._estimators[sid].integer_rate_hz
+        int_rate = stream.estimator.integer_rate_hz
         if int_rate is None or int_rate <= 0:
             return
         if int_rate * self.batch_length_s < 1.0:
-            self._grids.pop(sid, None)
+            stream.grid = None
             return
         period_ns = round(1e9 / int_rate)
         slots_per_batch = round(int_rate * self.batch_length_s)
-        existing = self._grids.get(sid)
-        origin = self._choose_origin(sid, bucket, batch_start, existing)
+        existing = stream.grid
+        origin = self._choose_origin(stream, bucket, batch_start, existing)
         if origin is None:
-            self._grids.pop(sid, None)
+            stream.grid = None
             return
         if (
             existing is not None
@@ -557,18 +609,18 @@ class RateAwareMessageBatcher(MessageBatcher):
             and existing.slots_per_batch == slots_per_batch
         ):
             return
-        self._grids[sid] = PulseGrid(
+        stream.grid = PulseGrid(
             origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
         )
 
     def _choose_origin(
         self,
-        sid: StreamId,
+        stream: _GatedStream,
         bucket: _StreamBucket | None,
         batch_start: Timestamp,
         existing: PulseGrid | None,
     ) -> int | None:
-        """Select a grid origin for ``sid``.
+        """Select a grid origin for a stream.
 
         Prefer the existing origin (keeps the pulse lattice stable
         across rebuilds).  When none exists, or the existing one has
@@ -583,7 +635,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             existing.origin_ns, batch_start
         ):
             return existing.origin_ns
-        candidate = self._pick_grid_origin(sid, bucket, batch_start)
+        candidate = self._pick_grid_origin(stream, bucket, batch_start)
         if candidate is None or self._origin_too_far(candidate, batch_start):
             return None
         return candidate
@@ -595,7 +647,7 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     def _pick_grid_origin(
         self,
-        sid: StreamId,
+        stream: _GatedStream,
         bucket: _StreamBucket | None,
         batch_start: Timestamp,
     ) -> int | None:
@@ -605,4 +657,4 @@ class RateAwareMessageBatcher(MessageBatcher):
                 if not m.timestamp < batch_start:
                     return m.timestamp.to_ns()
             return bucket.messages[0].timestamp.to_ns()
-        return self._estimators[sid].last_ts_ns
+        return stream.estimator.last_ts_ns

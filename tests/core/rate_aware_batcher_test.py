@@ -46,6 +46,12 @@ def hwm_trigger(t: float) -> Message[str]:
     return Message(timestamp=ts(t), stream=_HWM, value="")
 
 
+def grid_of(batcher: RateAwareMessageBatcher, sid: StreamId) -> PulseGrid | None:
+    """Return the pulse grid for *sid*, or ``None`` if not gridded/tracked."""
+    stream = batcher._streams.get(sid)
+    return stream.grid if stream is not None else None
+
+
 def msgs_at(
     rate_hz: float,
     start: float,
@@ -786,9 +792,9 @@ class TestOneHzEdgeCase:
         # Seed the pathological grid: origin 5 ms before current batch_start,
         # mimicking the fallback path picking a tracker msg with ts slightly
         # below batch_start.
-        original = batcher._grids[MONITOR]
+        original = batcher._streams[MONITOR].grid
         current_start = batcher._active_window.start.to_ns()
-        batcher._grids[MONITOR] = PulseGrid(
+        batcher._streams[MONITOR].grid = PulseGrid(
             origin_ns=current_start - 5_000_000,
             period_ns=original.period_ns,
             slots_per_batch=original.slots_per_batch,
@@ -810,7 +816,7 @@ class TestOneHzEdgeCase:
             if r2 is not None:
                 total_out += sum(1 for m in r2.messages if m.stream == MONITOR)
 
-        assert MONITOR in batcher._estimators, "MON evicted despite active stream"
+        assert MONITOR in batcher._streams, "MON evicted despite active stream"
         assert total_in == total_out, (
             f"Lost {total_in - total_out} of {total_in} MON messages"
         )
@@ -1119,8 +1125,8 @@ class TestSetBatchLength:
         """Grids for all converged streams recompute slots_per_batch on resize."""
         streams = {DETECTOR: 14.0, MONITOR: 5.0}
         batcher, t0 = make_converged_batcher(streams=streams, timeout_s=999.0)
-        assert batcher._grids[DETECTOR].slots_per_batch == 14
-        assert batcher._grids[MONITOR].slots_per_batch == 5
+        assert batcher._streams[DETECTOR].grid.slots_per_batch == 14
+        assert batcher._streams[MONITOR].grid.slots_per_batch == 5
 
         batcher.set_batch_length(2.0)
         det = msgs_at(14.0, start=t0, duration=1.0, stream=DETECTOR)
@@ -1129,8 +1135,8 @@ class TestSetBatchLength:
         assert batch1 is not None
 
         assert batcher.batch_length_s == 2.0
-        assert batcher._grids[DETECTOR].slots_per_batch == 28
-        assert batcher._grids[MONITOR].slots_per_batch == 10
+        assert batcher._streams[DETECTOR].grid.slots_per_batch == 28
+        assert batcher._streams[MONITOR].grid.slots_per_batch == 10
 
         # And the 2s batch actually completes with the expected counts.
         next_start = batch1.end_time.to_ns() / 1e9
@@ -1158,13 +1164,13 @@ class TestSetBatchLength:
     def test_grid_origin_preserved_across_size_change(self):
         """Grid origin must survive a resize so phase alignment is stable."""
         batcher, t0 = make_converged_batcher(rate_hz=14.0)
-        original_origin = batcher._grids[DETECTOR].origin_ns
+        original_origin = batcher._streams[DETECTOR].grid.origin_ns
 
         batcher.set_batch_length(2.0)
         batch1 = batcher.batch(msgs_at(14.0, start=t0, duration=1.0))
         assert batch1 is not None
         assert batcher.batch_length_s == 2.0
-        assert batcher._grids[DETECTOR].origin_ns == original_origin
+        assert batcher._streams[DETECTOR].grid.origin_ns == original_origin
 
         # De-escalate back and verify origin still stable.
         batcher.set_batch_length(1.0)
@@ -1172,7 +1178,7 @@ class TestSetBatchLength:
         batch2 = batcher.batch(msgs_at(14.0, start=next_start, duration=2.0))
         assert batch2 is not None
         assert batcher.batch_length_s == 1.0
-        assert batcher._grids[DETECTOR].origin_ns == original_origin
+        assert batcher._streams[DETECTOR].grid.origin_ns == original_origin
 
 
 class TestEnvelopeBoundaries:
@@ -1628,7 +1634,7 @@ class TestSlotBoundaryStability:
 
         # Let the estimator converge from the real stream
         deliver_ticks(3 * 1.5)
-        estimator = batcher._estimators[DETECTOR]
+        estimator = batcher._streams[DETECTOR].estimator
         assert estimator.integer_rate_hz is not None
 
         # Inject a wrong period: the source keeps emitting at true rate,
@@ -1640,7 +1646,7 @@ class TestSlotBoundaryStability:
         estimator.diffs.clear()
         for _ in range(MIN_DIFFS_FOR_GATE):
             estimator.diffs.append(wrong_period_ns)
-        batcher._grids.pop(DETECTOR, None)
+        batcher._streams[DETECTOR].grid = None
 
         warmup = 3
         all_counts = deliver_ticks((n_batches + warmup) * 1.1)
@@ -1735,7 +1741,7 @@ class TestDefaultTimeoutWithSlotGate:
         batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor
         counts = self._run_tick_delivery(batcher, 1.0, t0, n_batches=30, stream=MONITOR)
         assert all(c == 1 for c in counts), f"Unsteady counts: {counts}"
-        assert MONITOR in batcher._estimators, "MON evicted during steady 1 Hz"
+        assert MONITOR in batcher._streams, "MON evicted during steady 1 Hz"
 
 
 class TestMultiRateRobustness:
@@ -1787,7 +1793,7 @@ class TestMultiRateRobustness:
             r = batcher.batch([hwm_trigger(tick_ns / 1e9)])
             if r is not None:
                 total_out += sum(1 for m in r.messages if m.stream in rates)
-        evicted = {sid for sid in rates if sid not in batcher._estimators}
+        evicted = {sid for sid in rates if sid not in batcher._streams}
         return total_in, total_out, evicted
 
     @pytest.mark.parametrize(
@@ -1860,8 +1866,8 @@ class TestMultiRateRobustness:
         # Seed each stream's grid with a pathological origin.
         current_start = batcher._active_window.start.to_ns()
         for sid in rates:
-            g = batcher._grids[sid]
-            batcher._grids[sid] = PulseGrid(
+            g = batcher._streams[sid].grid
+            batcher._streams[sid].grid = PulseGrid(
                 origin_ns=current_start - 5_000_000,
                 period_ns=g.period_ns,
                 slots_per_batch=g.slots_per_batch,
@@ -1898,7 +1904,7 @@ class TestMultiRateRobustness:
             r = batcher.batch([hwm_trigger(tick_ns / 1e9)])
             if r is not None:
                 total_out += sum(1 for m in r.messages if m.stream in rates)
-        evicted = {sid for sid in rates if sid not in batcher._estimators}
+        evicted = {sid for sid in rates if sid not in batcher._streams}
         assert not evicted, f"Streams evicted: {evicted}"
         assert total_out == total_in, (
             f"Lost {total_in - total_out} of {total_in} ({rates})"
@@ -1961,9 +1967,9 @@ class TestSubHzGatedStream:
         )
         assert mon_out == n // 2
 
-        assert self.MON_HALF not in batcher._grids, "Sub-Hz must not be gridded"
-        assert self.MON_HALF in batcher._estimators, "Sub-Hz must not be evicted"
-        assert batcher._estimators[self.MON_HALF].integer_rate_hz is None
+        assert grid_of(batcher, self.MON_HALF) is None, "Sub-Hz must not be gridded"
+        assert self.MON_HALF in batcher._streams, "Sub-Hz must not be evicted"
+        assert batcher._streams[self.MON_HALF].estimator.integer_rate_hz is None
 
     def test_no_eviction_at_05hz_over_many_batches(self):
         """Absent/present cadence at 0.5 Hz keeps counter under eviction threshold."""
@@ -1992,7 +1998,7 @@ class TestSubHzGatedStream:
         schedule.sort(key=lambda m: m.timestamp.to_ns())
         closed = _run_ticks(batcher, t0, schedule, n_batches=n, max_run_s=n + 10)
         assert len(closed) == n
-        assert self.MON_HALF in batcher._estimators
+        assert self.MON_HALF in batcher._streams
 
     def test_sub_hz_alone_delivered_via_timeout(self):
         """Sub-Hz-only service: timeout drives closure; nothing dropped."""
@@ -2016,7 +2022,7 @@ class TestSubHzGatedStream:
             1 for b in closed for m in b.messages if m.stream == self.MON_HALF
         )
         assert mon_out == pulse_count
-        assert self.MON_HALF not in batcher._grids
+        assert grid_of(batcher, self.MON_HALF) is None
 
 
 class TestSubRateExclusion:
@@ -2038,7 +2044,7 @@ class TestSubRateExclusion:
         batcher, t0 = make_converged_batcher(
             batch_length_s=1.0, streams=streams, timeout_s=999.0
         )
-        assert MONITOR in batcher._grids
+        assert grid_of(batcher, MONITOR) is not None
 
         batcher.set_batch_length(0.6)
         det = msgs_at(14.0, start=t0, duration=1.0)
@@ -2046,9 +2052,9 @@ class TestSubRateExclusion:
         assert result is not None
 
         assert batcher.batch_length_s == pytest.approx(0.6)
-        assert MONITOR not in batcher._grids, "Sub-rate stream must be excluded"
-        assert MONITOR in batcher._estimators, "Estimator must stay live"
-        assert batcher._estimators[MONITOR].integer_rate_hz == 1
+        assert grid_of(batcher, MONITOR) is None, "Sub-rate stream must be excluded"
+        assert MONITOR in batcher._streams, "Estimator must stay live"
+        assert batcher._streams[MONITOR].estimator.integer_rate_hz == 1
 
     def test_grow_batch_length_regates_previously_excluded_stream(self):
         """Restoring 1 s batch length re-admits the 1 Hz stream to gating."""
@@ -2061,7 +2067,7 @@ class TestSubRateExclusion:
         det = msgs_at(14.0, start=t0, duration=1.0)
         batch1 = batcher.batch([*det, msg(t0, stream=MONITOR)])
         assert batch1 is not None
-        assert MONITOR not in batcher._grids
+        assert grid_of(batcher, MONITOR) is None
 
         # Close one 0.6 s batch to free the shrink transition from the path.
         t1 = batch1.end_time.to_ns() / 1e9
@@ -2077,7 +2083,9 @@ class TestSubRateExclusion:
         batch3 = batcher.batch([*det3, mon_msg])
         assert batch3 is not None
         assert batcher.batch_length_s == pytest.approx(1.0)
-        assert MONITOR in batcher._grids, "Stream must re-gate when batch grows"
+        assert grid_of(batcher, MONITOR) is not None, (
+            "Stream must re-gate when batch grows"
+        )
 
     def test_excluded_stream_does_not_block_closure(self):
         """14 Hz DET + 1 Hz MON at 0.6 s batch: DET slot gate closes every batch.
@@ -2091,7 +2099,7 @@ class TestSubRateExclusion:
         det0 = msgs_at(14.0, start=t0, duration=1.0)
         batcher.set_batch_length(0.6)
         batcher.batch([*det0, msg(t0, stream=MONITOR)])
-        assert MONITOR not in batcher._grids
+        assert grid_of(batcher, MONITOR) is None
 
         # Drive 10 batches of 0.6 s with DET at 14 Hz + MON at true 1 Hz.
         batcher.timeout_factor = RateAwareMessageBatcher().timeout_factor  # 1.2
@@ -2259,7 +2267,7 @@ class TestBrokenTimestampStream:
             f"Only {len(measured)}/10 batches closed via slot gate "
             f"(broken stream vetoed the rest)"
         )
-        assert self.BROKEN not in batcher._grids
+        assert grid_of(batcher, self.BROKEN) is None
         broken_out = sum(
             1 for b in measured for m in b.messages if m.stream == self.BROKEN
         )
@@ -2317,8 +2325,8 @@ class TestBrokenTimestampStream:
             warmup_batches=8,
             measured_batches=0,
         )
-        assert self.GOOD in batcher._grids
-        assert self.BROKEN in batcher._grids
+        assert grid_of(batcher, self.GOOD) is not None
+        assert grid_of(batcher, self.BROKEN) is not None
         # _seed_and_drive disables timeout before the measurement phase;
         # re-enable it so the broken stream's max_slot=-1 veto is broken
         # by the timeout path (the whole point: the broken stream still
@@ -2351,7 +2359,7 @@ class TestBrokenTimestampStream:
             if r is not None:
                 closed += 1
 
-        assert self.BROKEN not in batcher._grids, (
+        assert grid_of(batcher, self.BROKEN) is None, (
             "Broken stream's grid must be dropped once batch_start has "
             "drifted beyond _MAX_ORIGIN_OFFSET_BATCHES from the stale origin"
         )
@@ -2360,8 +2368,9 @@ class TestBrokenTimestampStream:
         # _MAX_ORIGIN_OFFSET_BATCHES boundaries, but a new origin
         # picked from healthy tracker messages lies on the same pulse
         # lattice, so slot assignments are unaffected.
-        assert self.GOOD in batcher._grids
-        assert batcher._grids[self.GOOD].period_ns == round(1e9 / 14)
+        good_grid = grid_of(batcher, self.GOOD)
+        assert good_grid is not None
+        assert good_grid.period_ns == round(1e9 / 14)
         # Most batches closed, proving the broken stream is not blocking
         # the rest of the batcher.
         assert closed > n_batches - 100, (
@@ -2503,8 +2512,7 @@ class TestNonGatedStreams:
         )
         log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
         assert log_out == 2 * n
-        assert self.LOG not in batcher._grids
-        assert self.LOG not in batcher._estimators
+        assert self.LOG not in batcher._streams
 
     def test_irregular_bursts_alongside_gated(self):
         """LOG alternates between a >1 Hz burst and a <1 Hz quiet phase.
@@ -2553,8 +2561,7 @@ class TestNonGatedStreams:
         )
         log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
         assert log_out == log_expected
-        assert self.LOG not in batcher._grids
-        assert self.LOG not in batcher._estimators
+        assert self.LOG not in batcher._streams
 
     def test_compound_non_gated_plus_sub_hz_plus_gated(self):
         """Non-gated LOG + sub-Hz MON + 14 Hz DET: slot gate closes cleanly."""
@@ -2609,7 +2616,6 @@ class TestNonGatedStreams:
         log_out = sum(1 for b in closed for m in b.messages if m.stream == self.LOG)
         assert mon_out == n // 2
         assert log_out == log_expected
-        assert MON_HALF in batcher._estimators
-        assert MON_HALF not in batcher._grids
-        assert self.LOG not in batcher._estimators
-        assert self.LOG not in batcher._grids
+        assert MON_HALF in batcher._streams
+        assert grid_of(batcher, MON_HALF) is None
+        assert self.LOG not in batcher._streams
