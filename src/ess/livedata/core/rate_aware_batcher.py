@@ -15,13 +15,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-import structlog
-
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch, MessageBatcher
 from ess.livedata.core.timestamp import Duration, Timestamp
-
-logger = structlog.get_logger(__name__)
 
 GATED_STREAM_KINDS = frozenset(
     {
@@ -317,20 +313,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._pending_batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        valid = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
-        dropped = len(messages) - len(valid)
-        if dropped:
-            logger.warning(
-                "Dropped messages with invalid timestamps",
-                count=dropped,
-                streams={
-                    msg.stream
-                    for msg in messages
-                    if not isinstance(msg.timestamp, Timestamp)
-                },
-            )
-        messages = valid
-
         if messages:
             latest = max(m.timestamp for m in messages)
             if self._high_water_mark is None:

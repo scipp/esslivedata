@@ -80,8 +80,6 @@ class NaiveMessageBatcher(MessageBatcher):
         return self._batch_length.to_seconds()
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         if not messages:
             return None
         messages = sorted(messages)
@@ -133,8 +131,6 @@ class SimpleMessageBatcher(MessageBatcher):
         self._batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         # Create and return initial batch including everything
         if self._active_batch is None:
             return self._make_initial_batch(messages)
