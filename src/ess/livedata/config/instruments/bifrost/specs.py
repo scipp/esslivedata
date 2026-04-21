@@ -427,7 +427,6 @@ unified_detector_view_handle = instrument.add_logical_view(
             'grouped so each tube yields ``pixels_per_tube`` output pixels.'
         ),
         params_model=BifrostSpectrumParams,
-        params_title='Spectrum view parameters',
     ),
 )
 

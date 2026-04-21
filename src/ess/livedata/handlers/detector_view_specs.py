@@ -137,9 +137,6 @@ class SpectrumViewSpec:
         the generated ``DetectorViewParams`` subclass and passed to the
         transform. When ``None`` (default), the transform takes only the
         histogram and no parameter widget is shown in the UI.
-    params_title:
-        Title for the ``spectrum_params`` field (only used when ``params_model``
-        is set).
     params_description:
         Description for the ``spectrum_params`` field (only used when
         ``params_model`` is set).
@@ -147,11 +144,10 @@ class SpectrumViewSpec:
 
     transform: Callable[..., sc.DataArray]
     output_dims: list[str]
-    output_title: str = 'Spectrum view'
+    output_title: str = 'Spectrum View'
     extra_description: str = ''
     params_model: type[pydantic.BaseModel] | None = None
-    params_title: str = 'Spectrum parameters'
-    params_description: str = 'Runtime parameters for the spectrum-view transform.'
+    params_description: str = 'Runtime parameters for the spectrum-view.'
 
     @property
     def output_description(self) -> str:
@@ -395,7 +391,7 @@ def make_detector_view_params(
         return DetectorViewParams
 
     params_model = spectrum_view.params_model
-    title = spectrum_view.params_title
+    title = spectrum_view.output_title
     description = spectrum_view.params_description
 
     class DetectorViewWithSpectrumParams(DetectorViewParams):
