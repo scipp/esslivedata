@@ -277,17 +277,16 @@ class _GatedStream:
     def rebuild_grid(self, batch_start: Timestamp, batch_length: Duration) -> None:
         """Build or rebuild the pulse grid from the estimator.
 
-        No-op if the estimator hasn't converged.  Streams whose rate is
-        below one pulse per batch (``int_rate * batch_length_s < 1``)
-        cannot reliably fill a slot per batch; any prior grid is dropped
-        and the stream reverts to opportunistic (non-gated) delivery.
+        No-op if the estimator hasn't converged.  Streams whose rate is below one pulse
+        per batch (``int_rate * batch_length_s < 1``) cannot reliably fill a slot per
+        batch; any prior grid is dropped and the stream reverts to opportunistic
+        (non-gated) delivery.
 
         The origin is preserved across rebuilds while it stays within
-        ``_MAX_ORIGIN_OFFSET_BATCHES`` of ``batch_start``.  A fresh
-        candidate is otherwise drawn from current bucket state or the
-        estimator's last timestamp; when no candidate is plausibly near
-        ``batch_start`` the grid is dropped (streams whose timestamps
-        live in a disjoint epoch: schema bug, clock reset, producer
+        ``_MAX_ORIGIN_OFFSET_BATCHES`` of ``batch_start``.  A fresh candidate is
+        otherwise drawn from current bucket state or the estimator's last timestamp;
+        when no candidate is plausibly near ``batch_start`` the grid is dropped (streams
+        whose timestamps live in a disjoint epoch: schema bug, clock reset, producer
         replaying an old topic).
         """
         int_rate = self.estimator.integer_rate_hz
