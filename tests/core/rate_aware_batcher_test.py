@@ -890,10 +890,10 @@ class TestOneHzEdgeCase:
         slow_msg = msg(t0 + 0.3, stream=slow_mon, value="slow_first")
         stray = msg(t0 + 0.6, stream=MONITOR, value="mon_stray")
         batcher.batch([slow_msg, stray])
-        bucket = batcher._active_window.buckets[slow_mon]
-        assert bucket.count == 1, (
+        count = len(batcher._streams[slow_mon].messages)
+        assert count == 1, (
             f"Bucket for unconverged-gated stream double-counted "
-            f"(count={bucket.count}, expected 1)"
+            f"(count={count}, expected 1)"
         )
 
 
