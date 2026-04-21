@@ -67,9 +67,12 @@ Conventions:
   Either define a Protocol with optional `finalize`, or require it.
 - [ ] **`core/orchestrating_processor.py:94`** —
   `if hasattr(accumulator, 'release_buffers')`. Same as above.
-- [ ] **`kafka/source.py:372`** —
-  `if not hasattr(self._consumer, 'assignment')`. Document the version
-  compatibility, or rely on the type and let it crash if violated.
+- [~] **`kafka/source.py:372`** —
+  `if not hasattr(self._consumer, 'assignment')`. Capability detection,
+  not version compatibility — the `KafkaConsumer` protocol only requires
+  `consume`, and minimal test consumers legitimately lack the lag-query
+  methods (`ControllableKafkaConsumer` returning `None` from
+  `get_consumer_lag` is an explicit test). Added a comment and keep.
 
 ## C. Silent exception swallowing (hides real bugs)
 
