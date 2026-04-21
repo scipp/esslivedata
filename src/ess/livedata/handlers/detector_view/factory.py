@@ -19,7 +19,7 @@ from ..accumulators import make_no_copy_accumulator_pair
 
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
-from ..detector_view_specs import DetectorViewParams
+from ..detector_view_specs import DetectorViewParams, SpectrumViewRebin
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
@@ -38,7 +38,6 @@ from .types import (
     ROIRectangleRequest,
     ROISpectra,
     SpectrumView,
-    SpectrumViewSpatialRebin,
     SpectrumViewTransform,
     TransformValueLog,
     TransformValueStream,
@@ -214,7 +213,7 @@ class DetectorViewFactory:
         if config.spectrum_view is not None:
             workflow.insert(spectrum_view)
             workflow[SpectrumViewTransform] = config.spectrum_view.transform
-            workflow[SpectrumViewSpatialRebin] = params.spectrum_rebin.factor
+            workflow[SpectrumViewRebin] = params.spectrum_rebin
             target_keys['spectrum_view'] = SpectrumView
         context_keys: dict[str, type] = {}
         window_outputs = (

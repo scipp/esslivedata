@@ -13,6 +13,7 @@ import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 from ess.reduce.unwrap.types import WavelengthDetector
 
+from ..detector_view_specs import SpectrumViewRebin
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     AccumulatedHistogram,
@@ -29,7 +30,6 @@ from .types import (
     ScreenBinnedEvents,
     ScreenMetadata,
     SpectrumView,
-    SpectrumViewSpatialRebin,
     SpectrumViewTransform,
     UsePixelWeighting,
 )
@@ -270,7 +270,7 @@ def counts_total(
 def spectrum_view(
     histogram: AccumulatedHistogram[Cumulative],
     transform: SpectrumViewTransform,
-    rebin: SpectrumViewSpatialRebin,
+    rebin: SpectrumViewRebin,
 ) -> SpectrumView:
     """
     Apply the per-instrument spectrum transform to the cumulative histogram.
@@ -292,7 +292,7 @@ def spectrum_view(
     :
         Spectrum view as a reshaped/partially-summed histogram.
     """
-    return SpectrumView(transform(histogram, rebin))
+    return SpectrumView(transform(histogram, rebin.factor))
 
 
 def counts_in_range(

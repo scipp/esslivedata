@@ -207,9 +207,6 @@ Signature: ``(histogram, rebin_factor) -> spectrum``. Instruments that do not
 need a rebin factor simply ignore the second argument.
 """
 
-SpectrumViewSpatialRebin = NewType('SpectrumViewSpatialRebin', int)
-"""Runtime rebin factor consumed by the spectrum transform."""
-
 
 # Generic accumulated data types - parametrized by accumulation mode
 class AccumulatedHistogram(
