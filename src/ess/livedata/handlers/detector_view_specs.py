@@ -291,10 +291,10 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
 
 
 def _make_spectrum_template(output_dims: list[str]) -> sc.DataArray:
-    ndim = len(output_dims)
-    return sc.DataArray(
-        sc.zeros(dims=output_dims, shape=[0] * ndim, unit='counts'),
-    )
+    # Append a placeholder spectral dim so the template has the right ndim for
+    # plotter selection. The actual dim name is determined at runtime by the transform.
+    dims = [*output_dims, 'spectrum']
+    return sc.DataArray(sc.zeros(dims=dims, shape=[0] * len(dims), unit='counts'))
 
 
 def make_detector_view_outputs(
