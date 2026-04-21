@@ -17,6 +17,7 @@ from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .autoscaler import Autoscaler
+from .data_roles import PRIMARY
 from .plot_params import (
     LayoutParams,
     PlotAspect,
@@ -406,7 +407,7 @@ class Plotter:
 
     def compute(
         self,
-        data: dict[ResultKey, sc.DataArray],
+        data: dict[str, dict[ResultKey, sc.DataArray]],
         *,
         title_resolver: TitleResolver | None = None,
         **kwargs,
@@ -421,13 +422,14 @@ class Plotter:
         Parameters
         ----------
         data:
-            Dictionary mapping ResultKeys to DataArrays.
+            Role-grouped data. Standard plotters consume the ``primary`` role.
         title_resolver:
             Resolves source/output names to display titles. If None, raw names
             are used.
         **kwargs:
             Additional keyword arguments passed to plot().
         """
+        data = data.get(PRIMARY, {})
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 

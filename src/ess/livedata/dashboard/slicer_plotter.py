@@ -13,6 +13,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
 
+from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
 from .plots import Plotter, PresenterBase, _normalize_to_rate
 from .scipp_to_holoviews import to_holoviews
@@ -279,7 +280,7 @@ class SlicerPlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
-    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
+    def compute(self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs) -> None:
         """
         Prepare 3D data for slicing with pre-computed color bounds.
 
@@ -292,11 +293,12 @@ class SlicerPlotter(Plotter):
         Parameters
         ----------
         data:
-            Dictionary of 3D DataArrays.
+            Role-grouped data; the ``primary`` role contains 3D DataArrays.
         **kwargs:
             Unused (required by base class signature).
         """
         del kwargs  # Unused for SlicerPlotter
+        data = data.get(PRIMARY, {})
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
         clim = self._compute_global_clim(data)

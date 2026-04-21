@@ -6,6 +6,7 @@ import pytest
 
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
@@ -95,6 +96,7 @@ def session_updater():
     return SessionUpdater(
         session_id=SessionId('test-session'),
         session_registry=registry,
+        notification_queue=NotificationQueue(),
     )
 
 
@@ -226,10 +228,12 @@ class TestGridTabManagement:
         session_updater1 = SessionUpdater(
             session_id=SessionId('session-1'),
             session_registry=registry,
+            notification_queue=NotificationQueue(),
         )
         session_updater2 = SessionUpdater(
             session_id=SessionId('session-2'),
             session_registry=registry,
+            notification_queue=NotificationQueue(),
         )
 
         # Create separate workflow status widgets for each instance

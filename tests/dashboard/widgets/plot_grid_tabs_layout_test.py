@@ -16,6 +16,7 @@ import pytest
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
@@ -124,6 +125,7 @@ def plot_grid_tabs(
         session_updater=SessionUpdater(
             session_id=SessionId('test'),
             session_registry=SessionRegistry(),
+            notification_queue=NotificationQueue(),
         ),
     )
 

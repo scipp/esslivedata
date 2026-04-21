@@ -198,8 +198,9 @@ class PlottingController:
         params
             Plotter parameters as a dict or validated Pydantic model.
         on_data
-            Callback invoked on every data update with the assembled data.
-            Called when at least one key from each role has data.
+            Callback invoked on every data update with role-grouped data
+            (dict[role, dict[ResultKey, DataArray]]). Called when at least one
+            key from each role has data.
 
         Returns
         -------

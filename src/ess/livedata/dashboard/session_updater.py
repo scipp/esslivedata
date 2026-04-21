@@ -56,7 +56,7 @@ class SessionUpdater:
         *,
         session_id: SessionId,
         session_registry: SessionRegistry,
-        notification_queue: NotificationQueue | None = None,
+        notification_queue: NotificationQueue,
         username: str | None = None,
     ) -> None:
         self._session_id = session_id
@@ -73,9 +73,7 @@ class SessionUpdater:
         self._heartbeat_widget = HeartbeatWidget(interval_ms=5000)
         self._last_heartbeat_value = 0
 
-        # Register with notification queue
-        if self._notification_queue is not None:
-            self._notification_queue.register_session(session_id)
+        self._notification_queue.register_session(session_id)
 
         # Auto-register this session with the registry
         self._session_registry.register(session_id, self, username=username)
@@ -167,9 +165,6 @@ class SessionUpdater:
 
     def _poll_notifications(self) -> list[NotificationEvent]:
         """Poll NotificationQueue for new events."""
-        if self._notification_queue is None:
-            return []
-
         return self._notification_queue.get_new_events(self._session_id)
 
     def _show_notifications(self, notifications: list[NotificationEvent]) -> None:
@@ -182,8 +177,7 @@ class SessionUpdater:
         if self._periodic_callback is not None:
             self._periodic_callback.stop()
 
-        if self._notification_queue is not None:
-            self._notification_queue.unregister_session(self._session_id)
+        self._notification_queue.unregister_session(self._session_id)
 
         self._custom_handlers.clear()
 
