@@ -2054,3 +2054,53 @@ class TestNonGatedStreams:
         assert MON_HALF in batcher.tracked_streams
         assert not batcher.is_gating(MON_HALF)
         assert self.LOG not in batcher.tracked_streams
+
+    def test_future_timestamped_held_for_next_batch(self):
+        """Non-gated msg with ts past window.end (within cap) lands in next batch.
+
+        Preserves batch atomicity: downstream accumulators must not pair a
+        log reading from a future time range with detector data from the
+        current window.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        log_msg = msg(t0 + 1.3, stream=self.LOG)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, log_msg])
+        assert r1 is not None
+        assert log_msg not in r1.messages
+        assert len(r1.messages) == 14
+
+        det_next = msgs_at(14.0, start=t0 + 1.0, duration=1.0)
+        r2 = batcher.batch(det_next)
+        assert r2 is not None
+        assert log_msg in r2.messages
+
+    def test_implausibly_future_timestamped_falls_through(self):
+        """Msg beyond the hold-back cap is delivered immediately.
+
+        Guards against a pathological timestamp (epoch bug, unit mismatch)
+        caching the message indefinitely.  Same fallback as the HWM clamp.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        rogue = msg(t0 + 999.0, stream=self.LOG)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, rogue])
+        assert r1 is not None
+        assert rogue in r1.messages
+
+    def test_held_message_delivered_via_gap_recovery(self):
+        """A held message re-routes correctly when the window jumps past it."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        held = msg(t0 + 2.5, stream=self.LOG)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, held])
+        assert r1 is not None
+        assert held not in r1.messages
+
+        det_far = msgs_at(14.0, start=t0 + 10.0, duration=1.0)
+        r2 = batcher.batch(det_far)
+        assert r2 is not None
+        assert held in r2.messages
