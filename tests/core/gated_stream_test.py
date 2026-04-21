@@ -98,9 +98,11 @@ class TestRebuildGrid:
     def test_origin_preserved_on_repeat_rebuild(self):
         stream = converged(14.0)
         stream.rebuild_grid(batch_start=ts(1.0), batch_length=ONE_SECOND)
-        origin = stream.grid.origin_ns
+        grid = stream.grid
         stream.rebuild_grid(batch_start=ts(1.0), batch_length=ONE_SECOND)
-        assert stream.grid.origin_ns == origin
+        # Identity check pins down the fast-path no-op branch: an identical
+        # (origin, period, slots) triple must not allocate a new PulseGrid.
+        assert stream.grid is grid
 
     def test_origin_preserved_within_drift_bound(self):
         """Batch_start advancing within _MAX_ORIGIN_OFFSET_BATCHES keeps origin."""
@@ -155,6 +157,7 @@ class TestRebuildGrid:
         stream = converged(14.0)
         stream.rebuild_grid(batch_start=ts(1.0), batch_length=ONE_SECOND)
         assert stream.grid.slots_per_batch == 14
+        original_origin = stream.grid.origin_ns
         # Reset estimator and seed at 10 Hz.
         stream.estimator.diffs.clear()
         stream.estimator.last_ts_ns = None
@@ -165,3 +168,40 @@ class TestRebuildGrid:
         assert stream.grid is not None
         assert stream.grid.period_ns == round(1e9 / 10)
         assert stream.grid.slots_per_batch == 10
+        # Old origin is within the 1000-batch bound (100 s offset), so it
+        # must be preserved even though the period changed.
+        assert stream.grid.origin_ns == original_origin
+
+    def test_origin_preserved_across_batch_length_shrink(self):
+        """Shrinking batch above sub-rate keeps origin, updates slot count."""
+        stream = converged(14.0)
+        stream.rebuild_grid(batch_start=ts(1.0), batch_length=ONE_SECOND)
+        original_origin = stream.grid.origin_ns
+        stream.rebuild_grid(
+            batch_start=ts(1.0), batch_length=Duration.from_seconds(0.5)
+        )
+        assert stream.grid is not None
+        assert stream.grid.origin_ns == original_origin
+        assert stream.grid.slots_per_batch == 7
+
+    def test_bucket_entirely_before_batch_start_seeds_from_first_message(self):
+        """Bucket with only pre-batch_start messages falls back to messages[0]."""
+        stream = converged(14.0)
+        # Clear bucket state left by the convergence sequence, then seed with
+        # messages that are strictly before a later batch_start but still
+        # within the drift bound.
+        stream.messages.clear()
+        first_ns = 10_000_000_000  # 10 s
+        stream.messages.append(
+            Message(timestamp=Timestamp.from_ns(first_ns), stream=STREAM, value="")
+        )
+        stream.messages.append(
+            Message(
+                timestamp=Timestamp.from_ns(first_ns + 500_000_000),
+                stream=STREAM,
+                value="",
+            )
+        )
+        stream.rebuild_grid(batch_start=ts(20.0), batch_length=ONE_SECOND)
+        assert stream.grid is not None
+        assert stream.grid.origin_ns == first_ns
