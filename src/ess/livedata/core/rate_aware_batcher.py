@@ -231,6 +231,7 @@ class _GatedStream:
         Overflow still bumps ``max_slot`` to the last grid slot so the
         slot gate observes that the window's final pulse was reached.
         """
+        self.observe(msg)
         if self.grid is None:
             self._add(msg)
             return None
@@ -481,9 +482,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         if msg.stream.kind not in GATED_STREAM_KINDS:
             self._non_gated.append(msg)
             return
-        stream = self._streams[msg.stream]
-        stream.observe(msg)
-        overflow = stream.route(msg, window.start)
+        overflow = self._streams[msg.stream].route(msg, window.start)
         if overflow is not None:
             self._overflow.append(overflow)
 
@@ -555,9 +554,7 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _close_batch(self, window: _ActiveWindow) -> MessageBatch:
         self._refresh_stream_registry(window)
         batch = MessageBatch(
-            start_time=window.start,
-            end_time=window.end,
-            messages=self._drain_window(),
+            start_time=window.start, end_time=window.end, messages=self._drain_window()
         )
 
         new_start = window.end
