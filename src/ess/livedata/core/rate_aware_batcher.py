@@ -397,6 +397,20 @@ class RateAwareMessageBatcher(MessageBatcher):
         return self._batch_length.to_seconds()
 
     @property
+    def tracked_streams(self) -> set[StreamId]:
+        """Stream IDs currently tracked by the batcher."""
+        return set(self._streams)
+
+    def grid_of(self, stream_id: StreamId) -> PulseGrid | None:
+        """Return the pulse grid for a tracked stream, or ``None``."""
+        stream = self._streams.get(stream_id)
+        return stream.grid if stream is not None else None
+
+    def is_gating(self, stream_id: StreamId) -> bool:
+        """True if the stream has a converged grid and gates batch closure."""
+        return self.grid_of(stream_id) is not None
+
+    @property
     def timeout_factor(self) -> float:
         return self._timeout_factor
 
