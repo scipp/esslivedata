@@ -275,7 +275,7 @@ class _GatedStream:
         self.max_slot = -1
         return messages
 
-    def rebuild_grid(self, batch_start: Timestamp, batch_length: Duration) -> None:
+    def refresh_grid(self, batch_start: Timestamp, batch_length: Duration) -> None:
         """Build or rebuild the pulse grid from the estimator.
 
         No-op if the estimator hasn't converged.  Streams whose rate is below one pulse
@@ -475,7 +475,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             start=end_time, end=end_time + self._batch_length
         )
         for stream in self._streams.values():
-            stream.rebuild_grid(end_time, self._batch_length)
+            stream.refresh_grid(end_time, self._batch_length)
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
@@ -576,17 +576,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         Runs once per close before draining, so each stream's buckets
         feed fresh origins into ``rebuild_grid``.
         """
-        for stream in self._streams.values():
-            if not stream.has_messages:
-                continue
-            stream.mark_present()
-            stream.rebuild_grid(window.start, self._batch_length)
-
         for sid in list(self._streams):
             stream = self._streams[sid]
             if stream.has_messages:
-                continue
-            if stream.mark_absent():
+                stream.mark_present()
+                stream.refresh_grid(window.start, self._batch_length)
+            elif stream.mark_absent():
                 del self._streams[sid]
 
         if self._pending_batch_length is not None:
@@ -596,4 +591,4 @@ class RateAwareMessageBatcher(MessageBatcher):
             # promote a previously-demoted sub-rate stream back into the
             # grid, and that stream has ``grid is None``.
             for stream in self._streams.values():
-                stream.rebuild_grid(window.start, self._batch_length)
+                stream.refresh_grid(window.start, self._batch_length)
