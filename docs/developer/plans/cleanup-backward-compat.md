@@ -44,14 +44,23 @@ Conventions:
   HoloViews `LayoutPlot` (not a Panel template). `state` is
   `handles["plot"]`, which after `initialize_plot` may be a Bokeh `Tabs`
   or wrapping `Column` with no `toolbar` attribute. Keep the guard.
-- [ ] **`dashboard/widgets/plot_grid_tabs.py:89, 995`** —
-  `if hasattr(params, 'plot_aspect')` then defaults to `'stretch_both'` either
-  way. Either branch returns the same value; remove the dead check or make
-  `plot_aspect` required.
-- [ ] **`dashboard/plots.py:708`**,
-  **`dashboard/plotting_controller.py:217`** — `getattr(params, 'rate', None)`
-  / `getattr(params, 'window', None)` defensive against polymorphic param
-  types. Decide: tighten typing (Protocol / union), or accept the duck-typing.
+- [~] **`dashboard/widgets/plot_grid_tabs.py:89, 995`** —
+  `if hasattr(params, 'plot_aspect')`. Guard is real: `params` is a generic
+  `pydantic.BaseModel` (`PlotConfig.params`), and ROI/static overlay param
+  types (e.g., `RectanglesRequestParams`) don't inherit from `PlotParamsBase`
+  and lack `plot_aspect`. The branches also return different values when
+  `aspect_type != Free` (e.g., `Square` yields `stretch_width`/`_height`).
+  Making `plot_aspect` required would force it onto overlay params — bigger
+  refactor than the cleanup warrants. Keep.
+- [~] **`dashboard/plots.py:708`**,
+  **`dashboard/plotting_controller.py:217`**,
+  **`dashboard/widgets/plot_widgets.py:295`** — `getattr(params, 'rate', None)`
+  / `getattr(params, 'window', None)`. Accept duck-typing: `PlotParams2d`
+  has `rate` but `ImagePlotter.from_params` is also called with
+  `CorrelationHistogram2dParams` (no `rate`); similarly `window` only
+  exists on `PlotParams1d/2d/3d/Bars`, not on `PlotDisplayParams*`.
+  A Protocol for two fields would be more ceremony than the getattr it
+  replaces.
 - [ ] **`kafka/x5f2_compat.py:281`** — `software_version: str | None = None`
   always replaced by `status.version`. Drop the parameter or make required.
 - [ ] **`core/service.py:173`** — `if hasattr(self._processor, 'finalize')`.
