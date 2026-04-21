@@ -755,7 +755,7 @@ class TestServiceStatusMessage:
     def test_from_service_status(self):
         """Test converting ServiceStatus to ServiceStatusMessage."""
         status = make_service_status()
-        msg = ServiceStatusMessage.from_service_status(status)
+        msg = ServiceStatusMessage.from_service_status(status, software_version="0.0.0")
 
         assert msg.software_name == "livedata"
         assert msg.service_id.instrument == status.instrument
@@ -781,7 +781,9 @@ class TestServiceStatusMessage:
     def test_to_service_status(self):
         """Test converting ServiceStatusMessage to ServiceStatus."""
         original = make_service_status()
-        msg = ServiceStatusMessage.from_service_status(original)
+        msg = ServiceStatusMessage.from_service_status(
+            original, software_version="0.0.0"
+        )
         converted = msg.to_service_status()
 
         assert converted.instrument == original.instrument
