@@ -422,3 +422,29 @@ class TestPlotterCompatibility:
         )
         compatible = plotter_registry.get_compatible_plotters({'key': data})
         assert 'lines' in compatible
+
+
+class TestROIReadbackOverlayValidation:
+    """ROI readback plotters are exempt from overlay unit validation."""
+
+    def test_rectangles_readback_does_not_set_canvas_spec(self, result_key):
+        roi = RectangleROI(
+            x=Interval(min=0.0, max=1.0, unit='m'),
+            y=Interval(min=0.0, max=1.0, unit='m'),
+        )
+        da = RectangleROI.to_concatenated_data_array({0: roi})
+        plotter = RectanglesReadbackPlotter(RectanglesReadbackParams())
+        plotter.compute({result_key: da})
+        assert plotter.canvas_spec is None
+
+    def test_polygons_readback_does_not_set_canvas_spec(self, result_key):
+        roi = PolygonROI(
+            x=[0.0, 1.0, 1.0, 0.0],
+            y=[0.0, 0.0, 1.0, 1.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        da = PolygonROI.to_concatenated_data_array({0: roi})
+        plotter = PolygonsReadbackPlotter(PolygonsReadbackParams())
+        plotter.compute({result_key: da})
+        assert plotter.canvas_spec is None

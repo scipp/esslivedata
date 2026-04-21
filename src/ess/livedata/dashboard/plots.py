@@ -7,6 +7,7 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any, ClassVar, cast
 
 import holoviews as hv
@@ -216,6 +217,70 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
+@dataclass(frozen=True)
+class CanvasSpec:
+    """Unit metadata extracted from a scipp DataArray for overlay validation.
+
+    Captures coordinate units (keyed by dimension name) and the value unit.
+    Two overlays are compatible when they share the same coordinate dimensions
+    with matching units and matching value units.
+    """
+
+    coord_units: dict[str, sc.Unit] = dataclass_field(default_factory=dict)
+    value_unit: sc.Unit = dataclass_field(default=sc.units.dimensionless)
+
+    @classmethod
+    def from_data_array(cls, da: sc.DataArray) -> CanvasSpec:
+        """Build from a scipp DataArray using its dimension coordinates."""
+        return cls(
+            coord_units={
+                dim: da.coords[dim].unit for dim in da.dims if dim in da.coords
+            },
+            value_unit=da.unit,
+        )
+
+
+def validate_canvas_spec(
+    entries: list[tuple[str, CanvasSpec]],
+) -> str | None:
+    """Check that overlay entries share compatible units.
+
+    Parameters
+    ----------
+    entries:
+        Pairs of (label, units) for each data-carrying element or layer.
+
+    Returns
+    -------
+    :
+        An error message if units are incompatible, or None if compatible.
+    """
+    if len(entries) < 2:
+        return None
+
+    ref_label, ref = entries[0]
+    for label, other in entries[1:]:
+        if ref.coord_units.keys() != other.coord_units.keys():
+            return (
+                f"Cannot overlay '{ref_label}' and '{label}': "
+                f"dimension mismatch "
+                f"({set(ref.coord_units)} vs {set(other.coord_units)})"
+            )
+        for dim, ref_unit in ref.coord_units.items():
+            if ref_unit != other.coord_units[dim]:
+                return (
+                    f"Cannot overlay '{ref_label}' and '{label}': "
+                    f"unit mismatch for coordinate '{dim}' "
+                    f"({ref_unit} vs {other.coord_units[dim]})"
+                )
+        if ref.value_unit != other.value_unit:
+            return (
+                f"Cannot overlay '{ref_label}' and '{label}': "
+                f"value unit mismatch ({ref.value_unit} vs {other.value_unit})"
+            )
+    return None
+
+
 class Plotter:
     """
     Base class for plots that support autoscaling.
@@ -223,6 +288,8 @@ class Plotter:
     Tracks presenters via WeakSet and marks them dirty when state changes.
     This enables efficient polling-based update detection.
     """
+
+    participates_in_overlay_validation: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -247,6 +314,7 @@ class Plotter:
         """
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
+        self.canvas_spec: CanvasSpec | None = None
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
@@ -436,6 +504,16 @@ class Plotter:
         resolver = title_resolver or TitleResolver()
         plots: list[hv.Element] = []
         try:
+            if self.participates_in_overlay_validation and data:
+                entries = [
+                    (key.job_id.source_name, CanvasSpec.from_data_array(da))
+                    for key, da in data.items()
+                ]
+                if self.layout_params.combine_mode == 'overlay':
+                    error = validate_canvas_spec(entries)
+                    if error is not None:
+                        raise ValueError(error)
+                self.canvas_spec = entries[0][1]
             for data_key, da in data.items():
                 label = resolver.get_legend_label(
                     data_key.job_id.source_name, data_key.output_name

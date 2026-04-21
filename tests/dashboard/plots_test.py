@@ -2100,3 +2100,135 @@ class TestRateNormalizationIntegration:
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
+
+
+def _make_result_key(source_name: str) -> ResultKey:
+    return ResultKey(
+        workflow_id=WorkflowId(instrument='test', namespace='ns', name='wf', version=1),
+        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
+        output_name='result',
+    )
+
+
+def _make_1d_da(
+    *, dim: str = 'tof', coord_unit: str = 'ms', value_unit: str = 'counts'
+) -> sc.DataArray:
+    coord = sc.arange(dim, 5, dtype='float64', unit=coord_unit)
+    return sc.DataArray(
+        sc.ones(sizes={dim: 5}, unit=value_unit),
+        coords={dim: coord},
+    )
+
+
+def _units(coord_units: dict[str, str], value_unit: str = 'counts') -> plots.CanvasSpec:
+    return plots.CanvasSpec(
+        coord_units={k: sc.Unit(v) for k, v in coord_units.items()},
+        value_unit=sc.Unit(value_unit),
+    )
+
+
+class TestCanvasSpec:
+    """Tests for CanvasSpec construction."""
+
+    def test_from_data_array_1d(self):
+        da = _make_1d_da(dim='tof', coord_unit='ms', value_unit='counts')
+        units = plots.CanvasSpec.from_data_array(da)
+        assert units.coord_units == {'tof': sc.Unit('ms')}
+        assert units.value_unit == sc.Unit('counts')
+
+    def test_from_data_array_2d(self):
+        da = sc.DataArray(
+            sc.ones(sizes={'y': 4, 'x': 5}, unit='counts'),
+            coords={
+                'x': sc.arange('x', 5, dtype='float64', unit='m'),
+                'y': sc.arange('y', 4, dtype='float64', unit='m'),
+            },
+        )
+        units = plots.CanvasSpec.from_data_array(da)
+        assert units.coord_units == {'x': sc.Unit('m'), 'y': sc.Unit('m')}
+        assert units.value_unit == sc.Unit('counts')
+
+
+class TestValidateCanvasSpec:
+    """Tests for validate_canvas_spec (used at both sites)."""
+
+    def test_single_entry_passes(self):
+        assert plots.validate_canvas_spec([('a', _units({'tof': 'ms'}))]) is None
+
+    def test_matching_units_pass(self):
+        entries = [
+            ('a', _units({'tof': 'ms'})),
+            ('b', _units({'tof': 'ms'})),
+        ]
+        assert plots.validate_canvas_spec(entries) is None
+
+    def test_mismatched_coord_units(self):
+        entries = [
+            ('src_a', _units({'tof': 'ms'})),
+            ('src_b', _units({'tof': 'us'})),
+        ]
+        error = plots.validate_canvas_spec(entries)
+        assert error is not None
+        assert 'tof' in error
+        assert 'ms' in error
+
+    def test_mismatched_value_units(self):
+        entries = [
+            ('a', _units({'tof': 'ms'}, value_unit='counts')),
+            ('b', _units({'tof': 'ms'}, value_unit='counts/us')),
+        ]
+        error = plots.validate_canvas_spec(entries)
+        assert error is not None
+        assert 'value unit mismatch' in error
+
+    def test_mismatched_dims(self):
+        entries = [
+            ('a', _units({'tof': 'ms'})),
+            ('b', _units({'wavelength': 'angstrom'})),
+        ]
+        error = plots.validate_canvas_spec(entries)
+        assert error is not None
+        assert 'dimension mismatch' in error
+
+    def test_error_includes_labels(self):
+        entries = [
+            ('detector_1', _units({'tof': 'ms'})),
+            ('detector_2', _units({'tof': 'us'})),
+        ]
+        error = plots.validate_canvas_spec(entries)
+        assert 'detector_1' in error
+        assert 'detector_2' in error
+
+
+class TestPlotterCanvasSpec:
+    """Integration: plotter stores canvas_spec after compute()."""
+
+    def test_line_plotter_stores_units(self):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        da = _make_1d_da(dim='tof', coord_unit='ms', value_unit='counts')
+        plotter.compute({_make_result_key('src'): da})
+        assert plotter.canvas_spec == _units({'tof': 'ms'})
+
+    def test_image_plotter_stores_units(self):
+        plotter = plots.ImagePlotter.from_params(PlotParams2d())
+        da = sc.DataArray(
+            sc.ones(sizes={'y': 4, 'x': 5}, unit='counts'),
+            coords={
+                'x': sc.arange('x', 5, dtype='float64', unit='m'),
+                'y': sc.arange('y', 4, dtype='float64', unit='m'),
+            },
+        )
+        plotter.compute({_make_result_key('src'): da})
+        assert plotter.canvas_spec == _units({'x': 'm', 'y': 'm'})
+
+    def test_compute_with_mismatched_units_shows_error(self):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data = {
+            _make_result_key('src_a'): _make_1d_da(coord_unit='ms'),
+            _make_result_key('src_b'): _make_1d_da(coord_unit='us'),
+        }
+        plotter.compute(data)
+        result = plotter.get_cached_state()
+        assert isinstance(result, hv.Overlay)
+        (element,) = result.values()
+        assert isinstance(element, hv.Text)

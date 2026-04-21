@@ -534,6 +534,8 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     skip logic, publishing) is handled via a closure-based edit callback.
     """
 
+    participates_in_overlay_validation = False
+
     def __init__(
         self,
         params: ParamsType,

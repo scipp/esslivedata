@@ -71,6 +71,8 @@ class RectanglesReadbackPlotter(Plotter):
     rectangles with per-shape colors based on the ROI index.
     """
 
+    participates_in_overlay_validation = False
+
     def __init__(self, params: RectanglesReadbackParams) -> None:
         super().__init__()
         self._params = params
@@ -176,6 +178,8 @@ class PolygonsReadbackPlotter(Plotter):
     Takes ROI readback DataArrays with roi_index coordinate and renders
     polygons with per-shape colors based on the ROI index.
     """
+
+    participates_in_overlay_validation = False
 
     def __init__(self, params: PolygonsReadbackParams) -> None:
         super().__init__()
