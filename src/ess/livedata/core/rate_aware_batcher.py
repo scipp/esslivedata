@@ -301,6 +301,86 @@ class _GatedStream:
         self.absent_batches += 1
         return self.absent_batches >= ABSENT_BATCHES_FOR_EVICTION
 
+    def rebuild_grid(
+        self,
+        bucket: _StreamBucket | None,
+        batch_start: Timestamp,
+        batch_length: Duration,
+    ) -> None:
+        """Build or rebuild the pulse grid from the estimator.
+
+        No-op if the estimator hasn't converged.  Streams whose rate is
+        below one pulse per batch (``int_rate * batch_length_s < 1``)
+        cannot reliably fill a slot per batch; any prior grid is dropped
+        and the stream reverts to opportunistic (non-gated) delivery.
+
+        The origin is preserved across rebuilds while it stays within
+        ``_MAX_ORIGIN_OFFSET_BATCHES`` of ``batch_start``.  A fresh
+        candidate is otherwise drawn from current bucket state or the
+        estimator's last timestamp; when no candidate is plausibly near
+        ``batch_start`` the grid is dropped (streams whose timestamps
+        live in a disjoint epoch: schema bug, clock reset, producer
+        replaying an old topic).
+        """
+        int_rate = self.estimator.integer_rate_hz
+        if int_rate is None or int_rate <= 0:
+            return
+        batch_length_s = batch_length.to_seconds()
+        if int_rate * batch_length_s < 1.0:
+            self.grid = None
+            return
+        period_ns = round(1e9 / int_rate)
+        slots_per_batch = round(int_rate * batch_length_s)
+        origin = self._choose_origin(bucket, batch_start, batch_length)
+        if origin is None:
+            self.grid = None
+            return
+        existing = self.grid
+        if (
+            existing is not None
+            and existing.origin_ns == origin
+            and existing.period_ns == period_ns
+            and existing.slots_per_batch == slots_per_batch
+        ):
+            return
+        self.grid = PulseGrid(
+            origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
+        )
+
+    def _choose_origin(
+        self,
+        bucket: _StreamBucket | None,
+        batch_start: Timestamp,
+        batch_length: Duration,
+    ) -> int | None:
+        if self.grid is not None and not _origin_too_far(
+            self.grid.origin_ns, batch_start, batch_length
+        ):
+            return self.grid.origin_ns
+        candidate = self._pick_origin(bucket, batch_start)
+        if candidate is None or _origin_too_far(candidate, batch_start, batch_length):
+            return None
+        return candidate
+
+    def _pick_origin(
+        self, bucket: _StreamBucket | None, batch_start: Timestamp
+    ) -> int | None:
+        """Pick an origin timestamp that lies on the pulse grid."""
+        if bucket is not None and bucket.messages:
+            for m in bucket.messages:
+                if not m.timestamp < batch_start:
+                    return m.timestamp.to_ns()
+            return bucket.messages[0].timestamp.to_ns()
+        return self.estimator.last_ts_ns
+
+
+def _origin_too_far(
+    origin_ns: int, batch_start: Timestamp, batch_length: Duration
+) -> bool:
+    """True if ``origin_ns`` is implausibly far from ``batch_start``."""
+    max_offset_ns = _MAX_ORIGIN_OFFSET_BATCHES * batch_length.to_ns()
+    return abs(origin_ns - batch_start.to_ns()) > max_offset_ns
+
 
 class RateAwareMessageBatcher(MessageBatcher):
     """A batcher that uses per-stream rate estimation and slot-based completion.
@@ -438,7 +518,9 @@ class RateAwareMessageBatcher(MessageBatcher):
             start=window_start, end=window_start + self._batch_length
         )
         for sid, stream in self._streams.items():
-            self._update_grid(stream, window.buckets.get(sid), window.start)
+            stream.rebuild_grid(
+                window.buckets.get(sid), window.start, self._batch_length
+            )
         return window
 
     def _stream(self, sid: StreamId) -> _GatedStream:
@@ -541,7 +623,7 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         Runs once per close while the just-closed ``window`` is still
         available -- the window's buckets feed fresh origins into
-        ``_update_grid``.
+        ``rebuild_grid``.
         """
         present: set[StreamId] = set()
         for sid, bucket in window.buckets.items():
@@ -552,7 +634,7 @@ class RateAwareMessageBatcher(MessageBatcher):
                 continue
             present.add(sid)
             stream.mark_present()
-            self._update_grid(stream, bucket, window.start)
+            stream.rebuild_grid(bucket, window.start, self._batch_length)
 
         for sid in list(self._streams):
             if sid in present:
@@ -567,94 +649,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             # promote a previously-demoted sub-rate stream back into the
             # grid, and that stream has ``grid is None``.
             for sid, stream in self._streams.items():
-                self._update_grid(stream, window.buckets.get(sid), window.start)
-
-    def _update_grid(
-        self,
-        stream: _GatedStream,
-        bucket: _StreamBucket | None,
-        batch_start: Timestamp,
-    ) -> None:
-        """Build or rebuild the pulse grid for a stream from its estimator.
-
-        No-op if the estimator hasn't converged.  Streams whose rate is
-        below one pulse per batch (``int_rate * batch_length_s < 1``)
-        cannot reliably fill a slot per batch; any prior grid is dropped
-        and the stream reverts to opportunistic (non-gated) delivery.
-
-        Origin selection is delegated to :meth:`_choose_origin`, which
-        preserves an existing origin while it stays within
-        ``_MAX_ORIGIN_OFFSET_BATCHES`` of ``batch_start`` and otherwise
-        picks a fresh one from current bucket state.  When no viable
-        origin exists (e.g. the stream's timestamps live in a disjoint
-        epoch) the grid is dropped.
-        """
-        int_rate = stream.estimator.integer_rate_hz
-        if int_rate is None or int_rate <= 0:
-            return
-        if int_rate * self.batch_length_s < 1.0:
-            stream.grid = None
-            return
-        period_ns = round(1e9 / int_rate)
-        slots_per_batch = round(int_rate * self.batch_length_s)
-        existing = stream.grid
-        origin = self._choose_origin(stream, bucket, batch_start, existing)
-        if origin is None:
-            stream.grid = None
-            return
-        if (
-            existing is not None
-            and existing.origin_ns == origin
-            and existing.period_ns == period_ns
-            and existing.slots_per_batch == slots_per_batch
-        ):
-            return
-        stream.grid = PulseGrid(
-            origin_ns=origin, period_ns=period_ns, slots_per_batch=slots_per_batch
-        )
-
-    def _choose_origin(
-        self,
-        stream: _GatedStream,
-        bucket: _StreamBucket | None,
-        batch_start: Timestamp,
-        existing: PulseGrid | None,
-    ) -> int | None:
-        """Select a grid origin for a stream.
-
-        Prefer the existing origin (keeps the pulse lattice stable
-        across rebuilds).  When none exists, or the existing one has
-        drifted more than ``_MAX_ORIGIN_OFFSET_BATCHES`` batches from
-        ``batch_start``, pick a fresh candidate from bucket messages
-        or the estimator's last timestamp.  Returns ``None`` if no
-        candidate is plausibly near ``batch_start`` -- this catches
-        streams whose timestamps live in a disjoint epoch (schema bug,
-        clock reset, producer replaying an old topic).
-        """
-        if existing is not None and not self._origin_too_far(
-            existing.origin_ns, batch_start
-        ):
-            return existing.origin_ns
-        candidate = self._pick_grid_origin(stream, bucket, batch_start)
-        if candidate is None or self._origin_too_far(candidate, batch_start):
-            return None
-        return candidate
-
-    def _origin_too_far(self, origin_ns: int, batch_start: Timestamp) -> bool:
-        """True if ``origin_ns`` is implausibly far from ``batch_start``."""
-        max_offset_ns = _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length.to_ns()
-        return abs(origin_ns - batch_start.to_ns()) > max_offset_ns
-
-    def _pick_grid_origin(
-        self,
-        stream: _GatedStream,
-        bucket: _StreamBucket | None,
-        batch_start: Timestamp,
-    ) -> int | None:
-        """Pick an origin timestamp that lies on the pulse grid."""
-        if bucket is not None and bucket.messages:
-            for m in bucket.messages:
-                if not m.timestamp < batch_start:
-                    return m.timestamp.to_ns()
-            return bucket.messages[0].timestamp.to_ns()
-        return stream.estimator.last_ts_ns
+                stream.rebuild_grid(
+                    window.buckets.get(sid), window.start, self._batch_length
+                )
