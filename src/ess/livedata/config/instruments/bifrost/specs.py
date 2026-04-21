@@ -401,11 +401,10 @@ unified_detector_view_handle = instrument.add_logical_view(
     output_ndim=2,
     spectrum_view=SpectrumViewSpec(
         transform=_bifrost_spectrum_transform,
-        output_dims=['arc', 'detector_number', 'time_of_arrival'],
-        output_title='Spectrum view',
-        output_description=(
-            'Per-arc, per-pixel spectrum over time-of-arrival, with adjacent '
-            'pixels within a tube grouped by the rebin factor.'
+        output_dims=['arc', 'detector_number'],
+        extra_description=(
+            'Per-arc, per-pixel spectrum with adjacent pixels within a tube '
+            'grouped by the rebin factor.'
         ),
         default_rebin_factor=10,
     ),

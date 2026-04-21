@@ -38,11 +38,7 @@ instrument.add_logical_view(
     output_ndim=3,
     spectrum_view=SpectrumViewSpec(
         transform=_estia_spectrum_transform,
-        output_dims=['blade', 'wire', 'time_of_arrival'],
-        output_title='Spectrum view',
-        output_description=(
-            'Spectrum view over time-of-arrival vs. blade and wire, '
-            'summed across strips.'
-        ),
+        output_dims=['blade', 'wire'],
+        extra_description='Summed across strips, yielding per-blade, per-wire spectra.',
     ),
 )

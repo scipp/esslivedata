@@ -132,12 +132,15 @@ class SpectrumViewSpec:
         cumulative accumulated histogram. Transforms that do not need a
         rebin factor simply ignore the second argument.
     output_dims:
-        Output dimension names, used for the template of the ``spectrum_view``
-        field in the workflow outputs.
+        Spatial output dimension names, used for the initial empty template of
+        the ``spectrum_view`` field. The transform preserves the spectral axis
+        of the input histogram (time-of-arrival or wavelength depending on mode),
+        so it is not listed here.
     output_title:
         Human-readable title for the output field.
-    output_description:
-        Description for the output field.
+    extra_description:
+        Instrument-specific description appended as a second paragraph to the
+        base description.
     default_rebin_factor:
         Default value for the runtime ``spectrum_rebin.factor`` parameter.
         Transforms that ignore the rebin factor can leave the default at 1.
@@ -146,10 +149,19 @@ class SpectrumViewSpec:
     transform: Callable[[sc.DataArray, int], sc.DataArray]
     output_dims: list[str]
     output_title: str = 'Spectrum view'
-    output_description: str = (
-        'Accumulated histogram reshaped into a per-spatial-group spectrum.'
-    )
+    extra_description: str = ''
     default_rebin_factor: int = 1
+
+    @property
+    def output_description(self) -> str:
+        base = (
+            'Accumulated histogram reshaped into a per-spatial-group spectrum. '
+            'The last axis is the spectral coordinate of the input histogram '
+            '(time-of-arrival or wavelength, depending on the workflow mode).'
+        )
+        if self.extra_description:
+            return f'{base}\n\n{self.extra_description}'
+        return base
 
 
 def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:
