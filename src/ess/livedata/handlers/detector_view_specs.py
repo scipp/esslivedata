@@ -128,7 +128,7 @@ class SpectrumViewSpec:
     Parameters
     ----------
     transform:
-        Callable ``(histogram, rebin_factor) -> spectrum`` applied to the
+        Callable ``(histogram, rebin_factor) -> spectrum_view`` applied to the
         cumulative accumulated histogram. Transforms that do not need a
         rebin factor simply ignore the second argument.
     output_dims:
@@ -380,18 +380,18 @@ def make_detector_view_outputs(
 
 
 def make_detector_view_params(
-    spectrum: SpectrumViewSpec | None = None,
+    spectrum_view: SpectrumViewSpec | None = None,
 ) -> type[DetectorViewParams]:
     """Return a ``DetectorViewParams`` subclass, adding spectrum-specific fields.
 
-    When ``spectrum`` is provided, the subclass adds a ``spectrum_rebin``
+    When ``spectrum_view`` is provided, the subclass adds a ``spectrum_rebin``
     field so the runtime rebin factor can be exposed in the UI. Workflows
-    without spectrum keep the base ``DetectorViewParams`` unchanged.
+    without spectrum-view keep the base ``DetectorViewParams`` unchanged.
     """
-    if spectrum is None:
+    if spectrum_view is None:
         return DetectorViewParams
 
-    default_factor = spectrum.default_rebin_factor
+    default_factor = spectrum_view.default_rebin_factor
 
     def make_default_rebin() -> SpectrumViewRebin:
         return SpectrumViewRebin(factor=default_factor)
@@ -479,7 +479,7 @@ def register_detector_view_spec(
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
     aux_sources: AuxSources | None = None,
-    spectrum: SpectrumViewSpec | None = None,
+    spectrum_view: SpectrumViewSpec | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -503,11 +503,11 @@ def register_detector_view_spec(
         Optional auxiliary source specification. If None (default), uses
         DetectorROIAuxSources for ROI geometry streams. Instruments that need
         both ROI and position streams can subclass DetectorROIAuxSources.
-    spectrum:
+    spectrum_view:
         Optional spectrum-view configuration. When provided, the registered
         params/outputs include the spectrum-specific rebin param and the
         ``spectrum_view`` output field. The factory is still responsible for
-        wiring the transform into the Sciline workflow (pass ``spectrum`` on
+        wiring the transform into the Sciline workflow (pass ``spectrum_view`` on
         the Sciline ``GeometricViewConfig`` / ``LogicalViewConfig`` when
         constructing ``DetectorViewFactory``).
 
@@ -576,6 +576,8 @@ def register_detector_view_spec(
         description=description,
         source_names=source_names,
         aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
-        params=make_detector_view_params(spectrum=spectrum),
-        outputs=make_detector_view_outputs(roi_support=True, spectrum_view=spectrum),
+        params=make_detector_view_params(spectrum_view=spectrum_view),
+        outputs=make_detector_view_outputs(
+            roi_support=True, spectrum_view=spectrum_view
+        ),
     )

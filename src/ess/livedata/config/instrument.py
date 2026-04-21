@@ -319,7 +319,7 @@ class Instrument:
         outputs = make_detector_view_outputs(
             output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
         )
-        params = make_detector_view_params(spectrum=spectrum_view)
+        params = make_detector_view_params(spectrum_view=spectrum_view)
         handle = self.register_spec(
             namespace=namespace,
             name=name,
