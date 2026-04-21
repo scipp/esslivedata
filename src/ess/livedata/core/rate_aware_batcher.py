@@ -11,7 +11,7 @@ batch window — not when a fixed message count is reached.
 from __future__ import annotations
 
 import statistics
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -383,7 +383,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
 
-        self._streams: dict[StreamId, _GatedStream] = {}
+        self._streams: defaultdict[StreamId, _GatedStream] = defaultdict(_GatedStream)
 
         self._pending_batch_length: Duration | None = None
         self._active_window: _ActiveWindow | None = None
@@ -476,7 +476,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         for msg in messages:
             if msg.stream.kind in GATED_STREAM_KINDS:
-                self._stream(msg.stream).observe(msg)
+                self._streams[msg.stream].observe(msg)
         window = _ActiveWindow(
             start=window_start, end=window_start + self._batch_length
         )
@@ -484,15 +484,11 @@ class RateAwareMessageBatcher(MessageBatcher):
             stream.rebuild_grid(window.start, self._batch_length)
         return window
 
-    def _stream(self, sid: StreamId) -> _GatedStream:
-        """Return the gated-stream state for ``sid``, creating it on demand."""
-        return self._streams.setdefault(sid, _GatedStream())
-
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
         if msg.stream.kind not in GATED_STREAM_KINDS:
             self._non_gated.append(msg)
             return
-        stream = self._stream(msg.stream)
+        stream = self._streams[msg.stream]
         stream.observe(msg)
         overflow = stream.route(msg, window.start)
         if overflow is not None:
