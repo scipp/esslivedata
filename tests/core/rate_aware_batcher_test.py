@@ -1519,14 +1519,17 @@ class TestSubHzGatedStream:
         assert self.MON_HALF in batcher.tracked_streams
 
     def test_sub_hz_alone_delivered_via_timeout(self):
-        """Sub-Hz-only service: timeout drives closure; nothing dropped."""
+        """Sub-Hz-only service: timeout drives closure; nothing dropped.
+
+        Pulses at ``0, 2, ..., 10`` alternate empty/with-msg closures.  A
+        trailing HWM driver flushes the final pulse out of the active
+        window: without it the last pulse is held pending a next HWM
+        advance.
+        """
         batcher = RateAwareMessageBatcher(batch_length_s=1.0)  # default timeout
-        n = 10
         mon_period = 2_000_000_000
-        # 6 pulses covers 10 closures under the empty/with-msg alternation that
-        # sub-Hz-only delivery produces past the first two batches.
-        pulse_count = n // 2 + 1
-        schedule = [
+        pulse_count = 6
+        schedule: list[Message[str]] = [
             Message(
                 timestamp=Timestamp.from_ns(k * mon_period),
                 stream=self.MON_HALF,
@@ -1534,6 +1537,8 @@ class TestSubHzGatedStream:
             )
             for k in range(pulse_count)
         ]
+        schedule.append(hwm_trigger(11.0))
+        n = 11
         closed = _run_ticks(batcher, 0.0, schedule, n_batches=n, max_run_s=30.0)
         assert len(closed) == n
         mon_out = sum(
@@ -1541,6 +1546,54 @@ class TestSubHzGatedStream:
         )
         assert mon_out == pulse_count
         assert not batcher.is_gating(self.MON_HALF)
+
+    def test_future_timestamped_held_for_next_batch(self):
+        """Sub-Hz msg with ts past window.end (within cap) lands in next batch.
+
+        Parallels the non-gated guarantee: an ungridded stream's readings
+        must not mis-correlate with a window that ends before their ts.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        mon_msg = msg(t0 + 1.3, stream=self.MON_HALF)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, mon_msg])
+        assert r1 is not None
+        assert mon_msg not in r1.messages
+        assert len(r1.messages) == 14
+
+        det_next = msgs_at(14.0, start=t0 + 1.0, duration=1.0)
+        r2 = batcher.batch(det_next)
+        assert r2 is not None
+        assert mon_msg in r2.messages
+
+    def test_implausibly_future_timestamped_falls_through(self):
+        """Sub-Hz msg beyond the hold-back cap is delivered immediately.
+
+        Guards against a pathological timestamp caching messages indefinitely.
+        """
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        rogue = msg(t0 + 999.0, stream=self.MON_HALF)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, rogue])
+        assert r1 is not None
+        assert rogue in r1.messages
+
+    def test_held_message_delivered_via_gap_recovery(self):
+        """A held sub-Hz message re-routes correctly when the window jumps."""
+        batcher, t0 = make_converged_batcher(rate_hz=14.0)
+        held = msg(t0 + 2.5, stream=self.MON_HALF)
+        det_now = msgs_at(14.0, start=t0, duration=1.0)
+
+        r1 = batcher.batch([*det_now, held])
+        assert r1 is not None
+        assert held not in r1.messages
+
+        det_far = msgs_at(14.0, start=t0 + 10.0, duration=1.0)
+        r2 = batcher.batch(det_far)
+        assert r2 is not None
+        assert held in r2.messages
 
 
 class TestSubRateExclusion:

@@ -380,7 +380,7 @@
   <!-- 4. Overflow -->
   <div class="card">
     <h3>Overflow &mdash; future pulse re-routed</h3>
-    <p class="caption">Early arrival past the last slot is queued and routed into the next batch after close. Only gridded gated streams overflow; non-gated and sub-Hz streams always land in the current batch.</p>
+    <p class="caption">Early arrival past the last slot is queued and routed into the next batch after close. Only gridded gated streams enter <code>_overflow</code>; ungridded streams (non-gated or sub-Hz gated) past <code>window.end</code> take the separate hold-back path (see below).</p>
     <svg viewBox="0 0 560 110">
       <rect x="60" y="14" width="200" height="70" fill="var(--band-a)"/>
       <rect x="260" y="14" width="200" height="70" fill="var(--band-b)"/>
@@ -551,7 +551,7 @@
   <!-- 9. Non-gated ride-along -->
   <div class="card">
     <h3>Non-gated ride-along &mdash; clean closure with log traffic</h3>
-    <p class="caption">Log messages bypass the slot grid: appended to whatever batch is currently active, never routed by timestamp, never stashed. Det&rsquo;s slot gate closes each batch normally.</p>
+    <p class="caption">Log messages bypass the slot grid &mdash; no rate estimation, no slot routing. Msgs with <code>ts &le; window.end</code> join the active batch; msgs ahead of the window are held for the next one (same path sub-Hz gated streams take &mdash; see below). Det&rsquo;s slot gate closes each batch normally.</p>
     <svg viewBox="0 0 560 140">
       <rect x="60" y="14" width="140" height="100" fill="var(--band-a)"/>
       <rect x="200" y="14" width="140" height="100" fill="var(--band-b)"/>
@@ -603,7 +603,7 @@
   <!-- 10. Sub-Hz stream -->
   <div class="card">
     <h3>Sub-Hz stream &mdash; non-gating ride-along</h3>
-    <p class="caption">0.5 Hz monitor: rate too low to build a grid. Each message is appended to whichever batch is active at receipt time (no slot routing, no overflow stashing). Det&rsquo;s slot gate closes every batch.</p>
+    <p class="caption">0.5 Hz monitor: rate too low to build a grid. No slot routing, no overflow stashing; msgs with <code>ts &le; window.end</code> join the active batch and msgs ahead of the window are held for the next one (same path as non-gated &mdash; see below). Det&rsquo;s slot gate closes every batch.</p>
     <svg viewBox="0 0 560 140">
       <rect x="60" y="14" width="100" height="100" fill="var(--band-a)"/>
       <rect x="160" y="14" width="100" height="100" fill="var(--band-b)"/>
@@ -650,6 +650,50 @@
         <text x="260" y="128" text-anchor="middle">2s</text>
         <text x="360" y="128" text-anchor="middle">3s</text>
         <text x="460" y="128" text-anchor="middle">4s</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- Future ungridded hold-back -->
+  <div class="card">
+    <h3>Future ungridded &mdash; held for next window</h3>
+    <p class="caption">Ungridded msg (non-gated, or sub-Hz gated) with <code>ts &gt; window.end</code> sits in <code>_future</code> and re-routes at close, so a future-ts reading doesn&rsquo;t mis-correlate with this batch&rsquo;s detector data. Capped at <code>3&middot;batch_length</code> ahead: beyond that the ts is implausibly far and the msg falls through to the active batch &mdash; a bad epoch can&rsquo;t cache messages indefinitely.</p>
+    <svg viewBox="0 0 560 140">
+      <rect x="60" y="14" width="180" height="100" fill="var(--band-a)"/>
+      <rect x="240" y="14" width="180" height="100" fill="var(--band-b)"/>
+      <text x="8" y="42" font-size="11" fill="var(--det)" font-weight="600">det</text>
+      <text x="8" y="82" font-size="11" fill="var(--log)" font-weight="600">log</text>
+      <g fill="var(--det)">
+        <circle cx="75" cy="38" r="2.5"/><circle cx="95" cy="38" r="2.5"/><circle cx="115" cy="38" r="2.5"/>
+        <circle cx="135" cy="38" r="2.5"/><circle cx="155" cy="38" r="2.5"/><circle cx="175" cy="38" r="2.5"/>
+        <circle cx="195" cy="38" r="2.5"/><circle cx="215" cy="38" r="2.5"/><circle cx="235" cy="38" r="2.5"/>
+        <circle cx="255" cy="38" r="2.5"/><circle cx="275" cy="38" r="2.5"/><circle cx="295" cy="38" r="2.5"/>
+        <circle cx="315" cy="38" r="2.5"/><circle cx="335" cy="38" r="2.5"/>
+        <circle cx="355" cy="38" r="2.5"/><circle cx="375" cy="38" r="2.5"/><circle cx="395" cy="38" r="2.5"/>
+        <circle cx="415" cy="38" r="2.5"/>
+      </g>
+      <!-- log1: within window 1, delivered in current batch -->
+      <g fill="var(--log)">
+        <circle cx="130" cy="78" r="3.5"/>
+      </g>
+      <text x="130" y="100" text-anchor="middle" font-size="9" fill="var(--muted)">ts &le; end · current batch</text>
+      <!-- log2: arrives during window 1 with ts in window 2 → held, then delivered on close -->
+      <circle cx="205" cy="78" r="3.5" fill="none" stroke="var(--log)" stroke-dasharray="2 2"/>
+      <text x="205" y="100" text-anchor="middle" font-size="9" fill="var(--muted)">arrives &middot; held</text>
+      <line x1="213" y1="78" x2="310" y2="78" stroke="var(--muted)" stroke-width="1"/>
+      <polygon points="312,78 306,75 306,81" fill="var(--muted)"/>
+      <g fill="var(--log)">
+        <circle cx="320" cy="78" r="3.5"/>
+      </g>
+      <text x="320" y="100" text-anchor="middle" font-size="9" fill="var(--muted)">delivered on close</text>
+      <!-- closes -->
+      <line x1="240" y1="14" x2="240" y2="114" stroke="var(--close)" stroke-width="2" stroke-dasharray="3 2"/>
+      <line x1="420" y1="14" x2="420" y2="114" stroke="var(--close)" stroke-width="2" stroke-dasharray="3 2"/>
+      <line x1="60" y1="114" x2="420" y2="114" stroke="var(--ink)" stroke-width="0.8"/>
+      <g font-size="10" fill="var(--muted)">
+        <text x="60" y="128" text-anchor="middle">0</text>
+        <text x="240" y="128" text-anchor="middle">1s</text>
+        <text x="420" y="128" text-anchor="middle">2s</text>
       </g>
     </svg>
   </div>
@@ -848,7 +892,8 @@
 
 <div style="margin-top: 18px; font-size: 11px; color: var(--muted); line-height: 1.55;">
   <strong>Invariants:</strong>
-  every ungated stream delivers opportunistically, never blocks closure &middot;
+  no ungated stream blocks closure &middot;
+  ungridded msgs (non-gated or sub-Hz gated) ahead of the window are held (up to 3·batch_length) and flow into the next batch; beyond that cap they fall through to the active batch &middot;
   gated stream must fill last slot OR be evicted/demoted &middot;
   new HWM clamped toward start + 3·batch_length (self-heals within a few closes) &middot;
   grid origin preserved across batch-length changes when plausible.

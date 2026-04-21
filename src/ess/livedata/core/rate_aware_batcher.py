@@ -391,7 +391,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._high_water_mark: Timestamp | None = None
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
-        self._future_non_gated: list[Message[Any]] = []
+        self._future: list[Message[Any]] = []
 
     @property
     def batch_length_s(self) -> float:
@@ -494,30 +494,37 @@ class RateAwareMessageBatcher(MessageBatcher):
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
-        if msg.stream.kind not in GATED_STREAM_KINDS:
-            self._route_non_gated(msg, window)
+        """Bucket a message by stream kind and timestamp relative to the window.
+
+        Ungridded streams (non-gated kind OR sub-Hz gated without a grid) hold
+        messages with ``window.end < ts <= window.end + K * batch_length`` in
+        ``_future`` so batch contents stay bounded by the batch's time range.
+        ``K`` reuses ``_MAX_HWM_PAST_WINDOW_BATCHES``: beyond that, a timestamp
+        is implausibly far and the message falls through to the active batch,
+        preventing a pathological timestamp (epoch bug, unit mismatch) from
+        caching messages indefinitely.
+
+        Gridded gated streams use the slot-based overflow path instead, which
+        drives gap recovery via ``_should_recover_from_gap``.
+        """
+        is_gated = msg.stream.kind in GATED_STREAM_KINDS
+        stream = self._streams[msg.stream] if is_gated else None
+        if (stream is None or stream.grid is None) and self._is_future(msg, window):
+            self._future.append(msg)
             return
-        overflow = self._streams[msg.stream].route(msg, window.start)
+        if stream is None:
+            self._non_gated.append(msg)
+            return
+        overflow = stream.route(msg, window.start)
         if overflow is not None:
             self._overflow.append(overflow)
 
-    def _route_non_gated(self, msg: Message[Any], window: _ActiveWindow) -> None:
-        """Bucket non-gated messages by timestamp relative to the active window.
-
-        Messages with ``ts <= window.end`` join the active batch.  Messages with
-        ``window.end < ts <= window.end + K * batch_length`` are held for the
-        next window so batch contents stay bounded by the batch's time range.
-        ``K`` reuses ``_MAX_HWM_PAST_WINDOW_BATCHES``: beyond that, a timestamp
-        is implausibly far and the message falls through to the active batch,
-        ensuring a pathological timestamp (epoch bug, unit mismatch) cannot
-        cache messages indefinitely.
-        """
-        if msg.timestamp > window.end:
-            cap = _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length
-            if msg.timestamp - window.end <= cap:
-                self._future_non_gated.append(msg)
-                return
-        self._non_gated.append(msg)
+    def _is_future(self, msg: Message[Any], window: _ActiveWindow) -> bool:
+        """True if ``msg`` belongs in a future window within the hold-back cap."""
+        if not (msg.timestamp > window.end):
+            return False
+        cap = _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length
+        return msg.timestamp - window.end <= cap
 
     def _is_batch_complete(self, window: _ActiveWindow) -> bool:
         if self._high_water_mark is not None:
@@ -562,8 +569,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         stashed = self._drain_window()
         pending = self._overflow
         self._overflow = []
-        future = self._future_non_gated
-        self._future_non_gated = []
+        future = self._future
+        self._future = []
 
         earliest = min(m.timestamp for m in pending)
         gap_ns = (earliest - window.start).to_ns()
@@ -602,8 +609,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow = []
         for msg in overflow:
             self._route_message(msg, new_window)
-        future = self._future_non_gated
-        self._future_non_gated = []
+        future = self._future
+        self._future = []
         for msg in future:
             self._route_message(msg, new_window)
 
