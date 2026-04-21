@@ -22,6 +22,7 @@ from ..accumulators import make_no_copy_accumulator_pair
 from ..detector_view_specs import DetectorViewParams
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
+from .providers import spectrum_view
 from .types import (
     AccumulatedHistogram,
     CountsInRange,
@@ -36,6 +37,9 @@ from .types import (
     ROIRectangleReadback,
     ROIRectangleRequest,
     ROISpectra,
+    SpectrumView,
+    SpectrumViewSpatialRebin,
+    SpectrumViewTransform,
     TransformValueLog,
     TransformValueStream,
     UsePixelWeighting,
@@ -206,6 +210,12 @@ class DetectorViewFactory:
             'counts_total_cumulative': CountsTotal[Cumulative],
             'counts_in_toa_range_cumulative': CountsInRange[Cumulative],
         }
+
+        if config.spectrum_view is not None:
+            workflow.insert(spectrum_view)
+            workflow[SpectrumViewTransform] = config.spectrum_view.transform
+            workflow[SpectrumViewSpatialRebin] = params.spectrum_rebin.factor
+            target_keys['spectrum_view'] = SpectrumView
         context_keys: dict[str, type] = {}
         window_outputs = (
             'current',

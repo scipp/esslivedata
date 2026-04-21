@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections import UserDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 
 import pydantic
 import scipp as sc
@@ -45,6 +48,7 @@ class LogicalViewConfig:
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
+    spectrum_view: SpectrumViewSpec | None = None
 
 
 class InstrumentRegistry(UserDict[str, 'Instrument']):
@@ -258,6 +262,7 @@ class Instrument:
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
+        spectrum_view: SpectrumViewSpec | None = None,
     ) -> SpecHandle:
         """
         Register a logical detector view.
@@ -295,6 +300,10 @@ class Instrument:
             Dimension(s) to sum over after applying transform. If specified,
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
+        spectrum_view:
+            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+            derived from the cumulative accumulated histogram via a
+            per-instrument transform.
 
         Returns
         -------
@@ -303,11 +312,14 @@ class Instrument:
         """
         from ess.livedata.handlers.detector_view_specs import (
             DetectorROIAuxSources,
-            DetectorViewParams,
             make_detector_view_outputs,
+            make_detector_view_params,
         )
 
-        outputs = make_detector_view_outputs(output_ndim, roi_support=roi_support)
+        outputs = make_detector_view_outputs(
+            output_ndim, roi_support=roi_support, spectrum=spectrum_view
+        )
+        params = make_detector_view_params(spectrum=spectrum_view)
         handle = self.register_spec(
             namespace=namespace,
             name=name,
@@ -316,7 +328,7 @@ class Instrument:
             description=description,
             source_names=list(source_names),
             aux_sources=DetectorROIAuxSources() if roi_support else None,
-            params=DetectorViewParams,
+            params=params,
             outputs=outputs,
         )
         self._logical_view_handles[name] = handle
@@ -330,6 +342,7 @@ class Instrument:
                 roi_support=roi_support,
                 output_ndim=output_ndim,
                 reduction_dim=reduction_dim,
+                spectrum_view=spectrum_view,
             )
         )
         return handle
@@ -439,13 +452,12 @@ class Instrument:
 
             for config in self._logical_views:
                 handle = self._logical_view_handles[config.name]
-                # Create view config for this logical view
                 view_config = ScilineLogicalViewConfig(
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
                     roi_support=config.roi_support,
+                    spectrum=config.spectrum_view,
                 )
-                # Create factory with InstrumentDetectorSource for dynamic lookup
                 factory = DetectorViewFactory(
                     data_source=InstrumentDetectorSource(self),
                     view_config=view_config,

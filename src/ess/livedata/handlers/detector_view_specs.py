@@ -13,6 +13,8 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -106,6 +108,48 @@ class DetectorViewParams(pydantic.BaseModel):
                     if self.wavelength_range.enabled
                     else None
                 )
+
+
+class SpectrumViewRebin(pydantic.BaseModel):
+    """Runtime spatial rebin configuration for a spectrum view."""
+
+    factor: int = pydantic.Field(
+        default=1,
+        ge=1,
+        title='Rebin factor',
+        description='Group this many adjacent bins along the rebinned spatial dim.',
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SpectrumViewSpec:
+    """Per-instrument configuration enabling a spectrum-view output.
+
+    Parameters
+    ----------
+    transform:
+        Callable ``(histogram, rebin_factor) -> spectrum`` applied to the
+        cumulative accumulated histogram. Transforms that do not need a
+        rebin factor simply ignore the second argument.
+    output_dims:
+        Output dimension names, used for the template of the ``spectrum_view``
+        field in the workflow outputs.
+    output_title:
+        Human-readable title for the output field.
+    output_description:
+        Description for the output field.
+    default_rebin_factor:
+        Default value for the runtime ``spectrum_rebin.factor`` parameter.
+        Transforms that ignore the rebin factor can leave the default at 1.
+    """
+
+    transform: Callable[[sc.DataArray, int], sc.DataArray]
+    output_dims: list[str]
+    output_title: str = 'Spectrum view'
+    output_description: str = (
+        'Accumulated histogram reshaped into a per-spatial-group spectrum.'
+    )
+    default_rebin_factor: int = 1
 
 
 def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:
@@ -234,10 +278,18 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     )
 
 
+def _make_spectrum_template(output_dims: list[str]) -> sc.DataArray:
+    ndim = len(output_dims)
+    return sc.DataArray(
+        sc.zeros(dims=output_dims, shape=[0] * ndim, unit='counts'),
+    )
+
+
 def make_detector_view_outputs(
     output_ndim: int | None = None,
     *,
     roi_support: bool = True,
+    spectrum: SpectrumViewSpec | None = None,
 ) -> type[DetectorViewOutputsBase]:
     """
     Create a DetectorViewOutputs subclass with the appropriate configuration.
@@ -252,39 +304,94 @@ def make_detector_view_outputs(
         Whether to include ROI-related outputs. If False, the returned class
         will not include roi_spectra_current, roi_spectra_cumulative,
         roi_rectangle, or roi_polygon fields.
+    spectrum:
+        Optional spectrum view configuration. When provided, the returned
+        class includes an additional ``spectrum_view`` field with a template
+        matching ``spectrum.output_dims``.
 
     Returns
     -------
     :
         A subclass of DetectorViewOutputsBase with appropriate configuration.
     """
-    base_class = DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+    base_class: type[DetectorViewOutputsBase] = (
+        DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+    )
 
-    if output_ndim is None:
+    if output_ndim is None and spectrum is None:
         return base_class
 
-    def make_cumulative_template() -> sc.DataArray:
-        return _make_nd_template(output_ndim)
+    if output_ndim is not None:
 
-    def make_current_template() -> sc.DataArray:
-        return _make_nd_template(output_ndim, with_time_coord=True)
+        def make_cumulative_template() -> sc.DataArray:
+            return _make_nd_template(output_ndim)
 
-    class CustomDetectorViewOutputs(base_class):  # type: ignore[valid-type]
-        cumulative: sc.DataArray = pydantic.Field(
-            title='Image (cumulative)',
-            description='Detector image accumulated since the start of the run.',
-            default_factory=make_cumulative_template,
+        def make_current_template() -> sc.DataArray:
+            return _make_nd_template(output_ndim, with_time_coord=True)
+
+        class _WithNdim(base_class):  # type: ignore[valid-type,misc]
+            cumulative: sc.DataArray = pydantic.Field(
+                title='Image (cumulative)',
+                description='Detector image accumulated since the start of the run.',
+                default_factory=make_cumulative_template,
+            )
+            current: sc.DataArray = pydantic.Field(
+                title='Image (current)',
+                description=(
+                    'Detector image for the latest update interval only. '
+                    'Resets each update interval.'
+                ),
+                default_factory=make_current_template,
+            )
+
+        base_class = _WithNdim
+
+    if spectrum is not None:
+        output_dims = list(spectrum.output_dims)
+
+        def make_spectrum_template() -> sc.DataArray:
+            return _make_spectrum_template(output_dims)
+
+        title = spectrum.output_title
+        description = spectrum.output_description
+
+        class _WithSpectrum(base_class):  # type: ignore[valid-type,misc]
+            spectrum_view: sc.DataArray = pydantic.Field(
+                title=title,
+                description=description,
+                default_factory=make_spectrum_template,
+            )
+
+        base_class = _WithSpectrum
+
+    return base_class
+
+
+def make_detector_view_params(
+    spectrum: SpectrumViewSpec | None = None,
+) -> type[DetectorViewParams]:
+    """Return a ``DetectorViewParams`` subclass, adding spectrum-specific fields.
+
+    When ``spectrum`` is provided, the subclass adds a ``spectrum_rebin``
+    field so the runtime rebin factor can be exposed in the UI. Workflows
+    without spectrum keep the base ``DetectorViewParams`` unchanged.
+    """
+    if spectrum is None:
+        return DetectorViewParams
+
+    default_factor = spectrum.default_rebin_factor
+
+    def make_default_rebin() -> SpectrumViewRebin:
+        return SpectrumViewRebin(factor=default_factor)
+
+    class DetectorViewWithSpectrumParams(DetectorViewParams):
+        spectrum_rebin: SpectrumViewRebin = pydantic.Field(
+            title='Spectrum rebin',
+            description='Spatial rebin applied by the spectrum-view transform.',
+            default_factory=make_default_rebin,
         )
-        current: sc.DataArray = pydantic.Field(
-            title='Image (current)',
-            description=(
-                'Detector image for the latest update interval only. '
-                'Resets each update interval.'
-            ),
-            default_factory=make_current_template,
-        )
 
-    return CustomDetectorViewOutputs
+    return DetectorViewWithSpectrumParams
 
 
 class DetectorROIAuxSources(AuxSources):
@@ -360,6 +467,7 @@ def register_detector_view_spec(
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
     aux_sources: AuxSources | None = None,
+    spectrum: SpectrumViewSpec | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -383,6 +491,13 @@ def register_detector_view_spec(
         Optional auxiliary source specification. If None (default), uses
         DetectorROIAuxSources for ROI geometry streams. Instruments that need
         both ROI and position streams can subclass DetectorROIAuxSources.
+    spectrum:
+        Optional spectrum-view configuration. When provided, the registered
+        params/outputs include the spectrum-specific rebin param and the
+        ``spectrum_view`` output field. The factory is still responsible for
+        wiring the transform into the Sciline workflow (pass ``spectrum`` on
+        the Sciline ``GeometricViewConfig`` / ``LogicalViewConfig`` when
+        constructing ``DetectorViewFactory``).
 
     Returns
     -------
@@ -449,6 +564,6 @@ def register_detector_view_spec(
         description=description,
         source_names=source_names,
         aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
-        params=DetectorViewParams,
-        outputs=DetectorViewOutputs,
+        params=make_detector_view_params(spectrum=spectrum),
+        outputs=make_detector_view_outputs(roi_support=True, spectrum=spectrum),
     )
