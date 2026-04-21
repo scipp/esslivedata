@@ -301,7 +301,7 @@ def make_detector_view_outputs(
     output_ndim: int | None = None,
     *,
     roi_support: bool = True,
-    spectrum: SpectrumViewSpec | None = None,
+    spectrum_view: SpectrumViewSpec | None = None,
 ) -> type[DetectorViewOutputsBase]:
     """
     Create a DetectorViewOutputs subclass with the appropriate configuration.
@@ -316,10 +316,10 @@ def make_detector_view_outputs(
         Whether to include ROI-related outputs. If False, the returned class
         will not include roi_spectra_current, roi_spectra_cumulative,
         roi_rectangle, or roi_polygon fields.
-    spectrum:
+    spectrum_view:
         Optional spectrum view configuration. When provided, the returned
         class includes an additional ``spectrum_view`` field with a template
-        matching ``spectrum.output_dims``.
+        matching ``spectrum_view.output_dims``.
 
     Returns
     -------
@@ -330,7 +330,7 @@ def make_detector_view_outputs(
         DetectorViewOutputs if roi_support else DetectorViewOutputsBase
     )
 
-    if output_ndim is None and spectrum is None:
+    if output_ndim is None and spectrum_view is None:
         return base_class
 
     if output_ndim is not None:
@@ -358,14 +358,14 @@ def make_detector_view_outputs(
 
         base_class = _WithNdim
 
-    if spectrum is not None:
-        output_dims = list(spectrum.output_dims)
+    if spectrum_view is not None:
+        output_dims = list(spectrum_view.output_dims)
 
         def make_spectrum_template() -> sc.DataArray:
             return _make_spectrum_template(output_dims)
 
-        title = spectrum.output_title
-        description = spectrum.output_description
+        title = spectrum_view.output_title
+        description = spectrum_view.output_description
 
         class _WithSpectrum(base_class):  # type: ignore[valid-type,misc]
             spectrum_view: sc.DataArray = pydantic.Field(
@@ -577,5 +577,5 @@ def register_detector_view_spec(
         source_names=source_names,
         aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
         params=make_detector_view_params(spectrum=spectrum),
-        outputs=make_detector_view_outputs(roi_support=True, spectrum=spectrum),
+        outputs=make_detector_view_outputs(roi_support=True, spectrum_view=spectrum),
     )
