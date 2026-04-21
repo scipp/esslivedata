@@ -320,17 +320,27 @@ class RateAwareMessageBatcher(MessageBatcher):
             elif self._high_water_mark < latest:
                 self._high_water_mark = self._clamped_hwm(latest)
 
-        if self._active_window is None:
-            return self._start_first_batch(messages)
+        window = self._active_window
+        if window is None:
+            if not messages:
+                return None
+            start_time = min(m.timestamp for m in messages)
+            end_time = max(m.timestamp for m in messages)
+            self._active_window = self._start_active_window(
+                messages, window_start=end_time
+            )
+            return MessageBatch(
+                start_time=start_time, end_time=end_time, messages=messages
+            )
 
         for msg in messages:
-            self._route_message(msg)
+            self._route_message(msg, window)
 
-        if self._should_recover_from_gap():
-            self._recover_from_gap()
+        if self._should_recover_from_gap(window):
+            window = self._recover_from_gap(window)
 
-        if self._is_batch_complete():
-            return self._close_batch()
+        if self._is_batch_complete(window):
+            return self._close_batch(window)
         return None
 
     def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
@@ -351,28 +361,28 @@ class RateAwareMessageBatcher(MessageBatcher):
         max_allowed = self._active_window.start + cap
         return min(latest, max(max_allowed, self._high_water_mark))
 
-    def _start_first_batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        if not messages:
-            return None
+    def _start_active_window(
+        self, messages: list[Message[Any]], *, window_start: Timestamp
+    ) -> _ActiveWindow:
+        """Bootstrap the active window from the first batch of messages.
+
+        Seeds estimators from gated-stream arrivals, creates the window
+        at ``window_start`` (typically the max input timestamp, so the
+        window opens immediately after the startup flush), and builds
+        grids for any streams whose estimators already converged.
+        """
         for msg in messages:
             if msg.stream.kind in GATED_STREAM_KINDS:
                 self._estimators[msg.stream].observe(msg.timestamp.to_ns())
-        start_time = min(msg.timestamp for msg in messages)
-        end_time = max(msg.timestamp for msg in messages)
-        batch = MessageBatch(
-            start_time=start_time, end_time=end_time, messages=messages
+        window = _ActiveWindow(
+            start=window_start, end=window_start + self._batch_length
         )
-        self._active_window = _ActiveWindow(
-            start=end_time, end=end_time + self._batch_length
-        )
-        self._rebuild_grids()
-        return batch
+        for sid in list(self._estimators):
+            self._update_grid(sid, window.buckets.get(sid), window.start)
+        return window
 
-    def _route_message(self, msg: Message[Any]) -> None:
-        if self._active_window is None:
-            raise RuntimeError("No active window when routing message")
-
-        bucket = self._active_window.bucket(msg.stream)
+    def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
+        bucket = window.bucket(msg.stream)
 
         if msg.stream.kind not in GATED_STREAM_KINDS:
             bucket.add(msg)
@@ -385,7 +395,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             bucket.add(msg)
             return
 
-        slot = grid.slot_in_batch(msg.timestamp, self._active_window.start)
+        slot = grid.slot_in_batch(msg.timestamp, window.start)
         if slot >= grid.slots_per_batch:
             self._overflow.append(msg)
             if grid.slots_per_batch - 1 > bucket.max_slot:
@@ -393,14 +403,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         else:
             bucket.add(msg, slot)
 
-    def _is_batch_complete(self) -> bool:
-        if self._active_window is None:
-            return False
-
+    def _is_batch_complete(self, window: _ActiveWindow) -> bool:
         if self._high_water_mark is not None:
-            threshold = self._active_window.start + Duration.from_seconds(
-                self.timeout_s
-            )
+            threshold = window.start + Duration.from_seconds(self.timeout_s)
             if not self._high_water_mark < threshold:
                 return True
 
@@ -408,12 +413,12 @@ class RateAwareMessageBatcher(MessageBatcher):
             return False
 
         for sid, grid in self._grids.items():
-            bucket = self._active_window.buckets.get(sid)
+            bucket = window.buckets.get(sid)
             if bucket is None or bucket.max_slot < grid.slots_per_batch - 1:
                 return False
         return True
 
-    def _should_recover_from_gap(self) -> bool:
+    def _should_recover_from_gap(self, window: _ActiveWindow) -> bool:
         """True if gated overflow exists but no gated stream has contributed.
 
         This indicates the window is lagging behind live traffic: every
@@ -421,15 +426,15 @@ class RateAwareMessageBatcher(MessageBatcher):
         overflowed rather than routed into the window.  Caller advances
         the window past the gap.
         """
-        if not self._overflow or self._active_window is None:
+        if not self._overflow:
             return False
         for sid in self._grids:
-            bucket = self._active_window.buckets.get(sid)
+            bucket = window.buckets.get(sid)
             if bucket is not None and bucket.messages:
                 return False
         return True
 
-    def _recover_from_gap(self) -> None:
+    def _recover_from_gap(self, window: _ActiveWindow) -> _ActiveWindow:
         """Advance the window past a detected gap, then re-route stashed traffic.
 
         Collects non-gated/ungridded messages already bucketed in the window
@@ -439,46 +444,40 @@ class RateAwareMessageBatcher(MessageBatcher):
         are cleared -- re-routing recomputes slot placement from scratch
         against the same ``start_time``.
         """
-        if self._active_window is None:
-            return
-        stashed = self._active_window.flatten()
+        stashed = window.flatten()
         pending = self._overflow
         self._overflow = []
 
         earliest = min(m.timestamp for m in pending)
-        gap_ns = (earliest - self._active_window.start).to_ns()
+        gap_ns = (earliest - window.start).to_ns()
         batch_ns = self._batch_length.to_ns()
         steps = max(gap_ns // batch_ns, 0)
         if steps > 0:
-            new_start = self._active_window.start + Duration.from_ns(steps * batch_ns)
-            self._active_window = _ActiveWindow(
-                start=new_start, end=new_start + self._batch_length
-            )
+            new_start = window.start + Duration.from_ns(steps * batch_ns)
+            window = _ActiveWindow(start=new_start, end=new_start + self._batch_length)
         else:
-            self._active_window.buckets = {}
+            window.buckets = {}
+        self._active_window = window
 
         for msg in stashed + pending:
-            self._route_message(msg)
+            self._route_message(msg, window)
+        return window
 
-    def _close_batch(self) -> MessageBatch:
-        if self._active_window is None:
-            raise RuntimeError("No active window when closing batch")
-        window = self._active_window
+    def _close_batch(self, window: _ActiveWindow) -> MessageBatch:
         batch = window.close()
 
         self._refresh_stream_registry(window)
 
         new_start = window.end
-        self._active_window = _ActiveWindow(
-            start=new_start, end=new_start + self._batch_length
-        )
+        new_window = _ActiveWindow(start=new_start, end=new_start + self._batch_length)
+        self._active_window = new_window
         # Drain overflow into the new window.  Timestamps that still fall
         # past the last slot land back in ``_overflow`` and wait for the
         # next close; gap recovery handles jumps larger than one batch.
         overflow = self._overflow
         self._overflow = []
         for msg in overflow:
-            self._route_message(msg)
+            self._route_message(msg, new_window)
 
         return batch
 
@@ -517,15 +516,6 @@ class RateAwareMessageBatcher(MessageBatcher):
             # grid, and that stream is not in ``self._grids``.
             for sid in list(self._estimators):
                 self._update_grid(sid, window.buckets.get(sid), window.start)
-
-    def _rebuild_grids(self) -> None:
-        """Update grids for all observed streams from current estimator state."""
-        if self._active_window is None:
-            return
-        for sid in list(self._estimators):
-            self._update_grid(
-                sid, self._active_window.buckets.get(sid), self._active_window.start
-            )
 
     def _update_grid(
         self,
