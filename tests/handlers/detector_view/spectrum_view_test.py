@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for the unified spectrum-view output."""
 
+import pydantic
 import scipp as sc
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
@@ -10,7 +11,6 @@ from ess.livedata.handlers.detector_view.data_source import DetectorNumberSource
 from ess.livedata.handlers.detector_view.factory import DetectorViewFactory
 from ess.livedata.handlers.detector_view.types import LogicalViewConfig
 from ess.livedata.handlers.detector_view_specs import (
-    SpectrumViewRebin,
     SpectrumViewSpec,
     make_detector_view_params,
 )
@@ -18,14 +18,20 @@ from ess.livedata.handlers.detector_view_specs import (
 from .utils import make_fake_detector_number, make_fake_nexus_detector_data
 
 
-def _sum_y_transform(histogram: sc.DataArray, rebin: int) -> sc.DataArray:
-    """Sum the ``y`` dim; the ``rebin`` argument is intentionally ignored."""
+class _RebinParams(pydantic.BaseModel):
+    factor: int = pydantic.Field(default=1, ge=1)
+
+
+def _sum_y_transform(histogram: sc.DataArray) -> sc.DataArray:
+    """Sum the ``y`` dim; takes no runtime parameters."""
     return histogram.sum('y')
 
 
-def _rebin_x_transform(histogram: sc.DataArray, rebin: int) -> sc.DataArray:
-    """Group ``rebin`` adjacent bins along ``x`` (reshape + sum)."""
-    return histogram.fold('x', sizes={'x': -1, 'subpixel': rebin}).sum('subpixel')
+def _rebin_x_transform(histogram: sc.DataArray, params: _RebinParams) -> sc.DataArray:
+    """Group ``params.factor`` adjacent bins along ``x`` (reshape + sum)."""
+    return histogram.fold('x', sizes={'x': -1, 'subpixel': params.factor}).sum(
+        'subpixel'
+    )
 
 
 def _make_factory_with_spectrum(
@@ -71,10 +77,11 @@ class TestSpectrumViewIntegration:
         spec = SpectrumViewSpec(
             transform=_rebin_x_transform,
             output_dims=['y', 'x', 'time_of_arrival'],
+            params_model=_RebinParams,
         )
         factory = _make_factory_with_spectrum(spec, y_size=4, x_size=4)
         Params = make_detector_view_params(spectrum_view=spec)
-        params = Params(spectrum_rebin=SpectrumViewRebin(factor=2))
+        params = Params(spectrum_params=_RebinParams(factor=2))
         workflow = factory.make_workflow('detector', params=params)
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)

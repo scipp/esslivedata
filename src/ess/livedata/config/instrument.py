@@ -456,7 +456,7 @@ class Instrument:
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
                     roi_support=config.roi_support,
-                    spectrum=config.spectrum_view,
+                    spectrum_view=config.spectrum_view,
                 )
                 factory = DetectorViewFactory(
                     data_source=InstrumentDetectorSource(self),

@@ -110,17 +110,6 @@ class DetectorViewParams(pydantic.BaseModel):
                 )
 
 
-class SpectrumViewRebin(pydantic.BaseModel):
-    """Runtime spatial rebin configuration for a spectrum view."""
-
-    factor: int = pydantic.Field(
-        default=1,
-        ge=1,
-        title='Rebin factor',
-        description='Group this many adjacent bins along the rebinned spatial dim.',
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class SpectrumViewSpec:
     """Per-instrument configuration enabling a spectrum-view output.
@@ -128,9 +117,10 @@ class SpectrumViewSpec:
     Parameters
     ----------
     transform:
-        Callable ``(histogram, rebin_factor) -> spectrum_view`` applied to the
-        cumulative accumulated histogram. Transforms that do not need a
-        rebin factor simply ignore the second argument.
+        Callable applied to the cumulative accumulated histogram to produce
+        the spectrum view. Signature is ``(histogram,) -> spectrum_view`` when
+        ``params_model`` is ``None``, else ``(histogram, params) -> spectrum_view``
+        where ``params`` is an instance of ``params_model``.
     output_dims:
         Spatial output dimension names, used for the initial empty template of
         the ``spectrum_view`` field. The transform preserves the spectral axis
@@ -141,16 +131,27 @@ class SpectrumViewSpec:
     extra_description:
         Instrument-specific description appended as a second paragraph to the
         base description.
-    default_rebin_factor:
-        Default value for the runtime ``spectrum_rebin.factor`` parameter.
-        Transforms that ignore the rebin factor can leave the default at 1.
+    params_model:
+        Optional pydantic model carrying runtime parameters for the transform.
+        When provided, a ``spectrum_params`` field of this type is injected into
+        the generated ``DetectorViewParams`` subclass and passed to the
+        transform. When ``None`` (default), the transform takes only the
+        histogram and no parameter widget is shown in the UI.
+    params_title:
+        Title for the ``spectrum_params`` field (only used when ``params_model``
+        is set).
+    params_description:
+        Description for the ``spectrum_params`` field (only used when
+        ``params_model`` is set).
     """
 
-    transform: Callable[[sc.DataArray, int], sc.DataArray]
+    transform: Callable[..., sc.DataArray]
     output_dims: list[str]
     output_title: str = 'Spectrum view'
     extra_description: str = ''
-    default_rebin_factor: int = 1
+    params_model: type[pydantic.BaseModel] | None = None
+    params_title: str = 'Spectrum parameters'
+    params_description: str = 'Runtime parameters for the spectrum-view transform.'
 
     @property
     def output_description(self) -> str:
@@ -384,23 +385,24 @@ def make_detector_view_params(
 ) -> type[DetectorViewParams]:
     """Return a ``DetectorViewParams`` subclass, adding spectrum-specific fields.
 
-    When ``spectrum_view`` is provided, the subclass adds a ``spectrum_rebin``
-    field so the runtime rebin factor can be exposed in the UI. Workflows
-    without spectrum-view keep the base ``DetectorViewParams`` unchanged.
+    When ``spectrum_view.params_model`` is set, the subclass adds a
+    ``spectrum_params`` field of that model type so the runtime parameters can
+    be exposed in the UI. Workflows without spectrum-view (or whose spectrum
+    transform needs no runtime parameters) keep the base ``DetectorViewParams``
+    unchanged.
     """
-    if spectrum_view is None:
+    if spectrum_view is None or spectrum_view.params_model is None:
         return DetectorViewParams
 
-    default_factor = spectrum_view.default_rebin_factor
-
-    def make_default_rebin() -> SpectrumViewRebin:
-        return SpectrumViewRebin(factor=default_factor)
+    params_model = spectrum_view.params_model
+    title = spectrum_view.params_title
+    description = spectrum_view.params_description
 
     class DetectorViewWithSpectrumParams(DetectorViewParams):
-        spectrum_rebin: SpectrumViewRebin = pydantic.Field(
-            title='Spectrum rebin',
-            description='Spatial rebin applied by the spectrum-view transform.',
-            default_factory=make_default_rebin,
+        spectrum_params: params_model = pydantic.Field(  # type: ignore[valid-type]
+            title=title,
+            description=description,
+            default_factory=params_model,
         )
 
     return DetectorViewWithSpectrumParams

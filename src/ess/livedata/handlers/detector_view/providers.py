@@ -13,7 +13,6 @@ import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 from ess.reduce.unwrap.types import WavelengthDetector
 
-from ..detector_view_specs import SpectrumViewRebin
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     AccumulatedHistogram,
@@ -270,29 +269,29 @@ def counts_total(
 def spectrum_view(
     histogram: AccumulatedHistogram[Cumulative],
     transform: SpectrumViewTransform,
-    rebin: SpectrumViewRebin,
 ) -> SpectrumView:
     """
     Apply the per-instrument spectrum transform to the cumulative histogram.
 
     The transform typically sums over unwanted spatial dims and/or rebins
-    kept spatial dims, preserving the event coordinate axis.
+    kept spatial dims, preserving the event coordinate axis. When the
+    ``SpectrumViewSpec`` declares a ``params_model``, the factory binds the
+    runtime parameter instance into the callable before inserting it here.
 
     Parameters
     ----------
     histogram:
         Cumulative accumulated histogram (spatial dims + event coordinate).
     transform:
-        Callable ``(histogram, rebin) -> spectrum`` bound at spec time.
-    rebin:
-        Runtime rebin factor; ignored by transforms that do not need it.
+        Callable ``(histogram,) -> spectrum`` bound at workflow-construction
+        time.
 
     Returns
     -------
     :
         Spectrum view as a reshaped/partially-summed histogram.
     """
-    return SpectrumView(transform(histogram, rebin.factor))
+    return SpectrumView(transform(histogram))
 
 
 def counts_in_range(

@@ -19,7 +19,7 @@ from ..accumulators import make_no_copy_accumulator_pair
 
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
-from ..detector_view_specs import DetectorViewParams, SpectrumViewRebin
+from ..detector_view_specs import DetectorViewParams
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
@@ -212,8 +212,20 @@ class DetectorViewFactory:
 
         if config.spectrum_view is not None:
             workflow.insert(spectrum_view)
-            workflow[SpectrumViewTransform] = config.spectrum_view.transform
-            workflow[SpectrumViewRebin] = params.spectrum_rebin
+            raw_transform = config.spectrum_view.transform
+            if config.spectrum_view.params_model is not None:
+                spectrum_params = params.spectrum_params  # type: ignore[attr-defined]
+
+                def bound_spectrum_transform(
+                    histogram: sc.DataArray,
+                    _transform=raw_transform,
+                    _params=spectrum_params,
+                ) -> sc.DataArray:
+                    return _transform(histogram, _params)
+
+                workflow[SpectrumViewTransform] = bound_spectrum_transform
+            else:
+                workflow[SpectrumViewTransform] = raw_transform
             target_keys['spectrum_view'] = SpectrumView
         context_keys: dict[str, type] = {}
         window_outputs = (

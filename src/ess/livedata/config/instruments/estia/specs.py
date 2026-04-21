@@ -23,7 +23,7 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 
-def _estia_spectrum_transform(histogram: sc.DataArray, rebin: int) -> sc.DataArray:
+def _estia_spectrum_transform(histogram: sc.DataArray) -> sc.DataArray:
     """Sum over the ``strip`` axis (constant scattering angle)."""
     return histogram.sum('strip')
 

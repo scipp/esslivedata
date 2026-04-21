@@ -199,12 +199,13 @@ SpectrumView = NewType('SpectrumView', sc.DataArray)
 
 SpectrumViewTransform = NewType(
     'SpectrumViewTransform',
-    Callable[[sc.DataArray, int], sc.DataArray],
+    Callable[[sc.DataArray], sc.DataArray],
 )
 """Callable applied to AccumulatedHistogram[Cumulative] to produce SpectrumView.
 
-Signature: ``(histogram, rebin_factor) -> spectrum``. Instruments that do not
-need a rebin factor simply ignore the second argument.
+Signature: ``(histogram,) -> spectrum``. Runtime parameters declared via
+``SpectrumViewSpec.params_model`` are bound into this callable by the
+detector-view factory before insertion into the workflow.
 """
 
 

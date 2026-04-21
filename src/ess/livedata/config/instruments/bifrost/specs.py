@@ -377,16 +377,36 @@ def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataA
     )
 
 
-def _bifrost_spectrum_transform(histogram: sc.DataArray, rebin: int) -> sc.DataArray:
+class BifrostSpectrumParams(pydantic.BaseModel):
+    """Runtime parameters for the Bifrost spectrum-view transform."""
+
+    pixels_per_tube: int = pydantic.Field(
+        default=10,
+        title='Pixels per tube',
+        description='Number of output pixels per tube. Must be a divisor of 100.',
+    )
+
+    @pydantic.field_validator('pixels_per_tube')
+    @classmethod
+    def _pixels_per_tube_must_be_divisor_of_100(cls, v: int) -> int:
+        if v <= 0 or 100 % v != 0:
+            raise ValueError('pixels_per_tube must be a positive divisor of 100')
+        return v
+
+
+def _bifrost_spectrum_transform(
+    histogram: sc.DataArray, params: BifrostSpectrumParams
+) -> sc.DataArray:
     """Reshape the cumulative histogram into ``(arc, detector_number, toa)``.
 
-    ``detector_number_full`` is folded back into an outer detector_number
-    axis and an inner ``subpixel`` axis of size ``rebin``; summing over
-    ``subpixel`` yields ``100 // rebin`` pixels per tube.
+    ``detector_number_full`` is folded back into an outer ``detector_number``
+    axis of size ``pixels_per_tube`` and an inner ``subpixel`` axis;
+    summing over ``subpixel`` yields ``pixels_per_tube`` pixels per tube.
     """
+    subpixel = 100 // params.pixels_per_tube
     folded = histogram.fold(
         'detector_number_full',
-        sizes={'detector_number': -1, 'subpixel': rebin},
+        sizes={'detector_number': -1, 'subpixel': subpixel},
     )
     return folded.sum('subpixel')
 
@@ -403,10 +423,11 @@ unified_detector_view_handle = instrument.add_logical_view(
         transform=_bifrost_spectrum_transform,
         output_dims=['arc', 'detector_number'],
         extra_description=(
-            'Per-arc, per-pixel spectrum with adjacent pixels within a tube '
-            'grouped by the rebin factor.'
+            'Per-arc, per-pixel spectrum. Adjacent pixels within a tube are '
+            'grouped so each tube yields ``pixels_per_tube`` output pixels.'
         ),
-        default_rebin_factor=10,
+        params_model=BifrostSpectrumParams,
+        params_title='Spectrum view parameters',
     ),
 )
 
