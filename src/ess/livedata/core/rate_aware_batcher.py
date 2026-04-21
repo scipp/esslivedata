@@ -427,14 +427,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         if window is None:
             if not messages:
                 return None
-            start_time = min(m.timestamp for m in messages)
-            end_time = max(m.timestamp for m in messages)
-            self._active_window = self._start_active_window(
-                messages, window_start=end_time
-            )
-            return MessageBatch(
-                start_time=start_time, end_time=end_time, messages=messages
-            )
+            return self._bootstrap_batch(messages)
 
         for msg in messages:
             self._route_message(msg, window)
@@ -464,25 +457,25 @@ class RateAwareMessageBatcher(MessageBatcher):
         max_allowed = self._active_window.start + cap
         return min(latest, max(max_allowed, self._high_water_mark))
 
-    def _start_active_window(
-        self, messages: list[Message[Any]], *, window_start: Timestamp
-    ) -> _ActiveWindow:
-        """Bootstrap the active window from the first batch of messages.
+    def _bootstrap_batch(self, messages: list[Message[Any]]) -> MessageBatch:
+        """Flush the startup backlog and open the active window.
 
-        Seeds estimators from gated-stream arrivals, creates the window
-        at ``window_start`` (typically the max input timestamp, so the
-        window opens immediately after the startup flush), and builds
-        grids for any streams whose estimators already converged.
+        Seeds estimators from gated-stream arrivals, opens the window at
+        the max input timestamp (so it starts immediately after the
+        flush), builds grids for any streams whose estimators already
+        converged, and returns the flushed messages as the first batch.
         """
+        start_time = min(m.timestamp for m in messages)
+        end_time = max(m.timestamp for m in messages)
         for msg in messages:
             if msg.stream.kind in GATED_STREAM_KINDS:
                 self._streams[msg.stream].observe(msg)
-        window = _ActiveWindow(
-            start=window_start, end=window_start + self._batch_length
+        self._active_window = _ActiveWindow(
+            start=end_time, end=end_time + self._batch_length
         )
         for stream in self._streams.values():
-            stream.rebuild_grid(window.start, self._batch_length)
-        return window
+            stream.rebuild_grid(end_time, self._batch_length)
+        return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
         if msg.stream.kind not in GATED_STREAM_KINDS:
