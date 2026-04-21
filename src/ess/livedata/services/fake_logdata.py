@@ -10,13 +10,9 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
-<<<<<<< rate-aware-message-batcher-v2
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
-=======
 from ess.livedata.kafka.sink import KafkaSink
 from ess.livedata.kafka.sink_serializers import F144Serializer
->>>>>>> main
 from ess.livedata.logging_config import configure_logging
 
 
