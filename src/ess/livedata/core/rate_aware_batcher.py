@@ -355,7 +355,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         if not messages:
             return None
         for msg in messages:
-            if self._is_gated(msg.stream):
+            if msg.stream.kind in GATED_STREAM_KINDS:
                 self._estimators[msg.stream].observe(msg.timestamp.to_ns())
         start_time = min(msg.timestamp for msg in messages)
         end_time = max(msg.timestamp for msg in messages)
@@ -368,16 +368,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._rebuild_grids()
         return batch
 
-    def _is_gated(self, stream_id: StreamId) -> bool:
-        return stream_id.kind in GATED_STREAM_KINDS
-
     def _route_message(self, msg: Message[Any]) -> None:
         if self._active_window is None:
             raise RuntimeError("No active window when routing message")
 
         bucket = self._active_window.bucket(msg.stream)
 
-        if not self._is_gated(msg.stream):
+        if msg.stream.kind not in GATED_STREAM_KINDS:
             bucket.add(msg)
             return
 
@@ -494,7 +491,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         present_streams: set[StreamId] = set()
         for sid, bucket in window.buckets.items():
-            if not self._is_gated(sid) or not bucket.messages:
+            if sid.kind not in GATED_STREAM_KINDS or not bucket.messages:
                 continue
             present_streams.add(sid)
             self._absent_batches[sid] = 0
