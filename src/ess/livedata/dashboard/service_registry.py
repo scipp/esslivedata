@@ -19,7 +19,7 @@ SERVICE_HEARTBEAT_TIMEOUT_NS = 30_000_000_000
 
 def make_worker_key(status: ServiceStatus) -> str:
     """Create a unique key for a worker from its status."""
-    return f"{status.instrument}:{status.namespace}:{status.worker_id}"
+    return f"{status.instrument}:{status.service_name}:{status.worker_id}"
 
 
 class ServiceRegistry:
@@ -67,7 +67,7 @@ class ServiceRegistry:
         Parameters
         ----------
         worker_key
-            The worker key (instrument:namespace:worker_id) to check.
+            The worker key (instrument:service_name:worker_id) to check.
 
         Returns
         -------

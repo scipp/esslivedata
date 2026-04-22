@@ -133,32 +133,36 @@ def service_state_to_nicos_status_constant(state: ServiceState) -> NicosStatus:
 
 class ServiceServiceId(pydantic.BaseModel):
     """
-    Helper class for handling service_id in instrument:namespace:worker_id format.
+    Helper class for handling service_id in instrument:service_name:worker_id format.
 
     NICOS expects a format of device_name:signal_name. For service heartbeats, we use
-    instrument:namespace:worker_uuid to uniquely identify each worker.
+    instrument:service_name:worker_uuid to uniquely identify each worker.
     """
 
     instrument: str = pydantic.Field(description="Instrument name")
-    namespace: str = pydantic.Field(description="Service namespace")
+    service_name: str = pydantic.Field(description="Backend service name")
     worker_id: str = pydantic.Field(description="Worker UUID as string")
 
     @classmethod
     def from_string(cls, service_id: str) -> ServiceServiceId:
-        """Parse service_id string in format 'instrument:namespace:worker_id'."""
+        """Parse service_id string in format 'instrument:service_name:worker_id'."""
         try:
             # Split on colons - expect exactly 3 parts
             parts = service_id.rsplit(':', 2)
             if len(parts) != 3:
                 raise ValueError("Expected 3 colon-separated parts")
-            instrument, namespace, worker_id = parts
+            instrument, service_name, worker_id = parts
             # Validate worker_id is a valid UUID
             uuid.UUID(worker_id)
-            return cls(instrument=instrument, namespace=namespace, worker_id=worker_id)
+            return cls(
+                instrument=instrument,
+                service_name=service_name,
+                worker_id=worker_id,
+            )
         except (ValueError, TypeError) as e:
             raise ValueError(
                 f"Invalid service_id format '{service_id}'. "
-                "Expected 'instrument:namespace:worker_uuid'"
+                "Expected 'instrument:service_name:worker_uuid'"
             ) from e
 
     @classmethod
@@ -166,13 +170,13 @@ class ServiceServiceId(pydantic.BaseModel):
         """Create ServiceServiceId from ServiceStatus."""
         return cls(
             instrument=status.instrument,
-            namespace=status.namespace,
+            service_name=status.service_name,
             worker_id=status.worker_id,
         )
 
     def to_string(self) -> str:
-        """Convert to service_id string in format 'instrument:namespace:worker_id'."""
-        return f"{self.instrument}:{self.namespace}:{self.worker_id}"
+        """Convert to string in format 'instrument:service_name:worker_id'."""
+        return f"{self.instrument}:{self.service_name}:{self.worker_id}"
 
     def __str__(self) -> str:
         return self.to_string()
@@ -201,7 +205,7 @@ class ServiceStatusPayload(pydantic.BaseModel):
         default="service", description="Message type for explicit typing"
     )
     instrument: str = pydantic.Field(description="Instrument name")
-    namespace: str = pydantic.Field(description="Service namespace")
+    service_name: str = pydantic.Field(description="Backend service name")
     worker_id: str = pydantic.Field(description="Worker UUID as string")
     state: ServiceState = pydantic.Field(description="Current state of the service")
     started_at: Timestamp = pydantic.Field(description="Service start time")
@@ -237,7 +241,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
         default='0.0.0', description="Version of the software"
     )
     service_id: ServiceServiceId = pydantic.Field(
-        description="Service identifier as instrument:namespace:worker_id"
+        description="Service identifier as instrument:service_name:worker_id"
     )
     host_name: str = pydantic.Field(default='', description="Host name")
     process_id: int = pydantic.Field(default=0, description="Process ID")
@@ -292,7 +296,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
                 status=service_state_to_nicos_status_constant(status.state),
                 message=ServiceStatusPayload(
                     instrument=status.instrument,
-                    namespace=status.namespace,
+                    service_name=status.service_name,
                     worker_id=status.worker_id,
                     state=status.state,
                     started_at=status.started_at,
@@ -309,7 +313,7 @@ class ServiceStatusMessage(pydantic.BaseModel):
         message = self.status_json.message
         return ServiceStatus(
             instrument=message.instrument,
-            namespace=message.namespace,
+            service_name=message.service_name,
             worker_id=message.worker_id,
             state=message.state,
             started_at=message.started_at,
