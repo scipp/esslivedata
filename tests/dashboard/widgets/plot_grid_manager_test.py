@@ -373,8 +373,13 @@ class TestGridUpload:
         yaml_content = b"""
 title: Test Grid
 cells:
-  - config:
-      workflow_id: test
+  - layers:
+    - data_sources:
+        primary:
+          workflow_id: test
+          source_names: []
+          output_name: result
+      plot_name: image
 """  # Missing 'geometry' field
         original_title = grid_manager._title_input.value
 

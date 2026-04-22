@@ -48,6 +48,7 @@ from ess.livedata.config.roi_names import (
     get_roi_mapper,
 )
 
+from .data_roles import PRIMARY
 from .plots import Plotter, PresenterBase
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
@@ -590,7 +591,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         """Create a presenter for this plotter."""
 
     def compute(
-        self, data: dict[ResultKey, sc.DataArray], **kwargs
+        self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs
     ) -> dict[ResultKey, sc.DataArray]:
         """
         Extract data-dependent info and forward data to presenter.
@@ -601,17 +602,18 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         Parameters
         ----------
         data:
-            Dictionary with ROI readback data.
+            Role-grouped data; the ``primary`` role contains the ROI readback.
         **kwargs:
             Unused.
 
         Returns
         -------
         :
-            The input data, forwarded for potential future use by presenter.
+            The primary-role data, forwarded for potential future use by presenter.
         """
         del kwargs
-        data_key, da = next(iter(data.items()))
+        primary = data.get(PRIMARY, {})
+        data_key, da = next(iter(primary.items()))
 
         # Store data-dependent info for edit handler
         self._data_key = data_key
@@ -627,8 +629,8 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         )
 
         # Forward data (presenter may use in future)
-        self._set_cached_state(data)
-        return data
+        self._set_cached_state(primary)
+        return primary
 
     def _create_edit_handler(self) -> Callable[[dict], None]:
         """

@@ -170,11 +170,10 @@ class Service(ServiceBase):
 
     def _finalize_processor(self) -> None:
         """Finalize processor after the worker thread has joined."""
-        if hasattr(self._processor, 'finalize'):
-            try:
-                self._processor.finalize(error=self._worker_error)
-            except Exception:
-                self._logger.exception("Error finalizing processor")
+        try:
+            self._processor.finalize(error=self._worker_error)
+        except Exception:
+            self._logger.exception("Error finalizing processor")
 
     def _stop_impl(self) -> None:
         """Stop the service gracefully"""

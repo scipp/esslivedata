@@ -9,11 +9,13 @@ cells:
     col: 0
     row_span: 2
     col_span: 2
-  config:
-    workflow_id: bifrost/monitor_data/monitor_histogram/1
-    output_name: counts_in_toa_range
-    source_names:
-    - bragg_peak_monitor
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        output_name: counts_in_toa_range
+        source_names:
+        - bragg_peak_monitor
     plot_name: timeseries
     params:
       plot_aspect:
@@ -23,11 +25,13 @@ cells:
     col: 2
     row_span: 2
     col_span: 2
-  config:
-    workflow_id: bifrost/monitor_data/monitor_histogram/1
-    output_name: current
-    source_names:
-    - bragg_peak_monitor
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        output_name: current
+        source_names:
+        - bragg_peak_monitor
     plot_name: lines
     params:
       plot_aspect:
@@ -37,11 +41,13 @@ cells:
     col: 0
     row_span: 2
     col_span: 2
-  config:
-    workflow_id: bifrost/monitor_data/monitor_histogram/1
-    output_name: counts_total
-    source_names:
-    - bragg_peak_monitor
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        output_name: counts_total
+        source_names:
+        - bragg_peak_monitor
     plot_name: timeseries
     params:
       plot_aspect:
@@ -51,11 +57,13 @@ cells:
     col: 2
     row_span: 2
     col_span: 2
-  config:
-    workflow_id: bifrost/monitor_data/monitor_histogram/1
-    output_name: cumulative
-    source_names:
-    - bragg_peak_monitor
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        output_name: cumulative
+        source_names:
+        - bragg_peak_monitor
     plot_name: lines
     params:
       plot_aspect:

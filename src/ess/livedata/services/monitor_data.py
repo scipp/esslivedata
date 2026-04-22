@@ -24,7 +24,9 @@ def make_monitor_service_builder(
     stream_counter = StreamCounter()
     adapter = (
         RoutingAdapterBuilder(stream_mapping=scoped, stream_counter=stream_counter)
-        .with_routes_from_mapping()
+        .with_routes_from_mapping(
+            pixellated_sources=instrument_obj.pixellated_monitor_sources
+        )
         .with_livedata_commands_route()
         .with_run_control_route()
         .build()

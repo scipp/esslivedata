@@ -9,11 +9,13 @@ cells:
     col: 0
     row_span: 3
     col_span: 3
-  config:
-    workflow_id: bifrost/data_reduction/spectrum_view/1
-    output_name: spectrum_view
-    source_names:
-    - unified_detector
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: bifrost/data_reduction/spectrum_view/1
+        output_name: spectrum_view
+        source_names:
+        - unified_detector
     plot_name: slicer
     params:
       plot_aspect:

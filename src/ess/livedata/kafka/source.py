@@ -369,6 +369,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         Called by the lag monitor thread. Uses a short timeout to avoid
         blocking for too long if the broker is slow to respond.
         """
+        # The KafkaConsumer protocol only requires `consume`. `assignment` and
+        # `get_watermark_offsets` are provided by `confluent_kafka.Consumer`
+        # but not by minimal test consumers, in which case lag is unavailable.
         if not hasattr(self._consumer, 'assignment') or not hasattr(
             self._consumer, 'get_watermark_offsets'
         ):

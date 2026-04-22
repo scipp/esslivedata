@@ -606,7 +606,7 @@ class TestAdaptiveMessageBatcher:
         # so we can measure the next idle period from here
 
         current_length = batcher.batch_length_s
-        assert current_length == pytest.approx(2.828, rel=1e-2)
+        assert current_length == pytest.approx(40 / 14, rel=1e-5)
 
         # Report idle again to trigger the next de-escalation
         clock.advance(DEESCALATION_IDLE_WINDOWS * current_length + 0.01)

@@ -226,8 +226,8 @@ def register_monitor_workflow_specs(
         namespace='monitor_data',
         name='monitor_histogram',
         version=1,
-        title="Beam monitor data",
-        description="Histogrammed and time-integrated beam monitor data. The monitor "
+        title="Beam monitor",
+        description="Histogrammed and time-integrated beam monitor. The monitor "
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
         aux_sources=aux_sources,

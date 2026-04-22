@@ -40,7 +40,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
-from .styles import Colors
+from .styles import Colors, ModalSizing
 from .wizard import Wizard, WizardStep
 
 logger = structlog.get_logger(__name__)
@@ -821,7 +821,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             if not has_metadata:
                 self._content_container.append(
                     pn.pane.Markdown(
-                        "**⚠️ Could not determine output properties. "
+                        "**Warning: Could not determine output properties. "
                         "Some of these plotters may not work with the actual data.**",
                         styles={'color': '#ff6b35', 'margin-bottom': '10px'},
                     )
@@ -1337,8 +1337,8 @@ class PlotConfigModal:
             self._wizard.render(),
             name=modal_title,
             margin=20,
-            width=800,
-            height=800,
+            width=ModalSizing.WIDTH,
+            max_height=ModalSizing.MAX_HEIGHT,
         )
 
         # Watch for modal close events

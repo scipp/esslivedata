@@ -53,3 +53,8 @@ repos:
       - id: actionlint
         # Disable because of false-positive SC2046
         args: ["-shellcheck="]
+  - repo: https://github.com/lirantal/anti-trojan-source
+    rev: v1.8.1
+    hooks:
+      - id: anti-trojan-source
+        exclude: '^docs/_static/favicon\.ico$'

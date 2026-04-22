@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
+from contextlib import contextmanager
 
 import pytest
 import scipp as sc
@@ -28,6 +29,49 @@ def make_job_number() -> uuid.UUID:
 def make_service_registry() -> ServiceRegistry:
     """Create a service registry for testing."""
     return ServiceRegistry()
+
+
+class FakeJobOrchestrator:
+    """Fake job orchestrator that records processed acknowledgements."""
+
+    def __init__(self):
+        self.acknowledgements: list[tuple[str, str, str | None]] = []
+
+    def process_acknowledgement(
+        self, message_id: str, response: str, error_message: str | None = None
+    ) -> None:
+        """Record the processed acknowledgement."""
+        self.acknowledgements.append((message_id, response, error_message))
+
+
+class PermissiveJobRegistry:
+    """Accepts every job number; used where filtering is orthogonal to the test."""
+
+    def is_active(self, job_number: uuid.UUID) -> bool:
+        return True
+
+    @contextmanager
+    def ingestion_guard(self):
+        yield
+
+
+def _make_orchestrator(
+    *,
+    message_source,
+    data_service,
+    job_service,
+    service_registry=None,
+    job_orchestrator=None,
+    active_job_registry=None,
+) -> Orchestrator:
+    return Orchestrator(
+        message_source=message_source,
+        data_service=data_service,
+        job_service=job_service,
+        service_registry=service_registry or ServiceRegistry(),
+        job_orchestrator=job_orchestrator or FakeJobOrchestrator(),
+        active_job_registry=active_job_registry or PermissiveJobRegistry(),
+    )
 
 
 class FakeMessageSource:
@@ -75,11 +119,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         orchestrator.update()
@@ -90,11 +133,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -120,11 +162,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id1 = WorkflowId(
@@ -167,11 +208,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -202,11 +242,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -232,11 +271,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -261,11 +299,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
@@ -280,11 +317,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -325,11 +361,10 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
         )
 
         # Track transaction calls
@@ -363,19 +398,6 @@ class TestOrchestrator:
         assert result_key in data_service
 
 
-class FakeJobOrchestrator:
-    """Fake job orchestrator that records processed acknowledgements."""
-
-    def __init__(self):
-        self.acknowledgements: list[tuple[str, str, str | None]] = []
-
-    def process_acknowledgement(
-        self, message_id: str, response: str, error_message: str | None = None
-    ) -> None:
-        """Record the processed acknowledgement."""
-        self.acknowledgements.append((message_id, response, error_message))
-
-
 class TestOrchestratorAcknowledgementProcessing:
     def test_forward_with_ack_message(self) -> None:
         """Test that acknowledgement messages are forwarded to job orchestrator."""
@@ -388,11 +410,10 @@ class TestOrchestratorAcknowledgementProcessing:
         data_service = DataService()
         job_service = JobService()
         job_orchestrator = FakeJobOrchestrator()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
             job_orchestrator=job_orchestrator,
         )
 
@@ -418,11 +439,10 @@ class TestOrchestratorAcknowledgementProcessing:
         data_service = DataService()
         job_service = JobService()
         job_orchestrator = FakeJobOrchestrator()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
             job_orchestrator=job_orchestrator,
         )
 
@@ -442,32 +462,6 @@ class TestOrchestratorAcknowledgementProcessing:
             "Workflow not found",
         )
 
-    def test_forward_with_response_message_no_orchestrator(self) -> None:
-        """Test that response messages are handled gracefully without orchestrator."""
-        from ess.livedata.config.acknowledgement import (
-            AcknowledgementResponse,
-            CommandAcknowledgement,
-        )
-
-        source = FakeMessageSource()
-        data_service = DataService()
-        job_service = JobService()
-        orchestrator = Orchestrator(
-            message_source=source,
-            data_service=data_service,
-            job_service=job_service,
-            service_registry=make_service_registry(),
-            job_orchestrator=None,
-        )
-
-        ack = CommandAcknowledgement(
-            message_id="test-uuid",
-            device="detector1",
-            response=AcknowledgementResponse.ACK,
-        )
-        # Should not raise an exception
-        orchestrator.forward(RESPONSES_STREAM_ID, ack)
-
 
 class TestOrchestratorServiceStatusRouting:
     """Test that ServiceStatus messages are routed to the ServiceRegistry."""
@@ -480,7 +474,7 @@ class TestOrchestratorServiceStatusRouting:
         data_service = DataService()
         job_service = JobService()
         service_registry = make_service_registry()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -513,7 +507,7 @@ class TestOrchestratorServiceStatusRouting:
         data_service = DataService()
         job_service = JobService()
         service_registry = make_service_registry()
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -550,11 +544,10 @@ class TestOrchestratorJobFiltering:
         registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
         for jn in active_job_numbers:
             registry.restore(jn)
-        orchestrator = Orchestrator(
+        orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            service_registry=make_service_registry(),
             active_job_registry=registry,
         )
         return orchestrator, data_service, job_service
@@ -626,31 +619,6 @@ class TestOrchestratorJobFiltering:
         orchestrator.forward(STATUS_STREAM_ID, status)
 
         assert len(job_service.job_statuses) == 0
-
-    def test_no_orchestrator_accepts_all_data(self) -> None:
-        """Without a JobOrchestrator, all data is accepted (permissive mode)."""
-        source = FakeMessageSource()
-        data_service = DataService()
-        job_service = JobService()
-        orchestrator = Orchestrator(
-            message_source=source,
-            data_service=data_service,
-            job_service=job_service,
-            service_registry=make_service_registry(),
-            job_orchestrator=None,
-        )
-
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
-        job_id = JobId(source_name="det1", job_number=make_job_number())
-        result_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name="result"
-        )
-        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
-        orchestrator.forward(_data_stream_id(result_key), data)
-
-        assert result_key in data_service
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

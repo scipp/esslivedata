@@ -41,12 +41,15 @@ class RoutingAdapterBuilder:
         """Builds the routing adapter."""
         return RouteByTopicAdapter(self._routes)
 
-    def with_beam_monitor_route(self) -> Self:
+    def with_beam_monitor_route(
+        self, *, pixellated_sources: frozenset[str] = frozenset()
+    ) -> Self:
         """Adds the beam monitor route."""
         adapter = RouteBySchemaAdapter(
             routes={
                 'ev44': KafkaToMonitorEventsAdapter(
                     stream_lut=self._stream_mapping.monitors,
+                    pixellated_sources=pixellated_sources,
                     stream_counter=self._stream_counter,
                 ),
                 'da00': ChainedAdapter(
@@ -106,14 +109,16 @@ class RoutingAdapterBuilder:
             self._routes[topic] = adapter
         return self
 
-    def with_routes_from_mapping(self) -> Self:
+    def with_routes_from_mapping(
+        self, *, pixellated_sources: frozenset[str] = frozenset()
+    ) -> Self:
         """Add data routes for all non-empty LUTs in the stream mapping."""
         if self._stream_mapping.detector_topics:
             self.with_detector_route()
         if self._stream_mapping.area_detector_topics:
             self.with_area_detector_route()
         if self._stream_mapping.monitor_topics:
-            self.with_beam_monitor_route()
+            self.with_beam_monitor_route(pixellated_sources=pixellated_sources)
         if self._stream_mapping.log_topics:
             self.with_logdata_route()
         return self

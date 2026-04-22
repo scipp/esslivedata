@@ -22,16 +22,14 @@ class StreamManager:
     def make_stream(
         self,
         keys_by_role: dict[str, list[ResultKey]],
-        on_data: Callable[[dict[ResultKey, Any]], None],
+        on_data: Callable[[dict[str, dict[ResultKey, Any]]], None],
         extractors: dict[ResultKey, Any] | None = None,
     ) -> DataServiceSubscriber[ResultKey]:
         """
         Create a data stream for the given result keys organized by role.
 
-        Registers a subscriber that assembles data and invokes the callback.
-        Assembly format depends on role count:
-        - Single role: flat dict[ResultKey, data] (standard plotters)
-        - Multiple roles: dict[str, dict[ResultKey, data]] (correlation plotters)
+        Registers a subscriber that groups data by role and invokes the
+        callback with ``dict[role, dict[ResultKey, data]]``.
 
         Parameters
         ----------
@@ -40,7 +38,7 @@ class StreamManager:
             this is {"primary": [keys...]}. For correlation plots, includes
             additional roles like "x_axis", "y_axis".
         on_data
-            Callback invoked on every data update with the assembled data.
+            Callback invoked on every data update with the grouped data.
             Called when at least one key from each role has data.
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not

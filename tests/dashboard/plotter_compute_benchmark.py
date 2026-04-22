@@ -80,16 +80,16 @@ def overlay_plotter() -> Overlay1DPlotter:
 def test_line_plotter_compute(benchmark, line_plotter):
     data_key = _make_result_key()
     da = _make_1d_curve_data()
-    benchmark(line_plotter.compute, {data_key: da})
+    benchmark(line_plotter.compute, {'primary': {data_key: da}})
 
 
 def test_image_plotter_compute(benchmark, image_plotter):
     data_key = _make_result_key()
     da = _make_2d_image_data()
-    benchmark(image_plotter.compute, {data_key: da})
+    benchmark(image_plotter.compute, {'primary': {data_key: da}})
 
 
 def test_overlay_plotter_compute(benchmark, overlay_plotter):
     data_key = _make_result_key()
     da = _make_2d_overlay_data(n_curves=5)
-    benchmark(overlay_plotter.compute, {data_key: da})
+    benchmark(overlay_plotter.compute, {'primary': {data_key: da}})
