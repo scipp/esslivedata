@@ -13,7 +13,7 @@ import structlog
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
-from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
+from .core.handler import PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
@@ -75,6 +75,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             accumulation and finalization are run in a thread pool.
         """
         self._name = f'{instrument}_{name}'
+        self._service_name = name
         self._log_level = log_level
         self._topics: list[KafkaTopic] | None = None
         self._instrument = instrument
@@ -84,9 +85,6 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._processor_cls = processor_cls
         self._job_threads = job_threads
         self._stream_counter = stream_counter
-        if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
-            # Ensure only jobs from the active namespace can be created by JobFactory.
-            preprocessor_factory.instrument.active_namespace = name
 
     @property
     def instrument(self) -> str:
@@ -184,6 +182,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             ),
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
+            service_name=self._service_name,
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
         )

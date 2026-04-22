@@ -259,6 +259,7 @@ class Instrument:
         source_names: Sequence[str],
         transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
         namespace: str = 'detector_data',
+        service: str | None = None,
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -322,6 +323,7 @@ class Instrument:
         params = make_detector_view_params(spectrum_view=spectrum_view)
         handle = self.register_spec(
             namespace=namespace,
+            service=service,
             name=name,
             version=1,
             title=title,
@@ -351,6 +353,7 @@ class Instrument:
         self,
         *,
         namespace: str = 'data_reduction',
+        service: str | None = None,
         name: str,
         version: int,
         title: str,
@@ -372,6 +375,10 @@ class Instrument:
         ----------
         namespace:
             Namespace for the workflow (default: 'data_reduction').
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``namespace`` (service and namespace match today; the
+            coupling is removed in a later stage).
         name:
             Name to register the workflow under.
         version:
@@ -415,7 +422,7 @@ class Instrument:
             outputs=outputs,
             reset_on_run_transition=reset_on_run_transition,
         )
-        return self.workflow_factory.register_spec(spec)
+        return self.workflow_factory.register_spec(spec, service=service)
 
     def load_factories(self) -> None:
         """

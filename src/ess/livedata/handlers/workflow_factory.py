@@ -49,6 +49,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
     def __init__(self) -> None:
         self._factories: dict[WorkflowId, Callable[[], Workflow]] = {}
         self._workflow_specs: dict[WorkflowId, WorkflowSpec] = {}
+        self._services: dict[WorkflowId, str] = {}
 
     def __getitem__(self, key: WorkflowId) -> WorkflowSpec:
         return self._workflow_specs[key]
@@ -59,7 +60,9 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
     def __len__(self) -> int:
         return len(self._workflow_specs)
 
-    def register_spec(self, spec: WorkflowSpec) -> SpecHandle:
+    def register_spec(
+        self, spec: WorkflowSpec, *, service: str | None = None
+    ) -> SpecHandle:
         """
         Register workflow spec, return handle for later factory attachment.
 
@@ -71,6 +74,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         ----------
         spec:
             Workflow specification to register.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Used by ``JobFactory`` to reject workflows not belonging to the
+            current service. Defaults to ``spec.namespace`` (namespace and
+            service name are identical today; the coupling is removed in a
+            later stage).
 
         Returns
         -------
@@ -80,7 +89,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         if spec_id in self._workflow_specs:
             raise ValueError(f"Workflow spec '{spec_id}' already registered.")
         self._workflow_specs[spec_id] = spec
+        self._services[spec_id] = service if service is not None else spec.namespace
         return SpecHandle(workflow_id=spec_id, _factory=self)
+
+    def get_service(self, workflow_id: WorkflowId) -> str | None:
+        """Return the backend service name that runs the given workflow."""
+        return self._services.get(workflow_id)
 
     def attach_factory(
         self, workflow_id: WorkflowId

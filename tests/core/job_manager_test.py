@@ -1487,7 +1487,6 @@ class TestJobFactoryRender:
 
         # Setup instrument and workflow
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='test_workflow',
@@ -1504,7 +1503,7 @@ class TestJobFactoryRender:
             return FakeProcessor()
 
         # Create JobFactory and job config
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         workflow_id = WorkflowId(
             instrument='test',
             namespace='data_reduction',
@@ -1535,7 +1534,6 @@ class TestJobFactoryRender:
 
         # Setup
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='default_workflow',
@@ -1551,7 +1549,7 @@ class TestJobFactoryRender:
         def default_workflow():
             return FakeProcessor()
 
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
@@ -1580,7 +1578,6 @@ class TestJobFactoryRender:
         from ess.livedata.config.instrument import Instrument
 
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='no_aux_workflow',
@@ -1595,7 +1592,7 @@ class TestJobFactoryRender:
         def no_aux_workflow():
             return FakeProcessor()
 
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
@@ -1617,7 +1614,6 @@ class TestJobFactoryRender:
         from ess.livedata.config.workflow_spec import AuxSources
 
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='optional_aux_workflow',
@@ -1633,7 +1629,7 @@ class TestJobFactoryRender:
         def optional_aux_workflow():
             return FakeProcessor()
 
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
@@ -1667,7 +1663,6 @@ class TestJobFactoryRender:
                 }
 
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='source_prefix_workflow',
@@ -1683,7 +1678,7 @@ class TestJobFactoryRender:
         def source_prefix_workflow():
             return FakeProcessor()
 
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
@@ -1731,7 +1726,6 @@ class TestJobFactoryRender:
                 }
 
         instrument = Instrument(name='test')
-        instrument.active_namespace = 'data_reduction'
 
         handle = instrument.register_spec(
             name='defaulted_aux_workflow',
@@ -1747,7 +1741,7 @@ class TestJobFactoryRender:
         def defaulted_aux_workflow():
             return FakeProcessor()
 
-        factory = JobFactory(instrument)
+        factory = JobFactory(instrument, service_name='data_reduction')
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
