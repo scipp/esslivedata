@@ -126,13 +126,13 @@ class KafkaSink(MessageSink[T]):
 
     def close(self) -> None:
         """Close the Kafka producer and release resources."""
-        if hasattr(self, '_producer'):
+        if self._producer is not None:
             try:
                 self._producer.flush(timeout=5)
             except kafka.KafkaException as e:
                 logger.error("Error flushing producer during close: %s", e)
             # The confluent_kafka Producer cleans up when deleted
-            del self._producer
+            self._producer = None
 
     def __enter__(self) -> 'KafkaSink[T]':
         """Enter context manager - initialize the Kafka producer."""

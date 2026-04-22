@@ -19,6 +19,13 @@ class Processor(Protocol):
     def process(self) -> None:
         pass
 
+    def finalize(self, *, error: str | None = None) -> None:
+        """Finalize after the worker thread has joined.
+
+        Called once by :class:`Service` before shutdown, with ``error`` set to
+        the stringified exception if the loop exited unexpectedly.
+        """
+
 
 class IdentityProcessor(Generic[Tin, Tout]):
     """
@@ -40,3 +47,6 @@ class IdentityProcessor(Generic[Tin, Tout]):
         messages = self._source.get_messages()
         logger.debug('processing_messages', count=len(messages))
         self._sink.publish_messages(messages)
+
+    def finalize(self, *, error: str | None = None) -> None:
+        pass
