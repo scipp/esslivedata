@@ -6,6 +6,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
+from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -21,21 +22,20 @@ def make_detector_service_builder(
     group_by_pixel: bool = True,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    instrument_obj = instrument_registry[instrument]
+    instrument_obj.load_factories()
+
+    scoped = scope_stream_mapping(instrument_obj, stream_mapping, 'detector_data')
+
     stream_counter = StreamCounter()
     adapter = (
-        RoutingAdapterBuilder(
-            stream_mapping=stream_mapping, stream_counter=stream_counter
-        )
-        .with_detector_route()
-        .with_area_detector_route()
-        .with_logdata_route()
+        RoutingAdapterBuilder(stream_mapping=scoped, stream_counter=stream_counter)
+        .with_routes_from_mapping()
         .with_livedata_commands_route()
         .with_livedata_roi_route()
         .with_run_control_route()
         .build()
     )
-    instrument_obj = instrument_registry[instrument]
-    instrument_obj.load_factories()
     service_name = 'detector_data'
     preprocessor_factory = DetectorHandlerFactory(
         instrument=instrument_obj, group_by_pixel=group_by_pixel

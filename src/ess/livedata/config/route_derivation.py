@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Derive needed stream names from workflow specs."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..kafka.stream_mapping import StreamMapping
+    from .instrument import Instrument
+
+
+def gather_source_names(
+    instrument: Instrument,
+    namespace: str,
+) -> set[str]:
+    """Collect internal stream names that specs in ``namespace`` depend on.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument whose workflow specs to inspect.
+    namespace:
+        Only consider specs in this namespace (e.g. ``'detector_data'``).
+    """
+    names: set[str] = set()
+    for spec in instrument.workflow_factory.values():
+        if spec.namespace != namespace:
+            continue
+        names.update(spec.source_names)
+        if spec.aux_sources:
+            for aux_input in spec.aux_sources.inputs.values():
+                names.update(aux_input.choices)
+    return names
+
+
+def resolve_stream_names(
+    needed: set[str],
+    instrument: Instrument,
+    stream_mapping: StreamMapping,
+) -> set[str]:
+    """Expand logical source names to physical stream names for filtering.
+
+    Workflow specs use logical names (e.g. ``'unified_detector'``), which may
+    not appear in the ``StreamMapping`` LUTs directly. For example, Bifrost
+    merges 45 physical streams (``arc0_triplet0``, ...) into one logical
+    detector. When a logical detector/monitor name is not found in any LUT,
+    all physical names from that category are included.
+
+    Parameters
+    ----------
+    needed:
+        Set of names from :func:`gather_source_names`.
+    instrument:
+        Instrument configuration.
+    stream_mapping:
+        The full (unfiltered) stream mapping.
+    """
+    known = stream_mapping.all_stream_names
+    resolved = needed & known
+    unknown = needed - known
+    if not unknown:
+        return resolved
+    # Bifrost compatibility: its specs use logical name 'unified_detector', but the
+    # StreamMapping LUT contains 45 physical stream names (arc0_triplet0, ...) that
+    # get merged at the route level (merge_detectors=True). When a logical name from
+    # instrument.detector_names is not found in any LUT, we include all physical
+    # names from that category. This is safe because Bifrost is the only instrument
+    # with this many-physical-to-one-logical pattern; all others have a 1:1 mapping
+    # between spec source_names and StreamMapping LUT values.
+    logical_detectors = set(instrument.detector_names)
+    logical_monitors = set(instrument.monitors)
+    if unknown & logical_detectors:
+        resolved |= set(stream_mapping.detectors.values())
+    if unknown & logical_monitors:
+        resolved |= set(stream_mapping.monitors.values())
+    return resolved
+
+
+def scope_stream_mapping(
+    instrument: Instrument,
+    stream_mapping: StreamMapping,
+    namespace: str,
+) -> StreamMapping:
+    """Return a stream mapping scoped to the streams needed by ``namespace``.
+
+    Combines :func:`gather_source_names`, :func:`resolve_stream_names`, and
+    :meth:`StreamMapping.filtered` into a single call.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument whose workflow specs to inspect.
+    stream_mapping:
+        The full (unfiltered) stream mapping.
+    namespace:
+        Only consider specs in this namespace (e.g. ``'detector_data'``).
+    """
+    needed = gather_source_names(instrument, namespace)
+    needed = resolve_stream_names(needed, instrument, stream_mapping)
+    return stream_mapping.filtered(needed)
