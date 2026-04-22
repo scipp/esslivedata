@@ -278,13 +278,13 @@ class ServiceStatusMessage(pydantic.BaseModel):
     def from_service_status(
         status: ServiceStatus,
         *,
-        software_version: str | None = None,
+        software_version: str,
         host_name: str = '',
         process_id: int = 0,
     ) -> ServiceStatusMessage:
         """Create ServiceStatusMessage from ServiceStatus."""
         return ServiceStatusMessage(
-            software_version=software_version or status.version,
+            software_version=software_version,
             host_name=host_name,
             process_id=process_id,
             service_id=ServiceServiceId.from_service_status(status),

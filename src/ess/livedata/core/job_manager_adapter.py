@@ -64,11 +64,8 @@ class JobManagerAdapter:
             return None
 
     def set_workflow_with_config(
-        self, source_name: str | None, value: dict | None
+        self, source_name: str, value: dict | None
     ) -> CommandAcknowledgement | None:
-        if source_name is None:
-            raise ValueError("source_name cannot be None for set_workflow_with_config")
-
         config = WorkflowConfig.model_validate(value)
 
         try:
