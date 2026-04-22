@@ -12,6 +12,7 @@ for full instrument details.
 """
 
 from enum import StrEnum
+from typing import Literal
 
 import pydantic
 import scipp as sc
@@ -380,18 +381,11 @@ def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataA
 class BifrostSpectrumParams(pydantic.BaseModel):
     """Runtime parameters for the Bifrost spectrum-view transform."""
 
-    pixels_per_tube: int = pydantic.Field(
+    pixels_per_tube: Literal[1, 2, 4, 5, 10, 20, 25, 50, 100] = pydantic.Field(
         default=10,
         title='Pixels per tube',
-        description='Number of output pixels per tube. Must be a divisor of 100.',
+        description='Number of output pixels per tube.',
     )
-
-    @pydantic.field_validator('pixels_per_tube')
-    @classmethod
-    def _pixels_per_tube_must_be_divisor_of_100(cls, v: int) -> int:
-        if v <= 0 or 100 % v != 0:
-            raise ValueError('pixels_per_tube must be a positive divisor of 100')
-        return v
 
 
 def _bifrost_spectrum_transform(
