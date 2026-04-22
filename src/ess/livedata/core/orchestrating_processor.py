@@ -148,6 +148,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
+        service_name: str,
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
         stream_stats_provider: StreamStatsProvider | None = None,
@@ -157,7 +158,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=instrument), job_threads=job_threads
+            job_factory=JobFactory(instrument=instrument, service_name=service_name),
+            job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
@@ -169,7 +171,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         # Service heartbeat state
         self._instrument = instrument.name
-        self._namespace = instrument.active_namespace or "unknown"
+        self._namespace = service_name
         self._worker_id = str(uuid.uuid4())
         self._started_at = Timestamp.now()
         self._service_state = ServiceState.starting
