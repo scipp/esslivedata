@@ -846,13 +846,13 @@ class TestSetBatchLength:
     def test_grid_origin_preserved_across_size_change(self):
         """Grid origin must survive a resize so phase alignment is stable."""
         batcher, t0 = make_converged_batcher(rate_hz=14.0)
-        original_origin = batcher.grid_of(DETECTOR).origin_ns
+        original_origin = batcher._streams[DETECTOR].grid.origin_ns
 
         batcher.set_batch_length(2.0)
         batch1 = batcher.batch(msgs_at(14.0, start=t0, duration=1.0))
         assert batch1 is not None
         assert batcher.batch_length_s == 2.0
-        assert batcher.grid_of(DETECTOR).origin_ns == original_origin
+        assert batcher._streams[DETECTOR].grid.origin_ns == original_origin
 
         # De-escalate back and verify origin still stable.
         batcher.set_batch_length(1.0)
@@ -860,7 +860,7 @@ class TestSetBatchLength:
         batch2 = batcher.batch(msgs_at(14.0, start=next_start, duration=2.0))
         assert batch2 is not None
         assert batcher.batch_length_s == 1.0
-        assert batcher.grid_of(DETECTOR).origin_ns == original_origin
+        assert batcher._streams[DETECTOR].grid.origin_ns == original_origin
 
 
 class TestEnvelopeBoundaries:

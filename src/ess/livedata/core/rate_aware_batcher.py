@@ -87,7 +87,7 @@ _MAX_ORIGIN_OFFSET_BATCHES = 1000
 _MAX_HWM_PAST_WINDOW_BATCHES = 3
 
 
-@dataclass
+@dataclass(slots=True)
 class StreamPeriodEstimator:
     """Infers pulse period from inter-arrival times between messages.
 
@@ -140,7 +140,7 @@ class StreamPeriodEstimator:
         return rate
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PulseGrid:
     """Fixed temporal grid for mapping timestamps to pulse indices.
 
@@ -188,7 +188,7 @@ class PulseGrid:
         return self.pulse_index(timestamp) - self.batch_base_index(batch_start)
 
 
-@dataclass
+@dataclass(slots=True)
 class _ActiveWindow:
     """Time range of the batch currently in progress."""
 
@@ -196,7 +196,7 @@ class _ActiveWindow:
     end: Timestamp
 
 
-@dataclass
+@dataclass(slots=True)
 class _GatedStream:
     """Per-stream state for a gated stream.
 
@@ -297,12 +297,12 @@ class _GatedStream:
         if int_rate * batch_length_s < 1.0:
             self.grid = None
             return
-        period_ns = round(1e9 / int_rate)
-        slots_per_batch = round(int_rate * batch_length_s)
         origin = self._choose_origin(batch_start, batch_length)
         if origin is None:
             self.grid = None
             return
+        slots_per_batch = round(int_rate * batch_length_s)
+        period_ns = round(1e9 / int_rate)
         existing = self.grid
         if (
             existing is not None
@@ -331,7 +331,7 @@ class _GatedStream:
         """Pick an origin timestamp that lies on the pulse grid."""
         if self.messages:
             for m in self.messages:
-                if not m.timestamp < batch_start:
+                if m.timestamp >= batch_start:
                     return m.timestamp.to_ns()
             return self.messages[0].timestamp.to_ns()
         return self.estimator.last_ts_ns
@@ -402,14 +402,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         """Stream IDs currently tracked by the batcher."""
         return set(self._streams)
 
-    def grid_of(self, stream_id: StreamId) -> PulseGrid | None:
-        """Return the pulse grid for a tracked stream, or ``None``."""
-        stream = self._streams.get(stream_id)
-        return stream.grid if stream is not None else None
-
     def is_gating(self, stream_id: StreamId) -> bool:
         """True if the stream has a converged grid and gates batch closure."""
-        return self.grid_of(stream_id) is not None
+        stream = self._streams.get(stream_id)
+        return stream.is_gating if stream is not None else False
 
     @property
     def timeout_factor(self) -> float:
@@ -434,10 +430,7 @@ class RateAwareMessageBatcher(MessageBatcher):
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         if messages:
             latest = max(m.timestamp for m in messages)
-            if self._high_water_mark is None:
-                self._high_water_mark = latest
-            elif self._high_water_mark < latest:
-                self._high_water_mark = self._clamped_hwm(latest)
+            self._high_water_mark = self._clamped_hwm(latest)
 
         window = self._active_window
         if window is None:
@@ -458,20 +451,20 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
         """Clamp an HWM update to a bounded distance past the active window.
 
-        See ``_MAX_HWM_PAST_WINDOW_BATCHES``.  When no active window is
-        present (the first-batch path handles its own bootstrap), the
-        latest timestamp is accepted as-is.  The clamp is floored at the
-        current HWM to preserve monotonicity: a window advance (close or
-        gap advance) may briefly leave HWM past ``start + cap``, which
-        the next update would otherwise regress.
+        See ``_MAX_HWM_PAST_WINDOW_BATCHES``.  Cold start (no window or no
+        prior HWM) accepts ``latest`` as-is.  Otherwise the new value is
+        capped at ``window.start + cap`` and floored at the current HWM
+        so it never regresses -- a window advance (close or gap advance)
+        may briefly leave HWM past the cap, and the next update must hold
+        that value until the window catches up.
         """
         if self._active_window is None or self._high_water_mark is None:
             return latest
         cap = Duration.from_ns(
             _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length.to_ns()
         )
-        max_allowed = self._active_window.start + cap
-        return min(latest, max(max_allowed, self._high_water_mark))
+        ceiling = self._active_window.start + cap
+        return max(self._high_water_mark, min(latest, ceiling))
 
     def _bootstrap_batch(self, messages: list[Message[Any]]) -> MessageBatch:
         """Flush the startup backlog and open the active window.
@@ -509,7 +502,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         is_gated = msg.stream.kind in GATED_STREAM_KINDS
         stream = self._streams[msg.stream] if is_gated else None
-        if (stream is None or stream.grid is None) and self._is_future(msg, window):
+        if (stream is None or not stream.is_gating) and self._is_future(msg, window):
             self._future.append(msg)
             return
         if stream is None:
@@ -529,7 +522,7 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _is_batch_complete(self, window: _ActiveWindow) -> bool:
         if self._high_water_mark is not None:
             threshold = window.start + Duration.from_seconds(self.timeout_s)
-            if not self._high_water_mark < threshold:
+            if self._high_water_mark >= threshold:
                 return True
 
         has_gating = False
