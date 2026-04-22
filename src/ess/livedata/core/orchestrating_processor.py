@@ -171,7 +171,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         # Service heartbeat state
         self._instrument = instrument.name
-        self._namespace = service_name
+        self._service_name = service_name
         self._worker_id = str(uuid.uuid4())
         self._started_at = Timestamp.now()
         self._service_state = ServiceState.starting
@@ -327,7 +327,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._pending_stream_stats = None
         return ServiceStatus(
             instrument=self._instrument,
-            namespace=self._namespace,
+            service_name=self._service_name,
             worker_id=self._worker_id,
             state=self._service_state,
             started_at=self._started_at,

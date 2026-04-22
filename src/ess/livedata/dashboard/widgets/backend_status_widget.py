@@ -32,7 +32,7 @@ class WorkerUIConstants:
     STALE_COLOR = StatusColors.ERROR
 
     # Sizes
-    NAMESPACE_WIDTH = 200
+    SERVICE_WIDTH = 200
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
     VERSION_WIDTH = 200
@@ -154,8 +154,8 @@ class WorkerStatusRow:
         last_seen_seconds_ago: float | None = None,
     ) -> None:
         # Create stable pane references
-        self._namespace_pane = pn.pane.HTML(
-            width=WorkerUIConstants.NAMESPACE_WIDTH,
+        self._service_pane = pn.pane.HTML(
+            width=WorkerUIConstants.SERVICE_WIDTH,
             margin=WorkerUIConstants.STANDARD_MARGIN,
         )
         self._worker_id_pane = pn.pane.HTML(
@@ -180,7 +180,7 @@ class WorkerStatusRow:
         )
 
         row = pn.Row(
-            self._namespace_pane,
+            self._service_pane,
             self._worker_id_pane,
             self._status_pane,
             self._version_pane,
@@ -233,9 +233,9 @@ class WorkerStatusRow:
         last_seen_seconds_ago: float | None = None,
     ) -> None:
         """Update the row content in-place."""
-        # Namespace
-        namespace_text = f"{status.instrument}:{status.namespace}"
-        self._namespace_pane.object = f"<b>{namespace_text}</b>"
+        # Service
+        service_text = f"{status.instrument}:{status.service_name}"
+        self._service_pane.object = f"<b>{service_text}</b>"
 
         # Worker ID (truncated)
         worker_id_short = status.worker_id[:8]
@@ -341,8 +341,8 @@ class BackendStatusWidget:
         )
         self._table_header = pn.Row(
             pn.pane.HTML(
-                f'<span style="{header_style}">Namespace</span>',
-                width=WorkerUIConstants.NAMESPACE_WIDTH,
+                f'<span style="{header_style}">Service</span>',
+                width=WorkerUIConstants.SERVICE_WIDTH,
                 margin=WorkerUIConstants.STANDARD_MARGIN,
             ),
             pn.pane.HTML(

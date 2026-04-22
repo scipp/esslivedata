@@ -483,7 +483,7 @@ class TestOrchestratorServiceStatusRouting:
 
         status = ServiceStatus(
             instrument="dream",
-            namespace="test_namespace",
+            service_name="test_namespace",
             worker_id="worker123",
             state=ServiceState.running,
             started_at=1000000000,

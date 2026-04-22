@@ -219,7 +219,7 @@ class TestF144Serializer:
 def _make_service_status(**overrides) -> ServiceStatus:
     defaults: dict = {
         'instrument': 'dream',
-        'namespace': 'data_reduction',
+        'service_name': 'data_reduction',
         'worker_id': str(uuid.uuid4()),
         'state': ServiceState.running,
         'started_at': Timestamp.from_ns(1_700_000_000_000_000_000),
