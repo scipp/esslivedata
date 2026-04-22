@@ -12,16 +12,14 @@ for full instrument details.
 """
 
 from enum import StrEnum
+from typing import Literal
 
 import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewParams,
-)
+from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -70,51 +68,10 @@ class DetectorRatemeterRegionParams(pydantic.BaseModel):
         return self
 
 
-class SpectrumViewParams(pydantic.BaseModel):
-    time_bins: int = pydantic.Field(
-        title='Time bins',
-        description='Number of time bins for the spectrum view.',
-        default=500,
-        ge=1,
-        le=10000,
-    )
-    pixels_per_tube: int = pydantic.Field(
-        title='Pixels per tube',
-        description='Number of pixels per tube for the spectrum view.',
-        default=10,
-    )
-
-    @pydantic.field_validator('pixels_per_tube')
-    @classmethod
-    def pixels_per_tube_must_be_divisor_of_100(cls, v):
-        if 100 % v != 0:
-            raise ValueError('pixels_per_tube must be a divisor of 100')
-        return v
-
-
-class BifrostWorkflowParams(pydantic.BaseModel):
-    spectrum_view: SpectrumViewParams = pydantic.Field(
-        title='Spectrum view parameters', default_factory=SpectrumViewParams
-    )
-
-
-def _make_2d_template() -> sc.DataArray:
-    """Create an empty 2D template for 2D output data."""
-    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
-
-
 def _make_3d_template() -> sc.DataArray:
     """Create an empty 3D template for 3D output data."""
     return sc.DataArray(
         sc.zeros(dims=['dim_0', 'dim_1', 'dim_2'], shape=[0, 0, 0], unit='counts')
-    )
-
-
-class SpectrumViewOutputs(WorkflowOutputsBase):
-    spectrum_view: sc.DataArray = pydantic.Field(
-        default_factory=_make_3d_template,
-        title='Spectrum View',
-        description='Spectrum view showing time-of-flight vs. detector position.',
     )
 
 
@@ -407,27 +364,64 @@ monitor_handle = register_monitor_workflow_specs(
     instrument, monitors, params=TOAOnlyMonitorDataParams
 )
 
-# Register detector view spec.
-unified_detector_view_handle = instrument.register_spec(
-    namespace='detector_data',
+
+def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataArray:
+    """Reshape raw detector data into ``(arc, detector_number_full)``.
+
+    ``arc`` is preserved so the spectrum transform can operate per-arc; the
+    remaining (tube, channel, pixel) axes are flattened into a single
+    ``detector_number_full`` dim of size 2700.
+    """
+    da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
+    return da.to(dtype='float32').flatten(
+        dims=('tube', 'channel', 'pixel'), to='detector_number_full'
+    )
+
+
+class BifrostSpectrumParams(pydantic.BaseModel):
+    """Runtime parameters for the Bifrost spectrum-view transform."""
+
+    pixels_per_tube: Literal[1, 2, 4, 5, 10, 20, 25, 50, 100] = pydantic.Field(
+        default=10,
+        title='Pixels per tube',
+        description='Number of output pixels per tube.',
+    )
+
+
+def _bifrost_spectrum_transform(
+    histogram: sc.DataArray, params: BifrostSpectrumParams
+) -> sc.DataArray:
+    """Reshape the cumulative histogram into ``(arc, detector_number, toa)``.
+
+    ``detector_number_full`` is folded back into an outer ``detector_number``
+    axis of size ``pixels_per_tube`` and an inner ``subpixel`` axis;
+    summing over ``subpixel`` yields ``pixels_per_tube`` pixels per tube.
+    """
+    subpixel = 100 // params.pixels_per_tube
+    folded = histogram.fold(
+        'detector_number_full',
+        sizes={'detector_number': -1, 'subpixel': subpixel},
+    )
+    return folded.sum('subpixel')
+
+
+# Register unified detector view with embedded spectrum output.
+unified_detector_view_handle = instrument.add_logical_view(
     name='unified_detector_view',
-    version=1,
     title='Unified detector view',
     description='All banks merged into a single detector view.',
     source_names=['unified_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-# Register spectroscopy workflow specs
-spectrum_view_handle = instrument.register_spec(
-    name='spectrum_view',
-    version=1,
-    title='Spectrum view',
-    description='Spectrum view with configurable time bins and pixels per tube.',
-    source_names=['unified_detector'],
-    params=BifrostWorkflowParams,
-    outputs=SpectrumViewOutputs,
+    transform=_logical_view,
+    output_ndim=2,
+    spectrum_view=SpectrumViewSpec(
+        transform=_bifrost_spectrum_transform,
+        output_dims=['arc', 'detector_number'],
+        extra_description=(
+            'Per-arc, per-pixel spectrum. Adjacent pixels within a tube are '
+            'grouped so each tube yields ``pixels_per_tube`` output pixels.'
+        ),
+        params_model=BifrostSpectrumParams,
+    ),
 )
 
 detector_ratemeter_handle = instrument.register_spec(

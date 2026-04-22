@@ -116,7 +116,9 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             inferred_params = type_hints.get('params', None)
 
             if spec.params is not None and inferred_params is not None:
-                if spec.params is not inferred_params:  # Use `is not`
+                # Spec params may be a subclass of the factory's declared type
+                # (e.g. dynamic subclasses produced by ``make_detector_view_params``).
+                if not issubclass(spec.params, inferred_params):
                     raise TypeError(f"Params type mismatch for {workflow_id}")
             elif spec.params is None and inferred_params is not None:
                 raise TypeError(

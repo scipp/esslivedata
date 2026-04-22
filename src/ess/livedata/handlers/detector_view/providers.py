@@ -19,6 +19,7 @@ from .types import (
     AccumulationMode,
     CountsInRange,
     CountsTotal,
+    Cumulative,
     DetectorHistogram,
     DetectorImage,
     EventCoordName,
@@ -27,6 +28,8 @@ from .types import (
     PixelWeights,
     ScreenBinnedEvents,
     ScreenMetadata,
+    SpectrumView,
+    SpectrumViewTransform,
     UsePixelWeighting,
 )
 
@@ -261,6 +264,34 @@ def counts_total(
         Total counts as 0D scalar.
     """
     return CountsTotal[AccumulationMode](histogram.sum())
+
+
+def spectrum_view(
+    histogram: AccumulatedHistogram[Cumulative],
+    transform: SpectrumViewTransform,
+) -> SpectrumView:
+    """
+    Apply the per-instrument spectrum transform to the cumulative histogram.
+
+    The transform typically sums over unwanted spatial dims and/or rebins
+    kept spatial dims, preserving the event coordinate axis. When the
+    ``SpectrumViewSpec`` declares a ``params_model``, the factory binds the
+    runtime parameter instance into the callable before inserting it here.
+
+    Parameters
+    ----------
+    histogram:
+        Cumulative accumulated histogram (spatial dims + event coordinate).
+    transform:
+        Callable ``(histogram,) -> spectrum`` bound at workflow-construction
+        time.
+
+    Returns
+    -------
+    :
+        Spectrum view as a reshaped/partially-summed histogram.
+    """
+    return SpectrumView(transform(histogram))
 
 
 def counts_in_range(
