@@ -68,33 +68,35 @@ def test_can_configure_and_stop_detector_workflow(
         # LOKI rear bank consumes the f144 detector_carriage position;
         # the workflow refuses to produce output until a value is seen.
         app.publish_log_message(source_name='detector_carriage', time=1, value=5000.0)
+    # Each workflow call returns 10 results by default: cumulative, current,
+    # counts_total, counts_in_toa, counts_total_cumulative,
+    # counts_in_toa_range_cumulative, roi_spectra_cumulative,
+    # roi_spectra_current, roi_rectangle, roi_polygon. Instruments that enable
+    # a unified spectrum output add one additional spectrum_view message.
+    n_out = 11 if instrument == 'bifrost' else 10
     app.publish_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 10 results: cumulative, current,
-    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa,
-    # counts_total_cumulative, counts_in_toa_range_cumulative,
-    # roi_rectangle, roi_polygon
-    assert len(sink.messages) == 10
+    assert len(sink.messages) == n_out
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 10
+    assert len(sink.messages) == n_out
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 20  # 10 + 10
-    assert sink.messages[10].value.nansum().value == 5000  # cumulative
-    assert sink.messages[11].value.nansum().value == 3000  # current
+    assert len(sink.messages) == 2 * n_out
+    assert sink.messages[n_out].value.nansum().value == 5000  # cumulative
+    assert sink.messages[n_out + 1].value.nansum().value == 3000  # current
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 30  # 20 + 10
-    assert sink.messages[20].value.nansum().value == 7000  # cumulative
-    assert sink.messages[21].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 3 * n_out
+    assert sink.messages[2 * n_out].value.nansum().value == 7000  # cumulative
+    assert sink.messages[2 * n_out + 1].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -105,7 +107,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 30
+    assert len(sink.messages) == 3 * n_out
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(

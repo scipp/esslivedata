@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, NewType, TypeVar
+from typing import TYPE_CHECKING, Literal, NewType, TypeVar
 
 import sciline
 import scipp as sc
+
+if TYPE_CHECKING:
+    from ..detector_view_specs import SpectrumViewSpec
 
 # Coordinate mode for detector view workflow
 CoordinateMode = Literal['toa', 'tof', 'wavelength']
@@ -88,12 +91,18 @@ class GeometricViewConfig:
         detectors face the same direction as the observer and typically
         do not need flipping. The preferred orientation may also depend on
         instrument scientist conventions.
+    spectrum_view:
+        Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+        derived from the cumulative accumulated histogram. Geometric
+        projections do not preserve detector-pixel identity, so the spectrum
+        is per-screen-pixel; document this caveat at registration.
     """
 
     projection_type: Literal['xy_plane', 'cylinder_mantle_z']
     resolution: dict[str, int]
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
     flip_x: bool = False
+    spectrum_view: SpectrumViewSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,11 +123,16 @@ class LogicalViewConfig:
     roi_support:
         Whether ROI selection is supported. If False, ROI-related outputs are
         excluded from the workflow. Typically False for 1D views.
+    spectrum_view:
+        Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+        derived from the cumulative accumulated histogram via a
+        per-instrument transform.
     """
 
     transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None
     reduction_dim: str | list[str] | None = None
     roi_support: bool = True
+    spectrum_view: SpectrumViewSpec | None = None
 
 
 ViewConfig = GeometricViewConfig | LogicalViewConfig
@@ -175,6 +189,24 @@ coordinate preserved."""
 DetectorHistogram = NewType('DetectorHistogram', sc.DataArray)
 """Histogram with screen dims + event coordinate - computed once, shared by
 accumulators."""
+
+
+# Spectrum view types: derived from AccumulatedHistogram[Cumulative] via a
+# per-instrument transform. The transform reshapes or partially sums the
+# accumulated histogram into a spectrum (spatial dims + event coordinate).
+SpectrumView = NewType('SpectrumView', sc.DataArray)
+"""Spectrum view derived from AccumulatedHistogram[Cumulative]."""
+
+SpectrumViewTransform = NewType(
+    'SpectrumViewTransform',
+    Callable[[sc.DataArray], sc.DataArray],
+)
+"""Callable applied to AccumulatedHistogram[Cumulative] to produce SpectrumView.
+
+Signature: ``(histogram,) -> spectrum``. Runtime parameters declared via
+``SpectrumViewSpec.params_model`` are bound into this callable by the
+detector-view factory before insertion into the workflow.
+"""
 
 
 # Generic accumulated data types - parametrized by accumulation mode

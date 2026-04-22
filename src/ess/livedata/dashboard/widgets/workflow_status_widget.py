@@ -216,11 +216,12 @@ class WorkflowStatusWidget:
         self._header: pn.Row | None = None
         self._body: pn.Column | None = None
 
-        # Track the orchestrator's workflow state version for change detection.
-        # refresh() compares this to detect structural changes (staging, commit, stop).
-        self._last_state_version: int | None = None
-
         self._build_widget()
+        # Initialise to the current version so the first refresh() is a no-op
+        # unless state actually changed after construction.
+        self._last_state_version = self._orchestrator.get_workflow_state_version(
+            self._workflow_id
+        )
 
     @property
     def workflow_id(self) -> WorkflowId:
@@ -1026,9 +1027,25 @@ class WorkflowStatusListWidget:
         self._orchestrator = orchestrator
         self._job_service = job_service
         self._is_visible: Callable[[], bool] | None = None
+        self._populated: bool = False
 
-        self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
-        self._panel = self._create_panel()
+        workflow_registry = orchestrator.get_workflow_registry()
+        self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {
+            workflow_id: WorkflowStatusWidget(
+                workflow_id=workflow_id,
+                workflow_spec=spec,
+                orchestrator=orchestrator,
+                job_service=job_service,
+            )
+            for workflow_id, spec in sorted(
+                workflow_registry.items(), key=lambda x: x[1].title
+            )
+        }
+        self._panel = pn.Column(
+            self._create_header_row(),
+            sizing_mode='stretch_width',
+            margin=(10, 10),
+        )
 
     def _create_header_row(self) -> pn.Row:
         """Create the header row with expand/collapse all buttons."""
@@ -1086,31 +1103,6 @@ class WorkflowStatusListWidget:
             for widget in self._widgets.values():
                 widget.set_expanded(False)
 
-    def _create_panel(self) -> pn.Column:
-        """Create the main panel with all workflow widgets."""
-        workflow_widgets = []
-        workflow_registry = self._orchestrator.get_workflow_registry()
-        for workflow_id, spec in sorted(
-            workflow_registry.items(), key=lambda x: x[1].title
-        ):
-            widget = WorkflowStatusWidget(
-                workflow_id=workflow_id,
-                workflow_spec=spec,
-                orchestrator=self._orchestrator,
-                job_service=self._job_service,
-            )
-            self._widgets[workflow_id] = widget
-            workflow_widgets.append(widget.panel())
-
-        header_row = self._create_header_row()
-
-        return pn.Column(
-            header_row,
-            *workflow_widgets,
-            sizing_mode='stretch_width',
-            margin=(10, 10),
-        )
-
     def rebuild_widget(self, workflow_id: WorkflowId) -> None:
         """Rebuild a specific workflow widget after config changes."""
         widget = self._widgets.get(workflow_id)
@@ -1135,6 +1127,23 @@ class WorkflowStatusListWidget:
         """
         self._is_visible = is_visible
         session_updater.register_custom_handler(self._refresh_all)
+        # Populate as soon as the session is connected. onload callbacks run
+        # with pn.state.curdoc set (unlike session-factory code), so
+        # pn.io.hold() is effective and all workflow panels are inserted
+        # atomically rather than one at a time.
+        pn.state.onload(self._populate_pending)
+
+    def _populate_pending(self) -> None:
+        """Insert all workflow panels into the column in one batch.
+
+        Called from pn.state.onload() where pn.io.hold() is effective.
+        Also called as a fallback from _refresh_all() in non-server contexts
+        (e.g., tests) where onload may not fire.
+        """
+        if not self._populated:
+            with pn.io.hold():
+                self._panel.extend([w.panel() for w in self._widgets.values()])
+            self._populated = True
 
     def _refresh_all(self) -> None:
         """Refresh all workflow status widgets.
@@ -1144,6 +1153,9 @@ class WorkflowStatusListWidget:
         """
         if self._is_visible is not None and not self._is_visible():
             return
+        if not self._populated:
+            # Fallback: onload didn't fire (non-server context).
+            self._populate_pending()
         for widget in self._widgets.values():
             widget.refresh()
 
