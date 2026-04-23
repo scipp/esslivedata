@@ -294,9 +294,106 @@ How do UIs consume specs, and what does the vocabulary promise them?
 
 (c) is the maximum reuse position: a shared widget library means the livedata dashboard and the ipywidget UIs literally use the same components. The cost is a fourth package to maintain with its own release cadence and its own set of UI-framework compatibility concerns (Panel vs ipywidgets vs whatever NICOS uses is not trivial).
 
-**Recommendation tilt:** (a) for immediate unification; (c) as an aspiration for long-term consolidation of the dashboard/ipywidget UI code but not in initial scope. The schemas plan currently proposes (a) by default — pydantic `Field` metadata is the rendering input.
+**Recommendation tilt:** (a) for immediate unification; (c) as an aspiration for long-term consolidation of the dashboard/ipywidget UI code but not in initial scope. Pydantic `Field` metadata is the rendering input.
 
-### 6. Validator policy and wire format
+### 6. Presentation variants across UIs
+
+A workflow's parameter surface is not uniform across its consumers. The livedata dashboard during beam time wants a small number of interactive knobs with operational presets — normalization file, calibration path, geometry — fixed by deployment. A batch ipywidget UI wants every knob exposed for careful, iterative analysis. A NICOS frontend wants an operational-setup subset. A CLI wants full control. These are not different workflows scientifically; they are different presentations of the same workflow to different users in different operational contexts. If vocabulary design does not address this, every UI invents its own filtering logic, and the "which values are pinned in production vs. adjustable" question has no declarative home.
+
+Three subproblems hide inside this, easily conflated, each wanting a different mechanism:
+
+- **Visibility filtering.** Which parameters a given UI surfaces. Pure rendering concern, no operational consequence. "Show basic by default, advanced behind a toggle, expert hidden unless enabled."
+- **Deployment-pinned values.** Parameters whose values are fixed by the deployment environment — the live DREAM instance uses *this* normalization file, *this* calibration, *this* geometry — and which the UI cannot change regardless of visibility. Operational concern; ops has authority, users do not.
+- **Scientifically-different variants.** Cases where "live powder" and "batch powder" are not the same workflow with knobs hidden but genuinely different computations (e.g. live does incremental accumulation with approximate normalization; batch computes absolute normalization from first principles). Different identity, not different presentation.
+
+Treating these as one mechanism produces bad designs. Each wants its own answer.
+
+**Options for visibility filtering:**
+
+- **visibility-(a) Field-level hints.** Parameter models carry metadata tags (e.g. `Field(..., ui_level="advanced")`); UIs filter by tag. Simple; tag vocabulary stabilises over time.
+- **visibility-(b) Named presentations in the spec.** Spec declares named presentations — `{live-minimal: [w, x], batch-full: [w, x, y, z], ...}` — and UIs select by name. Structured but harder to evolve, because adding a new UI context adds a new name that must be maintained.
+- **visibility-(c) UI-side filter config only.** Each UI carries its own per-workflow "which params to show" configuration outside the vocabulary. Maximum flexibility; no unification; the domain judgment of "basic vs. advanced" drifts across UIs.
+
+**Options for deployment-pinned values:**
+
+- **pinning-(a) Runtime overlay.** Deployment config (livedata-local, not in vocabulary) provides `{workflow_id: {param: value}}` maps; UIs read spec + overlay and render only un-pinned params. Vocabulary stays clean of operational concerns; the overlay lives where deployment authority lives.
+- **pinning-(b) Preset fields in the spec.** Spec itself declares named preset tables; deployment selects a preset by name. All declarative in one place; vocabulary now carries deployment configuration, which is the entanglement unification was trying to avoid.
+- **pinning-(c) Derived specs / spec wrapping.** A wrapping mechanism: a `LivePowderSpec` wraps `FullPowderSpec` with a pin-overlay and exposes only the remaining free parameters. Consumers interact with the wrapper as if it were standalone; the underlying full spec is reached only for advanced introspection. This is the "wrap a detailed spec in a simpler high-level one" pattern — attractive because each UI gets a first-class object to consume, costly because vocabulary grows a compositional primitive that every consumer must understand.
+
+**Options for scientifically-different variants:**
+
+- **variant-(a) Separate WorkflowIds, no formal relationship.** Two first-class specs; the relationship is carried by convention or display-metadata groupings only. This is the "register different flavours of workflow specs" pattern — cleanest in isolation, loses the correlation link ("is this the same underlying workflow as the one I ran live last night?").
+- **variant-(b) Separate WorkflowIds with `derived_from` or `variant_of` metadata.** Enough structure for UIs to correlate without pretending variants share identity.
+- **variant-(c) Version-string grammar.** `dream/powder/v1-live` vs. `dream/powder/v1-batch` parse as variants of the same ID-root. Explicit in the identity itself; makes version comparison awkward and conflates variance with versioning.
+
+**Coherent combination (non-binding tilt):**
+
+- Visibility: visibility-(a) field-level hints. Lightweight and UI-consumable.
+- Deployment pins: pinning-(a) runtime overlay, owned by livedata deployment config. Keeps vocabulary free of operational concerns and keeps ops authority where it lives.
+- Scientifically-different variants: variant-(b) separate IDs with explicit `derived_from` metadata. Correlation without identity collision.
+
+Three decoupled mechanisms, composable. A UI rendering a workflow applies: [params declared by the spec] minus [params pinned by deployment overlay] filtered by [visibility threshold this UI is configured for].
+
+**Tradeoffs against the alternatives directly raised:**
+
+Spec wrapping (pinning-(c)) collapses visibility + pinning into a single explicit primitive, at the cost of adding a compositional layer to vocabulary. Each UI sees its own first-class "spec object"; consumers of a wrapped spec either see the wrapper or the underlying depending on which level they introspect. Viable if the vocabulary is willing to carry the wrapping machinery and if the wrapper's relationship to its underlying is crisply defined. The risk is that the wrapper mechanism becomes a vocabulary-level feature that every future consumer must understand, and that two teams invent two different wrapper conventions.
+
+Separate registrations per UI flavour (variant-(a) with visibility folded in) is the simplest mechanism and the one most likely to happen silently if no decision is made. Livedata registers `dream/powder_live/v1`, a batch UI registers `dream/powder_batch/v1`, and nothing ties them formally. The failure mode is silent: scientists reinvent the correspondence mentally ("the live `wavelength_range` is the same as the batch `wavelength_cut`, I think"), the catalog grows, and correlation drifts.
+
+The three-mechanism approach keeps each concern at its natural authority layer — schema maintainers own visibility tags, ops owns deployment overlays, instrument/technique authors own variant identity. It costs more explanation up front and less long-term confusion about "who controls this?"
+
+**Open questions:**
+
+- Who owns visibility hints — technique-package authors (domain judgment about "advanced") or vocabulary maintainers (cross-cutting schema)? The natural split is that vocabulary defines the set of tag values and domain authors assign them.
+- Should deployment overlays participate in spec discovery? Does a `get_workflows()`-style API return specs with overlay applied, without, or both? Different consumers want different things, and the API surface shape dictates which is primary.
+- Can visibility hints be overridden per UI? A per-UI override invites drift; no override is rigid. The realistic answer is that the spec provides a default and individual UIs may adjust locally when they have a justified reason.
+- What does a UI show when a deployment-pinned value is in effect — "fixed by deployment" metadata, or absence? Both are defensible; the choice affects user trust ("is this parameter not here, or not applicable?").
+
+This decision interacts with section 1 (vocabulary scope) and section 5 (UI-surface contract): if presentations are a first-class part of vocabulary, scope grows; if they live UI-side, the UI contract grows; if they live in deployment config, livedata's runtime surface grows. Total complexity is conserved across layers — the real choice is where to put it.
+
+### 7. Runtime-catalog discovery: how UIs learn the effective specs
+
+Section 6 left one question open by design: if deployment-pinned values live as a runtime overlay in livedata's deployment config (rather than in vocabulary), and a UI imports `ess.schemas` directly, the UI sees only the full unpinned parameter surface. How does it learn which specs the running backend has registered and what overlay has been applied?
+
+The answer is that there are two distinct catalogs, reaching UIs through different channels.
+
+- **Schema catalog.** What `ess.schemas` declares: the full universe of workflow specs, the full parameter surfaces, no deployment awareness. Available to any Python consumer that installs the package.
+- **Runtime catalog.** What a specific deployment actually serves: the specs for which factories are registered, with the deployment's overlay applied. Lives in the backend's in-memory factory state.
+
+These intentionally diverge. A dashboard for a running DREAM instrument cares about the runtime catalog; a batch-analysis notebook cares about the schema catalog (there is no deployment, no overlay); a NICOS frontend monitoring a running instrument cares about the runtime catalog but cannot import livedata's Python state.
+
+**Path per UI type:**
+
+- **In-process UIs (livedata dashboard as it is today).** The dashboard runs in the same Python environment as the livedata backend and imports the same factory-setup path (`setup_factories()` or equivalent). It reads the effective spec set directly, with overlay already applied, and validators stay Python-authoritative. No new protocol, no serialization, no version-skew risk between vocabulary and backend. This is the simplest case and the one in play today. It works only because of co-residency, which is a current architectural fact rather than a permanent one — if the dashboard becomes a web app decoupled from the backend Python process, it joins the out-of-process group.
+- **Out-of-process UIs (NICOS, future remote dashboards, external ipywidget UIs connecting to a live backend, any web frontend not co-resident with Python).** Cannot import the runtime state. The backend must publish. Three options for the publication channel:
+  - **channel-(a) Status-topic announcement.** Each service publishes its registered WorkflowId set and overlay to the existing service-status Kafka topic on startup and whenever registration changes. Fits existing transport; no new infrastructure.
+  - **channel-(b) Dedicated catalog endpoint.** A separate Kafka topic or HTTP endpoint for catalog queries. More explicit, more infrastructure.
+  - **channel-(c) Heartbeats with embedded catalog.** Services include their current catalog in regular status heartbeats. Simple; bandwidth-redundant.
+- **Batch-only UIs (ipywidget UIs analyzing a NeXus file with no live backend).** Consume only the schema catalog. There is no overlay because there is no deployment. The question does not arise.
+
+**What exactly is published — effective specs, or base spec plus overlay?**
+
+Two sub-options that look similar and are not:
+
+- **publish-effective.** Backend publishes specs with pinned parameters already removed from the parameter model. UIs treat the published spec as if it were the vocabulary. The cost is loss of information: the UI cannot distinguish "this parameter is fixed by deployment to value X" from "this parameter does not exist in this workflow". A read-only indicator like "normalization file: /data/norm/latest.nxs (fixed by ops)" cannot be rendered because the field is simply absent.
+- **publish-reference-plus-overlay.** Backend publishes a `WorkflowId` reference plus a separate overlay map. UI composes them locally — looks up the base spec in its own vocabulary package, applies the overlay, and retains the overlay for rendering read-only pinned values. Gains information fidelity. Requires UIs to share the vocabulary package for reference resolution (fine for Python UIs that install `ess.schemas`, a gap for UIs that cannot import Python). The gap is closable by emitting a JSON-Schema export per referenced spec alongside the overlay — at the cost of a second serialization pathway.
+
+The second is richer and only slightly more expensive when consumers are Python; the first is simpler and information-lossy.
+
+**Drift between the two catalogs:**
+
+The plan so far implicitly assumes every workflow a backend serves is declared in `ess.schemas`. If that stops being true — livedata begins registering experimental, instrument-local, or one-off workflows not present in the schema catalog — out-of-process UIs lose discoverability of those workflows unless the publication mechanism carries the spec inline rather than merely by reference. The argument this makes: every published catalog entry should be self-contained, not relying on the consumer having the exact matching vocabulary version. Either vocabulary reference plus a resolvable (and cache-friendly) declarative spec, or a full declarative spec inline, but not an ID alone.
+
+**Open questions:**
+
+- Which publication channel — channel-(a), (b), or (c)? (a) fits existing infrastructure and is probably the right default. (b) is cleaner at the cost of new surface to maintain. (c) is simplest and wasteful.
+- Is the runtime catalog part of the *vocabulary contract* (defined alongside the schema catalog, with a committed wire protocol) or strictly an operational concern of each deployment? The second keeps vocabulary minimal; the first makes out-of-process UIs first-class consumers. This connects directly to the validator-policy choice in section 8 — both decisions are about what the schemas surface promises wire-level consumers.
+- In multi-instrument or multi-service deployments, how does a UI choose which backend's runtime catalog to subscribe to? Environment variable, discovery protocol, per-UI configuration. Not interesting for single-instrument deployments; becomes interesting the moment more than one livedata deployment is in play.
+- If the dashboard migrates from co-resident to decoupled (web-app form), does it reuse the NICOS-targeted publication mechanism or its own? Probably the former if the mechanism is designed well; a sign of failure if the answer ends up being "its own".
+
+**Mechanism is deferrable; the distinction is not.** The concrete publication mechanism can be deferred until a concrete out-of-process consumer exists (NICOS with real requirements, or a decoupled dashboard). The *distinction* between schema catalog and runtime catalog has to be committed now, because it shapes how every other decision here reads: the UI contract (section 5) assumes one or the other; presentation variants (section 6) assume one or the other; validator policy (section 8) assumes one or the other. Saying "UIs consume the schema catalog via Python import" is a different commitment from "UIs consume the runtime catalog via a wire protocol" — the near-term answer is both, for different UIs.
+
+### 8. Validator policy and wire format
 
 Pydantic validators are Python callables. They do not round-trip through JSON. Yet validators are exactly where the interesting input-validation logic lives today (range checks, consistency checks, instrument-configuration-specific rules).
 
@@ -316,7 +413,7 @@ Pydantic validators are Python callables. They do not round-trip through JSON. Y
 
 **Recommendation tilt:** (a), with an explicit acknowledgement that it closes the door on Python-free consumers for the foreseeable future. NICOS integration, if it happens, accepts this. If it does not accept this, the decision must be reopened — but committing to (b) because NICOS is hypothetical trades a concrete cost (beam-time latency) for a hypothetical benefit.
 
-### 7. Versioning and cadence
+### 9. Versioning and cadence
 
 How do consumers pin the vocabulary, and how do vocabulary releases relate to consumer releases?
 
@@ -339,7 +436,7 @@ How do consumers pin the vocabulary, and how do vocabulary releases relate to co
 
 **Recommendation tilt:** (b) with backward-compat discipline (new fields optional, deprecation cycles for breaking changes) during initial releases; aim for (c) once the surface stabilizes.
 
-### 8. Instrument-specific and technique-specific specialization
+### 10. Instrument-specific and technique-specific specialization
 
 Where do `DreamPowderWorkflowParams(PowderWorkflowParams)` and similar specializations live, given that they cross instrument × technique?
 
@@ -362,7 +459,7 @@ Where do `DreamPowderWorkflowParams(PowderWorkflowParams)` and similar specializ
 
 **Recommendation tilt:** (b), with the dependency edge (vocabulary → technique packages) accepted as the direction the arrow goes. The alternative — technique packages not importing from vocabulary, or vocabulary not knowing about technique specializations — foregoes the unification.
 
-### 9. Streaming-specific fields
+### 11. Streaming-specific fields
 
 Parameters that exist only because a workflow runs live — accumulation window, rate limit, cadence, incremental-binning resolution — do not apply to batch execution. Where do they live?
 
@@ -374,7 +471,7 @@ Parameters that exist only because a workflow runs live — accumulation window,
 
 **Tradeoffs:**
 
-(a) is clean but doubles the subclass tree: vocabulary already uses subclassing for instrument specialization (D1), and streaming adds a second axis. `DreamMonitorDataParams(MonitorDataParams)` in vocabulary and `LiveDreamMonitorDataParams(DreamMonitorDataParams, LiveMonitorParams)` in livedata — multiple inheritance and linearization problems may follow.
+(a) is clean but doubles the subclass tree: vocabulary already uses subclassing for instrument specialization (see section 1), and streaming adds a second axis. `DreamMonitorDataParams(MonitorDataParams)` in vocabulary and `LiveDreamMonitorDataParams(DreamMonitorDataParams, LiveMonitorParams)` in livedata — multiple inheritance and linearization problems may follow.
 
 (b) is smallest-diff but leaks: batch consumers carry unused fields, vocabulary releases force re-verify on live-only changes, and the vocabulary contract becomes polluted with streaming concepts.
 
@@ -382,7 +479,7 @@ Parameters that exist only because a workflow runs live — accumulation window,
 
 **Recommendation tilt:** (a). Accept the subclass complexity as the price of the separation. Livedata owns the "Live" subclasses; vocabulary does not know they exist.
 
-### 10. Cross-cutting reduction primitives (detector views, histogramming)
+### 12. Cross-cutting reduction primitives (detector views, histogramming)
 
 Detector-view binning (pixel indices to logical coordinates), monitor histogramming, ROI reduction, TOF binning — currently live in livedata. These are cross-instrument data-shaping primitives; they apply equally to batch and streaming.
 
@@ -402,7 +499,7 @@ Detector-view binning (pixel indices to logical coordinates), monitor histogramm
 
 **Recommendation tilt:** (a), as a separate migration plan with its own audit, not a consequence of vocabulary extraction. Requires the ess.reduce maintainers to accept the scope expansion.
 
-### 11. Migration path
+### 13. Migration path
 
 How do we get from here (duplicated specs, no shared vocabulary) to there (unified, cross-consumer)?
 
@@ -426,7 +523,7 @@ How do we get from here (duplicated specs, no shared vocabulary) to there (unifi
 
 **Recommendation tilt:** (b) as the immediate move; (d) with powder as the first technique if extraction proceeds; (e) as the acceptable endpoint if the second consumer never materializes.
 
-### 12. Release gates and breakage discipline
+### 14. Release gates and breakage discipline
 
 How do we prevent a vocabulary change from silently breaking a consumer?
 
