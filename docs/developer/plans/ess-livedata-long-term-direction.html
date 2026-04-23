@@ -741,8 +741,8 @@
 <section id="direction">
   <h2><span class="section-num">5</span>Architectural direction under discussion</h2>
   <p class="lead">
-    A three-way split with a deliberate choice about where vocabulary lives.
-    <em>Three structural claims</em> sit inside this picture — each individually evaluable.
+    A four-layer split with a deliberate choice about where vocabulary, factories, and runtimes live.
+    <em>Four structural claims</em> sit inside this picture — each individually evaluable.
   </p>
 
   <div class="arch">
@@ -753,57 +753,79 @@
     <div class="arch-arrow">▼ consumes specs ▼</div>
 
     <div class="arch-layer vocab">
-      <div class="label">ess.schemas — the shared vocabulary</div>
+      <div class="label">ess.schemas &nbsp;·&nbsp; scipp/ess monorepo &nbsp;·&nbsp; pydantic + stdlib</div>
       <div class="body">
-        <strong>pydantic + stdlib only.</strong> No scipp, no sciline, no UI toolkit.
         <ul>
           <li><code>WorkflowSpec</code>, <code>WorkflowId</code>, <code>InstrumentSpec</code>, <code>ComponentSpec</code></li>
-          <li>Parameter models, output shape schemas (<code>ArraySpec</code>), display metadata</li>
-          <li>Possibly: per-instrument / per-technique subpackages (see Decision 1)</li>
+          <li>Parameter models <strong>with streaming/batch visibility markers declared by the author</strong></li>
+          <li>Output shape schemas (<code>ArraySpec</code>), display metadata</li>
+          <li>Per-instrument / per-technique subpackages (see Decision 1)</li>
         </ul>
       </div>
     </div>
     <div class="arch-arrow">▼ implemented by ▼</div>
 
+    <div class="arch-layer" style="background:#fff7e8;border-color:#e9d9b4;">
+      <div class="label" style="color:#8a6a14;">Technique packages &nbsp;·&nbsp; scipp/ess monorepo</div>
+      <div class="body">
+        <ul>
+          <li><code>ess.powder</code>, <code>ess.sans</code>, <code>ess.reflectometry</code>, <code>ess.diffraction</code>, <code>ess.spectroscopy</code>, …</li>
+          <li>Reduction algorithms (sciline + scipp)</li>
+          <li><strong>Workflow factories (batch and streaming) — written by the algorithm author</strong></li>
+          <li><code>StreamProcessorWorkflow</code> and related streaming adapters</li>
+          <li>↓ relies on <code>ess.reduce</code> transforms</li>
+        </ul>
+      </div>
+    </div>
+
     <div class="arch-layer split">
       <div class="half stream">
-        <div class="label" style="color:var(--orange);">Streaming backend — ess.livedata</div>
+        <div class="label" style="color:var(--orange);">ess.livedata — streaming runtime ← <em>factory attached by</em></div>
         <ul>
-          <li>Kafka source/sink, accumulators, orchestration</li>
-          <li>Live-only parameter overlays</li>
+          <li>Kafka source/sink</li>
+          <li>Accumulators</li>
+          <li><code>WorkflowId → factory</code> binding (a small attachment table at startup)</li>
+          <li>Deployment config (ops pins — backend-internal)</li>
           <li>Dashboard</li>
-          <li>↓ uses ess.reduce (transforms)</li>
         </ul>
       </div>
       <div class="half batch">
-        <div class="label" style="color:var(--blue);">Batch backend — ess.&lt;technique&gt;</div>
+        <div class="label" style="color:var(--blue);">Batch runtime ← <em>directly invoked by</em></div>
         <ul>
-          <li>sciline over NeXus files</li>
-          <li>Technique-specific algorithm</li>
-          <li>↓ uses ess.reduce (transforms)</li>
+          <li>NeXus file loading</li>
+          <li>ipywidget UIs layered here</li>
         </ul>
       </div>
     </div>
   </div>
 
-  <h3 style="font-size:15px; margin-top:24px; margin-bottom:4px;">Three load-bearing claims inside this picture</h3>
-  <div class="claims">
+  <h3 style="font-size:15px; margin-top:24px; margin-bottom:4px;">Four load-bearing claims inside this picture</h3>
+  <div class="claims" style="grid-template-columns: repeat(4, 1fr);">
     <div class="claim">
       <div class="n">CLAIM 1</div>
       <div class="t">Vocabulary is separable from compute</div>
-      <div class="d">A spec can answer the 4 questions with pydantic + stdlib, no scipp. <strong>Empirically testable.</strong> The output-shape redesign is the hardest part.</div>
+      <div class="d">A spec can answer the 4 questions with pydantic + stdlib, no scipp. <strong>Empirically testable.</strong> Output-shape redesign is the hardest part.</div>
+    </div>
+    <div class="claim" style="border-top-color:var(--yellow);">
+      <div class="n" style="color:var(--yellow);">CLAIM 2 &nbsp;<span style="background:var(--yellow);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;">REFRAMED</span></div>
+      <div class="t">The workflow author owns streaming applicability</div>
+      <div class="d">Which inputs apply in streaming vs. batch is <em>structural</em>, known by the reduction author. Spec carries per-field markers (<code>streaming</code>/<code>batch</code>/<code>both</code>) declared once. UIs filter by marker. <strong>No deployment-time overlay, no runtime publication dance.</strong></div>
+    </div>
+    <div class="claim" style="border-top-color:var(--yellow);">
+      <div class="n" style="color:var(--yellow);">CLAIM 3 &nbsp;<span style="background:var(--yellow);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;">NEW</span></div>
+      <div class="t">Factories + streaming adapters belong with the algorithm, not with the runtime</div>
+      <div class="d">Glue that turns a spec into a runnable pipeline (incl. <code>StreamProcessorWorkflow</code>) is domain knowledge — lives next to the reduction it wraps. Livedata keeps only the attachment table. Cross-cutting primitives go to <code>ess.reduce</code>.</div>
     </div>
     <div class="claim">
-      <div class="n">CLAIM 2</div>
-      <div class="t">Streaming is an adapter over shared compute</div>
-      <div class="d">Cross-cutting data-shaping (detector views, histogramming, focus, ROI) belongs in <code>ess.reduce</code>. What stays in livedata is the reactive half: accumulators, Kafka, orchestration.</div>
-    </div>
-    <div class="claim">
-      <div class="n">CLAIM 3</div>
-      <div class="t">Technique packages become spec-conformant</div>
-      <div class="d">Technique packages declare workflows against the shared vocabulary (or it mirrors them). Workflows become first-class, catalog-wide entries.</div>
+      <div class="n">CLAIM 4</div>
+      <div class="t">Technique packages are the primary home for workflow implementation in both modes</div>
+      <div class="d">Technique packages declare workflows against the vocabulary and provide factories for <em>both</em> batch and streaming. The one thing users (via UIs) and backends (via either runtime) both import from. <strong>Livedata shrinks to Kafka + accumulators + dashboard + deployment config.</strong></div>
     </div>
   </div>
+  <style>
+    @media (max-width: 1100px) { .claims { grid-template-columns: repeat(2,1fr) !important; } }
+    @media (max-width: 600px)  { .claims { grid-template-columns: 1fr !important; } }
+  </style>
 </section>
 
 <!-- ══════════════ 6. UPSIDES VS DOWNSIDES ══════════════ -->
@@ -951,29 +973,44 @@
     </details>
 
     <!-- DECISION 4 -->
-    <details class="decision" data-risk="low">
+    <details class="decision" data-risk="high">
       <summary>
         <span class="dnum">4</span>
         <span>
-          <div class="dtitle">Compute-backend contract — how does a backend satisfy a spec?</div>
-          <div class="dsub">Factory? adapters? callbacks? no contract?</div>
+          <div class="dtitle">Compute-backend contract — where factories live <span style="background:var(--yellow);color:#fff;padding:1px 5px;border-radius:3px;font-size:10px;">REFRAMED</span></div>
+          <div class="dsub">Not "what contract" but "where does the glue between spec and runnable pipeline live?". Load-bearing for Decisions 6, 7, 12.</div>
         </span>
-        <span class="tilt">Tilt: (a)</span>
+        <span class="tilt">Tilt: (a) — with the algorithm</span>
       </summary>
       <div class="body">
         <div class="options">
           <div class="opt rec"><span class="letter">a</span>
-            <div><div class="t">Spec + factory <span class="tag">tilt</span></div>
-            <div class="d">Generalization of livedata's current factory. <code>WorkflowFactory</code> lookup by <code>WorkflowId</code>. Each backend owns its factory; specs key the lookup. Minimal vocabulary surface.</div></div></div>
-          <div class="opt ok"><span class="letter">b</span>
-            <div><div class="t">Spec + two adapters per workflow</div>
-            <div class="d">Explicit; less magic; more repetition across dozens of workflows × two backends.</div></div></div>
-          <div class="opt bad"><span class="letter">c</span>
-            <div><div class="t">Spec + callbacks</div>
-            <div class="d">Pushes streaming concepts into vocabulary. Violates the dependency-minimal premise.</div></div></div>
-          <div class="opt warn"><span class="letter">d</span>
-            <div><div class="t">No explicit contract</div>
-            <div class="d">Max flexibility, min unification. Backends drift; nothing enforces consistent interpretation.</div></div></div>
+            <div><div class="t">Factories with the algorithm (technique package) <span class="tag">tilt</span></div>
+            <div class="d">
+              <code>ess.powder.reduce</code> also exposes <code>_powder_workflow_factory</code> and a streaming variant. Author writes both.
+              <code>StreamProcessorWorkflow</code> moves from livedata to the monorepo alongside technique packages so factories can use it without depending on livedata.
+              Livedata discovers factories at startup and builds a <code>WorkflowId → factory</code> binding table.
+              <br><em>Why:</em> author of <code>ess.powder</code> already must think about streaming structure (incremental accumulation, restartability). Writing the streaming factory is a <em>continuation</em> of writing the algorithm, not a handoff. Also makes the author-declared markers in Decision 6 coherent (same person declares streaming applicability and writes the streaming factory).
+            </div></div></div>
+          <div class="opt warn"><span class="letter">b</span>
+            <div><div class="t">Factories with the runtime (livedata) — current state</div>
+            <div class="d">Livedata owns the glue. Streaming applicability looks like a livedata concern even though it is really an algorithm concern. Defensible near-term (no extraction needed); <strong>compounds the fix-latency and coordination-cost downsides</strong>.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span>
+            <div><div class="t">Factories in a third home (e.g. ess.reduce)</div>
+            <div class="d">Middle layer knows specs + knows both construction modes. Adds a package boundary and ownership question without obvious benefit over (a).</div></div></div>
+          <div class="opt bad"><span class="letter">d</span>
+            <div><div class="t">No unified factory pattern</div>
+            <div class="d">Each backend re-derives its own interpretation. Maximally flexible, minimally unified — <strong>this is not unification</strong>.</div></div></div>
+        </div>
+        <div class="tilt-block">
+          <span class="k">Load-bearing</span>
+          This choice cascades into Decision 6 (presentation markers are coherent only if author owns both declaration and streaming factory), Decision 7 (runtime catalog degenerates to an attachment list), and Decision 12 (cross-cutting primitives in <code>ess.reduce</code> include <code>StreamProcessorWorkflow</code> itself). An earlier framing of this doc defaulted to (b); the reframing across multiple sections reflects correcting that.
+        </div>
+        <div class="extras">
+          <span class="k">Open question</span>
+          <ul>
+            <li>Is the scipp/ess monorepo willing to take on a streaming adapter (Kafka-shaped semantics, even if not Kafka itself)? <strong>Option (a) stands or falls on this.</strong> If not, fall back to (b) and accept that the simplifications in Decisions 6 and 7 partially reverse.</li>
+          </ul>
         </div>
       </div>
     </details>
@@ -1004,112 +1041,163 @@
     </details>
 
     <!-- DECISION 6 -->
-    <details class="decision" data-risk="medium">
+    <details class="decision" data-risk="low">
       <summary>
         <span class="dnum">6</span>
         <span>
-          <div class="dtitle">Presentation variants across UIs</div>
-          <div class="dsub">Beam-time operator sees few knobs; batch analyst sees all. Three sub-problems easily conflated.</div>
+          <div class="dtitle">Presentation variants across UIs <span style="background:var(--yellow);color:#fff;padding:1px 5px;border-radius:3px;font-size:10px;">REFRAMED</span></div>
+          <div class="dsub">Reframed around <em>author-declared markers</em>. Three sub-problems collapse — two largely dissolve.</div>
         </span>
-        <span class="tilt">Tilt: three mechanisms</span>
+        <span class="tilt">Tilt: author-declared markers + ops-as-telemetry + variant-(b)</span>
       </summary>
       <div class="body">
 
-        <p class="tradeoffs-note"><strong>Three sub-problems — each wants a different answer:</strong></p>
+        <div class="tilt-block" style="background:var(--yellow-bg);border-left-color:var(--yellow);margin-bottom:14px;">
+          <span class="k" style="color:var(--yellow);">The simplifying observation</span>
+          <strong>Most of this variance is author-knowable.</strong> The person writing <code>ess.powder.reduce</code> already has to think about streaming structure — whether an input affects incremental accumulation, whether it expects complete-run statistics, whether it can be updated mid-stream. Streaming performance is a workflow-design concern before it is a UI concern. The author is therefore the right person to declare, per parameter, which execution modes a field is meaningful for. <strong>Declared once at the spec, every UI filters by marker for its context without asking any backend anything.</strong>
+        </div>
 
-        <div class="grid-3" style="margin:10px 0;">
-          <div class="card" style="padding:12px 14px;">
-            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Visibility filtering</div>
-            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">Which params a UI surfaces. Pure rendering concern. "Basic / advanced / expert."</div>
+        <p class="tradeoffs-note"><strong>Concretely:</strong></p>
+        <ul style="margin:4px 0 14px; padding-left:18px; font-size:13.5px; line-height:1.55;">
+          <li>Spec carries per-field markers — <code>modes={"streaming", "batch"}</code> or equivalent. Minimal vocab: <code>streaming</code> / <code>batch</code> / <code>both</code>. Richer tag sets (<code>advanced</code>, <code>expert</code>, <code>debug</code>) can layer on top.</li>
+          <li>UIs filter visible fields by intersecting their own mode with each field's markers. <strong>No runtime-side mechanism participates.</strong></li>
+        </ul>
+
+        <details>
+          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ How this looks in pydantic (click to expand)</summary>
+          <pre style="background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow-x:auto;font-size:12px;line-height:1.5;margin:8px 0;"><code>from typing import Annotated
+from pydantic import BaseModel, Field
+
+class Modes:
+    """Marker: which execution modes this field applies to."""
+    def __init__(self, *modes: str) -&gt; None:
+        self.modes = frozenset(modes)
+
+class PowderWorkflowParams(BaseModel):
+    wavelength_range: Annotated[WavelengthRange, Modes("streaming", "batch")] = Field(...)
+    normalization_file: Annotated[Path, Modes("batch")] = Field(...)
+    accumulation_window: Annotated[timedelta, Modes("streaming")] = Field(
+        default=timedelta(seconds=10),
+    )</code></pre>
+          <p class="tradeoffs-note">UI-side consumption is equally direct — pydantic preserves <code>Annotated</code> metadata on <code>FieldInfo</code>:</p>
+          <pre style="background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow-x:auto;font-size:12px;line-height:1.5;margin:8px 0;"><code>def visible_fields(model_cls: type[BaseModel], mode: str) -&gt; list[str]:
+    visible = []
+    for name, field_info in model_cls.model_fields.items():
+        markers = [m for m in field_info.metadata if isinstance(m, Modes)]
+        if not markers or any(mode in m.modes for m in markers):
+            visible.append(name)
+    return visible</code></pre>
+          <p class="tradeoffs-note">Alternatives at the binding layer (<code>Field(..., json_schema_extra={"modes": [...]})</code>, a <code>SpecField(...)</code> helper, decorator-based markers) are equivalent in spirit. <strong>The architectural commitment is that the marker lives on the field in vocabulary, travels with the pydantic model, and is accessible to any consumer without a second registry.</strong></p>
+        </details>
+
+        <h4 style="margin:20px 0 8px; font-size:14px;">Two remaining concerns</h4>
+
+        <div class="grid-2">
+          <div class="card" style="border-top:3px solid var(--green);">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:4px;">Deployment-specific ops state</div>
+            <div style="font-size:13px;color:var(--ink-2);line-height:1.55;">
+              Examples: "this DREAM instance uses <code>/data/norm/latest.nxs</code>", "this run uses calibration v7".
+              <strong>Mostly not a UI concern at all.</strong> Backend-internal values applied when the sciline pipeline is constructed. Live in livedata's deployment config; not exposed as UI parameters by design.
+              <br><br>Where the dashboard <em>does</em> want to show "backend is currently using X", that's <strong>backend telemetry (status)</strong> — a separate channel, not parameter rendering.
+              <br><br><em>This dissolves the previously imagined overlay-publication mechanism.</em>
+            </div>
           </div>
-          <div class="card" style="padding:12px 14px;">
-            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Deployment-pinned values</div>
-            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">Params fixed by deployment (norm file, calib). UI cannot change regardless of visibility. <em>Ops has authority.</em></div>
+          <div class="card" style="border-top:3px solid var(--blue);">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:4px;">Scientifically-different variants</div>
+            <div style="font-size:13px;color:var(--ink-2);line-height:1.55;">
+              "Live powder" vs. "batch powder" as <em>genuinely different computations</em> (e.g. live = incremental + approximate normalization; batch = absolute normalization from first principles). <strong>Identity concern, not presentation.</strong>
+            </div>
+            <div class="options" style="margin-top:10px;">
+              <div class="opt warn"><span class="letter">a</span><div><div class="t">Separate IDs, no formal relationship <span class="tag">silent drift</span></div><div class="d">Scientists reinvent correspondence mentally; catalog grows; correlation drifts.</div></div></div>
+              <div class="opt rec"><span class="letter">b</span><div><div class="t">Separate IDs with <code>derived_from</code> metadata <span class="tag">tilt</span></div><div class="d">Correlation without identity collision.</div></div></div>
+              <div class="opt warn"><span class="letter">c</span><div><div class="t">Version-string grammar (<code>v1-live</code>, <code>v1-batch</code>)</div><div class="d">Conflates variance with versioning.</div></div></div>
+            </div>
           </div>
-          <div class="card" style="padding:12px 14px;">
-            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Scientifically-different variants</div>
-            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">"Live powder" vs. "batch powder" are genuinely different computations — different identity, not different presentation.</div>
-          </div>
+        </div>
+
+        <div class="tilt-block"><span class="k">Recommendation</span>
+          <ul style="margin:6px 0 0;padding-left:18px;">
+            <li><strong>Visibility:</strong> per-field markers declared by the workflow author. Spec is single source of truth. No runtime-catalog publication required for this layer.</li>
+            <li><strong>Ops state:</strong> lives in livedata deployment config, outside the spec. Surfaced as dashboard telemetry if needed — distinct API from parameter rendering.</li>
+            <li><strong>Variants:</strong> variant-(b), separate IDs with <code>derived_from</code>, when the computations genuinely differ.</li>
+          </ul>
         </div>
 
         <details style="margin-top:12px;">
-          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ Options per sub-problem (click to expand)</summary>
-          <div class="options" style="margin-top:10px;">
-            <div class="opt rec"><span class="letter">V·a</span><div><div class="t">Visibility — field-level hints <span class="tag">tilt</span></div><div class="d"><code>Field(..., ui_level="advanced")</code>. UIs filter by tag. Simple; tag vocab stabilises.</div></div></div>
-            <div class="opt ok"><span class="letter">V·b</span><div><div class="t">Visibility — named presentations in spec</div><div class="d">Structured; every new UI context = new maintained name.</div></div></div>
-            <div class="opt warn"><span class="letter">V·c</span><div><div class="t">Visibility — UI-side config only</div><div class="d">"Basic vs advanced" drifts across UIs.</div></div></div>
-            <div class="opt rec"><span class="letter">P·a</span><div><div class="t">Pinning — runtime overlay <span class="tag">tilt</span></div><div class="d">Deployment config provides <code>{workflow_id: {param: value}}</code>. Vocab stays clean; ops owns what ops should own.</div></div></div>
-            <div class="opt warn"><span class="letter">P·b</span><div><div class="t">Pinning — preset fields in spec</div><div class="d">Vocab carries deployment configuration — the entanglement unification was trying to avoid.</div></div></div>
-            <div class="opt ok"><span class="letter">P·c</span><div><div class="t">Pinning — derived specs / wrapping</div><div class="d">Wrapping primitive every consumer must learn. Attractive, costly.</div></div></div>
-            <div class="opt warn"><span class="letter">X·a</span><div><div class="t">Variants — separate IDs, no relationship <span class="tag">silent failure</span></div><div class="d">Happens by default if nothing is decided. Scientists reinvent correspondence mentally; drift.</div></div></div>
-            <div class="opt rec"><span class="letter">X·b</span><div><div class="t">Variants — separate IDs with <code>derived_from</code> metadata <span class="tag">tilt</span></div><div class="d">Correlation without identity collision.</div></div></div>
-            <div class="opt warn"><span class="letter">X·c</span><div><div class="t">Variants — version-string grammar</div><div class="d">Conflates variance with versioning.</div></div></div>
-          </div>
+          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0; color:var(--ink-2);">▸ Obsoleted alternatives (from earlier iteration)</summary>
+          <p class="tradeoffs-note" style="margin-top:8px;">An earlier iteration treated <strong>spec wrapping</strong> (one "live spec" wrapping a full one with pinned values) and <strong>parallel-flavour registration</strong> (separate live/batch specs covering partly the same ground) as primary mechanisms. Both are obsoleted by author-declared markers for the common case. Wrapping stays viable if vocabulary ever wants a first-class "simplified spec" object for reasons beyond visibility, but it's no longer the default — the cost of a compositional layer every consumer must understand is avoided if markers suffice. Parallel-flavour registration collapses to variant-(a) above, retained only for genuine identity differences.</p>
         </details>
-
-        <div class="tilt-block"><span class="k">Coherent combination</span>
-          Three <em>decoupled</em> mechanisms, composable. UI renders = <code>[params declared by spec]</code> minus <code>[pinned by deployment overlay]</code> filtered by <code>[visibility threshold this UI is at]</code>.
-          Schema maintainers own tags; ops owns overlays; instrument/technique authors own variant identity.
-        </div>
 
         <div class="extras">
           <span class="k">Open questions</span>
           <ul>
-            <li>Who owns visibility hints — technique authors (domain judgment) or vocab maintainers (cross-cutting schema)? Likely split: vocab defines tag values, authors assign.</li>
-            <li>Do deployment overlays participate in spec discovery? Does <code>get_workflows()</code> return overlay-applied, raw, or both?</li>
-            <li>Can visibility hints be overridden per UI? Override invites drift; no override is rigid.</li>
-            <li>UI behaviour for pinned values: "fixed by deployment" indicator vs. absence? Affects user trust.</li>
+            <li>Who owns the marker vocabulary — technique-package authors (per-field domain judgment) or vocabulary maintainers (cross-cutting schema)? Natural split: vocab defines allowed values; domain authors assign per field.</li>
+            <li>Can markers be overridden per UI? E.g. a debug/expert mode in NICOS that shows streaming-hidden fields. Per-UI override invites drift but probably needed in practice. Realistic answer: spec declares defaults; individual UIs adjust when justified.</li>
+            <li>Any real case where ops wants to surface a pinned value read-only? If so → dashboard telemetry, not spec metadata. Not the same machinery.</li>
+            <li>Parameters that are streaming-relevant but whose <em>default</em> changes by deployment? Probably as backend-provided initial-value hints in the runtime-catalog announcement — much simpler than an overlay. See Decision 7.</li>
           </ul>
         </div>
       </div>
     </details>
 
     <!-- DECISION 7 -->
-    <details class="decision" data-risk="medium">
+    <details class="decision" data-risk="low">
       <summary>
         <span class="dnum">7</span>
         <span>
-          <div class="dtitle">Runtime-catalog discovery — how UIs learn <em>effective</em> specs</div>
-          <div class="dsub">Two catalogs: schema (what ess.schemas declares) vs runtime (what a deployment actually serves, overlay applied).</div>
+          <div class="dtitle">Runtime-catalog discovery — how UIs find out what is registered <span style="background:var(--yellow);color:#fff;padding:1px 5px;border-radius:3px;font-size:10px;">SIMPLIFIED</span></div>
+          <div class="dsub">Once author-declared markers do the heavy lifting (Decision 6), the runtime catalog degenerates to an <em>ID enumeration</em>.</div>
         </span>
-        <span class="tilt">Distinction: commit now. Mechanism: deferrable.</span>
+        <span class="tilt">Distinction: commit now. Mechanism: trivial when needed.</span>
       </summary>
       <div class="body">
+
         <p class="tradeoffs-note">
-          <strong>Two catalogs by design:</strong>
-          batch notebook cares about schema catalog (no deployment);
-          in-process dashboard reads runtime catalog directly (imports livedata's Python state);
-          NICOS / remote / web-app dashboard cares about runtime catalog but <em>cannot</em> import Python.
+          Two catalogs still exist, but the runtime catalog is a much simpler object than it originally appeared.
         </p>
 
-        <details open style="margin-top:10px;">
-          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ Publication channel (out-of-process UIs only)</summary>
-          <div class="options" style="margin-top:10px;">
-            <div class="opt rec"><span class="letter">a</span><div><div class="t">Status-topic announcement <span class="tag">tilt</span></div><div class="d">Each service publishes catalog on the existing service-status Kafka topic. Fits existing transport.</div></div></div>
-            <div class="opt ok"><span class="letter">b</span><div><div class="t">Dedicated catalog endpoint</div><div class="d">More explicit; more infrastructure.</div></div></div>
-            <div class="opt warn"><span class="letter">c</span><div><div class="t">Heartbeats with embedded catalog</div><div class="d">Simple; bandwidth-redundant.</div></div></div>
+        <div class="grid-2" style="margin:10px 0;">
+          <div class="card" style="border-top:3px solid var(--green);">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:4px;">Schema catalog</div>
+            <div style="font-size:13px;color:var(--ink-2);line-height:1.55;">
+              Everything <code>ess.schemas</code> declares: full universe of workflow specs, parameter surfaces with <em>author-declared markers</em>, no deployment awareness. Available to any Python consumer that installs the package.
+            </div>
           </div>
-        </details>
+          <div class="card" style="border-top:3px solid var(--blue);">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:4px;">Runtime catalog &nbsp;<span style="background:var(--green);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;">DEGENERATE</span></div>
+            <div style="font-size:13px;color:var(--ink-2);line-height:1.55;">
+              Which <code>WorkflowId</code>s a specific deployment has factories for.
+              <strong>Essentially the whole content — it's just an ID list.</strong>
+              Specs come from the schema catalog, markers are author-declared, ops-pinned values are backend-internal and not UI-facing.
+              Optionally: backend-provided initial-value hints ("for this run, prefer <code>wavelength_range = [1, 5]</code> Å").
+            </div>
+          </div>
+        </div>
 
-        <details style="margin-top:10px;">
-          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ What is published — effective specs, or base + overlay?</summary>
-          <div class="options" style="margin-top:10px;">
-            <div class="opt warn"><span class="letter">e1</span><div><div class="t">publish-effective (pinned fields removed)</div><div class="d">Information-lossy: UI can't render "fixed by ops" indicator — field is simply absent.</div></div></div>
-            <div class="opt rec"><span class="letter">e2</span><div><div class="t">publish-reference + overlay <span class="tag">richer</span></div><div class="d">UI composes locally. Retains info fidelity. Requires shared vocab (or JSON-Schema export for non-Python UIs).</div></div></div>
-          </div>
-        </details>
+        <h4 style="margin:18px 0 8px; font-size:14px;">Path per UI type</h4>
+        <div class="options">
+          <div class="opt rec"><span class="letter">In</span>
+            <div><div class="t">In-process UIs (today's livedata dashboard)</div>
+            <div class="d">Imports factory state directly from co-resident backend; reads registered IDs and resolves specs from schema catalog. No new protocol. Co-residency is a current fact — if the dashboard becomes a decoupled web app, it joins the out-of-process group.</div></div></div>
+          <div class="opt ok"><span class="letter">Out</span>
+            <div><div class="t">Out-of-process UIs (NICOS, remote dashboards, external frontends)</div>
+            <div class="d">Obvious channel: the <strong>existing service-status Kafka topic</strong>. Each service announces its registered ID set on startup and when it changes. <strong>Payload is an enumeration, not a serialized spec</strong> — consumers resolve specs themselves via <code>ess.schemas</code>. Initial-value hints ride in the same announcement.</div></div></div>
+          <div class="opt rec"><span class="letter">Batch</span>
+            <div><div class="t">Batch-only UIs (ipywidget over NeXus, no live backend)</div>
+            <div class="d">Schema catalog only. <strong>No runtime catalog to care about.</strong></div></div></div>
+        </div>
 
         <p class="tradeoffs-note" style="margin-top:14px;">
-          <strong>Drift risk:</strong> if livedata registers experimental/local workflows not in <code>ess.schemas</code>, out-of-process UIs lose discovery unless each published catalog entry is <em>self-contained</em> (ID + resolvable declarative spec, or full inline spec — never ID alone).
+          <strong>Drift rule:</strong> if livedata registers experimental/local workflows not in <code>ess.schemas</code>, announcement must carry the spec inline instead of just an ID.
+          Pragmatic rule: workflow is in <code>ess.schemas</code> → announce ID; not in it → announce inline declarative spec. Hybrid announcements covering both cases are fine.
         </p>
 
-        <div class="extras">
-          <span class="k">Open questions</span>
-          <ul>
-            <li>Is the runtime catalog part of the <em>vocabulary contract</em> (wire protocol committed) or strictly operational per deployment?</li>
-            <li>Multi-instrument deployments: how does a UI choose a backend's catalog? Env var, discovery, per-UI config.</li>
-            <li>If the dashboard goes from co-resident to decoupled (web-app), reuse NICOS-targeted mechanism or build its own?</li>
-          </ul>
+        <div class="tilt-block">
+          <span class="k">Mechanism is deferrable; the distinction is not</span>
+          Runtime-catalog publication is trivial to add when a concrete out-of-process consumer appears; deferring costs nothing.
+          The <em>distinction</em> between schema and runtime catalogs must be committed now — UI contract (Decision 5), validator policy (Decision 8), and other decisions assume one or the other.
+          <br><br>
+          <em>An earlier version of this section carried the full weight of overlay delivery with metadata; that was largely a consequence of placing streaming applicability on the wrong side of the spec/runtime boundary. With the author-declared-markers reframing (Decision 6), most of what seemed hard evaporates.</em>
         </div>
       </div>
     </details>
