@@ -91,51 +91,56 @@ None of this is pathological today because the duplication is small and the team
 
 ## Architectural direction under discussion
 
-The direction this document is evaluating is a three-way split with a deliberate choice about where the vocabulary lives:
+The direction this document is evaluating is a layered split with a deliberate choice about where each concern lives:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ UI surfaces                                                          │
 │   livedata dashboard │ ipywidget UIs │ CLI │ NICOS (future)          │
 └──────────────────┬───────────────────┬───────────────────┬───────────┘
-                   │ consumes specs    │                   │
-                   ▼                   ▼                   ▼
+                   │ streaming UIs consume reduced schemas
+                   │ batch UIs consume full schemas
+                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ ess.schemas (scipp/ess monorepo, pydantic + stdlib)                  │
-│   WorkflowSpec, WorkflowId, parameter models (with streaming/batch   │
-│   visibility markers declared by the author), output schemas,        │
-│   instrument specs, display metadata                                 │
-└──────────────────┬────────────────────────────────────┬──────────────┘
-                   │ implemented by                     │
-                   ▼                                    ▼
+│ Schemas (pydantic + stdlib; ess.schemas + per-technique schema       │
+│ submodules e.g. ess.<technique>.schemas)                             │
+│   WorkflowSpec, WorkflowId, param models, outputs models,            │
+│   display metadata. No sciline, no scipp, no livedata.               │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   │ implemented by
+                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Technique packages (ess.powder, ess.sans, ...) in scipp/ess monorepo │
-│   reduction algorithms (sciline + scipp)                             │
-│   workflow factories (batch and streaming)                           │
-│   StreamProcessorWorkflow and related streaming adapters             │
-│   rely on ess.reduce transforms                                      │
+│   Reduction algorithms (sciline + scipp; rely on ess.reduce)         │
+│   WorkflowImpl bundles: pipeline + accumulators + target_keys        │
+│                       + apply_params + dynamic_keys                  │
 └──────────────────┬────────────────────────────────────┬──────────────┘
-                   │ factory attached by                │ directly invoked by
+                   │ registered with                    │ directly invoked by
                    ▼                                    ▼
 ┌──────────────────────────────────┐   ┌───────────────────────────────┐
 │ ess.livedata (streaming runtime) │   │ Batch runtime                 │
-│   Kafka source/sink              │   │   NeXus file loading          │
-│   accumulators                   │   │   ipywidget UIs layered here  │
-│   WorkflowId → factory binding   │   │                               │
-│   deployment config (ops pins)   │   │                               │
-│   dashboard                      │   │                               │
+│   Composition root (generic):    │   │   NeXus file loading          │
+│     WorkflowId → WorkflowImpl    │   │   ipywidget UIs layered here  │
+│     param-source partitioning    │   │                               │
+│     builds StreamProcessorWorkflow│  │                               │
+│   Kafka source/sink, accumulators│   │                               │
+│   Deployment config              │   │                               │
+│   Dashboard                      │   │                               │
 └──────────────────────────────────┘   └───────────────────────────────┘
+
+StreamProcessorWorkflow itself lives in ess.reduce so technique-package
+bundles can construct it without importing livedata.
 ```
 
 Four load-bearing structural claims sit inside this picture, each of which can be evaluated on its own:
 
-1. **Vocabulary is separable from compute.** A workflow-spec type can carry enough information to be useful to every UI (and to act as a contract for every backend) without importing scipp, sciline, or any streaming machinery. This claim is empirically testable: if a spec can be declared in pydantic + stdlib and still answer the four questions above, the claim holds. The output-shape question is the hardest — today outputs are declared via `sc.DataArray` factories; replacing that with a shape-only schema (dims, unit, coord units, no array construction) is the key design move that makes the separation possible.
+1. **Vocabulary is separable from compute.** A workflow-spec type can carry enough information to be useful to every UI (and to act as a contract for every backend) without importing scipp, sciline, or any streaming machinery. This claim is empirically testable: if a spec can be declared in pydantic + stdlib and still answer identity, inputs, outputs, and display metadata, the claim holds. The output-shape question is the hardest — today outputs are declared via `sc.DataArray` factories; replacing that with a shape-only schema (dims, unit, coord units, no array construction) is the key design move that makes the separation possible.
 
-2. **The workflow author owns streaming applicability.** Which inputs are meaningful in streaming mode versus batch mode is a structural property of the workflow, known by whoever writes the reduction. Powder reduction in ess.powder is organised differently depending on whether it runs incrementally or one-shot, and that organisation forces the author to think about streaming from the start. The spec therefore carries per-field visibility markers (`streaming`, `batch`, `both`) declared by the author once, not a deployment-time overlay maintained by ops. Corollary: UIs filter by marker for their context without querying the backend.
+2. **Spec and workflow implementation are distinct artifacts with a strict dependency direction.** The spec (param model, outputs model, identity, display metadata) is pure pydantic and sits above the compute stack. The workflow implementation (sciline pipeline, accumulators, param-to-sciline-key translation) sits in the technique package and depends on sciline/scipp. The spec does not know sciline exists; the implementation depends on the spec. Livedata is below both and depends on both. This direction is load-bearing: if schema imports leak sciline metadata (`Annotated[T, SclineBind(...)]` and similar), the shareability premise collapses.
 
-3. **Workflow factories and streaming adapters belong with the algorithm, not with the runtime.** The glue that turns a spec into a runnable pipeline — including the streaming adapter (the piece currently called `StreamProcessorWorkflow` in livedata) — is domain knowledge owned by the workflow author. It lives in the technique package next to the reduction it wraps. Livedata holds only the *attachment*: a table mapping `WorkflowId` to factory callable, built at service startup from whatever factories the installed technique packages expose. The cross-cutting data-shaping primitives (detector-view binning, monitor histogramming, focus, ROI) similarly belong in `ess.reduce`, where both the streaming adapter and the batch pipelines can consume them.
+3. **The streaming adapter lives below the algorithm, not above it.** `StreamProcessorWorkflow` moves from livedata to `ess.reduce` so technique-package implementations can construct it without importing livedata. Livedata holds only a generic composition root: a `WorkflowId → WorkflowImpl` attachment, deployment config, and one call site that assembles a `StreamProcessorWorkflow` from any bundle plus a populated param instance. There is no per-technique code in livedata. Cross-cutting data-shaping primitives (detector-view binning, monitor histogramming, focus, ROI) similarly belong in `ess.reduce`, where both streaming and batch pipelines can consume them.
 
-4. **Technique packages are spec-conformant and become the primary home for workflow implementation in both modes.** Each technique package declares its workflows against the shared vocabulary and provides factories for both batch and streaming execution. The technique package is the one thing users (via any UI) and backends (via either runtime) both import from. Livedata shrinks to Kafka plumbing, accumulator infrastructure, a dashboard, and deployment configuration.
+4. **Technique packages are the primary home for workflow implementation in both modes.** Each technique package exposes its spec (pydantic) and its `WorkflowImpl` bundle (sciline). The technique package is the one thing users (via any UI) and backends (via either runtime) both import from. Livedata shrinks to Kafka plumbing, accumulator infrastructure, a dashboard, deployment configuration, and the composition root.
 
 Each claim is an argument. Each is also where the main objections live. The rest of this document pulls them apart.
 
@@ -262,32 +267,115 @@ This is the question that most directly determines whether the unification is su
 
 **The generative observation** is that the authority question is not just "who" but also "how fast". A process where the vocabulary-owning group reviews every vocabulary change within hours is survivable under (a) or (c); the same process with week-long review cycles is fatal under both. The decision is therefore really about *responsiveness commitments*, not just nominal authority.
 
-### 4. Compute-backend contract — where factories live
+### 4. Compute-backend contract — spec, implementation, composition
 
-What contract does a workflow spec impose on compute code that wants to satisfy it, and where does the glue between spec and runnable pipeline live?
+Today, per-instrument factory functions in `config/instruments/<instr>/factories.py` bundle five concerns under one roof:
 
-**Options:**
+1. **Algorithm setup** — sciline pipeline construction, with deployment-invariant choices.
+2. **Streaming-variant pipeline patches** — providers added because the live runtime lacks a stream the batch version had (e.g. a synthesized `AccumulatedProtonCharge` because no proton-charge source exists on the live topic set).
+3. **Param-to-sciline-key mapping** — reading param-model fields and setting sciline keys on the pipeline.
+4. **`StreamProcessorWorkflow` wrapping** — with `dynamic_keys`, `target_keys`, `accumulators`.
+5. **Deployment pins** — hardcoded filenames, instrument constants, calibration IDs.
 
-- **(a) Factories with the algorithm (technique package).** The technique package that owns `ess.powder.reduce` also exposes `_powder_workflow_factory` (and a streaming variant) alongside. The workflow author writes both. `StreamProcessorWorkflow` (currently in livedata) moves to the monorepo alongside the technique packages so factories can use it without depending on livedata. Livedata at startup discovers the factories exposed by installed technique packages and builds a `WorkflowId → factory` binding table.
-- **(b) Factories with the runtime (livedata).** Current state. Livedata owns the factory layer; the technique package exposes only reduction functions; livedata writes the glue. Two backends means livedata writes both.
-- **(c) Factories in a third home (e.g. `ess.reduce`).** Neither technique package nor runtime; a middle layer that knows how to build pipelines from specs. Additional package boundary.
-- **(d) No unified factory pattern.** Each backend interprets specs on its own terms. Streaming and batch coordinate by convention.
+These five concerns belong in five different places:
 
-**Tradeoffs:**
+| Concern | Belongs in |
+|---|---|
+| Algorithm setup | Technique-package pipeline constructor |
+| Streaming-variant pipeline patches | Technique-package streaming pipeline |
+| Param → sciline-key binding | Technique package, next to the pipeline |
+| `StreamProcessorWorkflow` wrapping | Livedata, generic, one call site |
+| Deployment pins | Ops config, read into param-model fields at job start |
 
-(a) puts the factory next to the thing it wraps. The author of `ess.powder` already has to think about streaming structure — incremental accumulation, complete-run-statistics dependencies, restartability. Writing the streaming factory is a continuation of writing the algorithm, not a separate handoff to another team. This is also what makes the author-declared visibility markers in section 6 coherent: the same person who decides "this parameter is meaningful in streaming mode" writes the streaming factory that uses it. Cost: technique packages grow a dependency on whatever carries the streaming adapter (`StreamProcessorWorkflow` in `ess.reduce` or a new home in the monorepo). If the monorepo cannot take on that dependency, this option is blocked.
+Bundling them obscures that only one of the five — the wrapping — is genuinely livedata-shaped, and even that is technique-agnostic. Once decomposed, the "factory" as a per-technique function largely disappears.
 
-(b) is the current arrangement and the one that forced most of the complexity this document has spent effort on. Livedata owns the glue, so streaming applicability looks like a livedata concern even though it is really an algorithm concern. Keeping it here is defensible as a near-term state (no extraction needed) but it compounds the fix-latency and coordination-cost downsides.
+**Spec vs workflow-implementation.** Make the separation between interface and algorithm literal and structural:
 
-(c) is an intermediate position: the middle layer knows about specs and knows about both batch and streaming construction, without either technique packages or livedata owning the glue. Adds a package boundary and an ownership question without obvious benefit over (a).
+- **Spec (interface, public, shareable across repos and out-of-process consumers).** Identity (`WorkflowId`), param-model class, outputs-model class, display metadata. No graph structure, no sciline-key references. Pure pydantic; shareable with non-Python consumers, portable across runtimes. Lives in the technique package's schema submodule (e.g. `ess.<technique>.schemas`) or in a shared vocabulary package; either way the import footprint is pydantic + stdlib.
+- **Workflow implementation (algorithm-author-owned).** Sciline pipeline (with streaming-variant patches baked in), accumulators, target-key mapping, and a translation layer that binds param-model fields to sciline keys. Sciline-aware; lives next to the reduction code in the technique package. Not part of the spec's wire contract; bound to the spec by a registration table.
 
-(d) accepts that there is no shared way to construct pipelines from specs. Each backend re-derives its own interpretation. Maximally flexible, minimally unified — this is not unification.
+Accumulators belong with the implementation, not the spec: they are graph-structural ("where do we checkpoint"), meaningful only to the streaming runtime, and inappropriate for out-of-process consumers to see.
 
-**Recommendation tilt:** (a). Factories and streaming adapter co-locate with the algorithm in the monorepo. Livedata holds only the `WorkflowId → factory` attachment (a small table built at service startup from installed packages) plus deployment config, Kafka plumbing, accumulators, and dashboard. This both keeps glue next to knowledge and makes livedata a smaller, more focused codebase.
+A bundled object rather than convention-based discovery:
 
-This choice is load-bearing for several other decisions here: section 6 (presentation markers are coherent only if the author owns both declaration and streaming factory), section 7 (runtime catalog degenerates to an attachment list), section 12 (cross-cutting primitives in `ess.reduce` include `StreamProcessorWorkflow` itself, not just batch transforms). An earlier framing in this document assumed (b) by default; the reframing across multiple sections reflects correcting that.
+```python
+@dataclass(frozen=True)
+class WorkflowImpl:
+    pipeline: sciline.Pipeline
+    accumulators: tuple[sciline.typing.Key, ...]
+    target_keys: dict[str, sciline.typing.Key]
+    apply_params: Callable[[sciline.Pipeline, BaseModel], None]
+    dynamic_keys: Callable[[BaseModel], dict[str, sciline.typing.Key]]
+```
 
-**Open question:** is the scipp/ess monorepo willing to take on a streaming adapter (Kafka-shaped semantics, even if not Kafka itself)? Option (a) stands or falls on this. If not, fall back to (b) and accept that the simplifications in sections 6 and 7 partially reverse.
+Explicit structure; future streaming-structural metadata (window outputs, context-key defaults) is an additive field rather than a new convention.
+
+**Translation lives next to the pipeline, not on the param model.** The param model must not import sciline. Pulling `sciline.Pipeline`, sciline NewTypes, or an `Annotated[T, SclineBind(...)]` metadata object into the model couples the schema layer to the compute stack and defeats the separation. Any non-Python consumer of the schema either tolerates sciline-shaped metadata it cannot interpret or has to filter it out. The translation layer is a free-function layer in the technique package, alongside the pipeline:
+
+```python
+# ess.<technique>.livedata (or equivalent submodule)
+from ess.<technique>.schemas import PowderWorkflowParams    # pure pydantic
+from ess.<technique> import build_powder_pipeline           # sciline-aware
+
+def apply_params(pipeline: sciline.Pipeline, params: PowderWorkflowParams) -> None:
+    pipeline[powder.types.TwoThetaBins] = params.two_theta_edges.get_edges()
+    pipeline[powder.types.DspacingBins] = params.dspacing_edges.get_edges()
+    ...
+
+def dynamic_keys(params: PowderWorkflowParams) -> dict[str, sciline.typing.Key]:
+    return {
+        params.detector_source: NeXusData[NXdetector, SampleRun],
+        params.cave_monitor: NeXusData[powder.types.CaveMonitor, SampleRun],
+    }
+
+workflow = WorkflowImpl(
+    pipeline=build_powder_pipeline(),
+    accumulators=(powder.types.CorrectedDspacing[SampleRun], ...),
+    target_keys={'focussed_data_dspacing': powder.types.FocussedDataDspacing[SampleRun], ...},
+    apply_params=apply_params,
+    dynamic_keys=dynamic_keys,
+)
+```
+
+The param model lives in `ess.<technique>.schemas` and pulls only pydantic + stdlib. The translation layer lives next to the pipeline and pulls sciline, scipp, and technique types. Nothing pulls livedata. Output mapping follows the same pattern: `target_keys` is a dict on `WorkflowImpl` (sciline side), not an annotation on the outputs-model fields (schema side).
+
+**Composition root (livedata-side, generic).** One call site, no per-technique code. At job start the composition root:
+
+1. Partitions param-model fields by source — defaults / deployment pins / job-start routing / user input — as described in section 6.
+2. Merges per-source values into a fully-populated param instance.
+3. Invokes `impl.apply_params(pipeline, params)` on a copy of the bundle's pipeline.
+4. Constructs `StreamProcessorWorkflow` with `impl.accumulators`, `impl.target_keys`, and `impl.dynamic_keys(params)`.
+
+Livedata holds only: the attachment table (`WorkflowId → WorkflowImpl`), the composition root, deployment config, and streaming machinery (Kafka plumbing, accumulators, dashboard). No separate factory abstraction.
+
+**Pipeline-patch reachability test.** Any pipeline modification must affect reachability to some declared output, otherwise it is dead code. Under this test, today's per-instrument factory patches either move to the technique package (essential) or are deleted (dead). DREAM audit as a worked example:
+
+- `_fake_proton_charge` provides `AccumulatedProtonCharge[RunType]`, consumed by downstream normalization. Essential; belongs in `ess.dream`'s streaming pipeline, exists specifically because the streaming runtime lacks a proton-charge source.
+- `CalibrationData = None`, `with_pixel_mask_filenames([])`, `UncertaintyBroadcastMode.drop`, `KeepEvents = False`, `Filename[SampleRun] = 'dream-no-shape'` — not new providers, but pins on inputs feeding declared outputs. Essential configuration of the streaming pipeline; belongs in the technique package.
+- `_total_counts`: not reached by any declared output. Dead code.
+
+The test's correct framing is reachability, not name-match on outputs: a pinned input on the path to a declared output is essential; a provider whose output isn't reached is dead.
+
+**Multi-level defaults rule.** If a field exists in the param model, the param model is authoritative and the translation layer always applies it to the pipeline. Sciline-level "defaults" (`pipeline[UncertaintyBroadcastMode] = drop`) are permitted only for structural constants that no user, no ops config, no future param will ever touch. Anything else is a param masquerading as a default. Without this rule, batch and streaming can diverge silently for the same param value — which is fatal for cross-compute unification. Commit to this as a project-wide discipline, not a local design choice.
+
+**Dependency-injection lens.** The composition is a DI graph with explicit binding times:
+
+| Provider | Source | Binding time |
+|---|---|---|
+| Algorithm-structural choices | Technique-package pipeline constructor | Module import |
+| Param defaults | Pydantic field defaults | Module import |
+| Deployment pins | Livedata ops config | Service startup |
+| Job-start routing | User UI selection | Job start |
+| User parameter input | User UI input | Job start |
+| Stream data | Kafka messages | Per-message at runtime |
+
+Sciline already does last-mile DI (providers → keys inside the pipeline). The outer DI layer — who fills sciline's inputs, from which source, at which binding time — is what the livedata composition root owns. Making that structure explicit (rather than scattered across factory functions, pipeline constructors, and per-job wiring code) is the simplification.
+
+**Open question: where does the composition root physically live?** Two options: in livedata (simpler — it imports both deployment config and technique-package `WorkflowImpl` bundles directly), or in the technique package (keeps the "implementation lives with the algorithm" stance cleaner but requires the technique package to accept a `DeploymentConfig` protocol without importing livedata). Leaning livedata-side for simplicity.
+
+**Gating precondition: `StreamProcessorWorkflow` home.** The direction presupposes `StreamProcessorWorkflow` can move from livedata to `ess.reduce` (or an equivalent location in the scipp/ess monorepo), so technique-package `WorkflowImpl` bundles can construct it without importing livedata. If that placement is not achievable, the dependency edge inverts — technique packages would need to import a `StreamProcessorWorkflow` protocol from livedata, pulling streaming-runtime concepts into the algorithm layer and undermining the separation. That would be reason to reconsider the whole direction, not a detail to work around. So either we have confidence it lands in `ess.reduce`, or the direction itself is the question.
+
+This choice is load-bearing for several other decisions: section 6 (the composition root is the mechanism for streaming-vs-batch presentation), section 7 (runtime catalog carries reduced schemas produced by the composition root), section 11 (streaming-specific fields are source-partitioned rather than subclassed), section 12 (cross-cutting primitives in `ess.reduce` include `StreamProcessorWorkflow` itself, not just batch transforms).
 
 ### 5. UI-surface contract
 
@@ -311,104 +399,62 @@ How do UIs consume specs, and what does the vocabulary promise them?
 
 ### 6. Presentation variants across UIs
 
-A workflow's parameter surface need not look the same to every consumer. The livedata dashboard during beam time may want only a handful of interactive knobs, because most reduction inputs either do not apply in streaming mode (they assume a complete run is available) or are operational constants managed outside the UI. A batch ipywidget UI may want every knob exposed. A NICOS frontend may want an operational subset. A CLI may want full control.
+A workflow's parameter surface need not look the same to every consumer. The livedata dashboard during beam time wants only the handful of knobs a scientist adjusts live; most inputs to a reduction are either filled by deployment configuration (normalization files, calibration IDs), routed at job start (which Kafka source is "the mantle detector" for this run), or inapplicable because streaming has no complete-run statistic to work with. A batch ipywidget UI wants every knob exposed. A NICOS frontend may want an operational subset. A CLI wants full control.
 
-The key observation that simplifies this decision: **most of this variance is author-knowable**. The person writing `ess.powder.reduce` already has to think about streaming structure — whether a given input affects incremental accumulation, whether it expects complete-run statistics, whether it can be updated mid-stream. Streaming performance is a workflow-design concern before it is a UI concern, and the author is therefore the right person to declare, per parameter, which execution modes a field is meaningful for. Declared once at the spec, every UI filters by marker for its context without asking any backend anything.
+**The working model is a composition root.** The param model is complete — every field the algorithm needs, no hierarchy, no per-field marker soup. A livedata-side composition root partitions fields by source before the UI sees anything:
 
-Concretely:
+1. **Defaults** — pydantic field defaults built into the model.
+2. **Deployment pins** — ops-config values (e.g. the vanadium file path for this DREAM instance). Pinned values may be computed ("latest normalization file in this directory") as easily as hardcoded.
+3. **Job-start routing** — values selected when a job is launched: which detector source to treat as "mantle", which monitor to use as "cave monitor". Source-name fields carry NeXus-canonical component-group names, invariant across execution modes; the same value works for batch (NeXus group name) and streaming (resolved to a Kafka topic via stream-mapping). Param instances are therefore portable between runtimes without translation at the workflow layer.
+4. **User input** — the knobs the streaming UI renders.
 
-- The spec carries per-field visibility markers declared by the workflow author — `modes={"streaming", "batch"}` or equivalent. A minimal vocabulary is probably just `streaming` / `batch` / `both`; more elaborate tag sets (`advanced`, `expert`, `debug`) can layer on top if experience warrants.
-- UIs filter visible fields by intersecting their own mode with each field's markers. No runtime-side mechanism participates.
+The composition root fills (1)–(3) from deployment and job-start context, producing a **reduced schema** for the UI: the param model minus the fields already filled. The UI renders the reduced schema; the composition root merges everything into a fully-populated param instance and invokes the technique-package translation layer.
 
-**How this looks in pydantic:**
+**Why composition root rather than per-field visibility markers on the param model:**
 
-Pydantic supports per-field metadata natively, so the binding is mechanical. One plausible shape using `Annotated` with a typed marker class:
+- **One concept covers both hiding and value-sourcing.** A marker says "don't render this" and is silent on who fills it. Under source-partitioning, hiding and sourcing are the same act — the root fills a field, therefore the UI does not see it.
+- **Ops values can be computed, not just static constants.** Marker-only declarations cannot express derivation.
+- **No tag soup on param fields.** The algorithm author writes a clean pydantic model; presentation concerns stay in the composition layer.
+- **The schema is an algorithm contract, not a UI contract.** UIs go through adapters (one for streaming, one for batch ipywidgets, one per consumer). The schema itself does not anticipate which UIs exist.
 
-```python
-from typing import Annotated
-from pydantic import BaseModel, Field
+**Costs:**
 
-class Modes:
-    """Marker: which execution modes this field applies to."""
-    def __init__(self, *modes: str) -> None:
-        self.modes = frozenset(modes)
+- Out-of-process consumers read a deployment-specific reduced schema rather than a static annotation they can grep. The reduced-schema payload rides on the runtime-catalog announcement (section 7).
+- "Which fields are user-visible in streaming?" is a function to call, not an annotation to read. Mitigate by keeping the partition declared (each field's source listed explicitly) rather than inferred from which fields the root happens to fill.
 
-class PowderWorkflowParams(BaseModel):
-    wavelength_range: Annotated[WavelengthRange, Modes("streaming", "batch")] = Field(
-        description="Wavelength range for reduction.",
-    )
-    normalization_file: Annotated[Path, Modes("batch")] = Field(
-        description="Vanadium normalization file path.",
-    )
-    accumulation_window: Annotated[timedelta, Modes("streaming")] = Field(
-        default=timedelta(seconds=10),
-        description="Rolling window for live accumulation.",
-    )
-```
+**Deployment-specific ops state is not a UI concern.** Examples: "this DREAM instance uses `/data/norm/latest.nxs`"; "this run uses calibration v7". These are not user-adjustable parameters — they are composition-root deployment pins applied when the pipeline runs. Cases where the dashboard *does* want to show "the backend is currently using normalization X" are backend telemetry, delivered through a separate status channel from specs.
 
-UI-side consumption is equally direct — pydantic preserves the `Annotated` metadata on `FieldInfo`:
-
-```python
-def visible_fields(model_cls: type[BaseModel], mode: str) -> list[str]:
-    visible = []
-    for name, field_info in model_cls.model_fields.items():
-        markers = [m for m in field_info.metadata if isinstance(m, Modes)]
-        if not markers or any(mode in m.modes for m in markers):
-            visible.append(name)
-    return visible
-```
-
-Alternatives at the binding layer — `Field(..., json_schema_extra={"modes": [...]})`, a `SpecField(...)` helper wrapping `Field`, or decorator-based markers — are equivalent in spirit and differ only in authorial ergonomics and in how a JSON-Schema emitter will treat the marker (whether it surfaces in the emitted schema for out-of-process consumers). Picking one is an implementation detail. The architectural commitment is that the marker lives on the field in vocabulary, travels with the pydantic model wherever it goes, and is accessible to any consumer without a second registry.
-
-Once author-declared markers do the heavy lifting, the two remaining concerns become clearer:
-
-**Deployment-specific ops state is mostly not a UI concern at all.** Examples: "this DREAM instance uses `/data/norm/latest.nxs`"; "this run uses calibration v7". These are not user-adjustable parameters — they are backend-internal values applied when the sciline pipeline is constructed. They live in livedata's deployment config and are not exposed as UI parameters by design. If the user was never going to adjust a value, there is nothing for the UI to render. Cases where the dashboard *does* want to show "the backend is currently using normalization X" are backend telemetry (status), not parameter rendering — delivered through a separate status channel from specs, designed for that purpose.
-
-This dissolves the previously imagined need for an overlay-publication mechanism. The spec describes what users can set; ops state is a distinct, narrower concept. A UI either sees a parameter (and can set it) or does not (and the backend does whatever it does internally).
-
-**Scientifically-different variants.** Cases where "live powder" and "batch powder" are not the same workflow with some fields marked streaming-irrelevant but genuinely different computations (e.g. live does incremental accumulation with approximate normalization; batch computes absolute normalization from first principles). This is an identity concern, not a presentation concern.
+**Scientifically-different variants.** Cases where "live powder" and "batch powder" compute genuinely different quantities (e.g. live uses approximate incremental normalization; batch computes absolute normalization from first principles) are an identity concern rather than a presentation one.
 
 **Options for scientifically-different variants:**
 
-- **variant-(a) Separate WorkflowIds, no formal relationship.** Two first-class specs; the relationship is carried by convention only. Simplest. Failure mode is silent: scientists reinvent the correspondence mentally ("the live `wavelength_range` is the same as the batch `wavelength_cut`, I think"), the catalog grows, correlation drifts.
+- **variant-(a) Separate WorkflowIds, no formal relationship.** Two first-class specs; the correspondence is carried by convention only. Failure mode is silent: scientists reinvent the correspondence mentally, the catalog drifts.
 - **variant-(b) Separate WorkflowIds with `derived_from` or `variant_of` metadata.** Enough structure for UIs to correlate across variants without pretending they share identity.
-- **variant-(c) Version-string grammar.** `dream/powder/v1-live` vs. `dream/powder/v1-batch` parse as variants of the same ID-root. Conflates variance with versioning and makes version comparison awkward.
+- **variant-(c) Version-string grammar.** `dream/powder/v1-live` vs. `dream/powder/v1-batch`. Conflates variance with versioning and makes version comparison awkward.
 
-**Recommendation tilt:**
-
-- Visibility: per-field markers declared by the workflow author. The spec is the single source of truth. No runtime-catalog publication required for this layer.
-- Ops state: lives in livedata deployment config, outside the spec. If a user needs to know the active normalization file, the dashboard surfaces it as status — distinct API from parameter rendering.
-- Scientifically-different variants: variant-(b), separate IDs with `derived_from` metadata, when the computations genuinely differ.
-
-**On the spec-wrapping and separate-registration alternatives:**
-
-An earlier iteration of this document treated spec wrapping (one "live spec" wrapping a full one with pinned values) and parallel-flavour registration (separate live and batch specs covering partly the same ground) as primary mechanisms. Both are obsoleted by author-declared markers for the common case: if streaming applicability is declared in the spec, the UI sees only what applies, without any compositional primitive. Wrapping remains viable if the vocabulary ever wanted a first-class "simplified spec" object for reasons beyond visibility, but it is no longer the default answer — and the cost (vocabulary grows a compositional layer every consumer must understand) is avoided if markers suffice. Parallel-flavour registration collapses to variant-(a) above, retained only for genuine identity differences.
+**Recommendation tilt:** variant-(b) when the computations genuinely differ. For the common case — both modes running the same reduction with different inputs filled from different sources — one spec suffices; composition-root partitioning handles the rest.
 
 **Open questions:**
 
-- Who owns the marker vocabulary — technique-package authors (per-field domain judgment) or vocabulary maintainers (cross-cutting schema)? Natural split: vocabulary defines the allowed marker values; domain authors assign them per field.
-- Can markers be overridden per UI? A debug/expert mode in NICOS that shows streaming-hidden fields for troubleshooting, for example. Per-UI override invites drift but is probably needed in practice. The realistic answer: spec declares defaults; individual UIs may adjust when they have justification.
-- Is there a real case where ops wants to surface a pinned value in the UI read-only ("normalization currently: X")? If so, handled as dashboard telemetry — a status signal distinct from spec metadata. Not the same machinery.
-- How to handle parameters that are streaming-relevant but whose *default* should change by deployment context (e.g. wavelength range preferred for this instrument for this run)? Probably as backend-provided initial-value hints announced alongside the runtime catalog — much simpler than an overlay mechanism, and addressed in section 7.
+- **Declared or inferred partition?** Does the composition root explicitly list "fields filled from deployment / routing / defaults", or is the hidden set inferred from which fields the root actually fills? A declared partition is more auditable; inferred is DRY but magical. Declared is probably the right default.
+- **Deployment-dependent visibility.** A field user-visible in one deployment and pre-filled in another (e.g. an ordinarily pinned parameter that commissioning wants to expose). Structurally accommodated — the composition root already reads deployment config, so the partition is dynamic.
 
 ### 7. Runtime-catalog discovery: how UIs find out what is registered
 
-Two catalogs still exist, but once author-declared markers (section 6) do the heavy lifting for presentation, the runtime catalog is a much simpler object than it originally appeared.
+Two catalogs exist, with different audiences:
 
-- **Schema catalog.** Everything `ess.schemas` declares: the full universe of workflow specs, parameter surfaces with author-declared markers, no deployment awareness. Available to any Python consumer that installs the package.
-- **Runtime catalog.** Which `WorkflowId`s a specific deployment has factories registered for. Essentially the whole content — the specs themselves come from the schema catalog, markers are author-declared, ops-pinned values are backend-internal and not UI-facing. The runtime catalog degenerates to an ID enumeration, optionally with backend-provided initial-value hints (e.g. "for this run, prefer `wavelength_range = [1, 5]` Å").
+- **Schema catalog.** The full universe of workflow specs declared in the vocabulary (`ess.schemas` and technique-package schema submodules): identity, full param model, outputs model, display metadata. Pure pydantic, available to any Python consumer that installs the relevant packages. Deployment-unaware.
+- **Runtime catalog.** Which `WorkflowId`s a specific deployment has `WorkflowImpl`s registered for, plus — for out-of-process consumers of streaming UIs — the reduced schema produced by this deployment's composition root (the param model minus fields filled from deployment config or job-start routing; see section 6). A given deployment's reduced schema is deployment-specific because the composition root reads deployment config.
 
 **Path per UI type:**
 
-- **In-process UIs (livedata dashboard as it is today).** Imports the factory state directly from the backend it is co-resident with; reads the set of registered IDs and resolves their specs from the schema catalog. No new protocol. Co-residency is a current architectural fact, not a permanent one — if the dashboard becomes a decoupled web app, it joins the out-of-process group.
-- **Out-of-process UIs (NICOS, future remote dashboards, external frontends).** Need to be told which IDs are registered. The obvious channel is the existing service-status Kafka topic: each service announces its registered ID set on startup and when it changes. The payload is an enumeration, not a serialized spec — consumers resolve specs themselves via `ess.schemas`. Initial-value hints, if any, ride in the same announcement.
-- **Batch-only UIs (ipywidget over NeXus files, no live backend).** Consume the schema catalog only. No runtime catalog to care about.
+- **In-process UIs (livedata dashboard as it is today).** Reads the registered `WorkflowId → WorkflowImpl` attachment table directly from the co-resident backend; resolves full specs via the schema catalog; invokes the composition root for reduced schemas on demand. No new protocol. Co-residency is a current architectural fact, not a permanent one — if the dashboard becomes a decoupled web app, it joins the out-of-process group.
+- **Out-of-process UIs (NICOS, future remote dashboards, external frontends).** Need both the registered ID set and the reduced schema for each ID. The obvious channel is the existing service-status Kafka topic: each service announces its registered IDs plus the reduced-schema payload per ID, on startup and when they change. Consumers resolve full specs themselves via the schema catalog if they need them. Backend-provided initial-value hints (e.g. "for this run, prefer `wavelength_range = [1, 5]` Å") ride in the same announcement.
+- **Batch-only UIs (ipywidget over NeXus files, no live backend).** Consume the schema catalog only. No runtime catalog, no reduced schema, no composition root — batch UIs render the full param model and the user supplies every field.
 
-**Drift between the two catalogs:**
+**Drift between the two catalogs.** If a deployment registers experimental or instrument-local workflows not in the schema catalog, out-of-process UIs lose discoverability unless the announcement carries the full spec inline. Pragmatic rule: either the workflow is in the schema catalog (announcement is an ID plus reduced schema) or it is not (announcement includes the full declarative spec too). Hybrid announcements covering both cases are fine.
 
-The picture above assumes every workflow a backend serves is declared in `ess.schemas`. If that stops being true — livedata registers experimental or instrument-local workflows not in the schema catalog — out-of-process UIs lose discoverability unless the announcement carries the spec inline rather than just an ID. Pragmatic rule: either the workflow is in `ess.schemas` (announcement is an ID) or it is not (announcement includes a declarative spec). Hybrid announcements covering both cases are fine.
-
-**Mechanism is deferrable; the distinction is not.** The runtime-catalog publication is trivial to add when a concrete out-of-process consumer appears; deferring it costs nothing. The *distinction* between schema and runtime catalogs needs to be committed now, because the UI contract (section 5), the validator policy (section 8), and other decisions assume one or the other. The near-term answer is both, for different UIs. An earlier version of this section carried the full weight of overlay delivery with metadata; this was largely a consequence of placing streaming applicability on the wrong side of the spec/runtime boundary. With the author-declared-markers reframing, most of what seemed hard evaporates — what remains is straightforward.
+**Mechanism is deferrable; the distinction is not.** Runtime-catalog publication is trivial to add when a concrete out-of-process consumer appears; deferring it costs nothing. The *distinction* between schema and runtime catalogs needs to be committed now, because the UI contract (section 5), the validator policy (section 8), and the visibility story (section 6) all depend on it. The near-term answer is both, for different UIs.
 
 ### 8. Validator policy and wire format
 
@@ -478,23 +524,13 @@ Where do `DreamPowderWorkflowParams(PowderWorkflowParams)` and similar specializ
 
 ### 11. Streaming-specific fields
 
-Parameters that exist only because a workflow runs live — accumulation window, rate limit, cadence, incremental-binning resolution — do not apply to batch execution. Where do they live?
+Parameters that exist only because a workflow runs live — accumulation window, rate limit, incremental-binning resolution, or inputs like "which Kafka source to treat as the proton-charge proxy" — are not a subclass-hierarchy question. Under the composition-root framing (section 6), streaming-specific fields are ordinary fields in the shared param model.
 
-**Options:**
+The param model is complete: every field the algorithm needs, streaming-specific ones included, appears once, with no hierarchy. The composition root fills streaming-specific fields from deployment config or job-start routing before the UI sees the reduced schema. They are not visible in the streaming UI, not exposed to out-of-process consumers that only care about the user-facing contract, but present and authoritative when the pipeline runs.
 
-- **(a) Vocabulary is batch-native; livedata adds streaming overlays via subclasses.** `MonitorDataParams` in vocabulary has no streaming fields; `LiveMonitorDataParams(MonitorDataParams)` in livedata adds them.
-- **(b) Vocabulary admits optional streaming fields.** Fields marked as "live-only"; batch consumers ignore them. Single hierarchy.
-- **(c) Parallel hierarchies.** `BatchMonitorDataParams` and `LiveMonitorDataParams` both subclass a shared abstract base.
+No `Live*Params` subclasses, no multi-axis inheritance tree, no "vocabulary is batch-native with streaming overlays" asymmetry. One model per workflow; source partitioning carries the streaming/batch distinction that subclassing would otherwise encode.
 
-**Tradeoffs:**
-
-(a) is clean but doubles the subclass tree: vocabulary already uses subclassing for instrument specialization (see section 1), and streaming adds a second axis. `DreamMonitorDataParams(MonitorDataParams)` in vocabulary and `LiveDreamMonitorDataParams(DreamMonitorDataParams, LiveMonitorParams)` in livedata — multiple inheritance and linearization problems may follow.
-
-(b) is smallest-diff but leaks: batch consumers carry unused fields, vocabulary releases force re-verify on live-only changes, and the vocabulary contract becomes polluted with streaming concepts.
-
-(c) is most explicit but most verbose. Three hierarchies for a single concept.
-
-**Recommendation tilt:** (a). Accept the subclass complexity as the price of the separation. Livedata owns the "Live" subclasses; vocabulary does not know they exist.
+Corollary: a field meaningful only to batch execution (with no streaming analogue at all) is symmetrically just a field in the same model, filled by batch-side machinery and invisible to the streaming composition root.
 
 ### 12. Cross-cutting reduction primitives (detector views, histogramming)
 
@@ -567,11 +603,11 @@ How do we prevent a vocabulary change from silently breaking a consumer?
 
 Concrete scenarios that illustrate what changes in the developer experience end-to-end. Each is stated as "today" vs "post-unification" to make the delta visible.
 
-**Adding a parameter to a workflow.** Today, a scientist adding a new parameter to DREAM powder reduction edits livedata's `DreamPowderWorkflowParams`, the livedata factory, and associated tests, in one PR. Post-unification, the scientist edits the shared vocabulary's declaration (which may live in a different repo), waits for a vocabulary release, bumps the livedata dependency, adjusts the livedata factory, and lands. In parallel, the same scientist (or someone coordinated with them) updates ess.powder's implementation to accept the new parameter, or discovers that the parameter change actually requires reworking the ess.powder signature, which extends the coordination window. Best case: a few days. Worst case: a week or more of cross-repo review and release.
+**Adding a parameter to a workflow.** Today, a scientist adding a new parameter to DREAM powder reduction edits livedata's `DreamPowderWorkflowParams`, the per-instrument factory, and associated tests, in one PR. Post-unification, the scientist edits the param model in the technique package's schema submodule, the translation layer next to the pipeline (`apply_params` and possibly `dynamic_keys`), and the reduction code in the technique package itself (if the parameter is new rather than newly exposed). Livedata's composition root needs no change because it is generic over workflow-impl bundles. If the schema module lives in a different release cycle from livedata (see sections 2 and 9), bumping the dependency introduces coordination latency. Best case: hours within a single repo. Worst case: a week if a vocabulary release and a livedata bump must chain.
 
 **Fixing a validator during beam time.** Today, an instrument scientist notices at 2am that a validator is rejecting valid inputs; the fix is a one-line PR to livedata, reviewed by on-call, redeployed. ~15 minutes. Post-unification, the same fix goes to wherever the validator lives — if it is in vocabulary, the fix is a cross-repo PR, a release, and a dependency bump before it can deploy to the running instrument. Mitigation is to keep validators light (structural only) or to introduce a livedata-side override mechanism for temporary relaxation. Both cost something: light validators move constraint logic into runtime config, override mechanisms introduce a second authority over the same invariants.
 
-**Adding a new instrument.** Today, a new instrument's addition is a new subpackage under livedata's `config/instruments/`. Post-unification, it is a new subpackage in vocabulary (or wherever per-instrument specs live), possibly new transforms in ess.reduce, possibly new streaming overlays in livedata, possibly new technique-package entries if the instrument's techniques need specialization. Three-repo coordination instead of one-repo. Instrument-scientist contribution path becomes harder exactly at the moment it matters most (new instrument onboarding is already a high-coordination moment).
+**Adding a new instrument.** Today, a new instrument's addition is a new subpackage under livedata's `config/instruments/`. Post-unification, it is a new subpackage in the vocabulary layer (or wherever per-instrument specs live), new `WorkflowImpl` bundles in whichever technique packages the instrument uses, possibly new transforms in `ess.reduce`, and a deployment-config entry in livedata. Two or three repos instead of one. Instrument-scientist contribution path becomes harder exactly at the moment it matters most; livedata's composition root being generic helps (no per-instrument livedata code to add) but does not eliminate the cross-repo coordination cost.
 
 **A technique package bumps a reduction interface.** Today, if ess.powder renames a parameter or adds a required field, livedata's adapter may or may not even notice — livedata has its own parameter model and its own reduction entry point. Post-unification, the vocabulary's `PowderWorkflowParams` tracks ess.powder's signature directly; the change propagates as technique-package release → vocabulary release → livedata bump. The routine-feature cost of every technique-package release doubles or triples. Over a year, across five or six technique packages, the cumulative coordination cost is where the budget actually goes.
 
@@ -639,6 +675,8 @@ Commit to validator-policy (a) — validators are Python-side enrichment, not wi
 Treat the migration of cross-cutting transforms to ess.reduce as a separable plan with its own audit, requiring ess.reduce-maintainer buy-in. Do not let it block vocabulary work; do not let it be silently deferred by vocabulary work either.
 
 Scope the vocabulary at option 1(c): framework types plus generic parameter models plus per-instrument specializations, but not per-technique specializations yet. Per-technique absorbs into vocabulary only once technique-package maintainers are concrete participants, not proxies.
+
+Commit to the spec/workflow-implementation split and the multi-level-defaults rule (param model authoritative; no sciline-level fallback for parametric values) as project-wide discipline, not local design choices. Both are preconditions for cross-compute unification holding; both are cheap to adopt now and painful to retrofit.
 
 Make explicit, before any extraction, the responsiveness commitment from the vocabulary-owning team. Hour-scale review for urgent fixes, day-scale for routine changes, week-scale for design decisions. Without this commitment, authority-option (a) is ruinous regardless of what the org chart says.
 
