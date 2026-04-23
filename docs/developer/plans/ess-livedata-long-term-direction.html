@@ -1,0 +1,1528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unified workflow-spec surface — discussion</title>
+<style>
+  :root {
+    --bg: #f7f7f4;
+    --surface: #ffffff;
+    --surface-2: #fafaf7;
+    --ink: #1a1a1a;
+    --ink-2: #555;
+    --ink-3: #888;
+    --line: #e3e2dd;
+    --line-strong: #bdbbb3;
+
+    --green: #2f7a4f;       /* confident / recommended */
+    --green-bg: #e4f2ea;
+    --yellow: #9a7b14;      /* reasonable / uncertain */
+    --yellow-bg: #fdf4d2;
+    --orange: #a45a14;      /* caution / tradeoff */
+    --orange-bg: #fce5cf;
+    --red: #a6271a;         /* hazard / falsifier */
+    --red-bg: #fbddd7;
+    --blue: #1e5799;        /* open / deferred */
+    --blue-bg: #dce8f4;
+    --gray: #555;
+    --gray-bg: #ececea;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.04);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+  }
+
+  /* ───── Header ───── */
+  header.hero {
+    padding: 48px 0 24px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 32px;
+  }
+  header.hero .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  header.hero h1 {
+    font-size: 34px;
+    line-height: 1.15;
+    margin: 12px 0 16px;
+    max-width: 900px;
+    letter-spacing: -0.01em;
+  }
+  header.hero .pitch {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 820px;
+    margin: 0;
+  }
+  .status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+    align-items: center;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--yellow-bg);
+    color: var(--yellow);
+  }
+  .status-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* ───── Legend ───── */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 32px;
+    font-size: 12.5px;
+  }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .swatch {
+    width: 12px; height: 12px; border-radius: 3px;
+    display: inline-block;
+  }
+  .sw-green  { background: var(--green); }
+  .sw-yellow { background: var(--yellow); }
+  .sw-orange { background: var(--orange); }
+  .sw-red    { background: var(--red); }
+  .sw-blue   { background: var(--blue); }
+
+  /* ───── Nav (sticky, compact) ───── */
+  nav.toc {
+    position: sticky;
+    top: 0;
+    background: rgba(247,247,244,0.94);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    z-index: 50;
+    margin: 0 -28px 28px;
+    padding: 10px 28px;
+  }
+  nav.toc ol {
+    list-style: none;
+    margin: 0; padding: 0;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    font-size: 12.5px;
+  }
+  nav.toc a {
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+  }
+  nav.toc a:hover { background: var(--surface); border-color: var(--line); color: var(--ink); }
+
+  /* ───── Sections ───── */
+  section {
+    margin: 48px 0;
+    scroll-margin-top: 70px;
+  }
+  section > h2 {
+    font-size: 22px;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  section > .lead {
+    font-size: 15px;
+    color: var(--ink-2);
+    max-width: 820px;
+    margin: 0 0 22px;
+  }
+  .section-num {
+    color: var(--ink-3);
+    font-weight: 600;
+    margin-right: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ───── Cards ───── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 900px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+
+  /* ───── Failure-mode cards ───── */
+  .fmode {
+    border-left: 3px solid var(--red);
+    background: var(--surface);
+    padding: 12px 14px;
+    border-radius: 6px;
+    border-top: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .fmode .name { font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+  .fmode .desc { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+
+  /* ───── "Is / Is not" ───── */
+  .is-isnot { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .is-isnot .col { padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line); }
+  .is-isnot .col.is { background: var(--green-bg); border-color: #c5e0d0; }
+  .is-isnot .col.isnot { background: var(--red-bg); border-color: #ebc6bf; }
+  .is-isnot h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .is-isnot .col.is h3 { color: var(--green); }
+  .is-isnot .col.isnot h3 { color: var(--red); }
+  .is-isnot ul { margin: 0; padding-left: 18px; }
+  .is-isnot li { margin: 6px 0; font-size: 14px; line-height: 1.5; }
+  @media (max-width: 800px) { .is-isnot { grid-template-columns: 1fr; } }
+
+  /* ───── Matrix ───── */
+  .matrix {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    background: var(--surface);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .matrix th, .matrix td {
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .matrix th {
+    background: var(--surface-2);
+    font-weight: 600;
+    text-align: center;
+  }
+  .matrix th:first-child, .matrix td:first-child {
+    text-align: left;
+    background: var(--surface-2);
+    font-weight: 500;
+  }
+  .matrix td .mark {
+    font-size: 16px;
+    display: inline-block;
+  }
+  .matrix .check { color: var(--green); font-weight: 700; }
+  .matrix .partial { color: var(--yellow); }
+  .matrix .unknown { color: var(--ink-3); }
+
+  /* ───── Architecture diagram ───── */
+  .arch {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .arch-layer {
+    padding: 16px 18px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  .arch-layer .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .arch-layer .body { font-size: 14px; }
+  .arch-layer.ui    { background: var(--blue-bg);   border-color: #c3d4e6; }
+  .arch-layer.vocab { background: var(--green-bg);  border-color: #c5e0d0; }
+  .arch-layer.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: transparent; border: 0; padding: 0; }
+  .arch-layer.split > .half {
+    padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .arch-layer.split .half.stream { border-left: 4px solid var(--orange); }
+  .arch-layer.split .half.batch  { border-left: 4px solid var(--blue); }
+  .arch-arrow {
+    text-align: center;
+    color: var(--ink-3);
+    font-size: 12px;
+    margin: -4px 0;
+  }
+  .arch ul { margin: 6px 0 0; padding-left: 18px; }
+  .arch li { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  @media (max-width: 700px) { .arch-layer.split { grid-template-columns: 1fr; } }
+
+  /* ───── Claims ───── */
+  .claims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 12px; }
+  .claim {
+    padding: 14px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+    border-top: 3px solid var(--green);
+  }
+  .claim .n { font-weight: 700; color: var(--green); font-size: 12px; letter-spacing: 0.05em; }
+  .claim .t { font-weight: 600; font-size: 14.5px; margin: 4px 0 6px; }
+  .claim .d { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  @media (max-width: 900px) { .claims { grid-template-columns: 1fr; } }
+
+  /* ───── Upsides / Downsides ───── */
+  .tradeoff-switch {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 14px;
+    background: var(--surface);
+  }
+  .tradeoff-switch button {
+    border: 0;
+    padding: 8px 16px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: transparent;
+    color: var(--ink-2);
+  }
+  .tradeoff-switch button.active {
+    background: var(--ink);
+    color: #fff;
+  }
+  .tradeoff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .tradeoff-grid { grid-template-columns: 1fr; } }
+  .tradeoff-col.upside  { border-top: 3px solid var(--green); }
+  .tradeoff-col.downside { border-top: 3px solid var(--red); }
+  .tradeoff-col {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 4px 4px 6px;
+  }
+  .tradeoff-col > h3 {
+    margin: 10px 14px 6px;
+    font-size: 14px;
+  }
+  .tradeoff-col.upside h3 { color: var(--green); }
+  .tradeoff-col.downside h3 { color: var(--red); }
+  .tradeoff-col .item {
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .tradeoff-col .item:first-of-type { border-top: 0; }
+  .tradeoff-col .item .h { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .tradeoff-col .item .b { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+
+  /* ───── Decision cards (14 total) ───── */
+  .decisions { display: grid; gap: 14px; }
+  details.decision {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0;
+    overflow: hidden;
+  }
+  details.decision[open] { box-shadow: var(--shadow); }
+  details.decision > summary {
+    list-style: none;
+    padding: 14px 18px;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    border-left: 4px solid transparent;
+    user-select: none;
+  }
+  details.decision > summary::-webkit-details-marker { display: none; }
+  details.decision > summary:hover { background: var(--surface-2); }
+  details.decision .dnum {
+    font-weight: 700;
+    background: var(--ink);
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 6px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 14px;
+  }
+  details.decision .dtitle { font-weight: 600; font-size: 15px; }
+  details.decision .dsub { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+  details.decision .tilt {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--green-bg);
+    color: var(--green);
+    white-space: nowrap;
+  }
+  details.decision[data-risk="high"] > summary { border-left-color: var(--red); }
+  details.decision[data-risk="medium"] > summary { border-left-color: var(--orange); }
+  details.decision[data-risk="low"] > summary { border-left-color: var(--green); }
+
+  details.decision .body { padding: 4px 18px 20px; }
+  details.decision .options {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .opt {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-2);
+    align-items: start;
+  }
+  .opt .letter {
+    background: var(--ink);
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    text-align: center;
+    padding: 6px 0;
+    border-radius: 5px;
+  }
+  .opt.rec { border-color: var(--green); background: var(--green-bg); }
+  .opt.rec .letter { background: var(--green); }
+  .opt.warn { border-color: var(--orange); background: var(--orange-bg); }
+  .opt.warn .letter { background: var(--orange); }
+  .opt.bad { border-color: var(--red); background: var(--red-bg); }
+  .opt.bad .letter { background: var(--red); }
+  .opt.ok { border-color: var(--yellow); background: var(--yellow-bg); }
+  .opt.ok .letter { background: var(--yellow); }
+  .opt .t { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .opt .d { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  .opt .tag {
+    display: inline-block; margin-left: 6px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 1px 6px; border-radius: 4px; vertical-align: 1px;
+  }
+  .opt.rec .tag { background: var(--green); color: #fff; }
+  .opt.bad .tag { background: var(--red); color: #fff; }
+
+  details.decision .tilt-block {
+    margin-top: 14px;
+    padding: 10px 14px;
+    background: var(--green-bg);
+    border-left: 3px solid var(--green);
+    border-radius: 0 6px 6px 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  details.decision .tilt-block .k {
+    font-weight: 700; color: var(--green); font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    display: block; margin-bottom: 3px;
+  }
+  details.decision .tradeoffs-note {
+    font-size: 13px; color: var(--ink-2); line-height: 1.5;
+    margin: 8px 0 0;
+  }
+  details.decision .extras {
+    margin-top: 12px;
+    border-top: 1px dashed var(--line);
+    padding-top: 12px;
+  }
+  details.decision .extras .k {
+    font-weight: 700; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--blue);
+    display: block; margin-bottom: 4px;
+  }
+  details.decision .extras ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  details.decision .extras li { margin: 4px 0; color: var(--ink-2); line-height: 1.5; }
+
+  /* ───── Today vs Post-unification toggle ───── */
+  .vs {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .vs h3 { margin: 0 0 8px; font-size: 15px; }
+  .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+  .vs-col {
+    padding: 12px 14px; border-radius: 8px; font-size: 13.5px; line-height: 1.5;
+  }
+  .vs-col.today { background: var(--gray-bg); }
+  .vs-col.post  { background: var(--orange-bg); }
+  .vs-col .k {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    font-weight: 700; display: block; margin-bottom: 5px; color: var(--ink-2);
+  }
+  .vs-col.today .k { color: var(--ink-2); }
+  .vs-col.post .k { color: var(--orange); }
+  @media (max-width: 800px) { .vs-grid { grid-template-columns: 1fr; } }
+
+  /* ───── Reversal list ───── */
+  .reversal { display: grid; gap: 10px; }
+  .reversal .r {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--red);
+    padding: 12px 14px; border-radius: 6px;
+  }
+  .reversal .r .h { font-weight: 600; font-size: 14px; margin-bottom: 3px; color: var(--red); }
+  .reversal .r .b { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+
+  /* ───── Open questions ───── */
+  .questions { display: grid; gap: 8px; counter-reset: q; }
+  .q {
+    counter-increment: q;
+    position: relative;
+    padding: 12px 14px 12px 58px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--blue);
+    border-radius: 6px; font-size: 13.5px; line-height: 1.5;
+  }
+  .q::before {
+    content: "Q" counter(q);
+    position: absolute;
+    left: 14px;
+    top: 11px;
+    background: var(--blue); color: #fff;
+    font-weight: 700; font-size: 11px;
+    border-radius: 5px; padding: 5px 6px;
+    text-align: center;
+    min-width: 22px;
+    line-height: 1;
+  }
+
+  /* ───── Final recommendation ───── */
+  .final {
+    background: linear-gradient(180deg, var(--green-bg), #eff7f1);
+    border: 2px solid var(--green);
+    border-radius: 12px;
+    padding: 22px 24px;
+  }
+  .final h2 { color: var(--green); margin-top: 0; }
+  .final ol { margin: 10px 0; padding-left: 22px; }
+  .final li { margin: 8px 0; line-height: 1.55; }
+  .final .punch {
+    margin-top: 14px; padding: 12px 14px;
+    background: #fff; border: 1px solid var(--green);
+    border-radius: 8px; font-size: 14px;
+  }
+  .final .punch strong { color: var(--red); }
+
+  /* ───── Misc ───── */
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 90%; }
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 12px;
+    text-align: center;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Proposal · Discussion document · Not a commitment</div>
+  <h1>Unified workflow-spec surface across ESS data pipelines and UIs</h1>
+  <p class="pitch">
+    One vocabulary — <code>WorkflowSpec</code>, parameter models, output schemas — declared once,
+    consumed uniformly by every UI (livedata dashboard, ipywidget UIs, CLI, NICOS) and satisfied
+    uniformly by every compute backend (streaming, batch). This document makes the tradeoffs of
+    that direction legible enough to <em>adopt it, modify it, or reject it</em> on what it actually costs.
+  </p>
+  <div class="status-row">
+    <span class="status-pill"><span class="dot"></span>Status: discussion</span>
+    <span class="status-pill" style="background:var(--blue-bg);color:var(--blue);"><span class="dot"></span>For team review</span>
+    <span class="status-pill" style="background:var(--gray-bg);color:var(--gray);"><span class="dot"></span>14 decisions · 10 open questions</span>
+  </div>
+</header>
+
+<!-- Legend -->
+<div class="legend">
+  <strong style="color:var(--ink-2); margin-right:4px;">Confidence / risk:</strong>
+  <span class="item"><span class="swatch sw-green"></span>Recommended / low risk / confident</span>
+  <span class="item"><span class="swatch sw-yellow"></span>Reasonable / moderate uncertainty</span>
+  <span class="item"><span class="swatch sw-orange"></span>Caution / real tradeoff</span>
+  <span class="item"><span class="swatch sw-red"></span>Hazard / falsifier / fatal failure mode</span>
+  <span class="item"><span class="swatch sw-blue"></span>Open / deferred / needs stakeholder</span>
+</div>
+
+<!-- Sticky nav -->
+<nav class="toc" aria-label="Section nav">
+  <ol>
+    <li><a href="#problem">1. Problem</a></li>
+    <li><a href="#spec">2. What a spec is</a></li>
+    <li><a href="#goal">3. The goal</a></li>
+    <li><a href="#today">4. Today</a></li>
+    <li><a href="#direction">5. Direction</a></li>
+    <li><a href="#tradeoffs">6. Upsides vs downsides</a></li>
+    <li><a href="#decisions">7. Decisions (14)</a></li>
+    <li><a href="#impact">8. Dev &amp; prod impact</a></li>
+    <li><a href="#reversal">9. Reversal triggers</a></li>
+    <li><a href="#open">10. Open questions</a></li>
+    <li><a href="#recommendation">11. Recommendation</a></li>
+  </ol>
+</nav>
+
+<!-- ══════════════ 1. PROBLEM ══════════════ -->
+<section id="problem">
+  <h2><span class="section-num">1</span>The problem — what's broken today</h2>
+  <p class="lead">
+    Six contexts run or present reduction workflows: <strong>streaming</strong>, <strong>batch</strong>,
+    <strong>ipywidget UIs</strong>, the <strong>livedata dashboard</strong>,
+    <strong>CLI</strong>, and <strong>external frontends (NICOS)</strong>.
+    Each answers "what workflows exist, what parameters, what outputs?" by reaching into its own, independently-drifting source.
+  </p>
+
+  <div class="grid-3">
+    <div class="fmode">
+      <div class="name">Parameter defaults drift</div>
+      <div class="desc">DREAM d-spacing default in the livedata dashboard is not guaranteed to match ess.powder's notebook UI. Same workflow, different defaults.</div>
+    </div>
+    <div class="fmode">
+      <div class="name">Output-shape disagreements</div>
+      <div class="desc"><code>I(d)</code> from livedata vs. ess.powder can carry different coord units, dim names. Silent reconciliation required downstream.</div>
+    </div>
+    <div class="fmode">
+      <div class="name">Validation duplicated &amp; drifts</div>
+      <div class="desc">"Must be positive" declared in one place, copied with minor variation elsewhere.</div>
+    </div>
+    <div class="fmode">
+      <div class="name">Duplicated UI form logic</div>
+      <div class="desc">Every UI builds its own form layer from scratch — no shared spec to render against.</div>
+    </div>
+    <div class="fmode">
+      <div class="name">NICOS has no path in</div>
+      <div class="desc">No single source of truth for "workflows available on DREAM right now" that out-of-process frontends can query.</div>
+    </div>
+    <div class="fmode">
+      <div class="name">Triple-edit contribution overhead</div>
+      <div class="desc">Adding a parameter to a powder workflow: edit technique package, edit livedata, edit ipywidget UI. Three changes for one concept.</div>
+    </div>
+  </div>
+  <p class="lead" style="margin-top:18px;">
+    Not pathological today (teams are close, duplication small) —
+    <em>pathological eventually</em> (surface grows super-linearly, reconciliation projects get deprioritised).
+  </p>
+</section>
+
+<!-- ══════════════ 2. WHAT A SPEC IS ══════════════ -->
+<section id="spec">
+  <h2><span class="section-num">2</span>What a workflow spec is (and is not)</h2>
+  <p class="lead">
+    A workflow spec is <strong>vocabulary</strong> — a declarative description of a pipeline's interface.
+    It answers four questions: <strong>identity</strong>, <strong>inputs</strong>, <strong>outputs</strong>, <strong>display metadata</strong>.
+    The separation below is <em>load-bearing</em>: anything that pulls scipp, sciline, or a UI toolkit into the spec forecloses a consumer.
+  </p>
+
+  <div class="is-isnot">
+    <div class="col is">
+      <h3>A spec IS</h3>
+      <ul>
+        <li><strong>Identity</strong> — instrument, technique, version; unambiguous reference across UIs &amp; releases</li>
+        <li><strong>Inputs</strong> — typed parameters (ranges, defaults, units) + data sources (streams or NeXus groups)</li>
+        <li><strong>Outputs</strong> — structural shape per result: dim names, unit, coord names/units. <em>Schema, not arrays.</em></li>
+        <li><strong>Display metadata</strong> — titles, groupings, plot hints (UIs need them; nowhere sensible else to live)</li>
+      </ul>
+    </div>
+    <div class="col isnot">
+      <h3>A spec is NOT</h3>
+      <ul>
+        <li><strong>The algorithm</strong> — sciline graph, scipp transforms stay with technique packages</li>
+        <li><strong>Runtime machinery</strong> — Kafka topics, accumulators, job scheduling</li>
+        <li><strong>UI rendering code</strong> — forms, plots, widgets are <em>consumers</em> of the spec</li>
+        <li><strong>Fine-grained data layout</strong> — bin-edge/center, dtype, chunk shape</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="tradeoffs-note" style="margin-top:14px; font-size:13px; color:var(--ink-2);">
+    <strong>Key design move:</strong> replace <code>sc.DataArray</code> output factories (current livedata) with
+    a shape-only schema (<code>ArraySpec</code>-like) that constructs no arrays. This is what lets the spec layer use
+    <em>pydantic + stdlib only</em> — the dependency cap that keeps it cheap to share.
+  </p>
+</section>
+
+<!-- ══════════════ 3. GOAL ══════════════ -->
+<section id="goal">
+  <h2><span class="section-num">3</span>The goal — two unification axes</h2>
+  <p class="lead">
+    <strong>Cross-UI:</strong> same spec drives livedata dashboard, ipywidget UI, CLI, NICOS.
+    <strong>Cross-compute:</strong> same spec describes streaming (esslivedata) <em>and</em> batch (technique package on NeXus file).
+    Each cell consumes or implements the same spec. Today-empty cells become cheap because integration cost collapses.
+  </p>
+
+  <table class="matrix">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Streaming<br><small style="color:var(--ink-3);font-weight:400;">esslivedata</small></th>
+        <th>Batch<br><small style="color:var(--ink-3);font-weight:400;">technique package + NeXus</small></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Livedata dashboard</td>
+          <td><span class="mark check">✓</span></td>
+          <td><span class="mark partial">replay</span></td></tr>
+      <tr><td>Ipywidget UI</td>
+          <td><span class="mark partial">live notebook?</span></td>
+          <td><span class="mark check">✓</span></td></tr>
+      <tr><td>CLI wrapper</td>
+          <td><span class="mark check">✓</span></td>
+          <td><span class="mark check">✓</span></td></tr>
+      <tr><td>NICOS</td>
+          <td><span class="mark check">✓</span></td>
+          <td><span class="mark unknown">?</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════ 4. TODAY ══════════════ -->
+<section id="today">
+  <h2><span class="section-num">4</span>The ecosystem today</h2>
+  <p class="lead">Stated as facts, not assuming any direction.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;">Players</h3>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;line-height:1.6;">
+        <li><strong>ess.livedata</strong> — streaming + dashboard. Defines its <em>own</em> spec types (<code>WorkflowSpec</code>, parameter models). Carries <code>sc.DataArray</code> factories, pydantic validators, instrument subclasses. Specs, factories, Kafka adapters intermixed.</li>
+        <li><strong>Technique packages</strong> (ess.powder, ess.sans, ess.reflectometry, ess.diffraction, ess.spectroscopy) — reduction algorithms as sciline pipelines. Each has own parameter-declaration convention. UIs ad-hoc.</li>
+        <li><strong>ess.reduce</strong> — cross-cutting reduction primitives. Owns compute; does <em>not</em> today own vocabulary.</li>
+        <li><strong>scippneutron</strong> — low-level neutron scipp layer.</li>
+        <li><strong>NICOS</strong> — instrument control. Not today a Python consumer of any of the above.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;">Seams where drift lives</h3>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;line-height:1.6;">
+        <li>DREAM powder parameters exist both in the technique package <em>and</em> as livedata's <code>DreamPowderWorkflowParams</code>. Kept in sync manually.</li>
+        <li>Output shapes disagree: livedata's <code>*Outputs</code> with <code>sc.DataArray</code> factories vs. technique-package sciline returns.</li>
+        <li>Validators live in livedata only — technique package finds out about ranges when the notebook crashes.</li>
+        <li>Display metadata (titles, groups) livedata-only; ipywidget UI reinvents.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 5. DIRECTION ══════════════ -->
+<section id="direction">
+  <h2><span class="section-num">5</span>Architectural direction under discussion</h2>
+  <p class="lead">
+    A three-way split with a deliberate choice about where vocabulary lives.
+    <em>Three structural claims</em> sit inside this picture — each individually evaluable.
+  </p>
+
+  <div class="arch">
+    <div class="arch-layer ui">
+      <div class="label">UI surfaces</div>
+      <div class="body">livedata dashboard · ipywidget UIs · CLI · NICOS (future)</div>
+    </div>
+    <div class="arch-arrow">▼ consumes specs ▼</div>
+
+    <div class="arch-layer vocab">
+      <div class="label">ess.schemas — the shared vocabulary</div>
+      <div class="body">
+        <strong>pydantic + stdlib only.</strong> No scipp, no sciline, no UI toolkit.
+        <ul>
+          <li><code>WorkflowSpec</code>, <code>WorkflowId</code>, <code>InstrumentSpec</code>, <code>ComponentSpec</code></li>
+          <li>Parameter models, output shape schemas (<code>ArraySpec</code>), display metadata</li>
+          <li>Possibly: per-instrument / per-technique subpackages (see Decision 1)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="arch-arrow">▼ implemented by ▼</div>
+
+    <div class="arch-layer split">
+      <div class="half stream">
+        <div class="label" style="color:var(--orange);">Streaming backend — ess.livedata</div>
+        <ul>
+          <li>Kafka source/sink, accumulators, orchestration</li>
+          <li>Live-only parameter overlays</li>
+          <li>Dashboard</li>
+          <li>↓ uses ess.reduce (transforms)</li>
+        </ul>
+      </div>
+      <div class="half batch">
+        <div class="label" style="color:var(--blue);">Batch backend — ess.&lt;technique&gt;</div>
+        <ul>
+          <li>sciline over NeXus files</li>
+          <li>Technique-specific algorithm</li>
+          <li>↓ uses ess.reduce (transforms)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px; margin-top:24px; margin-bottom:4px;">Three load-bearing claims inside this picture</h3>
+  <div class="claims">
+    <div class="claim">
+      <div class="n">CLAIM 1</div>
+      <div class="t">Vocabulary is separable from compute</div>
+      <div class="d">A spec can answer the 4 questions with pydantic + stdlib, no scipp. <strong>Empirically testable.</strong> The output-shape redesign is the hardest part.</div>
+    </div>
+    <div class="claim">
+      <div class="n">CLAIM 2</div>
+      <div class="t">Streaming is an adapter over shared compute</div>
+      <div class="d">Cross-cutting data-shaping (detector views, histogramming, focus, ROI) belongs in <code>ess.reduce</code>. What stays in livedata is the reactive half: accumulators, Kafka, orchestration.</div>
+    </div>
+    <div class="claim">
+      <div class="n">CLAIM 3</div>
+      <div class="t">Technique packages become spec-conformant</div>
+      <div class="d">Technique packages declare workflows against the shared vocabulary (or it mirrors them). Workflows become first-class, catalog-wide entries.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 6. UPSIDES VS DOWNSIDES ══════════════ -->
+<section id="tradeoffs">
+  <h2><span class="section-num">6</span>Why this direction — and why it's hard</h2>
+  <p class="lead">Symmetric honesty. Every upside has a cost that accrues to somebody. Toggle to compare side-by-side or focus on one.</p>
+
+  <div class="tradeoff-switch" role="tablist">
+    <button id="tBoth" class="active" onclick="showTradeoff('both')">Both</button>
+    <button id="tUp"   onclick="showTradeoff('up')">Upsides only</button>
+    <button id="tDown" onclick="showTradeoff('down')">Downsides only</button>
+  </div>
+
+  <div class="tradeoff-grid">
+    <div class="tradeoff-col upside" data-side="up">
+      <h3>Upsides</h3>
+      <div class="item"><div class="h">One vocabulary, many consumers</div><div class="b">n×m problem collapses to n+m. One changelog, one compatibility story.</div></div>
+      <div class="item"><div class="h">Technique packages gain a UI path</div><div class="b">Any UI built against the vocabulary works for any technique package conforming to it.</div></div>
+      <div class="item"><div class="h">Livedata gains reduction correctness for free</div><div class="b">Livedata calls ess.powder (or shared ess.reduce transforms) directly. "Live differs from batch" becomes structurally hard.</div></div>
+      <div class="item"><div class="h">Parallel interface declaration in livedata disappears</div><div class="b">Ongoing manual sync burden ends. The drift-class bug ceases to exist, not because it's patched, but because the surface permitting it is gone.</div></div>
+      <div class="item"><div class="h">Replay / stream-from-file become natural</div><div class="b">Both backends speak the same spec. No new glue.</div></div>
+      <div class="item"><div class="h">NICOS integration becomes possible</div><div class="b">Single source of truth → out-of-process consumers have something to query. Today they do not.</div></div>
+      <div class="item"><div class="h">Contribution overhead drops</div><div class="b">Edit once; every UI picks it up; both backends see the new field.</div></div>
+      <div class="item"><div class="h">Testability improves at every layer</div><div class="b">Vocabulary testable in isolation (pydantic + stdlib). ess.reduce testable as batch transforms. Streaming testable as plumbing.</div></div>
+      <div class="item"><div class="h">Design discipline is forced</div><div class="b">Versioning, validator semantics, streaming-vs-batch boundaries stop being perpetually deferred.</div></div>
+    </div>
+    <div class="tradeoff-col downside" data-side="down">
+      <h3>Downsides</h3>
+      <div class="item"><div class="h">Beam-time fix latency</div><div class="b"><strong>Most concrete cost.</strong> 2am validator fix: today ~15min in livedata. Post-unification: cross-repo PR, release cut, bump, deploy. Hours to days.</div></div>
+      <div class="item"><div class="h">Version-mismatch failures</div><div class="b">Backend v1.2 + dashboard v1.3 → ghost inputs; reverse → missing required fields. Didn't exist before.</div></div>
+      <div class="item"><div class="h">Rollback asymmetry</div><div class="b">Rolling livedata back while vocabulary stays may be unsafe; the reverse usually is. On-call needs a playbook that doesn't exist.</div></div>
+      <div class="item"><div class="h">Cascading upstream evolution</div><div class="b">Every non-trivial technique-package change is now a coordinated release train across 2–3 repos. Multiplied by 5–6 technique packages.</div></div>
+      <div class="item"><div class="h">Breaking-change blast radius</div><div class="b">DREAM-only concept change in shared vocabulary implicitly obligates every instrument/technique to re-verify.</div></div>
+      <div class="item"><div class="h">Ownership dilution</div><div class="b">Three-team bug = who owns, reviews, releases, deploys? Fails exactly under pressure.</div></div>
+      <div class="item"><div class="h">Release-cadence coupling</div><div class="b">Livedata ships when the slowest of {vocab, reduce, technique pkgs, livedata} is ready.</div></div>
+      <div class="item"><div class="h">Dev-loop friction</div><div class="b">Editable installs across multiple checkouts. Devcontainer that worked in one repo no longer end-to-end.</div></div>
+      <div class="item"><div class="h">Cognitive overhead for contributors</div><div class="b">Which of {vocab, reduce, livedata, technique pkg} owns this bug? Onboarding gets harder before it gets easier.</div></div>
+      <div class="item"><div class="h">Each technique team becomes a stakeholder whose priorities matter</div><div class="b">Today livedata decides in isolation. Post-unification, "let's change this" is a cross-team conversation.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 7. DECISIONS ══════════════ -->
+<section id="decisions">
+  <h2><span class="section-num">7</span>Fourteen decisions</h2>
+  <p class="lead">
+    Each must be made or consciously deferred. Options compound but are separable. Click any card to expand.
+    The <strong>recommendation tilt</strong> per card is non-binding — it's the coherent stance reachable today given the rest.
+  </p>
+
+  <div class="decisions">
+
+    <!-- DECISION 1 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">1</span>
+        <span>
+          <div class="dtitle">Vocabulary scope — what lives in <code>ess.schemas</code>?</div>
+          <div class="dsub">Framework only? + generic params? + instrument specializations? + technique specializations?</div>
+        </span>
+        <span class="tilt">Tilt: (c) → aim (d)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt warn"><span class="letter">a</span>
+            <div><div class="t">Framework only</div>
+            <div class="d">Just cross-cutting types. No home for <code>MonitorDataParams</code> shared by livedata + ess.powder + NICOS → defeats unification.</div></div></div>
+          <div class="opt ok"><span class="letter">b</span>
+            <div><div class="t">Framework + generic params</div>
+            <div class="d">Minimum that delivers cross-UI claim. Technique-specific specializations stay with technique packages.</div></div></div>
+          <div class="opt rec"><span class="letter">c</span>
+            <div><div class="t">Framework + generic + instrument subpackages <span class="tag">tilt</span></div>
+            <div class="d">Matches current code shape. Instrument specializations (e.g. <code>DreamMonitorDataParams</code>) first-class in vocabulary. Full cross-UI benefit; instrument-local changes become vocabulary changes.</div></div></div>
+          <div class="opt ok"><span class="letter">d</span>
+            <div><div class="t">+ technique subpackages (endpoint)</div>
+            <div class="d">Max unification. Architecturally clean; organizationally aggressive — requires technique-package maintainers to accept shared vocabulary as source of truth. Not a starting position.</div></div></div>
+        </div>
+        <div class="tilt-block"><span class="k">Recommendation</span>
+          Start at (c). Aim at (d). (d) requires organizational alignment not yet in place.
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 2 -->
+    <details class="decision" data-risk="high">
+      <summary>
+        <span class="dnum">2</span>
+        <span>
+          <div class="dtitle">Physical home &amp; ownership — where does the vocabulary live?</div>
+          <div class="dsub">scipp/ess monorepo? separate repo? in-repo for now?</div>
+        </span>
+        <span class="tilt">Tilt: (d) now → (a/c) later</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt warn"><span class="letter">a</span>
+            <div><div class="t">In scipp/ess monorepo as new subpackage</div>
+            <div class="d">Proximity to technique-package maintainers. Monorepo release cadence may be incompatible with beam-time ops.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span>
+            <div><div class="t">In monorepo with separately-scoped ownership</div>
+            <div class="d">Same physical location, different reviewer pool. Only helps fix latency if vocab-owning team has cadence autonomy.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span>
+            <div><div class="t">Separate repository</div>
+            <div class="d">Cleanest on paper, operationally most complex. Version matrix, dependency bump PRs, rollback asymmetry all show up.</div></div></div>
+          <div class="opt rec"><span class="letter">d</span>
+            <div><div class="t">Inside ess.livedata for now; extract once 2nd consumer exists <span class="tag">tilt</span></div>
+            <div class="d">Enforce the dependency boundary (pydantic + stdlib) in-repo. Prove the shape. Extract when payoff is concrete. Fix latency stays at deploy speed.</div></div></div>
+        </div>
+        <p class="tradeoffs-note">
+          <strong>Worst option:</strong> "extract early because it will be harder later" — extraction gets no easier if the boundary is unclear; extraction gets much easier if the boundary has already held under real use.
+        </p>
+      </div>
+    </details>
+
+    <!-- DECISION 3 -->
+    <details class="decision" data-risk="high">
+      <summary>
+        <span class="dnum">3</span>
+        <span>
+          <div class="dtitle">Authority for interface evolution — who decides what changes?</div>
+          <div class="dsub">The single question most likely to determine whether unification is sustainable. Also the most easily deferred.</div>
+        </span>
+        <span class="tilt" style="background:var(--yellow-bg);color:var(--yellow);">Responsiveness &gt; nominal authority</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt warn"><span class="letter">a</span>
+            <div><div class="t">Technique packages lead</div>
+            <div class="d">Vocab mirrors what technique pkgs publish. Every non-trivial change is a two-release dance. Vocab becomes <em>lagging</em>.</div></div></div>
+          <div class="opt bad"><span class="letter">b</span>
+            <div><div class="t">Vocabulary leads <span class="tag">unrealistic</span></div>
+            <div class="d">Vocab declares contract; technique pkgs conform. Inverts authority arrow — domain expertise is in technique pkgs. No leverage over non-livedata users.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span>
+            <div><div class="t">Interfaces only in vocabulary (algorithms with technique pkgs)</div>
+            <div class="d">Architecturally correct. Requires organizational alignment. Fatal risk: if vocab can't keep up, shadow interfaces form and unification dies quietly.</div></div></div>
+          <div class="opt ok"><span class="letter">d</span>
+            <div><div class="t">Instrument teams own their slice</div>
+            <div class="d">Matches how ESS is actually organized. Crosscuts technique ownership (most instruments use multiple techniques). Works if coordinated; a mess otherwise.</div></div></div>
+        </div>
+        <div class="tilt-block" style="background:var(--yellow-bg);border-left-color:var(--yellow);">
+          <span class="k" style="color:var(--yellow);">Generative observation</span>
+          The authority question isn't just "who" but "<em>how fast</em>". Same process with hour-scale reviews is survivable; with week-scale reviews it's fatal. The real decision is <strong>responsiveness commitments</strong>.
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 4 -->
+    <details class="decision" data-risk="low">
+      <summary>
+        <span class="dnum">4</span>
+        <span>
+          <div class="dtitle">Compute-backend contract — how does a backend satisfy a spec?</div>
+          <div class="dsub">Factory? adapters? callbacks? no contract?</div>
+        </span>
+        <span class="tilt">Tilt: (a)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt rec"><span class="letter">a</span>
+            <div><div class="t">Spec + factory <span class="tag">tilt</span></div>
+            <div class="d">Generalization of livedata's current factory. <code>WorkflowFactory</code> lookup by <code>WorkflowId</code>. Each backend owns its factory; specs key the lookup. Minimal vocabulary surface.</div></div></div>
+          <div class="opt ok"><span class="letter">b</span>
+            <div><div class="t">Spec + two adapters per workflow</div>
+            <div class="d">Explicit; less magic; more repetition across dozens of workflows × two backends.</div></div></div>
+          <div class="opt bad"><span class="letter">c</span>
+            <div><div class="t">Spec + callbacks</div>
+            <div class="d">Pushes streaming concepts into vocabulary. Violates the dependency-minimal premise.</div></div></div>
+          <div class="opt warn"><span class="letter">d</span>
+            <div><div class="t">No explicit contract</div>
+            <div class="d">Max flexibility, min unification. Backends drift; nothing enforces consistent interpretation.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 5 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">5</span>
+        <span>
+          <div class="dtitle">UI-surface contract — how do UIs consume specs?</div>
+          <div class="dsub">Auto-render from self-describing spec? bespoke per UI? shared widget library?</div>
+        </span>
+        <span class="tilt">Tilt: (a) now, (c) later</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt rec"><span class="letter">a</span>
+            <div><div class="t">Specs self-describing; UIs auto-render <span class="tag">tilt</span></div>
+            <div class="d">Pydantic <code>Field</code> metadata. Lowest friction for new UIs. Simple for 80%, painful for the 20% wanting custom widgets.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span>
+            <div><div class="t">Specs describe; UIs render bespoke (status quo)</div>
+            <div class="d">Common vocabulary but no rendering reuse. No progress on UI-code duplication.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span>
+            <div><div class="t">Shared widget library layered over specs</div>
+            <div class="d">Maximum reuse — dashboard and ipywidget UIs literally share components. 4th package with own cadence; Panel vs ipywidgets vs NICOS is not trivial.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 6 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">6</span>
+        <span>
+          <div class="dtitle">Presentation variants across UIs</div>
+          <div class="dsub">Beam-time operator sees few knobs; batch analyst sees all. Three sub-problems easily conflated.</div>
+        </span>
+        <span class="tilt">Tilt: three mechanisms</span>
+      </summary>
+      <div class="body">
+
+        <p class="tradeoffs-note"><strong>Three sub-problems — each wants a different answer:</strong></p>
+
+        <div class="grid-3" style="margin:10px 0;">
+          <div class="card" style="padding:12px 14px;">
+            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Visibility filtering</div>
+            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">Which params a UI surfaces. Pure rendering concern. "Basic / advanced / expert."</div>
+          </div>
+          <div class="card" style="padding:12px 14px;">
+            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Deployment-pinned values</div>
+            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">Params fixed by deployment (norm file, calib). UI cannot change regardless of visibility. <em>Ops has authority.</em></div>
+          </div>
+          <div class="card" style="padding:12px 14px;">
+            <div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--ink-3);letter-spacing:.05em;">Scientifically-different variants</div>
+            <div style="font-size:13px;margin-top:4px;color:var(--ink-2);line-height:1.5;">"Live powder" vs. "batch powder" are genuinely different computations — different identity, not different presentation.</div>
+          </div>
+        </div>
+
+        <details style="margin-top:12px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ Options per sub-problem (click to expand)</summary>
+          <div class="options" style="margin-top:10px;">
+            <div class="opt rec"><span class="letter">V·a</span><div><div class="t">Visibility — field-level hints <span class="tag">tilt</span></div><div class="d"><code>Field(..., ui_level="advanced")</code>. UIs filter by tag. Simple; tag vocab stabilises.</div></div></div>
+            <div class="opt ok"><span class="letter">V·b</span><div><div class="t">Visibility — named presentations in spec</div><div class="d">Structured; every new UI context = new maintained name.</div></div></div>
+            <div class="opt warn"><span class="letter">V·c</span><div><div class="t">Visibility — UI-side config only</div><div class="d">"Basic vs advanced" drifts across UIs.</div></div></div>
+            <div class="opt rec"><span class="letter">P·a</span><div><div class="t">Pinning — runtime overlay <span class="tag">tilt</span></div><div class="d">Deployment config provides <code>{workflow_id: {param: value}}</code>. Vocab stays clean; ops owns what ops should own.</div></div></div>
+            <div class="opt warn"><span class="letter">P·b</span><div><div class="t">Pinning — preset fields in spec</div><div class="d">Vocab carries deployment configuration — the entanglement unification was trying to avoid.</div></div></div>
+            <div class="opt ok"><span class="letter">P·c</span><div><div class="t">Pinning — derived specs / wrapping</div><div class="d">Wrapping primitive every consumer must learn. Attractive, costly.</div></div></div>
+            <div class="opt warn"><span class="letter">X·a</span><div><div class="t">Variants — separate IDs, no relationship <span class="tag">silent failure</span></div><div class="d">Happens by default if nothing is decided. Scientists reinvent correspondence mentally; drift.</div></div></div>
+            <div class="opt rec"><span class="letter">X·b</span><div><div class="t">Variants — separate IDs with <code>derived_from</code> metadata <span class="tag">tilt</span></div><div class="d">Correlation without identity collision.</div></div></div>
+            <div class="opt warn"><span class="letter">X·c</span><div><div class="t">Variants — version-string grammar</div><div class="d">Conflates variance with versioning.</div></div></div>
+          </div>
+        </details>
+
+        <div class="tilt-block"><span class="k">Coherent combination</span>
+          Three <em>decoupled</em> mechanisms, composable. UI renders = <code>[params declared by spec]</code> minus <code>[pinned by deployment overlay]</code> filtered by <code>[visibility threshold this UI is at]</code>.
+          Schema maintainers own tags; ops owns overlays; instrument/technique authors own variant identity.
+        </div>
+
+        <div class="extras">
+          <span class="k">Open questions</span>
+          <ul>
+            <li>Who owns visibility hints — technique authors (domain judgment) or vocab maintainers (cross-cutting schema)? Likely split: vocab defines tag values, authors assign.</li>
+            <li>Do deployment overlays participate in spec discovery? Does <code>get_workflows()</code> return overlay-applied, raw, or both?</li>
+            <li>Can visibility hints be overridden per UI? Override invites drift; no override is rigid.</li>
+            <li>UI behaviour for pinned values: "fixed by deployment" indicator vs. absence? Affects user trust.</li>
+          </ul>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 7 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">7</span>
+        <span>
+          <div class="dtitle">Runtime-catalog discovery — how UIs learn <em>effective</em> specs</div>
+          <div class="dsub">Two catalogs: schema (what ess.schemas declares) vs runtime (what a deployment actually serves, overlay applied).</div>
+        </span>
+        <span class="tilt">Distinction: commit now. Mechanism: deferrable.</span>
+      </summary>
+      <div class="body">
+        <p class="tradeoffs-note">
+          <strong>Two catalogs by design:</strong>
+          batch notebook cares about schema catalog (no deployment);
+          in-process dashboard reads runtime catalog directly (imports livedata's Python state);
+          NICOS / remote / web-app dashboard cares about runtime catalog but <em>cannot</em> import Python.
+        </p>
+
+        <details open style="margin-top:10px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ Publication channel (out-of-process UIs only)</summary>
+          <div class="options" style="margin-top:10px;">
+            <div class="opt rec"><span class="letter">a</span><div><div class="t">Status-topic announcement <span class="tag">tilt</span></div><div class="d">Each service publishes catalog on the existing service-status Kafka topic. Fits existing transport.</div></div></div>
+            <div class="opt ok"><span class="letter">b</span><div><div class="t">Dedicated catalog endpoint</div><div class="d">More explicit; more infrastructure.</div></div></div>
+            <div class="opt warn"><span class="letter">c</span><div><div class="t">Heartbeats with embedded catalog</div><div class="d">Simple; bandwidth-redundant.</div></div></div>
+          </div>
+        </details>
+
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13.5px; padding:6px 0;">▸ What is published — effective specs, or base + overlay?</summary>
+          <div class="options" style="margin-top:10px;">
+            <div class="opt warn"><span class="letter">e1</span><div><div class="t">publish-effective (pinned fields removed)</div><div class="d">Information-lossy: UI can't render "fixed by ops" indicator — field is simply absent.</div></div></div>
+            <div class="opt rec"><span class="letter">e2</span><div><div class="t">publish-reference + overlay <span class="tag">richer</span></div><div class="d">UI composes locally. Retains info fidelity. Requires shared vocab (or JSON-Schema export for non-Python UIs).</div></div></div>
+          </div>
+        </details>
+
+        <p class="tradeoffs-note" style="margin-top:14px;">
+          <strong>Drift risk:</strong> if livedata registers experimental/local workflows not in <code>ess.schemas</code>, out-of-process UIs lose discovery unless each published catalog entry is <em>self-contained</em> (ID + resolvable declarative spec, or full inline spec — never ID alone).
+        </p>
+
+        <div class="extras">
+          <span class="k">Open questions</span>
+          <ul>
+            <li>Is the runtime catalog part of the <em>vocabulary contract</em> (wire protocol committed) or strictly operational per deployment?</li>
+            <li>Multi-instrument deployments: how does a UI choose a backend's catalog? Env var, discovery, per-UI config.</li>
+            <li>If the dashboard goes from co-resident to decoupled (web-app), reuse NICOS-targeted mechanism or build its own?</li>
+          </ul>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 8 -->
+    <details class="decision" data-risk="high">
+      <summary>
+        <span class="dnum">8</span>
+        <span>
+          <div class="dtitle">Validator policy &amp; wire format</div>
+          <div class="dsub">Pydantic validators are Python callables. They don't round-trip through JSON.</div>
+        </span>
+        <span class="tilt">Tilt: (a)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt rec"><span class="letter">a</span>
+            <div><div class="t">Validators = Python-side enrichment only <span class="tag">tilt</span></div>
+            <div class="d">Out-of-process consumers reimplement validation or accept its absence. Validators evolve at deploy speed — no cross-repo release needed for a validator fix.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span>
+            <div><div class="t">All consumers are Python</div>
+            <div class="d">Preserves validator authority. Forecloses NICOS-over-wire or any non-Python consumer.</div></div></div>
+          <div class="opt warn"><span class="letter">c</span>
+            <div><div class="t">Dual-mode per validator (tagged)</div>
+            <div class="d">Correct in principle; painful in practice. Every validator needs a tag that survives years of drift.</div></div></div>
+        </div>
+        <div class="tilt-block">
+          <span class="k">Why (a)</span>
+          Beam-time fix latency is <em>concrete</em>; NICOS-over-wire is <em>hypothetical</em>. Don't trade a concrete cost for a hypothetical benefit. Revisit only if the hypothetical becomes concrete.
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 9 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">9</span>
+        <span>
+          <div class="dtitle">Versioning and cadence</div>
+          <div class="dsub">How do consumers pin the vocabulary? What's the relation between vocab and consumer releases?</div>
+        </span>
+        <span class="tilt">Tilt: (b) → (c)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt warn"><span class="letter">a</span><div><div class="t">Unified cadence (monorepo-style)</div><div class="d">Eliminates mismatch. Works inside scipp/ess; livedata in separate repo doesn't sync → falls back to (b) anyway.</div></div></div>
+          <div class="opt rec"><span class="letter">b</span><div><div class="t">Independent cadence with pinned deps <span class="tag">tilt now</span></div><div class="d">Realistic default. Requires compatibility matrix + backward-compat discipline (new fields optional for ≥1 release).</div></div></div>
+          <div class="opt ok"><span class="letter">c</span><div><div class="t">Head-tracking (aspirational)</div><div class="d">Every vocab release is non-breaking superset; consumers auto-upgrade. Fails silently the one time discipline slips.</div></div></div>
+          <div class="opt bad"><span class="letter">d</span><div><div class="t">No backward compat — rebuild on every release</div><div class="d">Fast dev; brittle ops. Unacceptable for production-critical surface.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 10 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">10</span>
+        <span>
+          <div class="dtitle">Instrument × technique specialization — where does <code>DreamPowderWorkflowParams</code> live?</div>
+          <div class="dsub">These cross instrument and technique. Dependency arrow direction matters.</div>
+        </span>
+        <span class="tilt">Tilt: (b)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt ok"><span class="letter">a</span><div><div class="t">All in vocabulary</div><div class="d">Co-located. Vocab grows large; every technique change → vocab change.</div></div></div>
+          <div class="opt rec"><span class="letter">b</span><div><div class="t">Split by ownership <span class="tag">tilt</span></div><div class="d">Generic in vocab; technique-specific with technique pkg; instrument specializations in vocab's instrument subpackage. Arrow: <strong>vocabulary → technique packages</strong>. Acceptable; circular-dep risk if not broken carefully.</div></div></div>
+          <div class="opt warn"><span class="letter">c</span><div><div class="t">Per-instrument lives with instrument team</div><div class="d">Smallest vocab; cross-instrument consistency unenforceable.</div></div></div>
+          <div class="opt warn"><span class="letter">d</span><div><div class="t">Composition over inheritance (flat)</div><div class="d">Easy locally; tedious across catalog; bulk "powder params" change touches every instance.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 11 -->
+    <details class="decision" data-risk="low">
+      <summary>
+        <span class="dnum">11</span>
+        <span>
+          <div class="dtitle">Streaming-specific fields — where do <em>live-only</em> params go?</div>
+          <div class="dsub">Accumulation window, rate limit, cadence — don't apply to batch.</div>
+        </span>
+        <span class="tilt">Tilt: (a)</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt rec"><span class="letter">a</span><div><div class="t">Vocab is batch-native; livedata adds streaming overlays via subclasses <span class="tag">tilt</span></div><div class="d">Clean. Doubles the subclass tree (instrument × streaming); MRO discipline needed but tractable.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span><div><div class="t">Vocab admits optional streaming fields</div><div class="d">Leaks streaming concepts into the contract. Batch consumers carry unused fields.</div></div></div>
+          <div class="opt warn"><span class="letter">c</span><div><div class="t">Parallel hierarchies</div><div class="d">Most explicit, most verbose. Three hierarchies for one concept.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 12 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">12</span>
+        <span>
+          <div class="dtitle">Cross-cutting reduction primitives (detector views, histogramming)</div>
+          <div class="dsub">Live today in livedata. Apply equally to batch. Where should they live?</div>
+        </span>
+        <span class="tilt">Tilt: (a), as separable migration</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt rec"><span class="letter">a</span><div><div class="t">Move to ess.reduce <span class="tag">tilt</span></div><div class="d">Audit each; decompose into pure transform + reactive wrapper. Not everything moves — ROI feedback, LoKI's moving carriage, accumulator state are genuinely streaming-shaped.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span><div><div class="t">Leave in livedata</div><div class="d">Known duplication persists. Acceptable short-term; contradicts unification goal long-term.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span><div><div class="t">Per-technique ownership</div><div class="d">Works if views are technique-scoped (often not — DREAM has both powder and spectroscopy-shaped views).</div></div></div>
+        </div>
+        <p class="tradeoffs-note"><strong>Requires ess.reduce maintainers to accept the scope expansion.</strong> Separable from vocabulary extraction — don't let it block, don't let it be silently deferred.</p>
+      </div>
+    </details>
+
+    <!-- DECISION 13 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">13</span>
+        <span>
+          <div class="dtitle">Migration path — how do we get from here to there?</div>
+          <div class="dsub">Big bang? vocab-first inside livedata? per-consumer? per-technique? consolidate without extracting?</div>
+        </span>
+        <span class="tilt">Tilt: (b) → (d) if it goes, (e) is fine endpoint</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt bad"><span class="letter">a</span><div><div class="t">Big bang <span class="tag">unreachable</span></div><div class="d">Requires every team's agreement simultaneously. ESS has no single body of authority over all stakeholders.</div></div></div>
+          <div class="opt rec"><span class="letter">b</span><div><div class="t">Vocabulary first, inside livedata <span class="tag">tilt</span></div><div class="d">Carve out subpackage with enforced boundary. Prove the shape. Extract when payoff is concrete.</div></div></div>
+          <div class="opt ok"><span class="letter">c</span><div><div class="t">Per-consumer incremental (extract early)</div><div class="d">Long-running parallel state; each consumer its own project.</div></div></div>
+          <div class="opt ok"><span class="letter">d</span><div><div class="t">Per-technique incremental (powder first)</div><div class="d">Each technique stresses a different shape. Slow, parallel state — but focused pressure on the design.</div></div></div>
+          <div class="opt rec"><span class="letter">e</span><div><div class="t">Consolidate but never extract <span class="tag">honest endpoint</span></div><div class="d">If second consumer never materializes, this is a complete outcome. Not a failure.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DECISION 14 -->
+    <details class="decision" data-risk="medium">
+      <summary>
+        <span class="dnum">14</span>
+        <span>
+          <div class="dtitle">Release gates &amp; breakage discipline</div>
+          <div class="dsub">How do we prevent a vocab change from silently breaking a consumer?</div>
+        </span>
+        <span class="tilt">Tilt: (c) now, (a) for critical consumers</span>
+      </summary>
+      <div class="body">
+        <div class="options">
+          <div class="opt ok"><span class="letter">a</span><div><div class="t">Integration tests per consumer <span class="tag">for critical consumers</span></div><div class="d">Most thorough; vocab moves at speed of slowest consumer.</div></div></div>
+          <div class="opt warn"><span class="letter">b</span><div><div class="t">Contract tests in vocabulary</div><div class="d">Vocab team maintains tests representing consumer needs — requires knowing those needs.</div></div></div>
+          <div class="opt rec"><span class="letter">c</span><div><div class="t">Consumer CI pulls vocab head (nightly) <span class="tag">tilt</span></div><div class="d">Early warning without blocking. Operationally lightest.</div></div></div>
+          <div class="opt bad"><span class="letter">d</span><div><div class="t">Rely on pydantic schema-compat only</div><div class="d">Fails silently if backward-compat discipline slips.</div></div></div>
+        </div>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+<!-- ══════════════ 8. IMPACT ══════════════ -->
+<section id="impact">
+  <h2><span class="section-num">8</span>Dev &amp; prod impact — today vs post-unification</h2>
+  <p class="lead">
+    Six scenarios on the dev side, six on the ops side. Use the filter to focus.
+    Production scenarios assume extraction has happened — in-repo consolidation phase does not incur most of these.
+  </p>
+
+  <div class="tradeoff-switch">
+    <button id="iAll" class="active" onclick="showImpact('all')">All</button>
+    <button id="iDev" onclick="showImpact('dev')">Developer scenarios</button>
+    <button id="iProd" onclick="showImpact('prod')">Production scenarios</button>
+  </div>
+
+  <!-- DEV -->
+  <div class="grid-2" data-impact="dev">
+
+    <div class="vs">
+      <h3>Adding a parameter to a workflow <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Edit <code>DreamPowderWorkflowParams</code>, factory, tests — one PR in livedata.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Edit shared vocab (possibly different repo), wait for vocab release, bump livedata, update factory. In parallel update ess.powder. <strong>Days to a week.</strong></div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Fixing a validator during beam time <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>2am one-line PR, on-call review, redeploy. <strong>~15 min.</strong></div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Depends entirely on validator policy (Decision 8). With (a): deploys at livedata speed. With (b): cross-repo PR + release + bump.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Adding a new instrument <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>New subpackage under livedata's <code>config/instruments/</code>.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>New subpackage in vocab, possibly new transforms in ess.reduce, possibly new technique-pkg entries. 3-repo coordination exactly at the moment contribution matters most.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Technique package bumps reduction interface <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Livedata may not even notice — has its own param model and entry point.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Vocab tracks the signature directly. Routine cost doubles or triples per release. <strong>This is where the budget actually goes.</strong></div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>New contributor fixes a monitor-histogramming bug <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>grep in livedata, find, fix, test, PR.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>First figure out which layer — vocab? reduce? livedata? technique pkg? — set up editable installs, cross-layer tests, per-repo release flow. Hours of first-time overhead.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Cross-layer debugging <span style="font-size:11px; color:var(--ink-3); font-weight:500;">DEV</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Dashboard shows wrong values → trace through one codebase.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Vocab (spec wrong?) → livedata (adapter wrong?) → ess.reduce (transform wrong?) → technique pkg (algorithm wrong?). <strong>Each boundary is where the bug hides.</strong> Needs layer-aware observability that doesn't exist today.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PROD -->
+  <div class="grid-2" data-impact="prod" style="margin-top:14px;">
+
+    <div class="vs">
+      <h3>Rolling deploy during an active run <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Backend + dashboard from same codebase → spec shapes agree by construction.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Backend v1.3 + dashboard v1.2 → ghost inputs. Reverse → validation failures on arrival. Mitigation: backward-compat discipline + tight windows.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Rollback during an incident <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Rollback is a livedata-only action. Usually safe.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Livedata rollback while vocab stays may be unsafe; vocab rollback almost never right. On-call needs a playbook. Rollback artifact must include vocab pin.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Validator change during production <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Ships with livedata push.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>With validator-policy (a): livedata-speed. With (b): vocab release — which during beam time may be operationally blocked. <strong>This is where operational flexibility lives.</strong></div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Scheduled vocab release during beam time <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>N/A.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Livedata decides: pin now, wait, or skip. Requires vocab-owning team to know + respect ESS run schedules.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Cross-team on-call <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>One person, merge rights on one repo.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Urgent fix may require merge rights on vocab and/or technique pkg. Either cross-team on-call (org commitment), bypass paths (op risk), or longer incident windows.</div>
+      </div>
+    </div>
+
+    <div class="vs">
+      <h3>Observability across layers <span style="font-size:11px; color:var(--ink-3); font-weight:500;">PROD</span></h3>
+      <div class="vs-grid">
+        <div class="vs-col today"><span class="k">Today</span>Logs livedata-internal state only.</div>
+        <div class="vs-col post"><span class="k">Post-unification</span>Need to log: which vocab version produced this spec? which ess.reduce transform? which adapter wired them? If not built pre-extraction, the first post-extraction incident is also the first tracing attempt. <strong>Bad combination.</strong></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════ 9. REVERSAL ══════════════ -->
+<section id="reversal">
+  <h2><span class="section-num">9</span>What could force a reversal</h2>
+  <p class="lead">
+    Falsification conditions. The direction is worth pursuing <em>only if it remains reversible on evidence</em>.
+    These are conditions, not predictions.
+  </p>
+
+  <div class="reversal">
+    <div class="r">
+      <div class="h">Second consumer never materializes</div>
+      <div class="b">18 months after consolidation, no technique-pkg ipywidget UI and no NICOS integration is pulling from the vocab → extraction is speculation. Stay in-repo; move on.</div>
+    </div>
+    <div class="r">
+      <div class="h">Fix-latency incidents cluster around vocabulary changes</div>
+      <div class="b">If on-call log shows vocab-side fixes dominate incidents post-extraction, the operational cost is real. Either validator-policy (a) is non-negotiable, or the direction is wrong for this reality.</div>
+    </div>
+    <div class="r">
+      <div class="h">Technique-package maintainers reject spec conformance</div>
+      <div class="b">If, when asked to declare workflows against shared vocab, they push back on cadence, authority, or design — unification is organizationally infeasible. Fall back to vocab-used-only-by-livedata; accept no cross-compute unification.</div>
+    </div>
+    <div class="r">
+      <div class="h">ess.reduce cannot absorb the transforms</div>
+      <div class="b">If maintainers see detector-view logic as livedata-specific clutter, cross-compute unification-in-compute is blocked. Livedata keeps transforms; unification stays at the vocab layer only.</div>
+    </div>
+    <div class="r">
+      <div class="h">Version mismatches become routine</div>
+      <div class="b">More than one per quarter despite CI discipline → pinning strategy is wrong. Tighten or reverse.</div>
+    </div>
+    <div class="r">
+      <div class="h">Dev-loop friction is the top contributor complaint</div>
+      <div class="b">If new contributors consistently fail to land changes because of cross-repo coordination, the cost is higher than anticipated.</div>
+    </div>
+    <div class="r">
+      <div class="h">Cross-team coordination does not form</div>
+      <div class="b">Vocab-owning team unresponsive → validator fixes take days, interface changes take weeks, livedata maintainers work <em>around</em> vocab rather than through it. <strong>Unification failing quietly.</strong> Detect and reverse.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 10. OPEN QUESTIONS ══════════════ -->
+<section id="open">
+  <h2><span class="section-num">10</span>Open questions for explicit resolution</h2>
+  <p class="lead">
+    Questions this document cannot answer alone. They need the relevant stakeholders in the room <em>before extraction starts, ideally before consolidation ends</em>.
+  </p>
+
+  <div class="questions">
+    <div class="q">Do technique-package maintainers (powder, SANS, reflectometry, diffraction, spectroscopy) accept that their workflows become first-class entries in a shared vocabulary? If not in full, what subset?</div>
+    <div class="q">Does the ess.reduce maintainer group accept absorbing detector-view, monitor-histogramming, and related cross-cutting transforms currently in livedata? With what timeline?</div>
+    <div class="q">Is there a <strong>second concrete consumer</strong> of the vocabulary today (a technique-pkg ipywidget UI in development, a NICOS integration with real requirements)? If not, plausible timeline to one? <em>This is the primary gate on extraction.</em></div>
+    <div class="q">scipp/ess monorepo release cadence — and process for triggering an out-of-cycle release for an urgent fix? Determines whether validator policy (a) or (b) is operationally viable.</div>
+    <div class="q">Does NICOS need JSON-Schema exports or Python-class imports? Answer determines whether validator-policy is a real decision or a forced choice.</div>
+    <div class="q">Do technique packages treat workflow interfaces as public APIs with deprecation discipline, or as internal-to-livedata structures free to change? Determines whether authority-option (a) is expensive or ruinous. Needs a changelog survey, not a guess.</div>
+    <div class="q">Who is responsible, post-extraction, for coordination costs across repos? If "the livedata maintainer absorbs it" — that's an <em>explicit organizational ask</em>; it should not be implicit.</div>
+    <div class="q">Is the goal extraction, or is the goal internal separation with a clear exit path if demand appears? Different commitments, different cost structures. Easy to conflate.</div>
+    <div class="q">What observability exists today to diagnose layer-crossing bugs, and what would need to exist before extraction is operationally safe? If answer is "none" and "substantial" — that work is on the critical path.</div>
+    <div class="q">Can parts of the vocabulary be auto-generated from technique-package type annotations, so vocab tracks interfaces without requiring a separate release per change? Speculative but potentially consequential.</div>
+  </div>
+</section>
+
+<!-- ══════════════ 11. RECOMMENDATION ══════════════ -->
+<section id="recommendation">
+  <div class="final">
+    <h2>Recommendation tilt (non-binding)</h2>
+    <p style="margin:0;">A coherent stance reachable today, with the decisions above made explicit:</p>
+
+    <ol>
+      <li><strong>Consolidate in-repo.</strong> Carve out the vocabulary subpackage inside livedata; enforce dependency boundary (pydantic + stdlib only); replace <code>sc.DataArray</code> output templates with shape-only schema. Hold the boundary with CI. Captures most internal benefit — testability, separation, forced design decisions — at none of the cross-repo coordination cost. Makes extraction materially easier later by proving the boundary holds.</li>
+
+      <li><strong>Extraction gated on a second concrete consumer</strong>, not speculation. Technique-pkg ipywidget UI or NICOS integration with real code + real requirements → begin extraction. Eighteen months without one → consolidation is the endpoint.</li>
+
+      <li><strong>Commit to validator-policy (a)</strong> — validators are Python-side enrichment, not wire contract. Beam-time fix latency is concrete; NICOS-over-wire is hypothetical. Revisit only if hypothetical becomes concrete.</li>
+
+      <li><strong>Cross-cutting transforms → ess.reduce as a separable plan</strong> with its own audit, requiring ess.reduce-maintainer buy-in. Don't let it block vocabulary work; don't let it be silently deferred by vocabulary work either.</li>
+
+      <li><strong>Vocabulary scope at 1(c):</strong> framework types + generic parameter models + per-instrument specializations. <em>Not per-technique specializations yet.</em> Per-technique absorbs into vocabulary only once technique-pkg maintainers are concrete participants, not proxies.</li>
+
+      <li><strong>Before any extraction, make explicit the responsiveness commitment</strong> from the vocab-owning team. Hour-scale for urgent fixes. Day-scale for routine. Week-scale for design. Without this, authority-option (a) is ruinous regardless of what the org chart says.</li>
+    </ol>
+
+    <div class="punch">
+      The failure mode to avoid is not <em>extracted too early</em> or <em>extracted too late</em>. It is <strong>extracted without deciding the validator policy, the responsiveness commitment, and the second-consumer gate.</strong> Those three questions, resolved, make the direction survivable whether extraction happens in a year or never. Left unresolved, any version of the direction fails under pressure.
+    </div>
+  </div>
+</section>
+
+<footer>
+  Discussion document · based on <code>docs/developer/plans/ess-livedata-long-term-direction.md</code>
+</footer>
+</div>
+
+<script>
+  function showTradeoff(mode) {
+    const up = document.querySelector('[data-side="up"]');
+    const down = document.querySelector('[data-side="down"]');
+    const btns = document.querySelectorAll('.tradeoff-switch button');
+    btns.forEach(b => b.classList.remove('active'));
+    if (mode === 'both') {
+      up.classList.remove('hidden'); down.classList.remove('hidden');
+      document.getElementById('tBoth').classList.add('active');
+    } else if (mode === 'up') {
+      up.classList.remove('hidden'); down.classList.add('hidden');
+      document.getElementById('tUp').classList.add('active');
+    } else {
+      up.classList.add('hidden'); down.classList.remove('hidden');
+      document.getElementById('tDown').classList.add('active');
+    }
+  }
+
+  function showImpact(mode) {
+    const dev = document.querySelector('[data-impact="dev"]');
+    const prod = document.querySelector('[data-impact="prod"]');
+    const btns = ['iAll','iDev','iProd'].map(id => document.getElementById(id));
+    btns.forEach(b => b.classList.remove('active'));
+    if (mode === 'all') {
+      dev.classList.remove('hidden'); prod.classList.remove('hidden');
+      document.getElementById('iAll').classList.add('active');
+    } else if (mode === 'dev') {
+      dev.classList.remove('hidden'); prod.classList.add('hidden');
+      document.getElementById('iDev').classList.add('active');
+    } else {
+      dev.classList.add('hidden'); prod.classList.remove('hidden');
+      document.getElementById('iProd').classList.add('active');
+    }
+  }
+
+  // Smooth scroll
+  document.querySelectorAll('nav.toc a').forEach(a => {
+    a.addEventListener('click', e => {
+      const id = a.getAttribute('href').slice(1);
+      const t = document.getElementById(id);
+      if (t) { e.preventDefault(); t.scrollIntoView({behavior:'smooth', block:'start'}); }
+    });
+  });
+</script>
+
+</body>
+</html>
