@@ -23,16 +23,15 @@ from ess.livedata.dashboard.workflow_configuration_adapter import (
 )
 
 
-def _is_slow_workflow(workflow_id):
+def _is_slow_workflow(workflow_id, spec):
     """Check if a workflow is known to be slow (>2s)."""
+    from ess.livedata.config.workflow_spec import REDUCTION
+
     # Bifrost data reduction workflows are slow due to complex spectroscopy setup
-    if (
-        workflow_id.instrument == 'bifrost'
-        and workflow_id.namespace == 'data_reduction'
-    ):
+    if workflow_id.instrument == 'bifrost' and spec.group is REDUCTION:
         return True
     # LOKI i_of_q workflows are slow due to SANS reduction complexity
-    if workflow_id.instrument == 'loki' and workflow_id.namespace == 'data_reduction':
+    if workflow_id.instrument == 'loki' and spec.group is REDUCTION:
         if workflow_id.name.startswith('i_of_q'):
             return True
     return False
@@ -50,7 +49,8 @@ def _collect_workflow_factories():
         instrument = instrument_registry[instrument_name]
         instrument.load_factories()
         for workflow_id in instrument.workflow_factory:
-            marks = [pytest.mark.slow] if _is_slow_workflow(workflow_id) else []
+            spec = instrument.workflow_factory[workflow_id]
+            marks = [pytest.mark.slow] if _is_slow_workflow(workflow_id, spec) else []
             workflows.append(
                 pytest.param(
                     instrument_name, workflow_id, id=str(workflow_id), marks=marks
@@ -97,7 +97,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     4. Backend can instantiate workflow from config (JobFactory)
     """
     # Skip known workflows that require data files not available in CI
-    if str(workflow_id) == "dream/data_reduction/powder_reduction_with_vanadium/1":
+    if str(workflow_id) == "dream/powder_reduction_with_vanadium/1":
         pytest.skip(
             "Workflow requires vanadium data file "
             "(268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf) "

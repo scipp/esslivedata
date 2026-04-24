@@ -44,7 +44,6 @@ def test_workflow_params_stored_and_retrieved_via_config_store(
     # Define workflow parameters with non-default values
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -105,7 +104,6 @@ def test_adapter_filters_removed_sources(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -159,7 +157,6 @@ def test_config_persists_across_adapter_recreations(
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -205,7 +202,6 @@ def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -286,7 +282,6 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         # Add a cell with plot configuration
         workflow_id = WorkflowId(
             instrument='dummy',
-            namespace='monitor_data',
             name='monitor_histogram',
             version=1,
         )
@@ -462,7 +457,6 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
 
         workflow_id = WorkflowId(
             instrument='dummy',
-            namespace='monitor_data',
             name='monitor_histogram',
             version=1,
         )
@@ -523,7 +517,6 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
 
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )

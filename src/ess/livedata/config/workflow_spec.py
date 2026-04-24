@@ -78,24 +78,22 @@ TIMESERIES = WorkflowGroup(
 
 class WorkflowId(BaseModel, frozen=True):
     instrument: str
-    namespace: str
     name: str
     version: int
 
     def __str__(self) -> str:
-        return f"{self.instrument}/{self.namespace}/{self.name}/{self.version}"
+        return f"{self.instrument}/{self.name}/{self.version}"
 
     @staticmethod
     def from_string(workflow_id_str: str) -> WorkflowId:
         """Parse WorkflowId from string representation."""
         parts = workflow_id_str.split('/')
-        if len(parts) != 4:
+        if len(parts) != 3:
             raise ValueError(f"Invalid WorkflowId string format: {workflow_id_str}")
         return WorkflowId(
             instrument=parts[0],
-            namespace=parts[1],
-            name=parts[2],
-            version=int(parts[3]),
+            name=parts[1],
+            version=int(parts[2]),
         )
 
 
@@ -219,10 +217,6 @@ class WorkflowSpec(BaseModel):
     instrument: str = Field(
         description="Name of the instrument this workflow is associated with."
     )
-    namespace: str = Field(
-        default='data_reduction',
-        description="Namespace for the workflow, used to group workflows logically.",
-    )
     group: WorkflowGroup = Field(
         description=(
             "Display-oriented group this workflow belongs to. Carries the UI "
@@ -313,11 +307,10 @@ class WorkflowSpec(BaseModel):
         """
         Get a unique identifier for the workflow.
 
-        The identifier is a combination of instrument, namespace, name, and version.
+        The identifier is a combination of instrument, name, and version.
         """
         return WorkflowId(
             instrument=self.instrument,
-            namespace=self.namespace,
             name=self.name,
             version=self.version,
         )

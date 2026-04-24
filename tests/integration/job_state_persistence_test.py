@@ -21,7 +21,6 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -89,7 +88,6 @@ def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -141,7 +139,6 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -206,7 +203,6 @@ def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -252,7 +248,6 @@ def test_no_active_job_persists_empty_state(tmp_path) -> None:
     """
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )

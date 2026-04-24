@@ -64,7 +64,7 @@ class TestGetPlotCellDisplayInfo:
                 title='Cumulative',
             )
 
-        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
         spec = WorkflowSpec(
             instrument='test',
             name='wf',
@@ -110,7 +110,7 @@ class TestGetPlotCellDisplayInfo:
                 title='Current',
             )
 
-        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
         spec = WorkflowSpec(
             instrument='test',
             name='wf',

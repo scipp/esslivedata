@@ -30,7 +30,7 @@ class FakeInstrumentConfig:
 
 
 def _make_workflow_id(name: str = "timeseries") -> WorkflowId:
-    return WorkflowId(instrument="test", namespace="ns", name=name, version=1)
+    return WorkflowId(instrument="test", name=name, version=1)
 
 
 class Bins(pydantic.BaseModel):

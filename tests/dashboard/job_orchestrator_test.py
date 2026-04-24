@@ -72,7 +72,6 @@ def workflow_with_params() -> WorkflowSpec:
     """Workflow spec with params model."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="with_params",
         version=1,
         title="Workflow With Params",
@@ -89,7 +88,6 @@ def workflow_with_params_and_aux() -> WorkflowSpec:
     """Workflow spec with both params and aux sources."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="with_params_and_aux",
         version=1,
         title="Workflow With Params and Aux",
@@ -107,7 +105,6 @@ def workflow_no_params() -> WorkflowSpec:
     """Workflow spec without params model."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="no_params",
         version=1,
         title="Workflow Without Params",
@@ -124,7 +121,6 @@ def workflow_empty_sources() -> WorkflowSpec:
     """Workflow spec with empty source_names."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="empty_sources",
         version=1,
         title="Workflow With Empty Sources",
@@ -141,7 +137,6 @@ def workflow_params_without_defaults() -> WorkflowSpec:
     """Workflow spec with params that can't be instantiated (required fields)."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="params_without_defaults",
         version=1,
         title="Workflow With Required Params",
@@ -158,7 +153,6 @@ def workflow_with_enum_params() -> WorkflowSpec:
     """Workflow spec with params containing enum fields."""
     return WorkflowSpec(
         instrument="test",
-        namespace="testing",
         name="with_enum_params",
         version=1,
         title="Workflow With Enum Params",
@@ -390,9 +384,7 @@ class TestJobOrchestratorInitialization:
         """get_staged_config should raise KeyError for unknown workflow_id."""
         orchestrator = make_orchestrator(workflow_with_params)
 
-        unknown_id = WorkflowId(
-            instrument="unknown", namespace="unknown", name="unknown", version=99
-        )
+        unknown_id = WorkflowId(instrument="unknown", name="unknown", version=99)
 
         # Should raise KeyError for unknown workflow
         with pytest.raises(KeyError):
@@ -1097,9 +1089,7 @@ class TestJobOrchestratorWorkflowStateVersion:
         """get_workflow_state_version returns 0 for unknown workflow IDs."""
         orchestrator = make_orchestrator(workflow_with_params)
 
-        unknown_id = WorkflowId(
-            instrument="unknown", namespace="unknown", name="unknown", version=99
-        )
+        unknown_id = WorkflowId(instrument="unknown", name="unknown", version=99)
         assert orchestrator.get_workflow_state_version(unknown_id) == 0
 
     def test_stage_config_increments_version(
@@ -1309,7 +1299,6 @@ class TestJobOrchestratorWorkflowStateVersion:
 
         workflow_2 = WorkflowSpec(
             instrument="test",
-            namespace="testing",
             name="different_workflow",
             version=1,
             title="Different Workflow",

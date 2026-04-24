@@ -27,7 +27,7 @@ from ess.livedata.dashboard.save_filename import (
     make_save_filename_hook,
 )
 
-_WF_ID = WorkflowId(instrument='dream', namespace='ns', name='wf', version=1)
+_WF_ID = WorkflowId(instrument='dream', name='wf', version=1)
 
 
 class _TestOutputs(WorkflowOutputsBase):
@@ -72,9 +72,7 @@ def _make_layer(
     instrument: str = 'dream',
     static: bool = False,
 ) -> Layer:
-    workflow_id = WorkflowId(
-        instrument=instrument, namespace='ns', name='wf', version=1
-    )
+    workflow_id = WorkflowId(instrument=instrument, name='wf', version=1)
     sources = [] if static else (source_names or ['monitor'])
     config = PlotConfig(
         data_sources={

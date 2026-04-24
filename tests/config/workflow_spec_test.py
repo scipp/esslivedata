@@ -27,7 +27,6 @@ class SimpleTestOutputs(WorkflowOutputsBase):
 def sample_workflow_id() -> WorkflowId:
     return WorkflowId(
         instrument="INSTRUMENT",
-        namespace="NAMESPACE",
         name="NAME",
         version=1,
     )
@@ -671,12 +670,9 @@ class TestFindTimeseriesOutputs:
                 ),
             )
 
-        workflow_id = WorkflowId(
-            instrument='test', namespace='timeseries', name='test', version=1
-        )
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
         spec = WorkflowSpec(
             instrument='test',
-            namespace='timeseries',
             name='test',
             version=1,
             title='Test',
@@ -706,12 +702,9 @@ class TestFindTimeseriesOutputs:
                 ),
             )
 
-        workflow_id = WorkflowId(
-            instrument='test', namespace='other', name='test', version=1
-        )
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
         spec = WorkflowSpec(
             instrument='test',
-            namespace='other',
             name='test',
             version=1,
             title='Test',
@@ -735,12 +728,9 @@ class TestFindTimeseriesOutputs:
                 default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
-        workflow_id = WorkflowId(
-            instrument='test', namespace='other', name='test', version=1
-        )
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
         spec = WorkflowSpec(
             instrument='test',
-            namespace='other',
             name='test',
             version=1,
             title='Test',
@@ -762,12 +752,9 @@ class TestFindTimeseriesOutputs:
         class NoFactoryOutputs(WorkflowOutputsBase):
             delta: sc.DataArray = Field(title='Delta')
 
-        workflow_id = WorkflowId(
-            instrument='test', namespace='other', name='test', version=1
-        )
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
         spec = WorkflowSpec(
             instrument='test',
-            namespace='other',
             name='test',
             version=1,
             title='Test',
@@ -809,16 +796,11 @@ class TestFindTimeseriesOutputs:
                 ),
             )
 
-        workflow_id_1 = WorkflowId(
-            instrument='test', namespace='timeseries', name='ts1', version=1
-        )
-        workflow_id_2 = WorkflowId(
-            instrument='test', namespace='detector', name='det1', version=1
-        )
+        workflow_id_1 = WorkflowId(instrument='test', name='ts1', version=1)
+        workflow_id_2 = WorkflowId(instrument='test', name='det1', version=1)
 
         spec1 = WorkflowSpec(
             instrument='test',
-            namespace='timeseries',
             name='ts1',
             version=1,
             title='TS 1',
@@ -830,7 +812,6 @@ class TestFindTimeseriesOutputs:
         )
         spec2 = WorkflowSpec(
             instrument='test',
-            namespace='detector',
             name='det1',
             version=1,
             title='Det 1',

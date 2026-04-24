@@ -93,7 +93,6 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
-    active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
@@ -274,7 +273,7 @@ class Instrument:
         Parameters
         ----------
         name:
-            Unique name for the view within the given namespace.
+            Unique name for the view within the given group.
         title:
             Human-readable title for the view.
         description:
@@ -376,12 +375,11 @@ class Instrument:
         ----------
         group:
             Display-oriented :class:`WorkflowGroup` for the workflow
-            (default: ``REDUCTION``). The group's ``name`` is also used as
-            the workflow namespace today.
+            (default: ``REDUCTION``).
         service:
             Name of the backend service responsible for running this workflow.
-            Defaults to ``group.name`` (service and namespace match today; the
-            coupling is removed in a later stage).
+            Defaults to ``group.name`` (service and group identifier match
+            today; the coupling is removed in a later stage).
         name:
             Name to register the workflow under.
         version:
@@ -414,7 +412,6 @@ class Instrument:
         """
         spec = WorkflowSpec(
             instrument=self.name,
-            namespace=group.name,
             group=group,
             name=name,
             version=version,
