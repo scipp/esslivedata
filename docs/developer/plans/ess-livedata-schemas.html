@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow spec consolidation — team discussion</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --surface-2: #fbfaf7;
+    --ink: #1a1a1a;
+    --ink-muted: #555;
+    --ink-faint: #7a7a7a;
+    --line: #e5e5e0;
+    --line-strong: #cfcfc6;
+
+    --green-50: #edf8ee;
+    --green-200: #b8dcbb;
+    --green-500: #2e7d32;
+    --green-700: #1b5e20;
+
+    --amber-50: #fdf6e3;
+    --amber-200: #f1d88e;
+    --amber-500: #b8860b;
+    --amber-700: #8a5a00;
+
+    --red-50: #fdecec;
+    --red-200: #f2b9b9;
+    --red-500: #c0392b;
+    --red-700: #8f2a1e;
+
+    --blue-50: #edf3fb;
+    --blue-200: #bcd1ec;
+    --blue-500: #1f5fa6;
+    --blue-700: #174574;
+
+    --gray-50: #f0f0ed;
+    --gray-200: #d5d5ce;
+    --gray-500: #6b6b64;
+
+    --radius: 8px;
+    --radius-lg: 14px;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.03);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  code, pre { font-family: var(--mono); font-size: 0.88em; }
+  code { background: var(--surface-2); padding: 0.08em 0.32em; border-radius: 4px; border: 1px solid var(--line); }
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    overflow-x: auto;
+    line-height: 1.5;
+    font-size: 13px;
+  }
+  pre code { background: transparent; padding: 0; border: none; }
+
+  h1, h2, h3, h4 { font-weight: 650; letter-spacing: -0.01em; }
+  h1 { font-size: 2.1rem; margin: 0 0 0.3em 0; }
+  h2 { font-size: 1.45rem; margin: 0 0 0.6em 0; padding-bottom: 0.35em; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.13rem; margin: 1.5em 0 0.5em 0; }
+  h4 { font-size: 1.0rem; margin: 1.2em 0 0.4em 0; color: var(--ink-muted); }
+  p { margin: 0.6em 0; }
+  ul { padding-left: 1.3em; margin: 0.5em 0; }
+  ul li { margin: 0.25em 0; }
+
+  /* Layout */
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 28px 120px;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 36px;
+  }
+  @media (max-width: 980px) {
+    .page { grid-template-columns: 1fr; }
+    .toc { display: none; }
+  }
+
+  .toc {
+    position: sticky;
+    top: 20px;
+    align-self: start;
+    padding: 16px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    font-size: 13.5px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+  }
+  .toc h3 {
+    margin: 0 0 10px 0;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ink-faint);
+  }
+  .toc ol {
+    list-style: none;
+    padding: 0; margin: 0;
+    counter-reset: toc;
+  }
+  .toc ol li { margin: 0; counter-increment: toc; }
+  .toc ol li a {
+    display: block;
+    padding: 6px 8px 6px 28px;
+    color: var(--ink-muted);
+    text-decoration: none;
+    border-radius: 6px;
+    line-height: 1.35;
+    position: relative;
+  }
+  .toc ol li a::before {
+    content: counter(toc);
+    position: absolute;
+    left: 8px; top: 6px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    font-size: 12px;
+  }
+  .toc ol li a:hover { background: var(--surface-2); color: var(--ink); }
+  .toc ol li a.active { background: var(--blue-50); color: var(--blue-700); }
+
+  /* Header */
+  .header {
+    padding: 28px 32px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfaf5 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+  }
+  .header .meta {
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin-bottom: 12px;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .header .meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .header h1 { margin-bottom: 8px; }
+  .header .subtitle {
+    color: var(--ink-muted);
+    font-size: 1.05rem;
+    margin: 0 0 20px 0;
+    max-width: 780px;
+  }
+
+  .tldr {
+    margin-top: 16px;
+    padding: 16px 18px;
+    background: var(--blue-50);
+    border: 1px solid var(--blue-200);
+    border-left: 4px solid var(--blue-500);
+    border-radius: var(--radius);
+  }
+  .tldr h3 { margin: 0 0 8px 0; color: var(--blue-700); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.07em; }
+  .tldr ul { margin: 0; padding-left: 20px; }
+  .tldr li { margin: 4px 0; font-size: 14.5px; }
+
+  /* Legend */
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+    gap: 10px;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 28px;
+  }
+  .legend-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 13px;
+  }
+  .legend-item .swatch {
+    flex-shrink: 0;
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    margin-top: 3px;
+  }
+  .legend-item b { font-weight: 600; }
+  .sw-green { background: var(--green-500); }
+  .sw-amber { background: var(--amber-500); }
+  .sw-red { background: var(--red-500); }
+  .sw-gray { background: var(--gray-500); }
+  .sw-blue { background: var(--blue-500); }
+
+  /* Section containers */
+  section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: 26px 28px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    scroll-margin-top: 16px;
+  }
+
+  /* Card grids */
+  .cards {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    margin-top: 16px;
+  }
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    position: relative;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .card:hover { border-color: var(--line-strong); }
+  .card h4 { margin: 0 0 6px 0; color: var(--ink); font-size: 0.98rem; }
+  .card p { margin: 0; color: var(--ink-muted); font-size: 14px; }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 20px;
+    border: 1px solid;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .badge.green { background: var(--green-50); color: var(--green-700); border-color: var(--green-200); }
+  .badge.amber { background: var(--amber-50); color: var(--amber-700); border-color: var(--amber-200); }
+  .badge.red { background: var(--red-50); color: var(--red-700); border-color: var(--red-200); }
+  .badge.gray { background: var(--gray-50); color: var(--gray-500); border-color: var(--gray-200); }
+  .badge.blue { background: var(--blue-50); color: var(--blue-700); border-color: var(--blue-200); }
+
+  /* Principle cards */
+  .principle {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-top: 12px;
+  }
+  .principle.committed { border-left-color: var(--green-500); }
+  .principle.in-principle { border-left-color: var(--amber-500); }
+  .principle.gated { border-left-color: var(--red-500); }
+  .principle .principle-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .principle h4 {
+    margin: 0;
+    font-size: 1.02rem;
+    color: var(--ink);
+  }
+  .principle p { margin: 6px 0 0 0; color: var(--ink-muted); }
+  .principle details { margin-top: 10px; }
+  .principle summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--ink-faint);
+    font-weight: 500;
+    user-select: none;
+    display: inline-block;
+    padding: 3px 0;
+  }
+  .principle summary:hover { color: var(--blue-700); }
+  .principle details[open] summary { margin-bottom: 8px; }
+  .principle .detail-body { padding: 4px 0 0 0; color: var(--ink); font-size: 14px; }
+  .principle .detail-body p { margin: 6px 0; color: var(--ink); }
+
+  /* In/Out columns */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 14px;
+  }
+  @media (max-width: 780px) { .two-col { grid-template-columns: 1fr; } }
+  .col {
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+  }
+  .col.in  { border-left: 4px solid var(--green-500); }
+  .col.out { border-left: 4px solid var(--gray-500); background: #fafaf7; }
+  .col h4 { margin-top: 0; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  .col ul { padding-left: 18px; margin: 8px 0 0 0; }
+  .col li { font-size: 14px; color: var(--ink-muted); margin: 5px 0; }
+  .col li strong { color: var(--ink); }
+
+  /* Timeline for stages */
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    margin: 20px 0 10px;
+    position: relative;
+  }
+  @media (max-width: 780px) { .timeline { grid-template-columns: 1fr 1fr; } }
+  .timeline .step {
+    position: relative;
+    padding: 14px 12px 14px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .timeline .step.stage0 { border-top: 3px solid var(--green-500); }
+  .timeline .step.stage1 { border-top: 3px solid var(--green-500); }
+  .timeline .step.stage2 { border-top: 3px solid var(--amber-500); }
+  .timeline .step.stage3 { border-top: 3px solid var(--green-500); }
+  .timeline .step.stage4 { border-top: 3px solid var(--green-500); }
+  .timeline .step-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin-bottom: 4px;
+  }
+  .timeline .step-title {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .timeline .step-sub {
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin-top: 4px;
+  }
+
+  /* Stage details: big collapsible blocks */
+  details.stage {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-top: 14px;
+    overflow: hidden;
+  }
+  details.stage > summary {
+    cursor: pointer;
+    padding: 14px 44px 14px 18px;
+    font-weight: 600;
+    font-size: 15px;
+    user-select: none;
+    list-style: none;
+    position: relative;
+  }
+  details.stage > summary::-webkit-details-marker { display: none; }
+  details.stage > summary::after {
+    content: '▸';
+    color: var(--ink-faint);
+    font-size: 14px;
+    position: absolute;
+    right: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    transition: transform 0.15s;
+  }
+  details.stage[open] > summary::after { transform: translateY(-50%) rotate(90deg); }
+  details.stage > summary:hover { background: #f4f3ee; }
+  details.stage .stage-body {
+    padding: 0 22px 20px 22px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  details.stage .stage-body h4 { margin-top: 18px; }
+
+  /* Sub-details inside stages */
+  details.sub {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    background: var(--surface);
+  }
+  details.sub > summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14.5px;
+    list-style: none;
+  }
+  details.sub > summary::-webkit-details-marker { display: none; }
+  details.sub > summary::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 8px;
+    color: var(--ink-faint);
+    transition: transform 0.15s;
+  }
+  details.sub[open] > summary::before { transform: rotate(90deg); }
+
+  /* Risk/falsification box */
+  .risk {
+    background: var(--red-50);
+    border: 1px solid var(--red-200);
+    border-left: 4px solid var(--red-500);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin: 10px 0;
+  }
+  .risk h4 { margin: 0 0 6px 0; color: var(--red-700); font-size: 0.98rem; }
+  .risk p { margin: 4px 0; color: var(--ink); font-size: 14px; }
+  .risk .risk-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--red-700);
+    font-weight: 600;
+    margin-right: 8px;
+  }
+
+  .note {
+    background: var(--amber-50);
+    border: 1px solid var(--amber-200);
+    border-left: 4px solid var(--amber-500);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin: 10px 0;
+    font-size: 14px;
+  }
+  .note b { color: var(--amber-700); }
+
+  .info {
+    background: var(--blue-50);
+    border: 1px solid var(--blue-200);
+    border-left: 4px solid var(--blue-500);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin: 10px 0;
+    font-size: 14px;
+  }
+  .info b { color: var(--blue-700); }
+
+  /* Before/after toggle */
+  .toggle-pair { margin: 14px 0; }
+  .toggle-buttons {
+    display: inline-flex;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 2px;
+    margin-bottom: 10px;
+  }
+  .toggle-buttons button {
+    background: transparent;
+    border: none;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .toggle-buttons button.active {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+  .toggle-panel { display: none; }
+  .toggle-panel.active { display: block; }
+
+  /* Small utilities */
+  .pill {
+    display: inline-block;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--gray-50);
+    color: var(--ink-muted);
+    border: 1px solid var(--line);
+    margin-right: 4px;
+  }
+  .muted { color: var(--ink-muted); }
+  .faint { color: var(--ink-faint); }
+
+  /* Confidence map */
+  .conf-map {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  @media (max-width: 780px) { .conf-map { grid-template-columns: 1fr; } }
+  .conf-col {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    background: var(--surface-2);
+  }
+  .conf-col.green { border-top: 3px solid var(--green-500); }
+  .conf-col.amber { border-top: 3px solid var(--amber-500); }
+  .conf-col.red { border-top: 3px solid var(--red-500); }
+  .conf-col h5 {
+    margin: 0 0 8px 0;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  .conf-col.green h5 { color: var(--green-700); }
+  .conf-col.amber h5 { color: var(--amber-700); }
+  .conf-col.red h5 { color: var(--red-700); }
+  .conf-col ul { padding-left: 16px; margin: 0; }
+  .conf-col li { font-size: 13.5px; color: var(--ink-muted); margin: 3px 0; }
+
+  footer {
+    text-align: center;
+    color: var(--ink-faint);
+    font-size: 12.5px;
+    margin-top: 30px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+<!-- SIDE NAV -->
+<nav class="toc" aria-label="Table of contents">
+  <h3>Red thread</h3>
+  <ol>
+    <li><a href="#problem">The problem today</a></li>
+    <li><a href="#direction">Direction — 7 principles</a></li>
+    <li><a href="#scope">What's in / what's out</a></li>
+    <li><a href="#execution">Execution: stages</a></li>
+    <li><a href="#stage0">Stage 0 — in-place surgery</a></li>
+    <li><a href="#stage1">Stage 1 — carve out schemas/</a></li>
+    <li><a href="#stages234">Stages 2–4</a></li>
+    <li><a href="#later">Later: migration to ess.reduce</a></li>
+    <li><a href="#falsify">What could force reconsideration</a></li>
+    <li><a href="#open">Open items</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="meta">
+    <span><b>Branch:</b>&nbsp;schemas-module</span>
+    <span><b>Status:</b>&nbsp;draft, team discussion</span>
+    <span><b>Supersedes:</b>&nbsp;long-term-direction + schemas-stage0</span>
+  </div>
+  <h1>Workflow spec consolidation</h1>
+  <p class="subtitle">Unified plan consolidating the workflow-spec surface of <code>ess.livedata</code>. Covers long-term direction only insofar as it makes near-term decisions legible; near-term work is the concrete deliverable.</p>
+
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li><b>Consolidate in-repo</b> — <code>ess.livedata.schemas</code> subpackage, pydantic+stdlib only, CI-enforced.</li>
+      <li><b>Drop scipp from the schema layer</b> — <code>ArraySpec</code> replaces <code>sc.DataArray</code> templates; parameter models lose their <code>sc.Variable</code>-returning methods.</li>
+      <li><b>Reduce <code>WorkflowId</code> identity</b> to <code>(instrument, name, version)</code>; <code>namespace</code> leaves identity.</li>
+      <li><b>Runtime JSON-Schema announcement</b> is the cross-service contract. <b>No</b> importable universal catalog.</li>
+      <li><b>Extraction to <code>ess.reduce.schemas</code></b> is deferred — gated on a stable shape and a concrete trigger before the second instrument rolls out.</li>
+      <li>Per-technique cross-compute unification stays opt-in, per-technique, when maintainers engage. Consolidation-in-repo is itself a complete outcome.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend" aria-label="Confidence and risk legend">
+  <div class="legend-item"><span class="swatch sw-green"></span><div><b>Committed</b><br><span class="faint">Decision made, low uncertainty.</span></div></div>
+  <div class="legend-item"><span class="swatch sw-amber"></span><div><b>In principle</b><br><span class="faint">Direction settled; details or validation remain.</span></div></div>
+  <div class="legend-item"><span class="swatch sw-red"></span><div><b>Gated / Risk</b><br><span class="faint">Depends on external evidence or can force a reversal.</span></div></div>
+  <div class="legend-item"><span class="swatch sw-gray"></span><div><b>Out of scope</b><br><span class="faint">Deliberately not doing now.</span></div></div>
+  <div class="legend-item"><span class="swatch sw-blue"></span><div><b>Framing</b><br><span class="faint">Context, not a decision.</span></div></div>
+</div>
+
+<!-- 1. PROBLEM -->
+<section id="problem">
+  <h2>1 — The problem today</h2>
+  <p>Today's spec surface is scattered across <code>config/workflow_spec.py</code>, <code>config/instrument.py</code>, <code>parameter_models.py</code>, <code>handlers/*_specs.py</code>, and per-instrument <code>config/instruments/&lt;inst&gt;/</code>. The concrete consequences:</p>
+  <div class="cards">
+    <div class="card">
+      <h4>Parallel interface declarations</h4>
+      <p><code>ess.livedata</code> maintains pydantic declarations of every workflow in parallel with what technique packages declare via sciline providers and scipp newtypes. Keeping them in step is an ongoing manual burden — drift happens without anyone acting.</p>
+    </div>
+    <div class="card">
+      <h4>Default drift</h4>
+      <p>A livedata parameter default is not guaranteed to match the technique package's default for the same quantity. Scientists configure the same workflow differently in different tools.</p>
+    </div>
+    <div class="card">
+      <h4>Scipp coupling in the schema layer</h4>
+      <p>Output templates use <code>sc.DataArray</code> default factories; parameter models carry <code>get_edges()</code>-style methods returning <code>sc.Variable</code>. Anything introspecting specs transitively imports scipp.</p>
+    </div>
+    <div class="card">
+      <h4>No UI story beyond the dashboard</h4>
+      <p>Any out-of-process consumer (NICOS, future web dashboard, technique-package ipywidget UI) has nothing to import and no wire protocol to read.</p>
+    </div>
+    <div class="card">
+      <h4>Contribution overhead</h4>
+      <p>Adding a parameter touches livedata, its factory, and the technique package separately. Three edits for one concept.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 2. DIRECTION -->
+<section id="direction">
+  <h2>2 — Direction: 7 principles</h2>
+  <p>Framing decisions that justify the near-term plan. Not all of them are executed now, but each is committed as framing. Colored bar indicates confidence; expand any card for more detail.</p>
+
+  <h3>Confidence map</h3>
+  <div class="conf-map">
+    <div class="conf-col green">
+      <h5>Committed</h5>
+      <ul>
+        <li>Spec ≠ WorkflowImpl</li>
+        <li>Translation layer next to pipeline</li>
+        <li>Multi-level-defaults rule</li>
+        <li>Runtime JSON-Schema announcement</li>
+        <li>Consolidation-in-repo is a complete outcome</li>
+      </ul>
+    </div>
+    <div class="conf-col amber">
+      <h5>In principle</h5>
+      <ul>
+        <li>No graph reshapes in livedata (discipline, requires upstream responsiveness)</li>
+        <li>Per-technique <code>ess.&lt;tech&gt;.schemas</code> submodules (gated on maintainer buy-in)</li>
+      </ul>
+    </div>
+    <div class="conf-col red">
+      <h5>Gated / reversible</h5>
+      <ul>
+        <li>Migration to <code>ess.reduce.schemas</code> — trigger-based, not speculative</li>
+        <li>Cross-compute unification at the technique level — depends on external parties</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Principles</h3>
+
+  <div class="principle committed">
+    <div class="principle-head">
+      <h4>1. Spec vs. <code>WorkflowImpl</code> split</h4>
+      <span class="badge green">Committed</span>
+    </div>
+    <p>The spec (identity, param model, outputs model, display metadata) is pure pydantic and carries no sciline/scipp. The implementation (sciline pipeline, accumulators, target keys, translation layer) lives where the reduction code lives — today in <code>ess.livedata</code>, eventually in technique packages. Dependency arrow goes <b>impl → spec</b>, never the reverse.</p>
+    <details>
+      <summary>Why this matters</summary>
+      <div class="detail-body">
+        <p>Anything that lets sciline or scipp leak into the spec layer forecloses the whole point: out-of-process consumers that don't install scipp, and technique-package reuse. The reverse direction (spec importing impl) would couple the UI-facing contract to compute, which defeats the separation.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle committed">
+    <div class="principle-head">
+      <h4>2. Translation layer next to the pipeline, never on the param model</h4>
+      <span class="badge green">Committed</span>
+    </div>
+    <p>Sciline binding is a free-function layer — <code>apply_params(pipeline, params)</code> and <code>dynamic_keys(params)</code> per workflow — co-located with pipeline construction. No <code>Annotated[T, SclineBind(...)]</code> on fields.</p>
+    <details>
+      <summary>Why not field annotations?</summary>
+      <div class="detail-body">
+        <p>Annotations on param fields that reference sciline types pull sciline into the schema layer. Any non-Python consumer of the schema either tolerates sciline-shaped metadata it cannot interpret, or has to filter it out. The free-function layer keeps the schema layer importable without sciline.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle committed">
+    <div class="principle-head">
+      <h4>3. Multi-level-defaults rule</h4>
+      <span class="badge green">Committed</span>
+    </div>
+    <p>If a field exists in the param model, <b>the param model is authoritative</b>. The translation layer always applies it. Sciline-level <code>pipeline[X] = value</code> "defaults" are permitted only for structural constants — anything else is a param masquerading as a default and a silent source of streaming/batch divergence.</p>
+    <details>
+      <summary>Why this rule now?</summary>
+      <div class="detail-body">
+        <p>Without this rule, batch and streaming can silently diverge for the same param value. That is fatal for cross-compute unification. Cheap to adopt now, painful to retrofit. Project-wide discipline, not a local design choice.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle in-principle">
+    <div class="principle-head">
+      <h4>4. No graph reshapes in livedata</h4>
+      <span class="badge amber">In principle</span>
+    </div>
+    <p>Pins on inputs feeding declared outputs are fine (operational facts of the Kafka topic set). <code>wf.insert(...)</code> of replacement providers, scalar substitutions like <code>CorrectedMonitor[EmptyBeamRun, ...] = 1.0</code>, rebranding runs — not fine. Each is a shadow algorithm that will silently drift from the authoritative batch version.</p>
+    <details>
+      <summary>Why "in principle", not "committed"?</summary>
+      <div class="detail-body">
+        <p>The discipline kills a class of bug by construction. But it only holds if upstream (technique-package) maintainers absorb the category-C PRs that the discipline produces. If they resist, there will be temptation to reshape locally "just this once" — and that's exactly how shadow-algorithm rot wins. The rule is committed <em>as a rule</em>; its success is gated on external responsiveness. Listed as a falsification condition below.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle committed">
+    <div class="principle-head">
+      <h4>5. Runtime JSON-Schema announcement is the cross-service contract</h4>
+      <span class="badge green">Committed</span>
+    </div>
+    <p>Each running service publishes the JSON Schema of its registered (reduced) workflow specs on the existing status topic. Authority lives at runtime, not in a compile-time import. Pydantic validators run backend-side; the UI gets JSON Schema for form rendering and optimistic validation.</p>
+    <details>
+      <summary>No importable universal catalog?</summary>
+      <div class="detail-body">
+        <p>Correct. There is no importable "all workflows for all instruments" package, and there is no planned ancestor for one. That assumption was the largest single source of scope blow-up in the earlier draft (fix latency, version mismatch, rollback asymmetry, cross-team on-call, dev-loop friction, release-cadence coupling — all derived from it). Dropping it removes ~70% of the plan's operational anxiety.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle committed">
+    <div class="principle-head">
+      <h4>6. Consolidation-in-repo is a complete outcome</h4>
+      <span class="badge green">Committed</span>
+    </div>
+    <p>The schema subpackage is in-repo, framework types only, with an enforced pydantic+stdlib dependency boundary so later extraction to <code>ess.reduce</code> is mechanical rather than a redesign. Extraction happens when the shape has stabilised, not speculatively.</p>
+    <details>
+      <summary>What if no second consumer ever appears?</summary>
+      <div class="detail-body">
+        <p>Consolidation-in-repo is the endpoint. Not a failure. The benefits — testability, clean separation, forced design decisions, JSON-Schema emission for out-of-process consumers — all hold without extraction.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="principle in-principle">
+    <div class="principle-head">
+      <h4>7. Per-technique <code>ess.&lt;tech&gt;.schemas</code> submodules</h4>
+      <span class="badge amber">In principle</span>
+    </div>
+    <p>Cross-compute sharing is incremental. If and when a technique-package maintainer engages concretely, that package grows an <code>ess.&lt;tech&gt;.schemas</code> submodule (pydantic-only) for its technique-specific param/output shapes, importing framework types from <code>ess.reduce.schemas</code>.</p>
+    <details>
+      <summary>Why "in principle"?</summary>
+      <div class="detail-body">
+        <p>This is <em>opt-in per technique</em>, not a precondition for anything. Technique-package maintainers are stakeholders we don't control. If none engage, the plan still stands.</p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- 3. SCOPE -->
+<section id="scope">
+  <h2>3 — What's in, what's out</h2>
+  <p>The strictest constraint on the plan. Anything on the right is excluded by design, for reasons detailed in the principles.</p>
+  <div class="two-col">
+    <div class="col in">
+      <h4><span class="badge green">In</span> This branch's deliverables</h4>
+      <ul>
+        <li><strong>Core spec types:</strong> <code>WorkflowSpec</code>, <code>WorkflowId</code>, <code>WorkflowOutputsBase</code>, <code>AuxInput</code>, <code>AuxSources</code>.</li>
+        <li><strong>Output templates:</strong> <code>ArraySpec</code> / <code>CoordSpec</code> replace <code>sc.DataArray</code>.</li>
+        <li><strong>Instrument identity:</strong> <code>InstrumentSpec</code>, <code>ComponentSpec</code>.</li>
+        <li><strong>Common parameter building blocks:</strong> wavelength / TOF / two-theta / energy ranges, <code>EdgesModel</code> variants, unit enums. <em>Scipp-free</em>; runtime-side converter module.</li>
+        <li><strong>Generic workflow models:</strong> monitor, detector, timeseries.</li>
+        <li><strong>Per-instrument files relocated</strong> to <code>schemas/instruments/&lt;inst&gt;/</code> by filesystem convention.</li>
+        <li><strong>Identity simplification:</strong> <code>WorkflowId</code> → <code>(instrument, name, version)</code>; <code>WorkflowSpec.group</code>; <code>params</code> → <code>inputs</code>.</li>
+        <li><strong>Translation-layer convention:</strong> <code>apply_params</code> / <code>dynamic_keys</code> free functions.</li>
+        <li><strong>Dependency-boundary CI:</strong> <code>schemas/</code> imports pydantic + stdlib only.</li>
+        <li><strong>Reduced-schema JSON emission</strong> on the status topic.</li>
+      </ul>
+    </div>
+    <div class="col out">
+      <h4><span class="badge gray">Out</span> Deliberately not now</h4>
+      <ul>
+        <li><strong>No <code>ess.schemas</code> extraction.</strong> Stays inside <code>ess.livedata</code>; migration to <code>ess.reduce.schemas</code> is a separable follow-up.</li>
+        <li><strong>No composition-root refactor.</strong> Source-partitioning framing guides reduced-schema design, but the five-concern factory decomposition is separate Tier A work.</li>
+        <li><strong>No cross-repo type sharing</strong> with technique packages. Per-technique submodules are opt-in, when maintainers engage.</li>
+        <li><strong>No <code>StreamProcessorWorkflow</code> move</strong> to <code>ess.reduce</code>.</li>
+        <li><strong>No cross-cutting transforms</strong> (detector views, histogramming) moving to <code>ess.reduce</code>.</li>
+        <li><strong>No sciline-annotation shortcut</strong> on param models.</li>
+        <li><strong>No wire-export of pydantic validators.</strong> Validators are Python-side; JSON Schema carries structure + bounds; backend validates authoritatively.</li>
+        <li><strong>No publication as a PyPI package.</strong></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 4. EXECUTION -->
+<section id="execution">
+  <h2>4 — Execution: stages</h2>
+  <p>Five stages, each ending green. Stage 0 first, mechanical; Stage 1 carves out the subpackage; Stage 2 validates on DREAM; Stage 3 rolls out mechanically; Stage 4 cleans up. Colored bar = confidence.</p>
+
+  <div class="timeline" aria-label="Stage timeline">
+    <a class="step stage0" href="#stage0">
+      <div class="step-label">Stage 0</div>
+      <div class="step-title">In-place surgery</div>
+      <div class="step-sub">4 commits</div>
+    </a>
+    <a class="step stage1" href="#stage1">
+      <div class="step-label">Stage 1</div>
+      <div class="step-title">Carve out schemas/</div>
+      <div class="step-sub">Framework types</div>
+    </a>
+    <a class="step stage2" href="#stages234">
+      <div class="step-label">Stage 2</div>
+      <div class="step-title">Prove on DREAM</div>
+      <div class="step-sub">Stress-test shape</div>
+    </a>
+    <a class="step stage3" href="#stages234">
+      <div class="step-label">Stage 3</div>
+      <div class="step-title">Roll out</div>
+      <div class="step-sub">Per instrument</div>
+    </a>
+    <a class="step stage4" href="#stages234">
+      <div class="step-label">Stage 4</div>
+      <div class="step-title">Cleanup</div>
+      <div class="step-sub">Shims, old registry</div>
+    </a>
+  </div>
+</section>
+
+<!-- 5. STAGE 0 -->
+<section id="stage0">
+  <h2>5 — Stage 0: in-place surgery</h2>
+  <p>Non-1:1 semantic changes to <code>WorkflowId</code> and <code>WorkflowSpec</code> performed <em>before</em> any files move, so Stage 1's relocation is mechanical. Four independent commits on this branch; packaging (single PR vs. split) decided when the branch is ready.</p>
+
+  <details class="stage" open>
+    <summary>0a — Route services without reading <code>WorkflowId.namespace</code></summary>
+    <div class="stage-body">
+      <p><code>JobManager.create</code> currently rejects jobs where <code>workflow_id.namespace != instrument.active_namespace</code> (set by <code>ServiceFactory</code> at startup). Replace with an explicit service tag owned by the registering factory.</p>
+      <ul>
+        <li><code>WorkflowFactory.register(...)</code> gains a <code>service: str</code> argument.</li>
+        <li>Factory keeps a <code>service</code> mapping <code>WorkflowId → str</code>.</li>
+        <li><code>JobManager</code> consults <code>factory.get_service(workflow_id)</code> and compares against the running service name.</li>
+        <li><code>active_namespace</code> stays in place but becomes unused by routing; removed in 0d once nothing else reads it.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>0b — <code>BackendStatus.service_name</code> replaces <code>.namespace</code></summary>
+    <div class="stage-body">
+      <p><code>BackendStatus</code> publishes <code>namespace</code>; the dashboard uses it for the worker-identity key and status-widget label. Rename the wire field to <code>service_name</code>; update <code>service_registry.py</code> key composition and <code>backend_status_widget.py</code> display.</p>
+      <div class="note"><b>Wire break:</b> producers and consumers land in the same commit — no compatibility shim.</div>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>0c — Add <code>WorkflowSpec.group</code>, rename <code>params</code> → <code>inputs</code></summary>
+    <div class="stage-body">
+      <p>Introduce <code>WorkflowGroup</code> as a frozen pydantic model providing display metadata:</p>
+<pre><code>class WorkflowGroup(BaseModel, frozen=True):
+    name: Literal["data_reduction", "monitor_data", "detector_data", "timeseries"]
+    title: str
+    description: str = ""</code></pre>
+      <p>Canonical instances as module-level constants (<code>REDUCTION</code>, <code>MONITORS</code>, <code>DETECTORS</code>, <code>TIMESERIES</code>); specs reference them. <code>WorkflowSpec</code> gains <code>group: WorkflowGroup</code> (required, no default) and renames <code>params</code> → <code>inputs</code> (and <code>WorkflowConfig.params</code> → <code>WorkflowConfig.inputs</code> for consistency).</p>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>0d — Drop <code>namespace</code> from identity</summary>
+    <div class="stage-body">
+      <div class="toggle-pair" data-group="wid">
+        <div class="toggle-buttons">
+          <button class="active" data-target="wid-before">Before</button>
+          <button data-target="wid-after">After</button>
+        </div>
+        <div class="toggle-panel active" id="wid-before">
+<pre><code>class WorkflowId(BaseModel, frozen=True):
+    instrument: str
+    namespace: str    # routing + display, two unrelated jobs
+    name: str
+    version: int
+
+str(wid) == "dream/data_reduction/powder/1"</code></pre>
+        </div>
+        <div class="toggle-panel" id="wid-after">
+<pre><code>class WorkflowId(BaseModel, frozen=True):
+    instrument: str
+    name: str
+    version: int
+
+str(wid) == "dream/powder/1"</code></pre>
+        </div>
+      </div>
+      <ul>
+        <li>Remove <code>namespace</code> from <code>WorkflowId</code>, <code>WorkflowSpec</code>, and every spec registration site.</li>
+        <li><code>WorkflowId.__str__</code> → <code>"{instrument}/{name}/{version}"</code>; <code>from_string</code> parses three parts.</li>
+        <li>Remove <code>Instrument.active_namespace</code> and the setter in <code>ServiceFactory</code>.</li>
+        <li>No wire-format compatibility.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 6. STAGE 1 -->
+<section id="stage1">
+  <h2>6 — Stage 1: carve out <code>schemas/</code></h2>
+  <p>Everything generic; no instrument touched yet. Ends with every load-bearing type in place and a green repo, behind re-export shims so existing instrument code keeps importing from old paths.</p>
+
+  <details class="stage" open>
+    <summary>Pre-migration audit</summary>
+    <div class="stage-body">
+      <p>For every type that is a candidate to move into <code>schemas/</code> — <code>WorkflowSpec</code>, param models (including <code>DetectorViewParams</code> and per-instrument subclasses), output models, <code>InstrumentSpec</code> / <code>ComponentSpec</code> — check its field types for scipp or callable leakage. Anything that fails decomposes before the file moves: move the offending field onto a runtime-side helper, keep only declarative data on the schema type.</p>
+      <div class="info"><b>Note:</b> runtime-side config types (<code>LogicalViewConfig</code>, <code>SpectrumViewSpec</code>) hold callables and scipp types by design — they are inputs to factory/registration logic, not part of the wire surface. They stay where they are.</div>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Module layout</summary>
+    <div class="stage-body">
+      <h4>Schema subpackage (pydantic + stdlib only)</h4>
+<pre><code>src/ess/livedata/schemas/
+├── __init__.py
+├── core.py           # WorkflowId, WorkflowSpec, WorkflowOutputsBase,
+│                     # AuxInput, AuxSources, WorkflowGroup
+├── instrument.py     # InstrumentSpec, ComponentSpec
+├── arrays.py         # ArraySpec, CoordSpec
+├── parameters.py     # WavelengthRange, EdgesModel variants, unit enums
+├── workflows/
+│   ├── monitor.py
+│   ├── detector.py
+│   └── timeseries.py
+└── instruments/      # populated in Stage 2+; filesystem-organised,
+                      # no exported registry</code></pre>
+      <h4>Runtime-side converters (co-located, not in schemas/)</h4>
+<pre><code>src/ess/livedata/
+├── parameter_conversions.py   # edges_to_variable(), range_to_scalars()
+└── array_conversions.py       # array_spec_to_dataarray()</code></pre>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary><code>ArraySpec</code> replaces <code>sc.DataArray</code> output templates</summary>
+    <div class="stage-body">
+      <p>Current <code>*Outputs</code> models declare <code>sc.DataArray</code> with <code>default_factory</code> lambdas producing zero-sized arrays. The schema information consumers need (dims, unit, coord units) is only reachable by constructing a DataArray and reading it back.</p>
+      <div class="toggle-pair" data-group="arr">
+        <div class="toggle-buttons">
+          <button class="active" data-target="arr-before">Before</button>
+          <button data-target="arr-after">After</button>
+        </div>
+        <div class="toggle-panel active" id="arr-before">
+<pre><code>class PowderReductionOutputs(WorkflowOutputsBase):
+    focussed_data_dspacing: sc.DataArray = Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(sizes={'dspacing': 0}, unit='dimensionless'),
+            coords={'dspacing': sc.zeros(sizes={'dspacing': 0}, unit='angstrom')},
+        ),
+        title='I(d)',
+    )</code></pre>
+        </div>
+        <div class="toggle-panel" id="arr-after">
+<pre><code>@dataclass(frozen=True, slots=True)
+class CoordSpec:
+    unit: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class ArraySpec:
+    dims: tuple[str, ...]
+    unit: str | None = None
+    coords: Mapping[str, CoordSpec] = field(default_factory=dict)
+
+class PowderReductionOutputs(WorkflowOutputsBase):
+    focussed_data_dspacing: ArraySpec = Field(
+        default=ArraySpec(
+            dims=('dspacing',),
+            unit='dimensionless',
+            coords={'dspacing': CoordSpec(unit='angstrom')},
+        ),
+        title='I(d)',
+    )</code></pre>
+        </div>
+      </div>
+      <p class="muted"><strong>Consumer impact:</strong> <code>WorkflowSpec.get_output_template()</code> returns <code>ArraySpec</code>; <code>find_timeseries_outputs</code> becomes <code>len(spec.dims) == 0 and 'time' in spec.coords</code>; plotter auto-selection reads dims/coord units directly; sites that need an empty <code>sc.DataArray</code> at runtime use <code>array_spec_to_dataarray(spec)</code>.</p>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Parameter models go scipp-free</summary>
+    <div class="stage-body">
+      <p>Today's <code>parameter_models.py</code> carries <code>get_start()</code>, <code>get_stop()</code>, <code>get_edges()</code>, <code>range()</code> methods returning <code>sc.Variable</code> / <code>sc.scalar</code>. Field declarations themselves are pure (float, int, str, enum). Strip the scipp-returning methods and relocate them as free functions.</p>
+      <div class="toggle-pair" data-group="param">
+        <div class="toggle-buttons">
+          <button class="active" data-target="param-before">Before</button>
+          <button data-target="param-after">After</button>
+        </div>
+        <div class="toggle-panel active" id="param-before">
+<pre><code># Methods pull scipp into the schema layer
+class WavelengthRange(BaseModel):
+    start: float
+    stop: float
+    unit: WavelengthUnit
+
+    def range(self) -> tuple[sc.Variable, sc.Variable]:
+        return sc.scalar(self.start, unit=self.unit.value), ...
+
+# Usage
+w1, w2 = params.wavelength.range()</code></pre>
+        </div>
+        <div class="toggle-panel" id="param-after">
+<pre><code># Pure pydantic, no scipp
+class WavelengthRange(BaseModel):
+    start: float
+    stop: float
+    unit: WavelengthUnit
+
+# Runtime-side converter (parameter_conversions.py)
+def range_to_scalars(m: WavelengthRange) -> tuple[sc.Variable, sc.Variable]:
+    return sc.scalar(m.start, unit=m.unit.value), sc.scalar(m.stop, unit=m.unit.value)
+
+# Usage
+w1, w2 = range_to_scalars(params.wavelength)</code></pre>
+        </div>
+      </div>
+      <p class="muted">Mechanical; ~20 call sites.</p>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary><code>InstrumentSpec</code> / <code>ComponentSpec</code> and the runtime split</summary>
+    <div class="stage-body">
+      <p>Today's <code>Instrument</code> bundles schema data (name, title, description, detector/monitor names, component metadata, workflow specs) with runtime machinery (transform bindings, <code>WorkflowFactory</code>, stream/Kafka wiring, <code>load_factories()</code>). Split:</p>
+<pre><code>class InstrumentSpec(BaseModel):
+    name: str
+    title: str
+    description: str
+    detectors: dict[str, ComponentSpec]
+    monitors: dict[str, ComponentSpec]
+    workflows: dict[WorkflowId, WorkflowSpec]</code></pre>
+      <p>Runtime <code>Instrument</code> holds an <code>InstrumentSpec</code> reference plus the runtime pieces. No exported discovery API; the runtime <code>Instrument</code> is built by <code>setup_factories()</code> as today.</p>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Translation-layer convention</summary>
+    <div class="stage-body">
+      <p>Per workflow impl, co-located with factory registration:</p>
+<pre><code>def apply_params(pipeline: sciline.Pipeline, params: DreamPowderWorkflowParams) -> None:
+    pipeline[dream.powder.types.DspacingBins] = edges_to_variable(
+        params.dspacing_edges, dim='dspacing', unit='angstrom'
+    )
+    # ...
+
+def dynamic_keys(params: DreamPowderWorkflowParams) -> dict[str, sciline.typing.Key]:
+    return {params.detector_source: NeXusData[NXdetector, SampleRun], ...}</code></pre>
+      <p>Registration attaches <code>apply_params</code> and <code>dynamic_keys</code> alongside the <code>WorkflowSpec</code> and the sciline pipeline.</p>
+      <div class="info"><b>Scope note:</b> a formal <code>WorkflowImpl</code> bundle (pipeline + accumulators + target_keys + apply_params + dynamic_keys as one dataclass) is Tier A follow-up. Near-term: documented convention.</div>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Dependency boundary + CI</summary>
+    <div class="stage-body">
+<pre><code>[importlinter:contract:schemas-deps]
+name = ess.livedata.schemas depends only on pydantic/stdlib
+type = forbidden
+source_modules = ess.livedata.schemas
+forbidden_modules = ess.livedata, scipp, sciline</code></pre>
+      <p>A grep-based test in CI suffices if import-linter friction is too high.</p>
+      <div class="info"><b>Standalone test job:</b> a tox env that installs <code>ess.livedata.schemas</code> with pydantic only (no scipp, sciline, or ess.livedata) and runs its unit tests. This is the real proof of the boundary — <code>import-linter</code> checks imports; the tox job proves the package actually <em>works</em> standalone. Subtle but matters when extraction eventually happens.</div>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Reduced-schema JSON emission</summary>
+    <div class="stage-body">
+      <p>Each service emits, on its existing status topic:</p>
+      <ul>
+        <li>Its service name (the one that replaced <code>namespace</code> in Stage 0b).</li>
+        <li>Per registered <code>WorkflowId</code>, the <em>reduced</em> JSON Schema: the param model minus fields filled by deployment pins or job-start routing.</li>
+      </ul>
+      <h4>Field partitioning</h4>
+      <div class="cards">
+        <div class="card">
+          <h4>Pinned</h4>
+          <p>Fields set by ops config at service startup. Example: calibration file path, NeXus geometry filename. Backend authority; UI never sees.</p>
+        </div>
+        <div class="card">
+          <h4>Job-start routed</h4>
+          <p>Fields resolved from a job-launch selection — "which detector source is the mantle for this run". Filled by UI orchestration, not by the parameter form.</p>
+        </div>
+        <div class="card">
+          <h4>User-visible</h4>
+          <p>Everything else. This is what appears in the JSON Schema on the wire.</p>
+        </div>
+      </div>
+      <div class="info"><b>No composition-root refactor is needed to land emission.</b> The pinned/routed subset can be enumerated per workflow-impl registration in the near term (a list of field names excluded from emission). Full composition-root generalisation is Tier A follow-up.</div>
+    </div>
+  </details>
+</section>
+
+<!-- 7. STAGES 2-4 -->
+<section id="stages234">
+  <h2>7 — Stages 2 – 4</h2>
+
+  <details class="stage" open>
+    <summary>Stage 2 — Prove on DREAM <span class="badge amber" style="margin-left: 8px;">In principle</span></summary>
+    <div class="stage-body">
+      <p>DREAM is the most demanding instrument; validate the design end-to-end before replicating.</p>
+      <ul>
+        <li>Create <code>schemas/instruments/dream/</code>. Move DREAM's pydantic schemas, enums, workflow specs, source metadata, detector/monitor name lists. Start with reduction workflows (most stand-alone).</li>
+        <li>Adapt DREAM's <code>factories.py</code>, <code>streams.py</code>, <code>views.py</code> to read from <code>schemas.instruments.dream</code>.</li>
+        <li>Set <code>group</code> per <code>WorkflowSpec</code>.</li>
+        <li>Exercise <code>ArraySpec</code> by running the full DREAM test suite and dashboard.</li>
+        <li>Drive any design gaps back into Stage 1 types. <strong>Stress-test the abstraction here before multiplying by six.</strong></li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Stage 3 — Roll out <span class="badge green" style="margin-left: 8px;">Mechanical</span></summary>
+    <div class="stage-body">
+      <p>Mechanical, per instrument: <span class="pill">dummy</span><span class="pill">loki</span><span class="pill">bifrost</span><span class="pill">odin</span><span class="pill">nmx</span><span class="pill">tbl</span></p>
+      <p>Core is frozen by this point; pure relocation.</p>
+    </div>
+  </details>
+
+  <details class="stage">
+    <summary>Stage 4 — Cleanup</summary>
+    <div class="stage-body">
+      <ul>
+        <li>Remove Stage 1 re-export shims.</li>
+        <li>Delete the old <code>instrument_registry</code> mechanism.</li>
+        <li>Documentation pass describing <code>ess.livedata.schemas</code> as the authoritative schema surface.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 8. LATER -->
+<section id="later">
+  <h2>8 — Later: migration to <code>ess.reduce</code></h2>
+  <div class="note"><b>Scope:</b> explicitly <em>out</em> of this branch. Noted here so the future migration doesn't require a redesign.</div>
+  <p>Framework-only types (<code>WorkflowSpec</code>, <code>WorkflowId</code>, <code>ArraySpec</code>, <code>InstrumentSpec</code>, <code>ComponentSpec</code>, common parameter building blocks) eventually migrate into <code>ess.reduce.schemas</code> with the same pydantic+stdlib submodule-level boundary. Cross-repo, but within the same maintainer group — organisationally cheap.</p>
+
+  <h3>Concrete trigger for the migration</h3>
+  <div class="info"><b>Before a second instrument joins Stage 2/3 with stable schemas.</b> Don't let "for now" become forever — otherwise the migration never happens and the types calcify in <code>ess.livedata</code>.</div>
+
+  <h3>What stays where</h3>
+  <div class="two-col">
+    <div class="col in">
+      <h4><span class="badge green">Moves to <code>ess.reduce.schemas</code></span></h4>
+      <ul>
+        <li>Framework types: <code>WorkflowSpec</code>, <code>WorkflowId</code>, <code>ArraySpec</code>, <code>InstrumentSpec</code>, <code>ComponentSpec</code>.</li>
+        <li>Common parameter building blocks (bin edges, ranges, unit enums).</li>
+        <li>Submodule-level pydantic+stdlib-only boundary.</li>
+      </ul>
+    </div>
+    <div class="col out">
+      <h4><span class="badge gray">Stays in <code>ess.livedata</code></span></h4>
+      <ul>
+        <li>Per-instrument specialisations (DreamPowderWorkflowParams, …).</li>
+        <li>Stream mapping, Kafka plumbing, accumulators.</li>
+        <li>Workflow registrations, factories.</li>
+        <li>Composition root (when it exists).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 9. FALSIFICATION -->
+<section id="falsify">
+  <h2>9 — What could force reconsideration</h2>
+  <p>Falsification conditions. The direction is worth pursuing only if it remains reversible on evidence. Each is a concrete signal, not a hypothetical.</p>
+
+  <div class="risk">
+    <h4><span class="risk-label">Reversal</span>The second consumer never materialises</h4>
+    <p>If 18 months after consolidation no technique-package ipywidget UI and no NICOS integration is pulling from the schemas, migration to <code>ess.reduce</code> is speculative. Consolidate, stay in <code>ess.livedata</code>, move on.</p>
+  </div>
+
+  <div class="risk">
+    <h4><span class="risk-label">Reversal</span>Graph-reshape discipline fails</h4>
+    <p>If bespoke factories keep growing <code>wf.insert(...)</code> because upstream maintainers won't absorb category-C PRs, the shadow-algorithm rot wins and cross-compute unification is organisationally dead. Call it by name and stop planning around it.</p>
+  </div>
+
+  <div class="risk">
+    <h4><span class="risk-label">Tighten</span>Version mismatches become routine post-migration</h4>
+    <p>Tighten backward-compat discipline, or reverse the migration to <code>ess.reduce</code>.</p>
+  </div>
+
+  <div class="risk">
+    <h4><span class="risk-label">Scope-back</span>Technique-package maintainers reject per-technique schemas submodules</h4>
+    <p>Cross-compute unification stays at zero; vocabulary is livedata-local. Still a coherent outcome.</p>
+  </div>
+</section>
+
+<!-- 10. OPEN ITEMS -->
+<section id="open">
+  <h2>10 — Open items</h2>
+  <p>Decisions deliberately deferred to implementation time.</p>
+  <div class="cards">
+    <div class="card">
+      <h4><span class="badge amber">Open</span>&nbsp; Scope of <code>params</code> → <code>inputs</code></h4>
+      <p>In Stage 0c. Default: yes, for consistency; confirm at implementation time.</p>
+    </div>
+    <div class="card">
+      <h4><span class="badge amber">Open</span>&nbsp; Group ordering in the UI</h4>
+      <p>Declaration order of the <code>WorkflowGroup</code> module-level constants is the natural answer; confirm the dashboard honors it (not alphabetical sort).</p>
+    </div>
+    <div class="card">
+      <h4><span class="badge amber">Open</span>&nbsp; Stage 0 PR packaging</h4>
+      <p>One branch, four commits; single PR most likely, split only if review bandwidth demands it.</p>
+    </div>
+    <div class="card">
+      <h4><span class="badge amber">Open</span>&nbsp; Reduced-schema announcement payload format</h4>
+      <p>JSON Schema + <code>$id</code>? Grouped per service, or one per <code>WorkflowId</code>? Settle at implementation time.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  ess.livedata · workflow spec consolidation · schemas-module branch
+</footer>
+
+</main>
+</div>
+
+<script>
+  // Before / After toggles
+  document.querySelectorAll('.toggle-pair').forEach(pair => {
+    const buttons = pair.querySelectorAll('.toggle-buttons button');
+    const panels = pair.querySelectorAll('.toggle-panel');
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        buttons.forEach(b => b.classList.remove('active'));
+        panels.forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        const target = btn.getAttribute('data-target');
+        pair.querySelector('#' + target).classList.add('active');
+      });
+    });
+  });
+
+  // Active TOC tracking via IntersectionObserver
+  const tocLinks = document.querySelectorAll('.toc a');
+  const tocMap = new Map();
+  tocLinks.forEach(link => {
+    const id = link.getAttribute('href').slice(1);
+    tocMap.set(id, link);
+  });
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        tocLinks.forEach(l => l.classList.remove('active'));
+        const link = tocMap.get(entry.target.id);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
