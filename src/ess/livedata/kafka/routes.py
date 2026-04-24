@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from typing import Self
 
+import structlog
+
 from ..core.message import StreamKind
 from .message_adapter import (
     Ad00ToScippAdapter,
@@ -19,11 +21,12 @@ from .message_adapter import (
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
-    RunControlAdapter,
     X5f2ToStatusAdapter,
 )
 from .stream_counter import StreamCounter
 from .stream_mapping import StreamMapping
+
+logger = structlog.get_logger(__name__)
 
 
 class RoutingAdapterBuilder:
@@ -153,7 +156,11 @@ class RoutingAdapterBuilder:
 
     def with_run_control_route(self) -> Self:
         """Adds the run control route for filewriter run start/stop messages."""
-        self._routes[self._stream_mapping.topics.filewriter] = RunControlAdapter()
+        # Temporarily disabled due to filewriter topic auth issue in prod (#795).
+        logger.warning(
+            "Run control route (filewriter topic) subscription is disabled; "
+            "run start/stop messages will not trigger job resets."
+        )
         return self
 
     def with_livedata_status_route(self) -> Self:
