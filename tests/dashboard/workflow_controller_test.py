@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -92,6 +93,7 @@ def workflow_spec(workflow_id: WorkflowId) -> WorkflowSpec:
         description="A test workflow for unit testing",
         source_names=["detector_1", "detector_2"],
         params=SomeWorkflowParams,
+        group=REDUCTION,
     )
 
 
@@ -266,6 +268,7 @@ class TestWorkflowController:
             description="First workflow",
             source_names=sources_1,
             params=SomeWorkflowParams,
+            group=REDUCTION,
         )
         workflow_spec_2 = WorkflowSpec(
             instrument="test_instrument",
@@ -275,6 +278,7 @@ class TestWorkflowController:
             description="Second workflow",
             source_names=sources_2,
             params=SomeWorkflowParams,
+            group=REDUCTION,
         )
         workflow_id_1 = workflow_spec_1.get_id()
         workflow_id_2 = workflow_spec_2.get_id()

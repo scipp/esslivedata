@@ -7,6 +7,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -71,6 +72,7 @@ def workflow_spec(workflow_id):
         params=TestWorkflowParams,
         aux_sources=None,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -88,6 +90,7 @@ def workflow_spec_2(workflow_id_2):
         params=TestWorkflowParams,
         aux_sources=None,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 

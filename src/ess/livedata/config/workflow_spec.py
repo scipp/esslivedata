@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -39,6 +39,41 @@ class DefaultOutputs(WorkflowOutputsBase):
     """
 
     result: sc.DataArray = Field(title='Result', description='Workflow output.')
+
+
+class WorkflowGroup(BaseModel, frozen=True):
+    """Display-oriented grouping for workflow specs.
+
+    Groups bundle related workflows for the dashboard UI. Identity is by
+    the ``name`` field; the ``Literal`` constraint locks the set of legal
+    categories to prevent ad-hoc construction sneaking in new ones.
+    """
+
+    name: Literal['data_reduction', 'monitor_data', 'detector_data', 'timeseries']
+    title: str
+    description: str = ''
+
+
+REDUCTION = WorkflowGroup(
+    name='data_reduction',
+    title='Reduction',
+    description='Scientific data reduction workflows.',
+)
+MONITORS = WorkflowGroup(
+    name='monitor_data',
+    title='Monitors',
+    description='Beam monitor data workflows.',
+)
+DETECTORS = WorkflowGroup(
+    name='detector_data',
+    title='Detectors',
+    description='Detector data workflows.',
+)
+TIMESERIES = WorkflowGroup(
+    name='timeseries',
+    title='Timeseries',
+    description='Timeseries log data workflows.',
+)
 
 
 class WorkflowId(BaseModel, frozen=True):
@@ -187,6 +222,14 @@ class WorkflowSpec(BaseModel):
     namespace: str = Field(
         default='data_reduction',
         description="Namespace for the workflow, used to group workflows logically.",
+    )
+    group: WorkflowGroup = Field(
+        description=(
+            "Display-oriented group this workflow belongs to. Carries the UI "
+            "title and description; the ``name`` field is the canonical category "
+            "identifier (one of ``data_reduction``, ``monitor_data``, "
+            "``detector_data``, ``timeseries``)."
+        ),
     )
     name: str = Field(description="Name of the workflow. Used internally.")
     version: int = Field(description="Version of the workflow.")

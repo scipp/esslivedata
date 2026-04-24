@@ -11,7 +11,12 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import (
+    DETECTORS,
+    AuxInput,
+    AuxSources,
+    WorkflowOutputsBase,
+)
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
@@ -174,7 +179,7 @@ class DreamDetectorViewParams(DetectorViewParams):
 # Replaces both the legacy DetectorProjection and the Sciline detector view
 # registrations.
 projection_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='detector_projection',
     version=1,
     title='Detector Projection',

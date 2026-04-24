@@ -6,6 +6,7 @@ from ess.reduce.streaming import StreamProcessor
 from pydantic import BaseModel, ValidationError
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     AuxInput,
     AuxSources,
     WorkflowConfig,
@@ -50,6 +51,7 @@ def workflow_spec(workflow_id):
         title="Pretty name",
         description="Test description",
         params=None,
+        group=REDUCTION,
     )
 
 
@@ -65,6 +67,7 @@ def workflow_spec_with_sources(workflow_id):
         description="Test",
         source_names=["source1", "source2"],
         params=None,
+        group=REDUCTION,
     )
 
 
@@ -180,6 +183,7 @@ class TestWorkflowFactory:
             description="Test",
             source_names=["source1"],
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -208,6 +212,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=MyParams,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -238,6 +243,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=MyParams,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -286,6 +292,7 @@ class TestWorkflowFactory:
             description=workflow_spec_with_sources.description,
             source_names=["allowed-source"],
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -321,6 +328,7 @@ class TestWorkflowFactory:
             title="workflow1",
             description="Test 1",
             params=None,
+            group=REDUCTION,
         )
         spec2 = WorkflowSpec(
             instrument=workflow_id2.instrument,
@@ -330,6 +338,7 @@ class TestWorkflowFactory:
             title="workflow2",
             description="Test 2",
             params=None,
+            group=REDUCTION,
         )
 
         handle1 = factory.register_spec(spec1)
@@ -386,6 +395,7 @@ class TestWorkflowFactory:
             title="V1",
             description="Test 1",
             params=None,
+            group=REDUCTION,
         )
         spec2 = WorkflowSpec(
             instrument=workflow_id2.instrument,
@@ -395,6 +405,7 @@ class TestWorkflowFactory:
             title="V2",
             description="Test 2",
             params=None,
+            group=REDUCTION,
         )
 
         handle1 = factory.register_spec(spec1)
@@ -439,6 +450,7 @@ class TestWorkflowFactory:
             title="",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -473,6 +485,7 @@ class TestWorkflowFactory:
             description="Test",
             source_names=sources,
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -514,6 +527,7 @@ class TestWorkflowFactory:
             description="Test",
             params=None,
             aux_sources=my_aux_sources,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -546,6 +560,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -575,6 +590,7 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -612,6 +628,7 @@ class TestWorkflowFactory:
             description="Test",
             params=None,
             aux_sources=my_aux_sources,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -647,6 +664,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -671,6 +689,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         factory.register_spec(spec)
@@ -695,6 +714,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         factory.register_spec(spec)
@@ -719,6 +739,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=None,
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -752,6 +773,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=MyParams,  # Explicit params!
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -788,6 +810,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=MyParams,  # Spec expects MyParams
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -815,6 +838,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=MyParams,  # Spec has params
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -842,6 +866,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=None,  # Spec has no params
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)
@@ -882,6 +907,7 @@ class TestTwoPhaseRegistration:
             title="test-workflow",
             description="Test",
             params=MyParams,  # Explicit params
+            group=REDUCTION,
         )
 
         handle = factory.register_spec(spec)

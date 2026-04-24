@@ -7,6 +7,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -49,6 +50,7 @@ _WORKFLOW_REGISTRY = {
         description='test',
         params=None,
         outputs=_TestOutputs,
+        group=REDUCTION,
     )
 }
 

@@ -16,7 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .workflow_spec import AuxSources, WorkflowSpec
+from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 
 class SourceMetadata(pydantic.BaseModel):
@@ -258,7 +258,7 @@ class Instrument:
         description: str,
         source_names: Sequence[str],
         transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
-        namespace: str = 'detector_data',
+        group: WorkflowGroup = DETECTORS,
         service: str | None = None,
         roi_support: bool = True,
         output_ndim: int | None = None,
@@ -290,9 +290,10 @@ class Instrument:
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
             If None, identity (no reshaping).
-        namespace:
-            Service namespace this view belongs to. Determines which service
-            runs the workflow (e.g. ``'detector_data'`` or ``'monitor_data'``).
+        group:
+            Display-oriented :class:`WorkflowGroup` this view belongs to.
+            The group's ``name`` (e.g. ``'detector_data'`` or ``'monitor_data'``)
+            also determines which service runs the workflow today.
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
@@ -322,7 +323,7 @@ class Instrument:
         )
         params = make_detector_view_params(spectrum_view=spectrum_view)
         handle = self.register_spec(
-            namespace=namespace,
+            group=group,
             service=service,
             name=name,
             version=1,
@@ -352,7 +353,7 @@ class Instrument:
     def register_spec(
         self,
         *,
-        namespace: str = 'data_reduction',
+        group: WorkflowGroup = REDUCTION,
         service: str | None = None,
         name: str,
         version: int,
@@ -373,11 +374,13 @@ class Instrument:
 
         Parameters
         ----------
-        namespace:
-            Namespace for the workflow (default: 'data_reduction').
+        group:
+            Display-oriented :class:`WorkflowGroup` for the workflow
+            (default: ``REDUCTION``). The group's ``name`` is also used as
+            the workflow namespace today.
         service:
             Name of the backend service responsible for running this workflow.
-            Defaults to ``namespace`` (service and namespace match today; the
+            Defaults to ``group.name`` (service and namespace match today; the
             coupling is removed in a later stage).
         name:
             Name to register the workflow under.
@@ -411,7 +414,8 @@ class Instrument:
         """
         spec = WorkflowSpec(
             instrument=self.name,
-            namespace=namespace,
+            namespace=group.name,
+            group=group,
             name=name,
             version=version,
             title=title,
