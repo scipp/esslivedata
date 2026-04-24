@@ -12,6 +12,7 @@ import yaml
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     AuxSources,
     WorkflowConfig,
     WorkflowId,
@@ -79,6 +80,7 @@ def workflow_with_params() -> WorkflowSpec:
         source_names=["det_1", "det_2"],
         params=WorkflowParams,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -96,6 +98,7 @@ def workflow_with_params_and_aux() -> WorkflowSpec:
         params=WorkflowParams,
         aux_sources=test_aux_sources,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -112,6 +115,7 @@ def workflow_no_params() -> WorkflowSpec:
         source_names=["det_1", "det_2"],
         params=None,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -128,6 +132,7 @@ def workflow_empty_sources() -> WorkflowSpec:
         source_names=[],
         params=WorkflowParams,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -144,6 +149,7 @@ def workflow_params_without_defaults() -> WorkflowSpec:
         source_names=["det_1"],
         params=ParamsWithRequiredFields,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -160,6 +166,7 @@ def workflow_with_enum_params() -> WorkflowSpec:
         source_names=["det_1"],
         params=ParamsWithEnum,
         outputs=SimpleTestOutputs,
+        group=REDUCTION,
     )
 
 
@@ -1309,6 +1316,7 @@ class TestJobOrchestratorWorkflowStateVersion:
             description="A different workflow for testing",
             stream_kind="detector",
             params=workflow_with_params.params,
+            group=REDUCTION,
         )
         workflow_id_2 = workflow_2.get_id()
 

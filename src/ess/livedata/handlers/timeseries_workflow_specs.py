@@ -8,7 +8,7 @@ import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import WorkflowOutputsBase
+from ..config.workflow_spec import TIMESERIES, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
 
@@ -55,7 +55,7 @@ def register_timeseries_workflow_specs(
         return None
 
     return instrument.register_spec(
-        namespace='timeseries',
+        group=TIMESERIES,
         name='timeseries_data',
         version=1,
         title="Timeseries data",

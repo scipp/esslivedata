@@ -11,7 +11,12 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import (
+    MONITORS,
+    AuxInput,
+    AuxSources,
+    WorkflowOutputsBase,
+)
 from ess.livedata.handlers.detector_view.types import TransformValueStream
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
@@ -256,7 +261,7 @@ instrument.add_logical_view(
     title='Beam monitor: counts per pixel',
     description='Per-pixel event counts for pixellated beam monitors.',
     source_names=['beam_monitor_m3'],
-    namespace='monitor_data',
+    group=MONITORS,
     roi_support=False,
     output_ndim=1,
 )

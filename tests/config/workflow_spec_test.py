@@ -5,6 +5,8 @@ import scipp as sc
 from pydantic import Field
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
+    TIMESERIES,
     AuxInput,
     AuxSources,
     JobId,
@@ -52,6 +54,7 @@ class TestWorkflowSpecAuxSources:
             description="A test workflow",
             params=None,
             outputs=SimpleTestOutputs,
+            group=REDUCTION,
         )
         assert spec.aux_sources is None
 
@@ -77,6 +80,7 @@ class TestWorkflowSpecAuxSources:
             params=None,
             aux_sources=aux,
             outputs=SimpleTestOutputs,
+            group=REDUCTION,
         )
         assert spec.aux_sources is not None
         assert isinstance(spec.aux_sources, AuxSources)
@@ -106,6 +110,7 @@ class TestWorkflowSpecOutputs:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.outputs is TestOutputs
 
@@ -132,6 +137,7 @@ class TestWorkflowSpecOutputs:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
 
         template = spec.get_output_template('result')
@@ -161,6 +167,7 @@ class TestWorkflowSpecOutputs:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
 
         template = spec.get_output_template('nonexistent')
@@ -182,6 +189,7 @@ class TestWorkflowSpecOutputs:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
 
         template = spec.get_output_template('result')
@@ -206,6 +214,7 @@ class TestWorkflowSpecOutputs:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
 
         template1 = spec.get_output_template('result')
@@ -230,6 +239,7 @@ class TestGetOutputTitle:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_title('result') == 'I(d)'
 
@@ -245,6 +255,7 @@ class TestGetOutputTitle:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_title('result') == 'result'
 
@@ -260,6 +271,7 @@ class TestGetOutputTitle:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_title('nonexistent') == 'nonexistent'
 
@@ -279,6 +291,7 @@ class TestGetOutputDescription:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_description('result') == 'A detailed description.'
 
@@ -294,6 +307,7 @@ class TestGetOutputDescription:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_description('result') is None
 
@@ -309,6 +323,7 @@ class TestGetOutputDescription:
             description="A test workflow",
             params=None,
             outputs=TestOutputs,
+            group=REDUCTION,
         )
         assert spec.get_output_description('nonexistent') is None
 
@@ -669,6 +684,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=TimeseriesOutputs,
             source_names=['source1', 'source2'],
+            group=TIMESERIES,
         )
 
         results = find_timeseries_outputs({workflow_id: spec})
@@ -703,6 +719,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=NonTimeseriesOutputs,
             source_names=['source1'],
+            group=REDUCTION,
         )
 
         results = find_timeseries_outputs({workflow_id: spec})
@@ -731,6 +748,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=NoTimeCoordOutputs,
             source_names=['source1'],
+            group=REDUCTION,
         )
 
         results = find_timeseries_outputs({workflow_id: spec})
@@ -757,6 +775,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=NoFactoryOutputs,
             source_names=['source1'],
+            group=REDUCTION,
         )
 
         results = find_timeseries_outputs({workflow_id: spec})
@@ -807,6 +826,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=TimeseriesOutputs,
             source_names=['src1'],
+            group=TIMESERIES,
         )
         spec2 = WorkflowSpec(
             instrument='test',
@@ -818,6 +838,7 @@ class TestFindTimeseriesOutputs:
             params=None,
             outputs=NonTimeseriesOutputs,
             source_names=['src2'],
+            group=REDUCTION,
         )
 
         results = find_timeseries_outputs({workflow_id_1: spec1, workflow_id_2: spec2})

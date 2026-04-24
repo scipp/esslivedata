@@ -9,7 +9,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.workflow_spec import WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import MONITORS, REDUCTION, WorkflowOutputsBase
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
     WorkflowFactory,
@@ -190,7 +190,7 @@ class TestInstrument:
 
         # Phase 1: Register spec
         handle = instrument.register_spec(
-            namespace="test_namespace",
+            group=MONITORS,
             name="test_workflow",
             version=1,
             title="Test Workflow",
@@ -204,7 +204,8 @@ class TestInstrument:
         assert len(specs) == 1
         spec = next(iter(specs.values()))
         assert spec.instrument == "test_instrument"
-        assert spec.namespace == "test_namespace"
+        assert spec.namespace == "monitor_data"
+        assert spec.group is MONITORS
         assert spec.name == "test_workflow"
         assert spec.version == 1
         assert spec.title == "Test Workflow"
@@ -343,7 +344,7 @@ class TestInstrumentRegisterSpec:
         instrument = Instrument(name="test_instrument")
 
         handle = instrument.register_spec(
-            namespace="custom_namespace",
+            group=REDUCTION,
             name="test_workflow",
             version=1,
             title="Test Workflow",
@@ -360,7 +361,8 @@ class TestInstrumentRegisterSpec:
         spec_id = handle.workflow_id
         spec = instrument.workflow_factory[spec_id]
         assert spec.instrument == "test_instrument"
-        assert spec.namespace == "custom_namespace"
+        assert spec.namespace == "data_reduction"
+        assert spec.group is REDUCTION
         assert spec.name == "test_workflow"
         assert spec.version == 1
         assert spec.title == "Test Workflow"
