@@ -42,7 +42,6 @@ def make_job_status(**overrides) -> JobStatus:
         "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
         "workflow_id": WorkflowId(
             instrument="test_inst",
-            namespace="data_reduction",
             name="test_workflow",
             version=1,
         ),
@@ -244,9 +243,7 @@ class TestJobStatusMessage:
     def test_to_job_status_minimal(self):
         """Test converting minimal JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
@@ -271,9 +268,7 @@ class TestJobStatusMessage:
     def test_to_job_status_complete(self):
         """Test converting complete JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
@@ -428,7 +423,6 @@ class TestRoundTripConversion:
         """Test round-trip conversion with complex WorkflowId."""
         workflow_id = WorkflowId(
             instrument="complex-instrument-name",
-            namespace="special_namespace",
             name="workflow_with_underscores",
             version=42,
         )
@@ -604,9 +598,7 @@ class TestMessageTypeField:
         """Test that x5f2 serialized job status includes message_type in status_json."""
         job_status = JobStatus(
             job_id=JobId(source_name="test", job_number=uuid.uuid4()),
-            workflow_id=WorkflowId(
-                instrument="test", namespace="ns", name="wf", version=1
-            ),
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
             state=JobState.active,
         )
 
@@ -937,9 +929,7 @@ class TestX5f2ToStatusDiscriminator:
         """Test that job status with message_type='job' returns JobStatus."""
         job_status = JobStatus(
             job_id=JobId(source_name="detector1", job_number=uuid.uuid4()),
-            workflow_id=WorkflowId(
-                instrument="test", namespace="ns", name="wf", version=1
-            ),
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
             state=JobState.active,
         )
 
@@ -956,9 +946,7 @@ class TestX5f2ToStatusDiscriminator:
         Legacy messages without message_type field should return JobStatus.
         """
         job_id = JobId(source_name="detector1", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         # Manually create x5f2 data WITHOUT message_type field (legacy format)
         status_json = json.dumps(

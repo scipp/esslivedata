@@ -235,7 +235,6 @@ def _make_job_status(**overrides) -> JobStatus:
         'job_id': JobId(source_name='detector_1', job_number=uuid.uuid4()),
         'workflow_id': WorkflowId(
             instrument='test_inst',
-            namespace='data_reduction',
             name='test_workflow',
             version=1,
         ),

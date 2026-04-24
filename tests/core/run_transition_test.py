@@ -20,9 +20,7 @@ from .job_test import FakeProcessor
 
 
 def _workflow_id(name: str = 'test') -> WorkflowId:
-    return WorkflowId(
-        instrument="test", namespace="data_reduction", name=name, version=1
-    )
+    return WorkflowId(instrument="test", name=name, version=1)
 
 
 def _make_config(name: str = 'test') -> WorkflowConfig:

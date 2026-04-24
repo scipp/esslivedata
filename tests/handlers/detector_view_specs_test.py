@@ -152,7 +152,7 @@ class TestRegisterDetectorViewSpecs:
         # Verify spec details
         spec = instrument.workflow_factory[spec_id]
         assert spec.instrument == "test_instrument"
-        assert spec.namespace == "detector_data"
+        assert spec.group.name == "detector_data"
         assert spec.name == "detector_xy_projection"
         assert spec.source_names == source_names
 

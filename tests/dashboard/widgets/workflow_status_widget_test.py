@@ -568,9 +568,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_id = JobId(source_name='test', job_number='test-uuid')
         job_status = JobStatus(
             job_id=job_id,
-            workflow_id=WorkflowId(
-                instrument='test', namespace='test', name='test', version=1
-            ),
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
             state=JobState.active,
         )
 

@@ -34,7 +34,6 @@ def workflow_id():
     """Fixture to create a WorkflowId for testing."""
     return WorkflowId(
         instrument="test-instrument",
-        namespace="test-namespace",
         name="test-workflow",
         version=1,
     )
@@ -45,7 +44,6 @@ def workflow_spec(workflow_id):
     """Fixture to create a basic WorkflowSpec for testing."""
     return WorkflowSpec(
         instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
         name=workflow_id.name,
         version=workflow_id.version,
         title="Pretty name",
@@ -60,7 +58,6 @@ def workflow_spec_with_sources(workflow_id):
     """Fixture to create a WorkflowSpec with source names for testing."""
     return WorkflowSpec(
         instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
         name=workflow_id.name,
         version=workflow_id.version,
         title="test-workflow",
@@ -170,13 +167,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -200,13 +195,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -231,13 +224,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -265,7 +256,6 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         non_existent_id = WorkflowId(
             instrument="non-existent",
-            namespace="non-existent",
             name="non-existent",
             version=1,
         )
@@ -278,14 +268,12 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         # Override source_names for this specific test
         spec = WorkflowSpec(
             instrument=workflow_spec_with_sources.instrument,
-            namespace=workflow_spec_with_sources.namespace,
             name=workflow_spec_with_sources.name,
             version=workflow_spec_with_sources.version,
             title=workflow_spec_with_sources.title,
@@ -310,19 +298,16 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id1 = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="workflow1",
             version=1,
         )
         workflow_id2 = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="workflow2",
             version=1,
         )
         spec1 = WorkflowSpec(
             instrument=workflow_id1.instrument,
-            namespace=workflow_id1.namespace,
             name=workflow_id1.name,
             version=workflow_id1.version,
             title="workflow1",
@@ -332,7 +317,6 @@ class TestWorkflowFactory:
         )
         spec2 = WorkflowSpec(
             instrument=workflow_id2.instrument,
-            namespace=workflow_id2.namespace,
             name=workflow_id2.name,
             version=workflow_id2.version,
             title="workflow2",
@@ -377,19 +361,16 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id1 = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="same-name",
             version=1,
         )
         workflow_id2 = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="same-name",
             version=2,
         )
         spec1 = WorkflowSpec(
             instrument=workflow_id1.instrument,
-            namespace=workflow_id1.namespace,
             name=workflow_id1.name,
             version=workflow_id1.version,
             title="V1",
@@ -399,7 +380,6 @@ class TestWorkflowFactory:
         )
         spec2 = WorkflowSpec(
             instrument=workflow_id2.instrument,
-            namespace=workflow_id2.namespace,
             name=workflow_id2.name,
             version=workflow_id2.version,
             title="V2",
@@ -439,12 +419,9 @@ class TestWorkflowFactory:
 
     def test_empty_name(self):
         factory = WorkflowFactory()
-        workflow_id = WorkflowId(
-            instrument="test-instrument", namespace="test-namespace", name="", version=1
-        )
+        workflow_id = WorkflowId(instrument="test-instrument", name="", version=1)
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="",
@@ -472,13 +449,11 @@ class TestWorkflowFactory:
         sources = ["Source1", "SOURCE2"]
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -514,13 +489,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -548,13 +521,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -578,13 +549,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -615,13 +584,11 @@ class TestWorkflowFactory:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -652,13 +619,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -677,13 +642,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -702,13 +665,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -727,13 +688,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -761,13 +720,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -794,7 +751,6 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
@@ -804,7 +760,6 @@ class TestTwoPhaseRegistration:
 
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -826,13 +781,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -854,13 +807,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",
@@ -882,7 +833,6 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
@@ -895,13 +845,11 @@ class TestTwoPhaseRegistration:
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
-            namespace="test-namespace",
             name="test-workflow",
             version=1,
         )
         spec = WorkflowSpec(
             instrument=workflow_id.instrument,
-            namespace=workflow_id.namespace,
             name=workflow_id.name,
             version=workflow_id.version,
             title="test-workflow",

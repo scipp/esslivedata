@@ -76,9 +76,7 @@ def source_names() -> list[str]:
 @pytest.fixture
 def workflow_id() -> WorkflowId:
     """Test workflow ID."""
-    return WorkflowId(
-        instrument='test_instrument', namespace='abc', name="test_workflow", version=1
-    )
+    return WorkflowId(instrument='test_instrument', name="test_workflow", version=1)
 
 
 @pytest.fixture
@@ -86,7 +84,6 @@ def workflow_spec(workflow_id: WorkflowId) -> WorkflowSpec:
     """Test workflow specification."""
     return WorkflowSpec(
         instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
         name=workflow_id.name,
         version=workflow_id.version,
         title="Test Workflow",
@@ -415,9 +412,7 @@ class TestWorkflowController:
         workflow_controller: WorkflowControllerFixture,
     ):
         """Test that get_workflow_config returns None for non-existent workflow."""
-        nonexistent_id = WorkflowId(
-            instrument='test', namespace='test', name='nonexistent', version=1
-        )
+        nonexistent_id = WorkflowId(instrument='test', name='nonexistent', version=1)
 
         # Act
         result = workflow_controller.controller.get_workflow_config(nonexistent_id)

@@ -37,7 +37,6 @@ def workflow_id():
     """Create a test WorkflowId."""
     return WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )
@@ -48,7 +47,6 @@ def workflow_id_2():
     """Create a second test WorkflowId."""
     return WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow_2',
         version=1,
     )
@@ -63,7 +61,6 @@ def workflow_spec(workflow_id):
     """
     return WorkflowSpec(
         instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
         name=workflow_id.name,
         version=workflow_id.version,
         title='Test Workflow',
@@ -81,7 +78,6 @@ def workflow_spec_2(workflow_id_2):
     """Create a second WorkflowSpec with params for testing."""
     return WorkflowSpec(
         instrument=workflow_id_2.instrument,
-        namespace=workflow_id_2.namespace,
         name=workflow_id_2.name,
         version=workflow_id_2.version,
         title='Test Workflow 2',

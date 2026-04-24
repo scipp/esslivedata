@@ -20,7 +20,7 @@ def _make_detector_app() -> LivedataApp:
 def _get_workflow_id() -> workflow_spec.WorkflowId:
     instrument_config = instrument_registry['dummy']
     for wid, spec in instrument_config.workflow_factory.items():
-        if spec.namespace == 'detector_data':
+        if spec.group.name == 'detector_data':
             return wid
     raise ValueError("detector_data workflow not found")
 

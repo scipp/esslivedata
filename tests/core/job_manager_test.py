@@ -69,7 +69,6 @@ def base_workflow_config():
     return WorkflowConfig(
         identifier=WorkflowId(
             instrument="test",
-            namespace="data_reduction",
             name="test_workflow",
             version=1,
         )
@@ -82,7 +81,6 @@ def scheduled_workflow_config():
     return WorkflowConfig(
         identifier=WorkflowId(
             instrument="test",
-            namespace="data_reduction",
             name="scheduled_workflow",
             version=1,
         ),
@@ -98,7 +96,6 @@ def delayed_start_config():
     return WorkflowConfig(
         identifier=WorkflowId(
             instrument="test",
-            namespace="data_reduction",
             name="delayed_workflow",
             version=1,
         ),
@@ -209,7 +206,6 @@ class TestJobManager:
         config1 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="early_workflow",
                 version=1,
             ),
@@ -218,7 +214,6 @@ class TestJobManager:
         config2 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="late_workflow",
                 version=1,
             ),
@@ -418,7 +413,6 @@ class TestJobManager:
         config2 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow2",
                 version=1,
             ),
@@ -514,7 +508,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -551,7 +544,6 @@ class TestJobManager:
         config1 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow1",
                 version=1,
             ),
@@ -560,7 +552,6 @@ class TestJobManager:
         config2 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow2",
                 version=1,
             ),
@@ -569,7 +560,6 @@ class TestJobManager:
         config3 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow3",
                 version=1,
             ),
@@ -629,7 +619,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -666,7 +655,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -706,7 +694,6 @@ class TestJobManager:
         config1 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow1",
                 version=1,
             ),
@@ -715,7 +702,6 @@ class TestJobManager:
         config2 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow2",
                 version=1,
             ),
@@ -724,7 +710,6 @@ class TestJobManager:
         config3 = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="workflow3",
                 version=1,
             ),
@@ -779,7 +764,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -810,16 +794,12 @@ class TestJobManager:
 
         # Test future start
         config_future = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test", namespace="data_reduction", name="future", version=1
-            ),
+            identifier=WorkflowId(instrument="test", name="future", version=1),
             schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
         )
         # Test past start (should activate immediately when data arrives)
         config_past = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test", namespace="data_reduction", name="past", version=1
-            ),
+            identifier=WorkflowId(instrument="test", name="past", version=1),
             schedule=JobSchedule(start_time=Timestamp.from_ns(50)),
         )
 
@@ -863,7 +843,6 @@ class TestJobManager:
         config_valid = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="valid_workflow",
                 version=1,
             ),
@@ -878,7 +857,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -909,7 +887,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -937,7 +914,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -984,7 +960,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -1031,7 +1006,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             ),
@@ -1056,7 +1030,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1100,7 +1073,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1145,7 +1117,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1180,7 +1151,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1250,7 +1220,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1283,7 +1252,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1328,7 +1296,6 @@ class TestJobManager:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="test_workflow",
                 version=1,
             )
@@ -1506,7 +1473,6 @@ class TestJobFactoryRender:
         factory = JobFactory(instrument, service_name='data_reduction')
         workflow_id = WorkflowId(
             instrument='test',
-            namespace='data_reduction',
             name='test_workflow',
             version=1,
         )
@@ -1553,7 +1519,6 @@ class TestJobFactoryRender:
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
-                namespace='data_reduction',
                 name='default_workflow',
                 version=1,
             )
@@ -1596,7 +1561,6 @@ class TestJobFactoryRender:
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
-                namespace='data_reduction',
                 name='no_aux_workflow',
                 version=1,
             )
@@ -1633,7 +1597,6 @@ class TestJobFactoryRender:
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
-                namespace='data_reduction',
                 name='optional_aux_workflow',
                 version=1,
             )
@@ -1682,7 +1645,6 @@ class TestJobFactoryRender:
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
-                namespace='data_reduction',
                 name='source_prefix_workflow',
                 version=1,
             )
@@ -1745,7 +1707,6 @@ class TestJobFactoryRender:
         spec = instrument.workflow_factory[
             WorkflowId(
                 instrument='test',
-                namespace='data_reduction',
                 name='defaulted_aux_workflow',
                 version=1,
             )
@@ -1797,7 +1758,6 @@ def _make_workflow_config(source_name: str) -> WorkflowConfig:
     return WorkflowConfig(
         identifier=WorkflowId(
             instrument="test",
-            namespace="data_reduction",
             name=f"workflow_{source_name}",
             version=1,
         )
@@ -1953,7 +1913,6 @@ class TestPeekPendingStreams:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="wf",
                 version=1,
             ),
@@ -1975,7 +1934,6 @@ class TestPeekPendingStreams:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="wf",
                 version=1,
             ),
@@ -1993,7 +1951,6 @@ class TestPeekPendingStreams:
         config_a = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="wf_a",
                 version=1,
             ),
@@ -2002,7 +1959,6 @@ class TestPeekPendingStreams:
         config_b = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="wf_b",
                 version=1,
             ),
@@ -2027,7 +1983,6 @@ class TestPeekPendingStreams:
         config = WorkflowConfig(
             identifier=WorkflowId(
                 instrument="test",
-                namespace="data_reduction",
                 name="wf",
                 version=1,
             ),
