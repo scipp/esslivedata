@@ -12,29 +12,12 @@ import structlog
 
 from ..config.workflow_spec import ResultKey
 from ..core.message import Message, MessageSink
+from .errors import is_fatal
 
 logger = structlog.get_logger(__name__)
 
 
 T = TypeVar("T")
-
-
-# Codes treated as fatal in addition to producer-flagged fatal errors. These
-# are auth/misconfiguration failures that need operator intervention; raising
-# crashes the service so the problem surfaces, instead of silently dropping
-# results while every produce keeps failing in the background.
-_FATAL_ERROR_CODES = frozenset(
-    {
-        kafka.KafkaError.TOPIC_AUTHORIZATION_FAILED,
-        kafka.KafkaError.CLUSTER_AUTHORIZATION_FAILED,
-        kafka.KafkaError.SASL_AUTHENTICATION_FAILED,
-        kafka.KafkaError.TRANSACTIONAL_ID_AUTHORIZATION_FAILED,
-    }
-)
-
-
-def _is_fatal_error(err: kafka.KafkaError) -> bool:
-    return err.fatal() or err.code() in _FATAL_ERROR_CODES
 
 
 class SerializationError(Exception):
@@ -104,7 +87,7 @@ class KafkaSink(MessageSink[T]):
             if err is None:
                 return
             self._publish_errors += 1
-            if _is_fatal_error(err):
+            if is_fatal(err):
                 self._fatal_error = err
                 logger.error("Fatal delivery error for topic %s: %s", msg.topic(), err)
             else:
@@ -127,7 +110,7 @@ class KafkaSink(MessageSink[T]):
                 self._producer.poll(0)
             except kafka.KafkaException as e:
                 err = e.args[0] if e.args else None
-                if isinstance(err, kafka.KafkaError) and _is_fatal_error(err):
+                if isinstance(err, kafka.KafkaError) and is_fatal(err):
                     raise
                 logger.error("Failed to publish message to %s: %s", serialized.topic, e)
 
@@ -135,7 +118,7 @@ class KafkaSink(MessageSink[T]):
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
             err = e.args[0] if e.args else None
-            if isinstance(err, kafka.KafkaError) and _is_fatal_error(err):
+            if isinstance(err, kafka.KafkaError) and is_fatal(err):
                 raise
             logger.error("Error flushing producer: %s", e)
 

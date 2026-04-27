@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import structlog
-from confluent_kafka import KafkaError, KafkaException
+from confluent_kafka import KafkaException
 
 from ..core.message import MessageSource
+from .errors import is_fatal
 from .message_adapter import KafkaMessage
 
 logger = structlog.get_logger(__name__)
@@ -18,19 +19,6 @@ logger = structlog.get_logger(__name__)
 # Circuit breaker configuration
 DEFAULT_MAX_CONSECUTIVE_ERRORS = 10
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 60.0
-
-# Error codes treated as fatal in addition to librdkafka-flagged fatal errors:
-# misconfiguration that requires operator intervention. Crashing surfaces the
-# problem instead of silently spamming the broker with retries.
-_FATAL_ERROR_CODES = frozenset(
-    {
-        KafkaError.TOPIC_AUTHORIZATION_FAILED,
-        KafkaError.GROUP_AUTHORIZATION_FAILED,
-        KafkaError.CLUSTER_AUTHORIZATION_FAILED,
-        KafkaError.SASL_AUTHENTICATION_FAILED,
-        KafkaError.TRANSACTIONAL_ID_AUTHORIZATION_FAILED,
-    }
-)
 
 
 class KafkaConsumer(Protocol):
@@ -67,7 +55,7 @@ class KafkaMessageSource(MessageSource[KafkaMessage]):
         for m in messages:
             err = m.error()
             if err is not None:
-                if err.fatal() or err.code() in _FATAL_ERROR_CODES:
+                if is_fatal(err):
                     raise KafkaException(err)
                 logger.warning("kafka_consumer_error", error=err)
                 continue
