@@ -19,7 +19,7 @@ from enum import IntEnum
 import holoviews as hv
 import pydantic
 import scipp as sc
-from bokeh.models import CustomJSTickFormatter, LinearAxis
+from bokeh.models import CustomJSHover, CustomJSTickFormatter, HoverTool, LinearAxis
 
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -197,24 +197,97 @@ def _outer_axis_ticks(
     ]
 
 
-def _make_inner_axis_hook(side: str, formatter: CustomJSTickFormatter):
-    """HoloViews hook adding a secondary axis carrying the inner-dim ticks.
+def _hover_part(coord: sc.Variable | None) -> tuple[str, list]:
+    """JS-side ``(template, values)`` for one flat-dim slot in the hover.
 
-    Bokeh stacks each newly added layout closer to the plot frame than the
-    primary axis, so the secondary axis ends up between the plot and the
-    primary outer-group ticks — i.e. inner-close, outer-far, the standard
-    hierarchical convention. Idempotent across re-renders.
+    Hover tooltip rows already carry the dim name as a label, so the
+    formatter emits only the value (with unit) or — when no coord is
+    available — a bare index, avoiding ``blade: blade=...`` doubling.
+    """
+    if coord is None:
+        return '%d', []
+    values = [float(v) for v in coord.values]
+    unit = '' if coord.unit is None else f' {coord.unit}'
+    return f'%s{unit}', values
+
+
+def _build_flat_hover_formatter(
+    outer_coord: sc.Variable | None,
+    inner_coord: sc.Variable | None,
+    inner_size: int,
+) -> CustomJSHover:
+    """Hover formatter dispatching on ``format`` to outer/inner label.
+
+    Used as ``@<flat_field>{outer}`` and ``@<flat_field>{inner}`` so a single
+    formatter instance handles both rows of the decomposition. The flat field
+    value at the cursor is rounded to the cell index, then split into
+    ``outer = idx // inner_size`` and ``inner = idx %% inner_size`` (mirroring
+    the inner-axis tick formatter).
+    """
+    outer_template, outer_values = _hover_part(outer_coord)
+    inner_template, inner_values = _hover_part(inner_coord)
+    return CustomJSHover(
+        args={
+            'outer_template': outer_template,
+            'outer_values': outer_values,
+            'inner_template': inner_template,
+            'inner_values': inner_values,
+            'inner_size': inner_size,
+        },
+        code="""
+        const idx = Math.round(value);
+        if (inner_size <= 0 || idx < 0) return '';
+        let template, values, i;
+        if (format === 'outer') {
+            template = outer_template;
+            values = outer_values;
+            i = Math.floor(idx / inner_size);
+        } else {
+            template = inner_template;
+            values = inner_values;
+            i = ((idx % inner_size) + inner_size) % inner_size;
+        }
+        if (values.length === 0) return template.replace('%d', String(i));
+        if (i >= values.length) return '';
+        const v = values[i];
+        const s = (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6)
+            ? v.toPrecision(4)
+            : v.toExponential(3);
+        return template.replace('%s', s);
+        """,
+    )
+
+
+def _make_flatten_hook(
+    side: str,
+    inner_formatter: CustomJSTickFormatter,
+    hover: HoverTool,
+):
+    """HoloViews hook installing the inner-dim secondary axis and hover tool.
+
+    The secondary axis carries zoom-aware inner-dim ticks; Bokeh stacks newly
+    added layouts closer to the plot frame than the primary, so the inner
+    ticks end up between the plot and the outer group labels (inner-close,
+    outer-far — standard hierarchical convention).
+
+    The default Bokeh ``HoverTool`` added by HoloViews is replaced so the
+    toolbar shows a single hover with the outer/inner decomposition. Both
+    actions are idempotent across re-renders.
     """
 
     def hook(plot, _element):
-        if plot.handles.get('flatten_inner_axis_installed'):
+        if plot.handles.get('flatten_hook_installed'):
             return
         fig = plot.handles['plot']
         fig.add_layout(
-            LinearAxis(formatter=formatter, axis_label=''),
+            LinearAxis(formatter=inner_formatter, axis_label=''),
             side,
         )
-        plot.handles['flatten_inner_axis_installed'] = True
+        fig.toolbar.tools = [
+            t for t in fig.toolbar.tools if not isinstance(t, HoverTool)
+        ]
+        fig.add_tools(hover)
+        plot.handles['flatten_hook_installed'] = True
 
     return hook
 
@@ -315,11 +388,27 @@ class FlattenPlotter(ImagePlotter):
         side = 'below' if self._transpose else 'left'
         ticks_opt = 'xticks' if self._transpose else 'yticks'
         label_opt = 'xlabel' if self._transpose else 'ylabel'
+        # $x/$y refer to the cursor position in data space; @x/@y reference
+        # the Image glyph's anchor (a constant) and would freeze the index at 0.
+        flat_field = '$x' if self._transpose else '$y'
+        kept_field = '$y' if self._transpose else '$x'
+        hover_fmt = _build_flat_hover_formatter(
+            outer_coord, inner_coord, data.sizes[inner]
+        )
+        hover = HoverTool(
+            tooltips=[
+                (keep, kept_field),
+                (outer, f'{flat_field}{{outer}}'),
+                (inner, f'{flat_field}{{inner}}'),
+                ('value', '@image'),
+            ],
+            formatters={flat_field: hover_fmt},
+        )
         # Outer goes on the primary axis (further from plot per Bokeh stacking),
         # inner on the secondary axis added via the hook (closer to plot). The
         # synthetic flat-dim name (e.g. "outer·inner") is suppressed since each
         # tick row carries its own dim name.
         return image.opts(
             **{ticks_opt: outer_ticks, label_opt: ''},
-            hooks=[_make_inner_axis_hook(side, inner_formatter)],
+            hooks=[_make_flatten_hook(side, inner_formatter, hover)],
         )

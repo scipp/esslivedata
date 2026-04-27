@@ -11,7 +11,7 @@ import holoviews as hv
 import pydantic
 import pytest
 import scipp as sc
-from bokeh.models import CustomJSTickFormatter, LinearAxis
+from bokeh.models import CustomJSTickFormatter, HoverTool, LinearAxis
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.flatten_plotter import (
@@ -23,12 +23,24 @@ from ess.livedata.dashboard.flatten_plotter import (
 from ess.livedata.dashboard.plot_params import PlotScale
 
 
+class _FakeToolbar:
+    def __init__(self) -> None:
+        # Mimic the default HoloViews-added HoverTool that the hook should drop.
+        self.tools: list = [HoverTool()]
+
+
 class _FakeFigure:
     def __init__(self) -> None:
         self.layouts: list[tuple[LinearAxis, str]] = []
+        self.toolbar = _FakeToolbar()
+        self.added_tools: list = []
 
     def add_layout(self, axis: LinearAxis, side: str) -> None:
         self.layouts.append((axis, side))
+
+    def add_tools(self, tool) -> None:
+        self.added_tools.append(tool)
+        self.toolbar.tools.append(tool)
 
 
 class _FakePlot:
@@ -344,6 +356,87 @@ class TestFlattenPlotterPlot:
         plotter = FlattenPlotter.from_params(params)
         with pytest.raises(ValueError, match='out of range'):
             plotter.plot(data_abc, data_key)
+
+
+class TestFlattenPlotterHover:
+    """Hover decomposes the flat axis into outer/inner labels."""
+
+    def test_hook_replaces_default_hover_with_custom_one(
+        self, data_abc, data_key
+    ) -> None:
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        fig = _run_inner_axis_hook(img)
+        hovers = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        # Exactly one hover survives — the custom flatten one.
+        assert len(hovers) == 1
+        assert hovers[0] in fig.added_tools
+
+    def test_hover_tooltips_label_keep_outer_inner_and_value(
+        self, data_abc, data_key
+    ) -> None:
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        fig = _run_inner_axis_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        labels = [name for name, _ in hover.tooltips]
+        # Keep dim is 'b'; natural-order outer='a', inner='c'.
+        assert labels == ['b', 'a', 'c', 'value']
+        # Flat axis is y when not transposed; outer/inner both reference it.
+        templates = dict(hover.tooltips)
+        assert templates['b'] == '$x'
+        assert templates['a'] == '$y{outer}'
+        assert templates['c'] == '$y{inner}'
+        assert templates['value'] == '@image'
+        assert '$y' in hover.formatters
+
+    def test_hover_swaps_axes_when_transposed(self, data_abc, data_key) -> None:
+        params = _make_params(('a', 'b', 'c'), keep_dim='b', transpose=True)
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        fig = _run_inner_axis_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        templates = dict(hover.tooltips)
+        # Transposed: kept on y, flat on x.
+        assert templates['b'] == '$y'
+        assert templates['a'] == '$x{outer}'
+        assert templates['c'] == '$x{inner}'
+        assert '$x' in hover.formatters
+
+    def test_hover_formatter_carries_outer_and_inner_coord_values(
+        self, data_abc, data_key
+    ) -> None:
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        fig = _run_inner_axis_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        fmt = hover.formatters['$y']
+        assert fmt.args['inner_size'] == 5
+        assert len(fmt.args['outer_values']) == 3  # a
+        assert len(fmt.args['inner_values']) == 5  # c
+        # No dim-name prefix in templates: tooltip row already shows the name.
+        assert fmt.args['outer_template'] == '%s m'
+        assert fmt.args['inner_template'] == '%s K'
+
+    def test_hover_falls_back_to_index_when_coord_missing(
+        self, data_abc, data_key
+    ) -> None:
+        data = data_abc.copy(deep=False)
+        del data.coords['c']
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data, data_key)
+        fig = _run_inner_axis_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        fmt = hover.formatters['$y']
+        # Inner ('c') has no coord → empty values, bare-index template.
+        assert fmt.args['inner_values'] == []
+        assert fmt.args['inner_template'] == '%d'
+        # Outer ('a') still carries real coord values.
+        assert len(fmt.args['outer_values']) == 3
 
 
 class TestFlattenPlotterCompute:
