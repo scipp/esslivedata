@@ -13,6 +13,7 @@ import pytest
 
 from ess.livedata.config import streams
 from ess.livedata.config.instruments import available_instruments
+from ess.livedata.config.instruments._ess import GENERIC_CBM_MONITORS
 
 
 @pytest.mark.parametrize(
@@ -20,13 +21,20 @@ from ess.livedata.config.instruments import available_instruments
     available_instruments(),
 )
 def test_production_monitors_do_not_use_cbm0(instrument: str) -> None:
-    """All instruments use 1-based cbm source names (cbm1, cbm2, ...)."""
+    """Instruments with bespoke monitor configs use 1-based cbm source names.
+
+    Instruments still using the generic ``cbm0..cbm9`` placeholder are exempt:
+    the wider range is intentional to absorb upstream off-by-one errors until
+    the real configuration is known.
+    """
     stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
-    cbm_source_names = [
+    cbm_source_names = {
         key.source_name
         for key in stream_mapping.monitors
         if key.source_name.startswith('cbm')
-    ]
+    }
+    if cbm_source_names == set(GENERIC_CBM_MONITORS):
+        pytest.skip(f"{instrument} uses the generic cbm[0-9] placeholder")
     assert 'cbm0' not in cbm_source_names, (
         f"Monitor mapping for {instrument} includes cbm0, but this instrument "
         "is expected to use 1-indexed cbm source names (cbm1, cbm2, ...)"

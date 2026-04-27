@@ -12,6 +12,22 @@ from ess.livedata import StreamKind
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
+#: Generic monitor source names ``cbm0..cbm9`` for instruments without specific
+#: monitor information. The range starts at zero to absorb both 0- and 1-based
+#: upstream indexing conventions, since the actual convention has been observed
+#: to vary.
+GENERIC_CBM_MONITORS: tuple[str, ...] = tuple(f'cbm{i}' for i in range(10))
+
+#: Caveat appended to the workflow description when the generic ``cbm`` monitor
+#: placeholder is in use. Pass to ``register_monitor_workflow_specs`` via the
+#: ``extra_description`` argument.
+GENERIC_CBM_DESCRIPTION_NOTE: str = (
+    "This instrument uses a generic placeholder covering cbm0..cbm9. cbm0 most "
+    "likely does not exist on the real instrument, and few instruments have a "
+    "monitor as far as cbm9. The wide range absorbs upstream off-by-one "
+    "indexing until the actual monitor configuration is known."
+)
+
 
 def _make_cbm_monitors(
     instrument: str,

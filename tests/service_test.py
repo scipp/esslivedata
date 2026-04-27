@@ -12,6 +12,9 @@ class FakeProcessor:
     def process(self) -> None:
         self.call_count += 1
 
+    def finalize(self, *, error: str | None = None) -> None:
+        pass
+
 
 def test_create_start_stop_service() -> None:
     processor = FakeProcessor()

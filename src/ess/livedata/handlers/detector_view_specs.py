@@ -13,6 +13,8 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -106,6 +108,57 @@ class DetectorViewParams(pydantic.BaseModel):
                     if self.wavelength_range.enabled
                     else None
                 )
+
+
+@dataclass(frozen=True, slots=True)
+class SpectrumViewSpec:
+    """Per-instrument configuration enabling a spectrum-view output.
+
+    Parameters
+    ----------
+    transform:
+        Callable applied to the cumulative accumulated histogram to produce
+        the spectrum view. Signature is ``(histogram,) -> spectrum_view`` when
+        ``params_model`` is ``None``, else ``(histogram, params) -> spectrum_view``
+        where ``params`` is an instance of ``params_model``.
+    output_dims:
+        Spatial output dimension names, used for the initial empty template of
+        the ``spectrum_view`` field. The transform preserves the spectral axis
+        of the input histogram (time-of-arrival or wavelength depending on mode),
+        so it is not listed here.
+    output_title:
+        Human-readable title for the output field.
+    extra_description:
+        Instrument-specific description appended as a second paragraph to the
+        base description.
+    params_model:
+        Optional pydantic model carrying runtime parameters for the transform.
+        When provided, a ``spectrum_params`` field of this type is injected into
+        the generated ``DetectorViewParams`` subclass and passed to the
+        transform. When ``None`` (default), the transform takes only the
+        histogram and no parameter widget is shown in the UI.
+    params_description:
+        Description for the ``spectrum_params`` field (only used when
+        ``params_model`` is set).
+    """
+
+    transform: Callable[..., sc.DataArray]
+    output_dims: list[str]
+    output_title: str = 'Spectrum View'
+    extra_description: str = ''
+    params_model: type[pydantic.BaseModel] | None = None
+    params_description: str = 'Runtime parameters for the spectrum-view.'
+
+    @property
+    def output_description(self) -> str:
+        base = (
+            'Accumulated histogram reshaped into a per-spatial-group spectrum. '
+            'The last axis is the spectral coordinate of the input histogram '
+            '(time-of-arrival or wavelength, depending on the workflow mode).'
+        )
+        if self.extra_description:
+            return f'{base}\n\n{self.extra_description}'
+        return base
 
 
 def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:
@@ -234,10 +287,18 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     )
 
 
+def _make_spectrum_template(output_dims: list[str]) -> sc.DataArray:
+    # Append a placeholder spectral dim so the template has the right ndim for
+    # plotter selection. The actual dim name is determined at runtime by the transform.
+    dims = [*output_dims, 'spectrum']
+    return sc.DataArray(sc.zeros(dims=dims, shape=[0] * len(dims), unit='counts'))
+
+
 def make_detector_view_outputs(
     output_ndim: int | None = None,
     *,
     roi_support: bool = True,
+    spectrum_view: SpectrumViewSpec | None = None,
 ) -> type[DetectorViewOutputsBase]:
     """
     Create a DetectorViewOutputs subclass with the appropriate configuration.
@@ -252,39 +313,95 @@ def make_detector_view_outputs(
         Whether to include ROI-related outputs. If False, the returned class
         will not include roi_spectra_current, roi_spectra_cumulative,
         roi_rectangle, or roi_polygon fields.
+    spectrum_view:
+        Optional spectrum view configuration. When provided, the returned
+        class includes an additional ``spectrum_view`` field with a template
+        matching ``spectrum_view.output_dims``.
 
     Returns
     -------
     :
         A subclass of DetectorViewOutputsBase with appropriate configuration.
     """
-    base_class = DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+    base_class: type[DetectorViewOutputsBase] = (
+        DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+    )
 
-    if output_ndim is None:
+    if output_ndim is None and spectrum_view is None:
         return base_class
 
-    def make_cumulative_template() -> sc.DataArray:
-        return _make_nd_template(output_ndim)
+    if output_ndim is not None:
 
-    def make_current_template() -> sc.DataArray:
-        return _make_nd_template(output_ndim, with_time_coord=True)
+        def make_cumulative_template() -> sc.DataArray:
+            return _make_nd_template(output_ndim)
 
-    class CustomDetectorViewOutputs(base_class):  # type: ignore[valid-type]
-        cumulative: sc.DataArray = pydantic.Field(
-            title='Image (cumulative)',
-            description='Detector image accumulated since the start of the run.',
-            default_factory=make_cumulative_template,
+        def make_current_template() -> sc.DataArray:
+            return _make_nd_template(output_ndim, with_time_coord=True)
+
+        class _WithNdim(base_class):  # type: ignore[valid-type,misc]
+            cumulative: sc.DataArray = pydantic.Field(
+                title='Image (cumulative)',
+                description='Detector image accumulated since the start of the run.',
+                default_factory=make_cumulative_template,
+            )
+            current: sc.DataArray = pydantic.Field(
+                title='Image (current)',
+                description=(
+                    'Detector image for the latest update interval only. '
+                    'Resets each update interval.'
+                ),
+                default_factory=make_current_template,
+            )
+
+        base_class = _WithNdim
+
+    if spectrum_view is not None:
+        output_dims = list(spectrum_view.output_dims)
+
+        def make_spectrum_template() -> sc.DataArray:
+            return _make_spectrum_template(output_dims)
+
+        title = spectrum_view.output_title
+        description = spectrum_view.output_description
+
+        class _WithSpectrum(base_class):  # type: ignore[valid-type,misc]
+            spectrum_view: sc.DataArray = pydantic.Field(
+                title=title,
+                description=description,
+                default_factory=make_spectrum_template,
+            )
+
+        base_class = _WithSpectrum
+
+    return base_class
+
+
+def make_detector_view_params(
+    spectrum_view: SpectrumViewSpec | None = None,
+) -> type[DetectorViewParams]:
+    """Return a ``DetectorViewParams`` subclass, adding spectrum-specific fields.
+
+    When ``spectrum_view.params_model`` is set, the subclass adds a
+    ``spectrum_params`` field of that model type so the runtime parameters can
+    be exposed in the UI. Workflows without spectrum-view (or whose spectrum
+    transform needs no runtime parameters) keep the base ``DetectorViewParams``
+    unchanged.
+    """
+    if spectrum_view is None or spectrum_view.params_model is None:
+        return DetectorViewParams
+
+    params_model = spectrum_view.params_model
+    title = spectrum_view.output_title
+    description = spectrum_view.params_description
+
+    class DetectorViewWithSpectrumParams(DetectorViewParams):
+        spectrum_params: params_model = pydantic.Field(  # type: ignore[valid-type]
+            title=title,
+            description=description,
+            default_factory=params_model,
         )
-        current: sc.DataArray = pydantic.Field(
-            title='Image (current)',
-            description=(
-                'Detector image for the latest update interval only. '
-                'Resets each update interval.'
-            ),
-            default_factory=make_current_template,
-        )
 
-    return CustomDetectorViewOutputs
+    return DetectorViewWithSpectrumParams
 
 
 class DetectorROIAuxSources(AuxSources):
@@ -360,6 +477,7 @@ def register_detector_view_spec(
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
     aux_sources: AuxSources | None = None,
+    spectrum_view: SpectrumViewSpec | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -383,6 +501,13 @@ def register_detector_view_spec(
         Optional auxiliary source specification. If None (default), uses
         DetectorROIAuxSources for ROI geometry streams. Instruments that need
         both ROI and position streams can subclass DetectorROIAuxSources.
+    spectrum_view:
+        Optional spectrum-view configuration. When provided, the registered
+        params/outputs include the spectrum-specific rebin param and the
+        ``spectrum_view`` output field. The factory is still responsible for
+        wiring the transform into the Sciline workflow (pass ``spectrum_view`` on
+        the Sciline ``GeometricViewConfig`` / ``LogicalViewConfig`` when
+        constructing ``DetectorViewFactory``).
 
     Returns
     -------
@@ -449,6 +574,8 @@ def register_detector_view_spec(
         description=description,
         source_names=source_names,
         aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
-        params=DetectorViewParams,
-        outputs=DetectorViewOutputs,
+        params=make_detector_view_params(spectrum_view=spectrum_view),
+        outputs=make_detector_view_outputs(
+            roi_support=True, spectrum_view=spectrum_view
+        ),
     )

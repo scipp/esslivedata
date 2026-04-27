@@ -36,19 +36,11 @@ def make_reduction_app(instrument: str) -> LivedataApp:
 first_source_name = {
     'dummy': 'panel_0',
     'dream': 'mantle_detector',
-    'bifrost': 'unified_detector',
     'loki': 'loki_detector_0',
 }
 
 
-@pytest.mark.parametrize(
-    "instrument",
-    [
-        pytest.param('bifrost', marks=pytest.mark.slow),
-        'dummy',
-        'dream',
-    ],
-)
+@pytest.mark.parametrize("instrument", ['dummy', 'dream'])
 def test_can_configure_and_stop_workflow_with_detector(
     instrument: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -57,11 +49,10 @@ def test_can_configure_and_stop_workflow_with_detector(
     sink = app.sink
     service = app.service
     workflow_name = {
-        'bifrost': 'spectrum_view',
         'dummy': 'total_counts',
         'dream': 'powder_reduction',
     }[instrument]
-    n_target = {'bifrost': 1, 'dummy': 1, 'dream': 3}[instrument]
+    n_target = {'dummy': 1, 'dream': 3}[instrument]
     check_counts = instrument != 'dream'
     # WorkflowSpec (second arg) unused here since the workflow does not take params.
     workflow_id, _ = _get_workflow_from_registry(instrument, workflow_name)

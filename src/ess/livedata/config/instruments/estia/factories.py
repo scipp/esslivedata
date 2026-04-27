@@ -4,59 +4,26 @@
 ESTIA instrument factory implementations.
 """
 
-from typing import NewType
-
-import scipp as sc
-
 from ess.livedata.config import Instrument
 
 from . import specs
 
-SpectrumView = NewType('SpectrumView', sc.DataArray)
-SpectrumViewTOAEdges = NewType('SpectrumViewTOAEdges', sc.Variable)
-
 
 def setup_factories(instrument: Instrument) -> None:
-    """Initialize ESTIA-specific factories and workflows."""
-    from ess.estia import EstiaWorkflow
-    from ess.reduce.nexus.types import NeXusData, RawDetector, SampleRun
-    from ess.reduce.streaming import EternalAccumulator
-    from scippnexus import NXdetector
+    """Initialize ESTIA-specific factories and workflows.
 
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    The multiblade detector view (with its spectrum output) is wired via
+    ``add_logical_view`` in ``specs.py``. The generic ``cbm`` monitor workflow
+    factory is attached here.
+    """
+    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
 
-    def _make_spectrum_view(
-        data: RawDetector[SampleRun],
-        toa_edges: SpectrumViewTOAEdges,
-    ) -> SpectrumView:
-        """Create spectrum view with over strip, which has constant scattering angle."""
-        edges_ns = toa_edges.to(unit='ns')
-        return SpectrumView(
-            data.bins.concat('strip')
-            .hist(event_time_offset=edges_ns)
-            .assign_coords(event_time_offset=toa_edges)
-        )
-
-    from ess.reduce.nexus.types import Filename
-
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-
-    reduction_workflow = EstiaWorkflow()
-    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('estia')
-    reduction_workflow.insert(_make_spectrum_view)
-
-    @specs.spectrum_view_handle.attach_factory()
-    def _spectrum_view_workflow(
-        params: specs.EstiaSpectrumViewParams,
-    ) -> StreamProcessorWorkflow:
-        wf = reduction_workflow.copy()
-        edges = params.toa_edges.get_edges().rename_dims(
-            time_of_arrival='event_time_offset'
-        )
-        wf[SpectrumViewTOAEdges] = edges
-        return StreamProcessorWorkflow(
-            wf,
-            dynamic_keys={'multiblade_detector': NeXusData[NXdetector, SampleRun]},
-            target_keys={'spectrum_view': SpectrumView},
-            accumulators={SpectrumView: EternalAccumulator},
+    @specs.monitor_handle.attach_factory()
+    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            coordinate_mode='toa',
         )

@@ -43,20 +43,16 @@ def test_stream_mapping_has_all_livedata_topics(instrument: str) -> None:
     """Verify StreamMapping has all livedata topic properties."""
     mapping = streams.get_stream_mapping(instrument=instrument, dev=True)
 
-    # Check all livedata topic properties exist
-    assert hasattr(mapping, 'livedata_commands_topic')
-    assert hasattr(mapping, 'livedata_data_topic')
-    assert hasattr(mapping, 'livedata_roi_topic')
-    assert hasattr(mapping, 'livedata_status_topic')
+    topics = mapping.topics
 
     # Check they return valid topic strings
-    assert mapping.livedata_commands_topic
-    assert mapping.livedata_data_topic
-    assert mapping.livedata_roi_topic
-    assert mapping.livedata_status_topic
+    assert topics.livedata_commands
+    assert topics.livedata_data
+    assert topics.livedata_roi
+    assert topics.livedata_status
 
     # Check instrument name is in the topics
-    assert instrument in mapping.livedata_commands_topic
-    assert instrument in mapping.livedata_data_topic
-    assert instrument in mapping.livedata_roi_topic
-    assert instrument in mapping.livedata_status_topic
+    assert instrument in topics.livedata_commands
+    assert instrument in topics.livedata_data
+    assert instrument in topics.livedata_roi
+    assert instrument in topics.livedata_status

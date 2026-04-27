@@ -48,6 +48,14 @@ class Accumulator(Protocol, Generic[T, U]):
 
     def clear(self) -> None: ...
 
+    def release_buffers(self) -> None:
+        """Release buffers after the downstream consumer is done.
+
+        Default is a no-op. Accumulators that reuse zero-copy buffers across
+        ``get()`` cycles should override this to mark their buffers safe to
+        overwrite.
+        """
+
 
 class PreprocessorFactory(Protocol, Generic[Tin, Tout]):
     """

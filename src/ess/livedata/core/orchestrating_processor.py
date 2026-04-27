@@ -91,8 +91,7 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         ``get()`` cycles so they can safely overwrite their internal buffers.
         """
         for accumulator in self._accumulators.values():
-            if hasattr(accumulator, 'release_buffers'):
-                accumulator.release_buffers()
+            accumulator.release_buffers()
 
     def get_context(self, names: set[str]) -> dict[StreamId, Any]:
         """Read current values from context accumulators for the given stream names.

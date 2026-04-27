@@ -26,15 +26,9 @@ def bifrost_workflow():
     Returns a tuple of (workflow, DetectorRegionCounts) where the workflow
     has the detector_ratemeter function already inserted.
     """
-    (
-        workflow,
-        DetectorRegionCounts,
-        detector_ratemeter,
-        _SpectrumView,
-        _SpectrumViewTimeBins,
-        _SpectrumViewPixelsPerTube,
-        _make_spectrum_view,
-    ) = _create_base_reduction_workflow()
+    workflow, DetectorRegionCounts, detector_ratemeter = (
+        _create_base_reduction_workflow()
+    )
     workflow.insert(detector_ratemeter)
     return workflow, DetectorRegionCounts
 
