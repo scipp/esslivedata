@@ -186,11 +186,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.input.exists():
-        print(f'Input file {args.input} does not exist', file=sys.stderr)  # noqa: T201
+        print(f'Input file {args.input} does not exist', file=sys.stderr)
         return 1
 
     if args.output.exists() and not args.force:
-        print(f'Output file {args.output} already exists', file=sys.stderr)  # noqa: T201
+        print(f'Output file {args.output} already exists', file=sys.stderr)
         return 1
 
     write_minimal_geometry(args.input, args.output, use_pixel_shape=args.use_shape)
