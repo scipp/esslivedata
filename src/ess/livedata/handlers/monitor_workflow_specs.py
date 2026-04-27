@@ -195,6 +195,7 @@ def register_monitor_workflow_specs(
     source_names: list[str],
     params: type[MonitorDataParams] = MonitorDataParams,
     aux_sources: AuxSources | None = None,
+    extra_description: str | None = None,
 ) -> SpecHandle | None:
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
@@ -214,6 +215,10 @@ def register_monitor_workflow_specs(
         Optional auxiliary source specification for position or other dynamic data
         streams. Instruments with movable monitors can provide an AuxSources spec
         that maps logical names to f144 position streams.
+    extra_description
+        Optional text appended to the standard workflow description. Use this to
+        document instrument-specific caveats (e.g. that a generic placeholder is
+        in use until the real monitor configuration is known).
 
     Returns
     -------
@@ -222,13 +227,19 @@ def register_monitor_workflow_specs(
     if not source_names:
         return None
 
+    description = (
+        "Histogrammed and time-integrated beam monitor. The monitor "
+        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins."
+    )
+    if extra_description:
+        description = f"{description}<br><br>{extra_description}"
+
     return instrument.register_spec(
         namespace='monitor_data',
         name='monitor_histogram',
         version=1,
         title="Beam monitor",
-        description="Histogrammed and time-integrated beam monitor. The monitor "
-        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
+        description=description,
         source_names=source_names,
         aux_sources=aux_sources,
         params=params,
