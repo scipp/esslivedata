@@ -128,6 +128,8 @@ class PlotterSpec(pydantic.BaseModel):
     dynamic creation of user interfaces for configuring plots.
     """
 
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
     name: str = pydantic.Field(description="Name of the plot type. Used internally.")
     title: str = pydantic.Field(
         description="Title of the plot type. For display in the UI."
@@ -135,6 +137,17 @@ class PlotterSpec(pydantic.BaseModel):
     description: str = pydantic.Field(description="Description of the plot type.")
     params: type[pydantic.BaseModel] = pydantic.Field(
         description="Pydantic model defining the parameters for the plot."
+    )
+    params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None = (
+        pydantic.Field(
+            default=None,
+            description=(
+                "Optional factory that returns a parameters model specialized for "
+                "the dims of the chosen workflow output. When set, the plot config "
+                "modal calls it with the output template's dim names instead of "
+                "using the static `params` class."
+            ),
+        )
     )
     data_requirements: DataRequirements = pydantic.Field(
         description="Requirements the data to be plotted must fulfill."
@@ -175,6 +188,8 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         factory: PlotterFactory[P],
         spec_requirements: SpecRequirements | None = None,
         category: PlotterCategory = PlotterCategory.DATA,
+        params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]]
+        | None = None,
     ) -> None:
         # Try to get the type hint of the 'params' argument if it exists
         # Use get_type_hints to resolve forward references, in case we used
@@ -185,6 +200,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             title=title,
             description=description,
             params=type_hints['params'],
+            params_factory=params_factory,
             data_requirements=data_requirements,
             spec_requirements=spec_requirements or SpecRequirements(),
             category=category,
@@ -301,6 +317,7 @@ def _register_all_plotters() -> None:
         CorrelationHistogram2dPlotter,
     )
     from .extractors import FullHistoryExtractor
+    from .flatten_plotter import FlattenPlotter, make_flatten_params
     from .plots import (
         BarsPlotter,
         ImagePlotter,
@@ -382,6 +399,24 @@ def _register_all_plotters() -> None:
             custom_validators=[_all_coords_evenly_spaced],
         ),
         factory=SlicerPlotter.from_params,
+    )
+
+    plotter_registry.register_plotter(
+        name='flatten',
+        title='3D Flatten',
+        description=(
+            'Flatten 3D data to a 2D image with a static (config-time) choice '
+            'of which dim stays as one image axis. The other two dims are '
+            'flattened together; tick labels on the flattened axis are '
+            'derived from the input coords (zoom-aware).'
+        ),
+        data_requirements=DataRequirements(
+            min_dims=3,
+            max_dims=3,
+            multiple_datasets=False,
+        ),
+        factory=FlattenPlotter.from_params,
+        params_factory=make_flatten_params,
     )
 
     plotter_registry.register_plotter(
