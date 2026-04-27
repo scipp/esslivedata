@@ -232,7 +232,7 @@ def register_monitor_workflow_specs(
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins."
     )
     if extra_description:
-        description = f"{description} {extra_description}"
+        description = f"{description}\n\n{extra_description}"
 
     return instrument.register_spec(
         namespace='monitor_data',
