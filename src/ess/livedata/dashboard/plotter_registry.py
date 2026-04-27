@@ -407,8 +407,8 @@ def _register_all_plotters() -> None:
         description=(
             'Flatten 3D data to a 2D image with a static (config-time) choice '
             'of which dim stays as one image axis. The other two dims are '
-            'flattened together; tick labels on the flattened axis are '
-            'derived from the input coords (zoom-aware).'
+            'flattened together; hovering decomposes the synthetic axis back '
+            'into outer/inner labels with their coord values.'
         ),
         data_requirements=DataRequirements(
             min_dims=3,

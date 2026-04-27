@@ -173,11 +173,7 @@ def _build_flat_hover_formatter(
         }
         if (values.length === 0) return template.replace('%d', String(i));
         if (i >= values.length) return '';
-        const v = values[i];
-        const s = (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6)
-            ? v.toPrecision(4)
-            : v.toExponential(3);
-        return template.replace('%s', s);
+        return template.replace('%s', String(values[i]));
         """,
     )
 
