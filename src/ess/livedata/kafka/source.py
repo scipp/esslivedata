@@ -89,7 +89,7 @@ class ConsumerHealthStatus:
     failure_reason: str | None = None
 
 
-class BackgroundMessageSource(MessageSource[KafkaMessage]):
+class BackgroundMessageSource(KafkaMessageSource):
     """
     Message source that consumes messages in a background thread.
 
@@ -128,9 +128,7 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS,
         health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     ):
-        self._consumer = consumer
-        self._num_messages = num_messages
-        self._timeout = timeout
+        super().__init__(consumer=consumer, num_messages=num_messages, timeout=timeout)
         self._queue: queue.Queue[list[KafkaMessage]] = queue.Queue(
             maxsize=max_queue_size
         )
@@ -204,19 +202,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         try:
             while not self._stop_event.is_set():
                 try:
-                    messages = self._consumer.consume(self._num_messages, self._timeout)
-
-                    # Filter out error messages from the consumer
-                    data_messages = []
-                    for m in messages:
-                        err = m.error()
-                        if err is not None:
-                            if err.fatal() or err.code() in _FATAL_ERROR_CODES:
-                                raise KafkaException(err)
-                            logger.warning("kafka_consumer_error", error=err)
-                            continue
-                        data_messages.append(m)
-                    messages = data_messages
+                    # Foreground consume + error filter; the public get_messages
+                    # override below dispatches from the queue instead.
+                    messages = super().get_messages()
 
                     # Reset consecutive errors on successful consume
                     self._consecutive_errors = 0
