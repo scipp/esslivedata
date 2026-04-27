@@ -4,6 +4,7 @@ import time
 from queue import Queue
 
 import pytest
+from confluent_kafka import KafkaError, KafkaException
 
 from ess.livedata.kafka.message_adapter import FakeKafkaMessage
 from ess.livedata.kafka.source import (
@@ -87,6 +88,43 @@ def test_limit_number_of_consumed_messages() -> None:
     messages2 = source.get_messages()
     # The FakeKafkaConsumer returns the same messages every time
     assert messages1 == messages2
+
+
+def test_kafka_message_source_filters_nonfatal_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer = ControllableKafkaConsumer()
+    consumer.add_messages(
+        [
+            FakeErrorMessage(FakeKafkaError(is_fatal=False)),
+            FakeKafkaMessage(value=b'good', topic="topic1"),
+        ]
+    )
+    source = KafkaMessageSource(consumer=consumer, num_messages=10)
+
+    messages = source.get_messages()
+
+    assert len(messages) == 1
+    assert messages[0].value() == b'good'
+    assert "kafka_consumer_error" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        KafkaError.TOPIC_AUTHORIZATION_FAILED,
+        KafkaError.GROUP_AUTHORIZATION_FAILED,
+        KafkaError.CLUSTER_AUTHORIZATION_FAILED,
+        KafkaError.SASL_AUTHENTICATION_FAILED,
+    ],
+)
+def test_kafka_message_source_raises_on_auth_error(code: int) -> None:
+    consumer = ControllableKafkaConsumer()
+    consumer.add_messages([FakeErrorMessage(FakeKafkaError(code=code))])
+    source = KafkaMessageSource(consumer=consumer, num_messages=10)
+
+    with pytest.raises(KafkaException):
+        source.get_messages()
 
 
 class TestBackgroundMessageSource:
@@ -602,16 +640,47 @@ class TestBackgroundMessageSource:
             assert not source.is_healthy()
             assert source.get_health_status().failure_reason is not None
 
+    def test_auth_error_messages_stop_consume_loop(self) -> None:
+        consumer = ControllableKafkaConsumer()
+        consumer.add_messages(
+            [
+                FakeErrorMessage(
+                    FakeKafkaError(code=KafkaError.TOPIC_AUTHORIZATION_FAILED)
+                )
+            ]
+        )
+
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=10
+        ) as source:
+            for _ in range(50):
+                if not source.get_health_status().thread_alive:
+                    break
+                time.sleep(0.05)
+
+            assert not source.is_healthy()
+            assert source.get_health_status().failure_reason is not None
+
 
 class FakeKafkaError:
     """Fake KafkaError for testing error message filtering."""
 
-    def __init__(self, *, is_fatal: bool = False, message: str = "test error"):
+    def __init__(
+        self,
+        *,
+        is_fatal: bool = False,
+        code: int = 0,
+        message: str = "test error",
+    ):
         self._fatal = is_fatal
+        self._code = code
         self._message = message
 
     def fatal(self) -> bool:
         return self._fatal
+
+    def code(self) -> int:
+        return self._code
 
     def __str__(self) -> str:
         return self._message
