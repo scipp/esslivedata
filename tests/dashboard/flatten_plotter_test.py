@@ -11,7 +11,7 @@ import holoviews as hv
 import pydantic
 import pytest
 import scipp as sc
-from bokeh.models import CustomJSTickFormatter, HoverTool, LinearAxis
+from bokeh.models import HoverTool
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.flatten_plotter import (
@@ -31,12 +31,8 @@ class _FakeToolbar:
 
 class _FakeFigure:
     def __init__(self) -> None:
-        self.layouts: list[tuple[LinearAxis, str]] = []
         self.toolbar = _FakeToolbar()
         self.added_tools: list = []
-
-    def add_layout(self, axis: LinearAxis, side: str) -> None:
-        self.layouts.append((axis, side))
 
     def add_tools(self, tool) -> None:
         self.added_tools.append(tool)
@@ -48,18 +44,12 @@ class _FakePlot:
         self.handles: dict = {'plot': _FakeFigure()}
 
 
-def _run_inner_axis_hook(img: hv.Image) -> _FakeFigure:
-    """Invoke the secondary-axis hook against a fake bokeh figure and return it."""
+def _run_hook(img: hv.Image) -> _FakeFigure:
+    """Invoke the plotter's hook against a fake bokeh figure and return it."""
     [hook] = img.opts.get('plot').kwargs['hooks']
     plot = _FakePlot()
     hook(plot, None)
     return plot.handles['plot']
-
-
-def _outer_ticks_opt(img: hv.Image, transpose: bool) -> list[tuple[float, str]]:
-    """Outer-axis ticks set on the primary (HoloViews xticks/yticks opt)."""
-    key = 'xticks' if transpose else 'yticks'
-    return img.opts.get('plot').kwargs[key]
 
 
 hv.extension('bokeh')
@@ -209,126 +199,6 @@ class TestFlattenPlotterPlot:
         b_dim = next(d for d in img.kdims if d.name == 'b')
         assert b_dim.unit == 's'
 
-    def test_outer_ticks_at_group_centres_on_primary_axis(
-        self, data_abc, data_key
-    ) -> None:
-        # outer='a' size 3, inner='c' size 5 → centres at i*5 + 2 = 2, 7, 12.
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        ticks = _outer_ticks_opt(img, transpose=False)
-        assert [pos for pos, _ in ticks] == [2.0, 7.0, 12.0]
-        assert all(label.startswith('a=') for _, label in ticks)
-
-    def test_inner_axis_hook_installs_secondary_with_inner_formatter(
-        self, data_abc, data_key
-    ) -> None:
-        # keep_dim='b' → inner='c' size 5 → inner_size=5; secondary axis must
-        # carry the zoom-aware inner formatter for the y axis (side='left').
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
-        [(axis, side)] = fig.layouts
-        assert side == 'left'
-        assert isinstance(axis, LinearAxis)
-        assert isinstance(axis.formatter, CustomJSTickFormatter)
-        assert axis.formatter.args['inner_size'] == 5
-        assert len(axis.formatter.args['values']) == 5
-        # No axis_label on the secondary — it would float between the rows.
-        assert axis.axis_label == ''
-
-    def test_primary_axis_label_is_cleared(self, data_abc, data_key) -> None:
-        # The synthetic flat-dim name (e.g. "a·c") is suppressed since each
-        # tick row carries its own dim name.
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        assert img.opts.get('plot').kwargs['ylabel'] == ''
-
-    def test_inner_axis_hook_is_idempotent(self, data_abc, data_key) -> None:
-        # HoloViews may invoke hooks on every re-render; the secondary axis
-        # must not accumulate.
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        [hook] = img.opts.get('plot').kwargs['hooks']
-        plot = _FakePlot()
-        hook(plot, None)
-        hook(plot, None)
-        assert len(plot.handles['plot'].layouts) == 1
-
-    def test_transposed_uses_x_axis_and_below_side(self, data_abc, data_key) -> None:
-        params = _make_params(('a', 'b', 'c'), keep_dim='b', transpose=True)
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        # Outer ticks on the primary x axis.
-        assert _outer_ticks_opt(img, transpose=True)
-        assert img.opts.get('plot').kwargs['xlabel'] == ''
-        # Secondary axis attached to 'below'.
-        fig = _run_inner_axis_hook(img)
-        [(_axis, side)] = fig.layouts
-        assert side == 'below'
-
-    def test_flatten_transposed_changes_inner_size(self, data_abc, data_key) -> None:
-        # outer='c' (size 5), inner='a' (size 3) → inner_size=3
-        params = _make_params(('a', 'b', 'c'), keep_dim='b', flatten_transposed=True)
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
-        [(axis, _side)] = fig.layouts
-        assert axis.formatter.args['inner_size'] == 3
-
-    def test_missing_inner_coord_falls_back_to_index_template(
-        self, data_abc, data_key
-    ) -> None:
-        # Drop coord on the inner dim ('c' under natural order with keep='b').
-        data = data_abc.copy(deep=False)
-        del data.coords['c']
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        fig = _run_inner_axis_hook(img)
-        [(axis, _side)] = fig.layouts
-        # Inner formatter falls back to "c[%d]".
-        assert axis.formatter.args['values'] == []
-        assert '%d' in axis.formatter.args['template']
-        # Outer ('a') still has its real-coord labels on the primary axis.
-        ticks = _outer_ticks_opt(img, transpose=False)
-        assert all(label.startswith('a=') for _, label in ticks)
-
-    def test_missing_outer_coord_falls_back_to_index_label(
-        self, data_abc, data_key
-    ) -> None:
-        # Drop coord on the outer dim ('a' under natural order with keep='b').
-        data = data_abc.copy(deep=False)
-        del data.coords['a']
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        ticks = _outer_ticks_opt(img, transpose=False)
-        assert {label for _, label in ticks} == {f'a[{i}]' for i in range(3)}
-
-    def test_bin_edge_coord_uses_midpoints(self, data_key) -> None:
-        # 'a' (the outer under natural order with keep='b') has bin edges
-        # (size 4 for dim size 3) → 3 outer-axis ticks for the 3 midpoints.
-        data = sc.DataArray(
-            sc.arange('z', 0, 60, dtype='float64').fold(
-                dim='z', sizes={'a': 3, 'b': 4, 'c': 5}
-            ),
-            coords={
-                'a': sc.linspace('a', 0.0, 1.0, num=4, unit='m'),
-                'b': sc.linspace('b', 0.0, 1.0, num=4, unit='s'),
-                'c': sc.linspace('c', 0.0, 1.0, num=5, unit='K'),
-            },
-        )
-        data.data.unit = 'counts'
-        params = _make_params(('a', 'b', 'c'), keep_dim='b')
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        ticks = _outer_ticks_opt(img, transpose=False)
-        assert len(ticks) == 3
-
     def test_raises_for_non_3d_input(self, data_key) -> None:
         data = sc.DataArray(sc.zeros(dims=['x', 'y'], shape=[2, 2]))
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
@@ -367,7 +237,7 @@ class TestFlattenPlotterHover:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
+        fig = _run_hook(img)
         hovers = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         # Exactly one hover survives — the custom flatten one.
         assert len(hovers) == 1
@@ -379,7 +249,7 @@ class TestFlattenPlotterHover:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
+        fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         labels = [name for name, _ in hover.tooltips]
         # Keep dim is 'b'; natural-order outer='a', inner='c'.
@@ -396,7 +266,7 @@ class TestFlattenPlotterHover:
         params = _make_params(('a', 'b', 'c'), keep_dim='b', transpose=True)
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
+        fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         templates = dict(hover.tooltips)
         # Transposed: kept on y, flat on x.
@@ -411,7 +281,7 @@ class TestFlattenPlotterHover:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abc, data_key)
-        fig = _run_inner_axis_hook(img)
+        fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         fmt = hover.formatters['$y']
         assert fmt.args['inner_size'] == 5
@@ -429,7 +299,7 @@ class TestFlattenPlotterHover:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data, data_key)
-        fig = _run_inner_axis_hook(img)
+        fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         fmt = hover.formatters['$y']
         # Inner ('c') has no coord → empty values, bare-index template.
@@ -437,6 +307,29 @@ class TestFlattenPlotterHover:
         assert fmt.args['inner_template'] == '%d'
         # Outer ('a') still carries real coord values.
         assert len(fmt.args['outer_values']) == 3
+
+    def test_hook_is_idempotent(self, data_abc, data_key) -> None:
+        # HoloViews may invoke hooks on every re-render; the hover must not
+        # be installed multiple times.
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        [hook] = img.opts.get('plot').kwargs['hooks']
+        plot = _FakePlot()
+        hook(plot, None)
+        hook(plot, None)
+        fig = plot.handles['plot']
+        assert len(fig.added_tools) == 1
+
+    def test_flat_axis_label_is_not_suppressed(self, data_abc, data_key) -> None:
+        # The synthetic flat-dim name (e.g. "a·c") flows through as the default
+        # HoloViews axis label — no xlabel/ylabel opt overriding it.
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        plot_kwargs = img.opts.get('plot').kwargs
+        assert 'xlabel' not in plot_kwargs
+        assert 'ylabel' not in plot_kwargs
 
 
 class TestFlattenPlotterCompute:
