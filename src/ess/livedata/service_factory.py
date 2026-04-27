@@ -15,7 +15,13 @@ from .config.config_loader import load_config
 from .core import MessageSink, Processor
 from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
+from .core.message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatcher,
+    SimpleMessageBatcher,
+)
 from .core.orchestrating_processor import OrchestratingProcessor
+from .core.rate_aware_batcher import RateAwareMessageBatcher
 from .core.service import Service
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
@@ -38,6 +44,12 @@ Tin = TypeVar("Tin")
 Tout = TypeVar("Tout")
 
 
+_INNER_BATCHER_FACTORIES: dict[str, Callable[[float], MessageBatcher]] = {
+    'simple': SimpleMessageBatcher,
+    'rate-aware': RateAwareMessageBatcher,
+}
+
+
 class DataServiceBuilder(Generic[Traw, Tin, Tout]):
     def __init__(
         self,
@@ -51,6 +63,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         processor_cls: type[Processor] = OrchestratingProcessor,
         job_threads: int = 5,
         stream_counter: StreamCounter | None = None,
+        message_batcher: MessageBatcher | None = None,
     ) -> None:
         """
         Parameters
@@ -73,6 +86,11 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         job_threads:
             Number of threads for parallel job execution. When > 1, job
             accumulation and finalization are run in a thread pool.
+        message_batcher:
+            Message batcher for the processor. If ``None``, the processor's
+            default is used.  Services that require a specific batcher should
+            set this explicitly; otherwise ``DataServiceRunner`` will assign
+            one based on its CLI argument.
         """
         self._name = f'{instrument}_{name}'
         self._log_level = log_level
@@ -84,6 +102,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._processor_cls = processor_cls
         self._job_threads = job_threads
         self._stream_counter = stream_counter
+        self._message_batcher = message_batcher
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -100,6 +119,14 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
     @job_threads.setter
     def job_threads(self, value: int) -> None:
         self._job_threads = value
+
+    @property
+    def message_batcher(self) -> MessageBatcher | None:
+        return self._message_batcher
+
+    @message_batcher.setter
+    def message_batcher(self, value: MessageBatcher) -> None:
+        self._message_batcher = value
 
     def from_consumer_config(
         self,
@@ -186,6 +213,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             preprocessor_factory=self._preprocessor_factory,
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
+            message_batcher=self._message_batcher,
         )
         sink.publish_messages(self._startup_messages)
         return Service(
@@ -223,6 +251,14 @@ class DataServiceRunner:
             choices=['kafka', 'png'],
             default='kafka',
             help='Select sink type: kafka or png',
+        )
+        self._parser.add_argument(
+            '--batcher',
+            choices=list(_INNER_BATCHER_FACTORIES),
+            default='simple',
+            help='Inner batcher wrapped by AdaptiveMessageBatcher: "simple" uses'
+            ' SimpleMessageBatcher (pre-existing default); "rate-aware" uses'
+            ' RateAwareMessageBatcher (per-stream pulse-slot completion).',
         )
 
     @property
@@ -263,10 +299,24 @@ class DataServiceRunner:
 
         sink_type = args.pop('sink_type')
         job_threads = args.pop('job_threads')
+        batcher_name = args.pop('batcher')
         builder = self._make_builder(**args)
         builder.job_threads = job_threads
         if job_threads > 1:
             logger.info("job_threads", threads=job_threads)
+
+        if builder.message_batcher is None:
+            inner_factory = _INNER_BATCHER_FACTORIES[batcher_name]
+            builder.message_batcher = AdaptiveMessageBatcher(
+                inner_factory=inner_factory
+            )
+            logger.info("message_batcher", inner=batcher_name)
+        else:
+            logger.info(
+                "message_batcher",
+                inner=type(builder.message_batcher).__name__,
+                overridden_by_builder=True,
+            )
 
         if sink_type == 'kafka':
             kafka_sink = KafkaSink(
