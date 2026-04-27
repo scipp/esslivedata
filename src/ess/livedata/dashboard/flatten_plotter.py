@@ -3,19 +3,23 @@
 """Plotter wrapping ImagePlotter with static (config-time) flattening of 3D data.
 
 The user picks which input dim stays as one image axis; the other two are
-flattened together into the second image axis. Tick labels on the flattened
-axis are computed dynamically (zoom-aware) from the input coords via a Bokeh
-``CustomJSTickFormatter``.
+flattened together into the second image axis. The flattened axis carries two
+stacked tick rows in the standard hierarchical convention: the inner-dim
+ticks (zoom-aware via a Bokeh ``CustomJSTickFormatter``) sit closest to the
+plot, and the outer-dim group labels at fixed group centres sit one row
+further out. Bokeh's layout stacks newly added axes closer to the plot frame
+than the primary, so the outer (fixed) ticks go on the primary axis and the
+inner (zoom-aware) ticks on a secondary axis added via a hook.
 """
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from enum import IntEnum
 
 import holoviews as hv
 import pydantic
 import scipp as sc
-from bokeh.models import CustomJSTickFormatter
+from bokeh.models import CustomJSTickFormatter, LinearAxis
 
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -26,17 +30,18 @@ from .plots import ImagePlotter
 class FlattenAxisConfig(pydantic.BaseModel):
     """Static-flatten axis assignment.
 
-    The placeholder ``keep_dim: str`` is narrowed by ``make_flatten_params``
-    to ``Literal[*dims]`` so the dashboard renders a dropdown of actual dim
-    names. The other two dims are flattened in their natural input order
-    (``flatten_transposed`` swaps that order).
+    ``keep_dim`` is the *position* (0-based index) of the input dim that stays
+    as one image axis. ``make_flatten_params`` narrows the field to an
+    ``IntEnum`` whose member names are the actual dim names so the dashboard
+    renders a dropdown of dim names while the saved value is just an integer
+    — invariant under per-instrument dim renames.
     """
 
-    keep_dim: str = pydantic.Field(
-        default='',
+    keep_dim: int = pydantic.Field(
+        default=0,
         title='Keep dim',
-        description='Input dim that stays as one image axis. The other two dims '
-        'are flattened together into the second axis.',
+        description='Input dim (by position) that stays as one image axis. '
+        'The other two dims are flattened together into the second axis.',
     )
     flatten_transposed: bool = pydantic.Field(
         default=False,
@@ -63,36 +68,36 @@ class FlattenParams(PlotParams2d):
 
 
 def make_flatten_params(dims: tuple[str, ...]) -> type[FlattenParams]:
-    """Create a FlattenParams subclass narrowed to the given input dims.
+    """Create a FlattenParams subclass with ``keep_dim`` narrowed to ``dims``.
 
     Parameters
     ----------
     dims:
         Dim names of the workflow output template. When exactly three are
-        provided, the returned model narrows ``keep_dim`` to
-        ``Literal[*dims]`` so the UI renders a dropdown of the actual dim
-        names. For other arities the unmodified base ``FlattenParams`` is
-        returned (the plotter rejects mismatches at plot time).
+        provided, ``keep_dim`` is narrowed to an ``IntEnum`` mapping each
+        dim name to its position so the UI dropdown shows dim names while
+        the stored value is the integer position. For other arities the
+        unmodified base ``FlattenParams`` is returned (the plotter rejects
+        mismatches at plot time).
 
     Returns
     -------
     :
         A ``FlattenParams`` subclass.
+
+    Notes
+    -----
+    Dim names must be valid Python identifiers since they become ``IntEnum``
+    member names. All ESS dim names in this codebase satisfy that.
     """
     if len(dims) != 3:
         return FlattenParams
 
-    DimLit = Literal[*dims]  # type: ignore[valid-type]
+    KeepDim = IntEnum('KeepDim', [(d, i) for i, d in enumerate(dims)])
 
     class _AxisConfig(FlattenAxisConfig):
-        # Captured here so the plotter can fall back to positional binding
-        # when the runtime data dim names differ from the template (e.g. the
-        # detector_view abstraction declares dim_0/dim_1/... and per-instrument
-        # transforms rename to tube/pixel/... preserving order).
-        _template_dims: ClassVar[tuple[str, ...]] = dims
-
-        keep_dim: DimLit = pydantic.Field(  # type: ignore[valid-type]
-            default=dims[0],
+        keep_dim: KeepDim = pydantic.Field(  # type: ignore[valid-type]
+            default=KeepDim(0),
             title='Keep dim',
             description='Input dim that stays as one image axis. The other '
             'two dims are flattened together into the second axis.',
@@ -130,52 +135,88 @@ def _format_part(name: str, coord: sc.Variable | None) -> tuple[str, list]:
     return f'{name}=%s{unit}', values
 
 
-def _build_flat_axis_formatter(
-    outer_name: str,
-    inner_name: str,
-    outer_coord: sc.Variable | None,
-    inner_coord: sc.Variable | None,
-    inner_size: int,
-) -> CustomJSTickFormatter:
-    """Bokeh formatter mapping a flattened-axis position to a multi-index label.
+def _format_value_static(v: float) -> str:
+    """Mirror the JS formatter's per-value formatting for the outer-axis labels."""
+    if 1e-3 <= abs(v) < 1e6:
+        return f'{v:.4g}'
+    return f'{v:.3e}'
 
-    ``Math.round(tick)`` is unraveled into ``(o_idx, i_idx)`` against
-    ``inner_size`` so labels remain accurate at any zoom level. When a coord is
-    missing for one of the input dims, the label falls back to ``name[idx]``
-    for that part.
+
+def _label_part(name: str, idx: int, coord: sc.Variable | None) -> str:
+    """Static-side label for one dim slot, mirroring the JS formatter output."""
+    if coord is None:
+        return f'{name}[{idx}]'
+    unit = '' if coord.unit is None else f' {coord.unit}'
+    return f'{name}={_format_value_static(float(coord.values[idx]))}{unit}'
+
+
+def _build_inner_axis_formatter(
+    name: str, coord: sc.Variable | None, inner_size: int
+) -> CustomJSTickFormatter:
+    """Bokeh formatter showing only the inner-dim value at each tick.
+
+    ``Math.round(tick) % inner_size`` selects the inner index, so labels stay
+    accurate at any zoom level. Falls back to ``name[idx]`` when no coord.
     """
-    outer_template, outer_values = _format_part(outer_name, outer_coord)
-    inner_template, inner_values = _format_part(inner_name, inner_coord)
+    template, values = _format_part(name, coord)
     return CustomJSTickFormatter(
-        args={
-            'outer_template': outer_template,
-            'inner_template': inner_template,
-            'outer_values': outer_values,
-            'inner_values': inner_values,
-            'inner_size': inner_size,
-        },
+        args={'template': template, 'values': values, 'inner_size': inner_size},
         code="""
         const idx = Math.round(tick);
-        const total = Math.max(1, inner_size);
-        if (idx < 0) return '';
-        const o_idx = Math.floor(idx / total);
-        const i_idx = idx - o_idx * total;
-        function fmt(template, values, fallback_idx) {
-            if (values.length === 0) {
-                return template.replace('%d', String(fallback_idx));
-            }
-            if (fallback_idx < 0 || fallback_idx >= values.length) return '';
-            const v = values[fallback_idx];
-            const s = (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6)
-                ? v.toPrecision(4)
-                : v.toExponential(3);
-            return template.replace('%s', s);
+        if (inner_size <= 0 || idx < 0) return '';
+        const i_idx = ((idx % inner_size) + inner_size) % inner_size;
+        if (values.length === 0) {
+            return template.replace('%d', String(i_idx));
         }
-        const o = fmt(outer_template, outer_values, o_idx);
-        const i = fmt(inner_template, inner_values, i_idx);
-        return o + ', ' + i;
+        if (i_idx >= values.length) return '';
+        const v = values[i_idx];
+        const s = (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6)
+            ? v.toPrecision(4)
+            : v.toExponential(3);
+        return template.replace('%s', s);
         """,
     )
+
+
+def _outer_axis_ticks(
+    name: str, coord: sc.Variable | None, outer_size: int, inner_size: int
+) -> list[tuple[float, str]]:
+    """``(position, label)`` pairs for the outer-dim group axis.
+
+    Each outer index ``i`` gets one tick at the centre of its group on the
+    flattened axis (``i*inner_size + (inner_size-1)/2``), with a static label.
+    Returned as a list so it can be passed straight to HoloViews'
+    ``xticks``/``yticks`` opt.
+    """
+    return [
+        (
+            i * inner_size + (inner_size - 1) / 2.0,
+            _label_part(name, i, coord),
+        )
+        for i in range(outer_size)
+    ]
+
+
+def _make_inner_axis_hook(side: str, formatter: CustomJSTickFormatter):
+    """HoloViews hook adding a secondary axis carrying the inner-dim ticks.
+
+    Bokeh stacks each newly added layout closer to the plot frame than the
+    primary axis, so the secondary axis ends up between the plot and the
+    primary outer-group ticks — i.e. inner-close, outer-far, the standard
+    hierarchical convention. Idempotent across re-renders.
+    """
+
+    def hook(plot, _element):
+        if plot.handles.get('flatten_inner_axis_installed'):
+            return
+        fig = plot.handles['plot']
+        fig.add_layout(
+            LinearAxis(formatter=formatter, axis_label=''),
+            side,
+        )
+        plot.handles['flatten_inner_axis_installed'] = True
+
+    return hook
 
 
 class FlattenPlotter(ImagePlotter):
@@ -189,22 +230,19 @@ class FlattenPlotter(ImagePlotter):
     def __init__(
         self,
         *,
-        keep_dim: str,
+        keep_dim: int,
         flatten_transposed: bool,
         transpose: bool,
-        template_dims: tuple[str, ...] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self._keep_dim = keep_dim
+        self._keep_dim = int(keep_dim)
         self._flatten_transposed = flatten_transposed
         self._transpose = transpose
-        self._template_dims = template_dims
 
     @classmethod
     def from_params(cls, params: FlattenParams) -> FlattenPlotter:
         rate = getattr(params, 'rate', None)
-        template_dims = getattr(type(params.flatten), '_template_dims', None)
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
@@ -215,40 +253,22 @@ class FlattenPlotter(ImagePlotter):
             keep_dim=params.flatten.keep_dim,
             flatten_transposed=params.flatten.flatten_transposed,
             transpose=params.flatten.transpose,
-            template_dims=template_dims,
-        )
-
-    def _resolve_keep_dim(self, data: sc.DataArray) -> str:
-        """Map the configured ``keep_dim`` to an actual data dim.
-
-        Falls back to positional binding when the configured name doesn't
-        match data.dims directly: this handles the common case where a shared
-        template declares generic dims (``dim_0``, ``dim_1``, …) that are
-        renamed by per-instrument transforms while preserving order.
-        """
-        configured = self._keep_dim
-        if configured in data.dims:
-            return configured
-        if (
-            self._template_dims is not None
-            and configured in self._template_dims
-            and len(self._template_dims) == data.ndim
-        ):
-            return data.dims[self._template_dims.index(configured)]
-        raise ValueError(
-            f"Configured keep_dim {configured!r} matches neither the data "
-            f"dims {list(data.dims)} nor the template dims {self._template_dims}."
         )
 
     def _resolve_axes(self, data: sc.DataArray) -> tuple[str, str, str]:
         """Return (keep, outer, inner) actual data dim names.
 
-        The two non-kept dims are taken in their natural input order to be
-        (outer, inner); ``flatten_transposed`` swaps them.
+        ``keep_dim`` is a 0-based position into ``data.dims``. The two non-kept
+        dims are taken in their natural input order as (outer, inner);
+        ``flatten_transposed`` swaps them.
         """
         if data.ndim != 3:
             raise ValueError(f"FlattenPlotter requires 3D input, got {data.ndim}D")
-        keep = self._resolve_keep_dim(data)
+        if not 0 <= self._keep_dim < data.ndim:
+            raise ValueError(
+                f"keep_dim={self._keep_dim} out of range for {data.ndim}D data"
+            )
+        keep = data.dims[self._keep_dim]
         others = [d for d in data.dims if d != keep]
         outer, inner = others if not self._flatten_transposed else others[::-1]
         return keep, outer, inner
@@ -282,13 +302,24 @@ class FlattenPlotter(ImagePlotter):
             **kwargs,
         )
 
-        formatter = _build_flat_axis_formatter(
-            outer_name=outer,
-            inner_name=inner,
-            outer_coord=_coord_for_ticks(data, outer),
-            inner_coord=_coord_for_ticks(data, inner),
-            inner_size=data.sizes[inner],
+        outer_coord = _coord_for_ticks(data, outer)
+        inner_coord = _coord_for_ticks(data, inner)
+        inner_formatter = _build_inner_axis_formatter(
+            inner, inner_coord, data.sizes[inner]
         )
-        # When transpose=True the kept dim is on y → flat axis is x.
-        axis_kwarg = 'xformatter' if self._transpose else 'yformatter'
-        return image.opts(**{axis_kwarg: formatter})
+        outer_ticks = _outer_axis_ticks(
+            outer, outer_coord, data.sizes[outer], data.sizes[inner]
+        )
+        # When transpose=True the kept dim is on y → flat axis is x (side='below');
+        # otherwise flat axis is y (side='left').
+        side = 'below' if self._transpose else 'left'
+        ticks_opt = 'xticks' if self._transpose else 'yticks'
+        label_opt = 'xlabel' if self._transpose else 'ylabel'
+        # Outer goes on the primary axis (further from plot per Bokeh stacking),
+        # inner on the secondary axis added via the hook (closer to plot). The
+        # synthetic flat-dim name (e.g. "outer·inner") is suppressed since each
+        # tick row carries its own dim name.
+        return image.opts(
+            **{ticks_opt: outer_ticks, label_opt: ''},
+            hooks=[_make_inner_axis_hook(side, inner_formatter)],
+        )
