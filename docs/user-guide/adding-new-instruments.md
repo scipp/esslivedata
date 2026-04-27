@@ -163,6 +163,88 @@ def setup_factories(instrument: Instrument) -> None:
 - Workflow framework: `sciline`
 - Geometry and data loading: `scippnexus`, etc.
 
+## Monitor Workflow Registration
+
+Beam monitors get a standard time-of-arrival histogram workflow via
+`register_monitor_workflow_specs`. The function takes a list of monitor source
+names; the names must also appear in the `monitors=...` argument of the
+`Instrument` constructor and be wired up in the stream mapping (see below).
+
+```python
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
+
+monitor_handle = register_monitor_workflow_specs(
+    instrument, instrument.monitors, params=TOAOnlyMonitorDataParams
+)
+```
+
+Use `MonitorDataParams` instead of `TOAOnlyMonitorDataParams` if a TOF lookup
+table is available for the instrument.
+
+### Generic `cbm` Fallback
+
+For instruments coming online without confirmed monitor information, a
+standard placeholder is provided that covers source names `cbm0..cbm9`. This
+range is intentionally one wider than the documented `cbm[1-9]` convention to
+absorb upstream off-by-one configuration errors that have been observed.
+
+To use the placeholder, import `GENERIC_CBM_MONITORS` and pass it through to
+both the `Instrument` instance and the stream mapping:
+
+```python
+# specs.py
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
+from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
+
+instrument = Instrument(
+    name='instrument_name',
+    detector_names=detector_names,
+    monitors=list(GENERIC_CBM_MONITORS),
+)
+
+instrument_registry.register(instrument)
+
+monitor_handle = register_monitor_workflow_specs(
+    instrument,
+    instrument.monitors,
+    params=TOAOnlyMonitorDataParams,
+    extra_description=GENERIC_CBM_DESCRIPTION_NOTE,
+)
+```
+
+`GENERIC_CBM_DESCRIPTION_NOTE` is appended to the workflow's standard
+description so that dashboard users see a caveat explaining that several of
+the `cbm{i}` source names likely do not correspond to real beam monitors.
+
+```python
+# streams.py
+stream_mapping = {
+    StreamingEnv.DEV: make_dev_stream_mapping(
+        'instrument_name',
+        detector_names=list(detector_fakes),
+        monitor_names=instrument.monitors,
+    ),
+    StreamingEnv.PROD: StreamMapping(
+        **make_common_stream_mapping_inputs(
+            instrument='instrument_name',
+            monitor_names=instrument.monitors,
+            cbm_start=0,
+        ),
+        detectors=_make_instrument_detectors(),
+    ),
+}
+```
+
+The internal name and Kafka source name are kept identical (both `cbm{i}`), so
+what appears on the topic is what the dashboard displays. Replace with
+explicit monitor names once the real configuration is known.
+
 ## Stream Configuration
 
 In `streams.py`, define stream mappings and optionally fake detector configuration:

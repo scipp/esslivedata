@@ -26,10 +26,15 @@ stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'estia',
         detector_names=list(detector_fakes),
+        monitor_names=instrument.monitors,
         log_names=list(instrument.f144_attribute_registry.keys()),
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='estia'),
+        **make_common_stream_mapping_inputs(
+            instrument='estia',
+            monitor_names=instrument.monitors,
+            cbm_start=0,
+        ),
         detectors=_make_estia_detectors(),
     ),
 }

@@ -8,7 +8,12 @@ import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
+from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
 from .views import get_multiblade_view
 
 detector_names = ['multiblade_detector']
@@ -16,11 +21,18 @@ detector_names = ['multiblade_detector']
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
-    monitors=[],
+    monitors=list(GENERIC_CBM_MONITORS),
     f144_attribute_registry={},
 )
 
 instrument_registry.register(instrument)
+
+monitor_handle = register_monitor_workflow_specs(
+    instrument,
+    instrument.monitors,
+    params=TOAOnlyMonitorDataParams,
+    extra_description=GENERIC_CBM_DESCRIPTION_NOTE,
+)
 
 
 def _estia_spectrum_transform(histogram: sc.DataArray) -> sc.DataArray:
