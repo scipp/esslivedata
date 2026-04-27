@@ -128,8 +128,6 @@ class PlotterSpec(pydantic.BaseModel):
     dynamic creation of user interfaces for configuring plots.
     """
 
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
     name: str = pydantic.Field(description="Name of the plot type. Used internally.")
     title: str = pydantic.Field(
         description="Title of the plot type. For display in the UI."
@@ -137,17 +135,6 @@ class PlotterSpec(pydantic.BaseModel):
     description: str = pydantic.Field(description="Description of the plot type.")
     params: type[pydantic.BaseModel] = pydantic.Field(
         description="Pydantic model defining the parameters for the plot."
-    )
-    params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None = (
-        pydantic.Field(
-            default=None,
-            description=(
-                "Optional factory that returns a parameters model specialized for "
-                "the dims of the chosen workflow output. When set, the plot config "
-                "modal calls it with the output template's dim names instead of "
-                "using the static `params` class."
-            ),
-        )
     )
     data_requirements: DataRequirements = pydantic.Field(
         description="Requirements the data to be plotted must fulfill."
@@ -172,10 +159,19 @@ class PlotterFactory(Protocol, Generic[P]):
 
 @dataclass
 class PlotterEntry:
-    """Entry combining a plotter specification with its factory."""
+    """Entry combining a plotter specification with its factory.
+
+    ``params_factory`` is an optional callable that returns a parameters model
+    specialized for the dims of the chosen workflow output. When set, the
+    plot config modal calls it with the output template's dim names instead of
+    using the static ``spec.params`` class. It lives here (alongside
+    ``factory``) rather than on ``spec`` so ``PlotterSpec`` stays a pure
+    pydantic-validated metadata record.
+    """
 
     spec: PlotterSpec
     factory: PlotterFactory[Any]  # Use Any since we store different param types
+    params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None = None
 
 
 class PlotterRegistry(UserDict[str, PlotterEntry]):
@@ -200,12 +196,13 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             title=title,
             description=description,
             params=type_hints['params'],
-            params_factory=params_factory,
             data_requirements=data_requirements,
             spec_requirements=spec_requirements or SpecRequirements(),
             category=category,
         )
-        self[name] = PlotterEntry(spec=spec, factory=factory)
+        self[name] = PlotterEntry(
+            spec=spec, factory=factory, params_factory=params_factory
+        )
 
     def get_compatible_plotters(
         self, data: dict[Any, sc.DataArray]
@@ -271,6 +268,12 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
     def get_spec(self, name: str) -> PlotterSpec:
         """Get specification for a specific plotter."""
         return self[name].spec
+
+    def get_params_factory(
+        self, name: str
+    ) -> Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None:
+        """Get the dim-specialized params factory for a plotter, if any."""
+        return self[name].params_factory
 
     def create_plotter(self, name: str, params: pydantic.BaseModel) -> Plotter:
         """Create a plotter instance with the given parameters."""

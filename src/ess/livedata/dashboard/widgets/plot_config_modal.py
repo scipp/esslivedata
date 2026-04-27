@@ -1217,6 +1217,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             instrument_config=self._instrument_config,
             hidden_fields=hints.hidden_fields,
             output_template_dims=output_template_dims,
+            params_factory=self._plotting_controller.get_params_factory(
+                self._plotter_selection.plot_name
+            ),
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)

@@ -21,28 +21,30 @@ class _StaticParams(pydantic.BaseModel):
     pass
 
 
-def _make_spec(params_factory=None) -> PlotterSpec:
+def _make_spec() -> PlotterSpec:
     return PlotterSpec(
         name='dummy',
         title='Dummy',
         description='',
         params=_StaticParams,
-        params_factory=params_factory,
         data_requirements=DataRequirements(min_dims=0, max_dims=10),
     )
 
 
-def _adapter(spec, *, output_template_dims=None) -> PlotConfigurationAdapter:
+def _adapter(
+    *, params_factory=None, output_template_dims=None
+) -> PlotConfigurationAdapter:
     return PlotConfigurationAdapter(
-        plot_spec=spec,
+        plot_spec=_make_spec(),
         source_names=['s'],
         success_callback=lambda *_: None,
         output_template_dims=output_template_dims,
+        params_factory=params_factory,
     )
 
 
 def test_returns_static_params_when_no_factory() -> None:
-    adapter = _adapter(_make_spec(), output_template_dims=('a', 'b'))
+    adapter = _adapter(output_template_dims=('a', 'b'))
     assert adapter.model_class() is _StaticParams
 
 
@@ -50,7 +52,7 @@ def test_returns_static_params_when_factory_set_but_no_dims() -> None:
     def factory(dims):  # would raise if called with None
         raise AssertionError('factory should not be called without dims')
 
-    adapter = _adapter(_make_spec(factory), output_template_dims=None)
+    adapter = _adapter(params_factory=factory, output_template_dims=None)
     assert adapter.model_class() is _StaticParams
 
 
@@ -65,7 +67,7 @@ def test_calls_factory_with_dims_when_both_provided() -> None:
 
         return _Dyn
 
-    adapter = _adapter(_make_spec(factory), output_template_dims=('x', 'y', 'z'))
+    adapter = _adapter(params_factory=factory, output_template_dims=('x', 'y', 'z'))
     Dyn = adapter.model_class()
     assert captured == [('x', 'y', 'z')]
     assert Dyn is not _StaticParams
