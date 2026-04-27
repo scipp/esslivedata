@@ -653,13 +653,45 @@ class TestBackgroundMessageSource:
         with BackgroundMessageSource(
             consumer, timeout=0.01, max_consecutive_errors=10
         ) as source:
-            for _ in range(50):
-                if not source.get_health_status().thread_alive:
-                    break
-                time.sleep(0.05)
+            source._thread.join(timeout=2.0)
 
             assert not source.is_healthy()
             assert source.get_health_status().failure_reason is not None
+
+    def test_get_messages_raises_after_consume_thread_dies(self) -> None:
+        consumer = ControllableKafkaConsumer()
+        consumer.should_raise = True
+        consumer.exception_to_raise = RuntimeError("boom")
+
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=2
+        ) as source:
+            source._thread.join(timeout=2.0)
+            assert source.get_health_status().failure_reason is not None
+
+            with pytest.raises(RuntimeError, match="Background consumer stopped"):
+                source.get_messages()
+
+    def test_get_messages_drains_queue_before_raising(self) -> None:
+        consumer = ControllableKafkaConsumer()
+        good_msg = FakeKafkaMessage(value=b'good', topic="topic1")
+        consumer.add_messages(
+            [
+                good_msg,
+                FakeErrorMessage(FakeKafkaError(is_fatal=True)),
+            ]
+        )
+
+        with BackgroundMessageSource(consumer, num_messages=1, timeout=0.01) as source:
+            source._thread.join(timeout=2.0)
+            assert source.get_health_status().failure_reason is not None
+
+            messages = source.get_messages()
+            assert len(messages) == 1
+            assert messages[0].value() == b'good'
+
+            with pytest.raises(RuntimeError, match="Background consumer stopped"):
+                source.get_messages()
 
 
 class FakeKafkaError:

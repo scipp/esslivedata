@@ -315,7 +315,12 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
             self._last_metrics_time = now
 
     def get_messages(self) -> list[KafkaMessage]:
-        """Get all messages consumed since the last call."""
+        """Get all messages consumed since the last call.
+
+        Raises ``RuntimeError`` once the background consume thread has died
+        for any non-clean reason and any buffered messages have been drained,
+        so the caller (typically `Service._run_loop`) can fail fast.
+        """
         if not self._started:
             self.start()
 
@@ -326,6 +331,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                 all_messages.extend(batch)
         except queue.Empty:
             pass
+
+        if not all_messages and self._failure_reason is not None:
+            raise RuntimeError(f"Background consumer stopped: {self._failure_reason}")
 
         return all_messages
 
