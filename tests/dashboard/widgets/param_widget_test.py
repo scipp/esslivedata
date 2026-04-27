@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from enum import Enum, StrEnum
+from enum import Enum, IntEnum, StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -318,6 +318,23 @@ class TestEnumHandling:
         assert "LOW" in select.options
         assert "MEDIUM" in select.options
         assert "HIGH" in select.options
+
+    def test_int_enum_subclass_uses_member_names_not_values(self):
+        # IntEnum inherits __str__ from int, so str(member) returns the integer
+        # value rather than 'ClassName.member'. The dropdown must label by
+        # member name (e.g., dim names), not by the integer.
+        class Dims(IntEnum):
+            x = 0
+            y = 1
+            z = 2
+
+        class TestModel(pydantic.BaseModel):
+            dim: Dims = Dims.x
+
+        widget = ParamWidget(TestModel)
+
+        options = widget.widgets["dim"].options
+        assert set(options) == {"x", "y", "z"}
 
 
 class TestLiteralHandling:

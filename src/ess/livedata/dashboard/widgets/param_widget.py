@@ -114,11 +114,13 @@ class ParamWidget:
             options = {}
             for enum_val in field_type:
                 if isinstance(enum_val.value, str):
-                    # Use the value for string enums
+                    # String enums use the value as the user-facing label
+                    # (e.g., PlotAspectType.aspect = 'Fixed plot aspect ratio').
                     display_key = enum_val.value
                 else:
-                    # Use string repr without enum class name for other enums
-                    display_key = str(enum_val).split('.')[-1]
+                    # `.name`, not `str(enum_val)` — IntEnum inherits __str__
+                    # from int, so str() returns the integer, not the name.
+                    display_key = enum_val.name
                 options[display_key] = enum_val
 
             # Set the actual enum instance as the default value
