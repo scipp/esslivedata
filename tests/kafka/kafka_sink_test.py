@@ -13,10 +13,11 @@ failure injection for the :class:`SerializationError` handling tests.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 import scipp as sc
-from confluent_kafka import KafkaException
+from confluent_kafka import KafkaError, KafkaException
 from pydantic import BaseModel
 from streaming_data_types import dataarray_da00
 
@@ -40,14 +41,23 @@ from ess.livedata.kafka.sink_serializers import CommandSerializer, Da00Serialize
 INSTRUMENT = 'dummy'
 
 
+class _FakeMsg:
+    def __init__(self, topic: str) -> None:
+        self._topic = topic
+
+    def topic(self) -> str:
+        return self._topic
+
+
 class _FakeProducer:
     """
     Minimal stand-in for ``confluent_kafka.Producer``.
 
     Faking the broker is unavoidable — a real producer would need a running
     Kafka cluster. Records ``produce`` calls for assertion. ``raise_on_produce``
-    / ``raise_on_flush`` inject broker errors so the sink's error handling can
-    be verified without a real broker.
+    / ``raise_on_flush`` inject broker errors. ``delivery_error`` simulates
+    the broker reporting a delivery failure asynchronously: pending callbacks
+    fire with the given error on the next ``poll``/``flush``.
     """
 
     def __init__(self, config: dict) -> None:
@@ -56,6 +66,8 @@ class _FakeProducer:
         self.flushed = 0
         self.raise_on_produce: BaseException | None = None
         self.raise_on_flush: BaseException | None = None
+        self.delivery_error: KafkaError | None = None
+        self._pending: list[tuple[Any, _FakeMsg]] = []
 
     def produce(
         self,
@@ -70,13 +82,21 @@ class _FakeProducer:
         self.produced.append(
             {'topic': topic, 'key': key, 'value': value, 'callback': callback}
         )
+        if callback is not None:
+            self._pending.append((callback, _FakeMsg(topic)))
+
+    def _drain_callbacks(self) -> None:
+        for cb, msg in self._pending:
+            cb(self.delivery_error, msg)
+        self._pending = []
 
     def poll(self, timeout: float) -> None:
-        pass
+        self._drain_callbacks()
 
     def flush(self, timeout: float | None = None) -> None:
         if self.raise_on_flush is not None:
             raise self.raise_on_flush
+        self._drain_callbacks()
         self.flushed += 1
 
 
@@ -264,5 +284,72 @@ class TestErrorHandling:
     ) -> None:
         with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
             producer.raise_on_flush = KafkaException('flush failed')
+            # Must not raise.
+            sink.publish_messages([_data_message()])
+
+
+class TestFailFast:
+    """
+    Authorization/auth-misconfiguration errors must crash the sink instead of
+    being silently logged. confluent_kafka does not flag these as fatal, so
+    the sink applies its own auth-code list (see ``_FATAL_ERROR_CODES``).
+    """
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            KafkaError.TOPIC_AUTHORIZATION_FAILED,
+            KafkaError.CLUSTER_AUTHORIZATION_FAILED,
+            KafkaError.SASL_AUTHENTICATION_FAILED,
+            KafkaError.TRANSACTIONAL_ID_AUTHORIZATION_FAILED,
+        ],
+    )
+    def test_fatal_delivery_callback_raises_after_publish(
+        self, sink_factory, producer: _FakeProducer, code: int
+    ) -> None:
+        producer.delivery_error = KafkaError(code)
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            with pytest.raises(KafkaException):
+                sink.publish_messages([_data_message()])
+
+    def test_subsequent_publish_raises_after_fatal(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        producer.delivery_error = KafkaError(KafkaError.TOPIC_AUTHORIZATION_FAILED)
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            with pytest.raises(KafkaException):
+                sink.publish_messages([_data_message('a')])
+            # Even after clearing the broker-side fault, the sink stays poisoned:
+            # operator must restart the service.
+            producer.delivery_error = None
+            with pytest.raises(KafkaException):
+                sink.publish_messages([_data_message('b')])
+
+    def test_fatal_kafka_exception_from_produce_propagates(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        producer.raise_on_produce = KafkaException(
+            KafkaError(KafkaError.SASL_AUTHENTICATION_FAILED)
+        )
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            with pytest.raises(KafkaException):
+                sink.publish_messages([_data_message()])
+
+    def test_fatal_kafka_exception_from_flush_propagates(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        producer.raise_on_flush = KafkaException(
+            KafkaError(KafkaError.CLUSTER_AUTHORIZATION_FAILED)
+        )
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            with pytest.raises(KafkaException):
+                sink.publish_messages([_data_message()])
+
+    def test_nonfatal_delivery_error_does_not_raise(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        # NETWORK_EXCEPTION is a transient delivery failure, not auth/misconfig.
+        producer.delivery_error = KafkaError(KafkaError.NETWORK_EXCEPTION)
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
             # Must not raise.
             sink.publish_messages([_data_message()])
