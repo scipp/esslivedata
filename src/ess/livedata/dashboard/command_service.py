@@ -14,6 +14,7 @@ import structlog
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.core.message import COMMANDS_STREAM_ID, Message, MessageSink
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.config_handler import ConfigUpdate
 
 logger = structlog.get_logger(__name__)
@@ -62,7 +63,7 @@ class CommandService:
         messages = [
             Message(
                 stream=COMMANDS_STREAM_ID,
-                timestamp=time.time_ns(),
+                timestamp=Timestamp.from_ns(time.time_ns()),
                 value=ConfigUpdate(config_key=key, value=val),
             )
             for key, val in commands

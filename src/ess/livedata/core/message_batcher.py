@@ -80,8 +80,6 @@ class NaiveMessageBatcher(MessageBatcher):
         return self._batch_length.to_seconds()
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         if not messages:
             return None
         messages = sorted(messages)
@@ -133,8 +131,6 @@ class SimpleMessageBatcher(MessageBatcher):
         self._batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        # Filter messages with incompatible (broken) timestamps to avoid issues below.
-        messages = [msg for msg in messages if isinstance(msg.timestamp, Timestamp)]
         # Create and return initial batch including everything
         if self._active_batch is None:
             return self._make_initial_batch(messages)
@@ -223,10 +219,14 @@ class AdaptiveBatcherState:
 class AdaptiveMessageBatcher(MessageBatcher):
     """A message batcher that dynamically adjusts its batch length based on load.
 
-    Wraps a ``SimpleMessageBatcher`` and uses processing-time feedback to detect
-    overload.  When processing consistently exceeds the batch window, the batcher
-    escalates by doubling the window (+2 half-steps).  When processing completes
-    with headroom, it de-escalates by a factor of 1/sqrt(2) (-1 half-step).
+    Wraps an inner batcher (defaulting to :class:`SimpleMessageBatcher`) and uses
+    processing-time feedback to detect overload.  When processing consistently
+    exceeds the batch window, the batcher escalates by doubling the window
+    (+2 half-steps).  When processing completes with headroom, it de-escalates
+    by a factor of 1/sqrt(2) (-1 half-step).
+
+    The inner batcher must accept ``batch_length_s`` as its first argument and
+    expose ``set_batch_length`` so the outer batcher can adjust its window.
 
     The asymmetric step sizes mean two de-escalation steps undo one escalation,
     providing natural damping.  Batch lengths are quantized to integer multiples
@@ -242,6 +242,7 @@ class AdaptiveMessageBatcher(MessageBatcher):
         max_level: int = 3,
         clock: Callable[[], float] = time.monotonic,
         pulse_rate_hz: float = PULSE_RATE_HZ,
+        inner_factory: Callable[[float], MessageBatcher] = SimpleMessageBatcher,
     ) -> None:
         self._max_half_steps = max_level * 2
         self._pulse_rate_hz = pulse_rate_hz
@@ -253,7 +254,7 @@ class AdaptiveMessageBatcher(MessageBatcher):
         self._consecutive_underloaded = 0
         self._last_nonempty_batch_time: float | None = None
         self._clock = clock
-        self._inner = SimpleMessageBatcher(batch_length_s=self.batch_length_s)
+        self._inner = inner_factory(self.batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         return self._inner.batch(messages)
