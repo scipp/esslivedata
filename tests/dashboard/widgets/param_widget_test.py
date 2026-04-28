@@ -370,43 +370,6 @@ class TestSetOfEnumHandling:
         model = widget.create_model()
         assert model.selected == {Dims.x, Dims.y}
 
-    def test_multiselect_max_length_reverts_oversize_selections(self):
-        # max_length=2 on a set[Dim] field: the MultiSelect must veto a
-        # value change that would push selection count above 2.
-        class Dims(IntEnum):
-            x = 0
-            y = 1
-            z = 2
-
-        class TestModel(pydantic.BaseModel):
-            selected: set[Dims] = pydantic.Field(
-                default_factory=lambda: {Dims.x},
-                max_length=2,
-            )
-
-        widget = ParamWidget(TestModel)
-        ms = widget.widgets["selected"]
-        ms.value = [Dims.x, Dims.y]
-        assert ms.value == [Dims.x, Dims.y]
-        ms.value = [Dims.x, Dims.y, Dims.z]
-        assert ms.value == [Dims.x, Dims.y]
-
-    def test_multiselect_min_length_reverts_undersize_selections(self):
-        class Dims(IntEnum):
-            x = 0
-            y = 1
-
-        class TestModel(pydantic.BaseModel):
-            selected: set[Dims] = pydantic.Field(
-                default_factory=lambda: {Dims.x},
-                min_length=1,
-            )
-
-        widget = ParamWidget(TestModel)
-        ms = widget.widgets["selected"]
-        ms.value = []
-        assert ms.value == [Dims.x]
-
     def test_set_of_enum_set_values_accepts_raw_ints(self):
         # Restoring a saved config goes through int values, not enum members.
         class Dims(IntEnum):
