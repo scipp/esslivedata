@@ -20,21 +20,18 @@ def setup_factories(instrument: Instrument) -> None:
 
     import sciline.typing
     import scipp as sc
-    from ess.estia import EstiaWorkflow, data as estia_data
+    from ess.estia import EstiaWorkflow
+    from ess.estia import data as estia_data
     from ess.reduce.nexus.types import NeXusData
     from ess.reflectometry.types import (
         BeamDivergenceLimits,
-        CorrectionsToApply,
-        DetectorRotation,
         Filename,
         LookupTableFilename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
-        ProtonCurrent,
         QBins,
         ReducibleData,
         SampleRun,
-        SampleRotation,
         ThetaBins,
         WavelengthBins,
         YIndexLimits,
@@ -55,7 +52,9 @@ def setup_factories(instrument: Instrument) -> None:
         events: ReducibleData[SampleRun],
         wavelength_bins: WavelengthBins,
     ) -> IntensityWavelength:
-        return IntensityWavelength(events.hist(wavelength=wavelength_bins, dim=events.dims))
+        return IntensityWavelength(
+            events.hist(wavelength=wavelength_bins, dim=events.dims)
+        )
 
     def _intensity_over_q(
         events: ReducibleData[SampleRun],
@@ -69,9 +68,9 @@ def setup_factories(instrument: Instrument) -> None:
         theta_bins: ThetaBins[SampleRun],
     ) -> IntensityThetaWavelength:
         return IntensityThetaWavelength(
-            events.hist(theta=theta_bins, wavelength=wavelength_bins, dim=events.dims).transpose(
-                ['theta', 'wavelength']
-            )
+            events.hist(
+                theta=theta_bins, wavelength=wavelength_bins, dim=events.dims
+            ).transpose(['theta', 'wavelength'])
         )
 
     @specs.monitor_handle.attach_factory()
