@@ -163,6 +163,11 @@ the upstream simulation expects:
      project root, cross-checked against the upstream chopper class needs.
    - An update to the local-dev `setup-kafka-topics.sh` script.
 
+TODO:
+- `rotation_speed_setpoint` is the NXlog we need, probably f144, not `tdct`
+- check if latest CODA files have a `phase_setpoint` (or even just `phase`) in their NXdisk_chopper. If so, we do not need `tdct`. Gating in the preprocessor becomes much simpler - we do not need to look at stream contents. Instead we just wait until we have a setpoint pair (rotation-speed and phase) for each chopper, then emit.
+- Look into how this can rely on (or how it interferes with) the existing mechanism for (typically) f144 aux streams that are cached in the preprocessor and fed into newly started jobs. Think about whether this actually makes our approach of creating a unified stream in the adapter chain questionable - should unification happen later (in the preprocessor)?
+
 End-to-end validation runs on the CODA staging environment.
 
 A small **chopper preprocessor** owns the combination: it ingests live
@@ -218,6 +223,10 @@ params + choppers, computes the table, and returns the array with the four
 scalar params attached as coords. A couple of additional providers may need
 to be added to this base workflow, e.g., for turning the `LookupTable`
 output into the `LookupTableArray` described above.
+
+TODO:
+- workflow needs to insert chopper stream info into static info obtained from NeXus file. Mirror the approach taken for detectors and detector events fed via stream. Small difference: We need to deal with multiple choppers (combined from multiple groups in NeXus).
+- look into GenericNeXusWorkflow, it can apparently load choppers, but this is currently not connected to the LookupTableWorkflow. Something like `choppers = workflow.compute(RawChoppers[SampleRun])`, then figure out how to translate to the chopper object the LUT workflow expects.
 
 ## Service placement
 
