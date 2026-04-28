@@ -408,14 +408,14 @@ def _register_all_plotters() -> None:
         name='flatten',
         title='Flatten to 2D',
         description=(
-            'Flatten N-D data (N ≥ 2) to a 2D image with a static '
+            'Flatten N-D data (N ≥ 3) to a 2D image with a static '
             '(config-time) partition of input dims into X- and Y-axis '
             'groups. Each group with two or more dims is flattened together; '
             'hovering decomposes each axis back into per-dim labels with '
             'their coord values.'
         ),
         data_requirements=DataRequirements(
-            min_dims=2,
+            min_dims=3,
             max_dims=6,
             multiple_datasets=False,
         ),
