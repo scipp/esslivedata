@@ -25,10 +25,10 @@ result is deferred to a follow-up.
 - **Standalone "chopperless fallback" path** (#894 as originally framed).
   Once the dynamic producer exists, "chopperless" is just the degenerate input
   case (`DiskChoppers = {}`); no separate workflow logic is needed. (A small
-  JobManager extension *is* needed to fire `finalize` once for jobs with zero
-  input streams — see the Chopperless instruments section — but that
-  generalizes beyond this workflow rather than being a chopperless-specific
-  code path.)
+  JobManager extension *is* needed to fire `finalize` once and emit the result
+  synchronously when the job's primary source resolves to zero physical
+  streams — see the Chopperless instruments section — but that generalizes
+  beyond this workflow rather than being a chopperless-specific code path.)
 
 ## Approach
 
@@ -278,19 +278,46 @@ cleanup, not architectural change.
 
 ### Chopperless instruments
 
-Instruments where no chopper PVs are configured in the stream mapping have
-**zero input streams** for this workflow. JobManager has no message-driven
-trigger and would never call `finalize`. Resolution: extend JobManager so
-that a workflow with **zero input streams** has its `finalize` called once at
-job creation, and the job exits immediately afterwards (it can never be
-triggered again). The workflow then computes a chopperless table
-(`DiskChoppers = {}`) and publishes it once.
+The workflow spec is unchanged for chopperless instruments: it still declares
+`source_names=['choppers']`. "Chopperless" is a property of the *routing*, not
+the spec — `resolve_stream_names({'choppers'}, instrument, stream_mapping)`
+returns the empty set when no chopper PVs are configured. The dashboard,
+job-start command, and per-source job iteration are all identical to the
+chopper-equipped path; only the JobManager behavior on activation differs.
 
-This generalizes naturally beyond this workflow — any future zero-input
-"computed once from params" workflow gets the same treatment. We deliberately
-do **not** extend this to "zero primary, some aux" workflows: defining when
-such a workflow first runs (first message on every aux? first on any?) is
-trickier than we need.
+**Detection.** `JobFactory.create()` resolves the primary source via
+`resolve_stream_names`. An empty resolved set marks the job as one-shot
+(stamp on `Job`, e.g. `Job.is_one_shot`). This is a property of
+`(instrument, source)`, computed at job-creation time, not declared on the
+workflow spec.
+
+**Activation, synchronous.** `JobManager.schedule_job` checks the flag. If
+true, bypass `_scheduled_jobs` and `_active_jobs` entirely: synthesize a
+finalize call (empty `JobData`, `finalize=True`) inline and capture the
+`JobResult`. Activation does **not** depend on `_advance_to_time` or on any
+incoming message timestamps — relying on traffic side-effects to drive
+activation would break on instruments with quiet topics.
+
+**Emission, via the config-handler return path.** The result must reach the
+data sink without depending on data-batch traffic. The existing config
+plumbing already provides this seam: `ConfigProcessor.process_messages`
+returns messages, and `OrchestratingProcessor.process` publishes them via
+`self._sink.publish_messages(...)` unconditionally on every loop tick (both
+the no-data and data branches). To carry data results alongside acks, action
+signatures (`JobManagerAdapter.set_workflow_with_config`,
+`JobManagerAdapter.job_command`) change from
+`CommandAcknowledgement | None` to `list[Message]`; each action constructs
+its own ack message *and* any result messages (using the existing
+`_job_result_to_message` helper for the latter). `ConfigProcessor` extends
+the aggregate. No JobManager↔sink coupling, no wallclock tick needed.
+
+This generalizes naturally beyond this workflow — any future
+"computed once from params" workflow whose primary source resolves to zero
+physical streams gets the same treatment, and any future
+command-produces-result pattern can use the same emission seam. We
+deliberately do **not** extend the one-shot path to "zero primary, some aux"
+workflows: defining when such a workflow first runs (first message on every
+aux? first on any?) is trickier than we need.
 
 If the operator changes params and wants a new table, they stop and restart
 the job — a new job, a new fire. No "reset → re-finalize" on the same
@@ -307,7 +334,9 @@ job instance for v1.
 - `src/ess/livedata/scripts/make_geometry_nexus.py` — emit sufficient chopper info into the registry artifact (today it likely does not). When this changes, the regenerated artifact must be republished to the pooch registry and consuming hashes bumped.
 - `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults.
 - `src/ess/livedata/services/data_reduction.py` — register the new workflow factory (if option 1).
-- `src/ess/livedata/core/job_manager.py` (or wherever the job lifecycle lives) — extension: jobs whose workflow declares **zero input streams** get `finalize` called once at creation, and exit. Preserves existing behavior for jobs with one or more input streams.
+- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` consults `resolve_stream_names` and stamps `Job.is_one_shot` when the primary source resolves to zero physical streams; `JobManager.schedule_job` runs one-shot jobs inline (finalize once, no scheduled/active state) and returns the `JobResult` to the caller. Preserves existing behavior for jobs with one or more resolved physical streams.
+- `src/ess/livedata/core/job_manager_adapter.py` — `set_workflow_with_config` and `job_command` return `list[Message]` (ack message + any result messages from inline one-shot finalize) instead of `CommandAcknowledgement | None`.
+- `src/ess/livedata/handlers/config_handler.py` — `ConfigProcessor.process_messages` extends from each action's `list[Message]` instead of wrapping a single ack. The orchestrator's existing per-loop `self._sink.publish_messages(result_messages)` call then carries the result to the sink with no further wiring.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
 - `tests/handlers/lookup_table_workflow_test.py` and chopper-preprocessor tests.
 
@@ -317,11 +346,12 @@ job instance for v1.
 - Unit: the four input params appear as 0-D coords on the output array, with correct dtypes and units.
 - Unit: chopperless input (`DiskChoppers = {}`) produces a table without raising; values are the chopperless degenerate.
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp` preserves values, variances, dims, and the four scalar coords (regression check).
-- Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify JobManager fires `finalize` once on creation, output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job exits.
+- Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify the start command synchronously produces a published result message (no data-batch traffic involved), output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job leaves no scheduled/active state behind.
 - Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper preprocessor, the adapter rewrite path, and upstream `LookupTableWorkflow` integration before staging.
 - Integration (chopper-equipped, gating behavior): feed chopper messages through the adapter + preprocessor; verify the preprocessor gates as expected and the workflow re-runs only on substantial changes.
 - Chopper preprocessor unit: feeding a sequence of small rotation/phase fluctuations does *not* trigger a downstream emit; a step change does. NeXus geometry is preserved across emits.
-- JobManager unit: a job whose workflow declares zero input streams has `finalize` called exactly once at creation and then exits; jobs with ≥1 input stream behave as today.
+- JobManager unit: a job whose primary source resolves to zero physical streams runs `finalize` synchronously inside `schedule_job`, returns the `JobResult` to the caller, and leaves no entry in `_scheduled_jobs`/`_active_jobs`; jobs with ≥1 resolved physical stream behave as today.
+- ConfigProcessor unit: when `set_workflow_with_config` returns both an ack message and a result message, `process_messages` aggregates both and they reach the orchestrator's sink-publish call.
 - Message-adapter unit: the new chopper adapter rewrites `stream.name` to `'choppers'` regardless of the physical chopper PV, while preserving the chopper identity in the payload. Mirrors the existing patterns in `tests/kafka/message_adapter_test.py`.
 - `resolve_stream_names` unit: logical `'choppers'` expands to the configured set of physical chopper PV stream names; existing detector/monitor logical-name expansion is unchanged.
 
