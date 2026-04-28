@@ -337,6 +337,55 @@ class TestEnumHandling:
         assert set(options) == {"x", "y", "z"}
 
 
+class TestSetOfEnumHandling:
+    """Tests for set-of-enum field handling (rendered as MultiSelect)."""
+
+    def test_set_of_enum_creates_multiselect(self):
+        class Dims(IntEnum):
+            x = 0
+            y = 1
+            z = 2
+
+        class TestModel(pydantic.BaseModel):
+            selected: set[Dims] = pydantic.Field(default_factory=lambda: {Dims.x})
+
+        widget = ParamWidget(TestModel)
+
+        ms = widget.widgets["selected"]
+        assert isinstance(ms, pn.widgets.MultiSelect)
+        assert set(ms.options) == {"x", "y", "z"}
+        assert ms.value == [Dims.x]
+
+    def test_set_of_enum_default_round_trips(self):
+        class Dims(IntEnum):
+            x = 0
+            y = 1
+
+        class TestModel(pydantic.BaseModel):
+            selected: set[Dims] = pydantic.Field(default_factory=lambda: {Dims.y})
+
+        widget = ParamWidget(TestModel)
+        ms = widget.widgets["selected"]
+        ms.value = [Dims.x, Dims.y]
+        model = widget.create_model()
+        assert model.selected == {Dims.x, Dims.y}
+
+    def test_set_of_enum_set_values_accepts_raw_ints(self):
+        # Restoring a saved config goes through int values, not enum members.
+        class Dims(IntEnum):
+            x = 0
+            y = 1
+            z = 2
+
+        class TestModel(pydantic.BaseModel):
+            selected: set[Dims] = pydantic.Field(default_factory=set)
+
+        widget = ParamWidget(TestModel)
+        widget.set_values({"selected": {0, 2}})
+        ms = widget.widgets["selected"]
+        assert set(ms.value) == {Dims.x, Dims.z}
+
+
 class TestLiteralHandling:
     """Tests for Literal type handling."""
 

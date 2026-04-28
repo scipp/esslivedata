@@ -2,10 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Plotter wrapping ImagePlotter with static (config-time) flattening of N-D data.
 
-Each image axis is built from one or more input dims, flattened together in a
-fixed order. A custom hover decomposes each axis cursor index back into
-per-dim labels (with coord values when available) so the plot stays explorable
-despite the synthetic axes.
+The user partitions the input dims into two groups via ``axis_x_dims``; the
+remaining dims form the Y group. Each group with K ≥ 2 dims is flattened
+together in natural input order, optionally reversed by per-axis
+``transpose_*_flatten`` flags. A custom hover decomposes each axis cursor
+back into per-dim labels with coord values when available.
 """
 
 from __future__ import annotations
@@ -24,57 +25,66 @@ from .plots import ImagePlotter
 
 
 class FlattenAxisConfig(pydantic.BaseModel):
-    """Static-flatten axis assignment.
+    """Static-flatten partition of input dims into X and Y groups.
 
-    ``keep_dim`` is the *position* (0-based index) of the input dim that stays
-    as one image axis. ``make_flatten_params`` narrows the field to an
-    ``IntEnum`` whose member names are the actual dim names so the dashboard
-    renders a dropdown of dim names while the saved value is just an integer
-    — invariant under per-instrument dim renames.
+    ``axis_x_dims`` holds *positions* (0-based input-dim indices) — saving
+    integers rather than dim names keeps configs invariant under
+    per-instrument dim renames. The Y group is always the complement.
+    Ordering within each group is natural input order, with the
+    ``transpose_*_flatten`` flags reversing it when the natural order is
+    wrong; arbitrary K ≥ 3 permutations are not exposed at the params layer
+    (use the plotter's direct constructor if needed).
     """
 
-    keep_dim: int = pydantic.Field(
-        default=0,
-        title='Keep dim',
-        description='Input dim (by position) that stays as one image axis. '
-        'The other two dims are flattened together into the second axis.',
+    axis_x_dims: set[int] = pydantic.Field(
+        default_factory=lambda: {0},
+        title='Dims on X axis',
+        description='Input dims (by position) that combine into the X image '
+        'axis. The remaining dims form the Y axis. Each group with K ≥ 2 '
+        'dims is flattened together in natural input order.',
     )
-    flatten_transposed: bool = pydantic.Field(
+    transpose_x_flatten: bool = pydantic.Field(
         default=False,
-        title='Transpose flattened axes',
-        description='Swap the order of the two flattened dims. By default '
-        'they are flattened in their natural input order.',
+        title='Reverse X-axis flatten order',
+        description='Reverse the order in which the X-axis dims are flattened. '
+        'Has no effect when X has a single dim.',
+    )
+    transpose_y_flatten: bool = pydantic.Field(
+        default=False,
+        title='Reverse Y-axis flatten order',
+        description='Reverse the order in which the Y-axis dims are flattened. '
+        'Has no effect when Y has a single dim.',
     )
     transpose: bool = pydantic.Field(
         default=False,
         title='Transpose',
-        description='Swap x and y axes of the result. When False the kept dim '
-        'is on x and the flattened combination on y.',
+        description='Swap x and y axes of the result.',
     )
 
 
 class FlattenParams(PlotParams2d):
-    """Parameters for the static-flatten 3D-to-2D plotter."""
+    """Parameters for the static-flatten N-D-to-2D plotter."""
 
     flatten: FlattenAxisConfig = pydantic.Field(
         default_factory=FlattenAxisConfig,
-        description='Selection of which input dim stays as one image axis '
-        'and how the remaining two are flattened together.',
+        description='Partition of input dims into X- and Y-axis groups and '
+        'their flatten ordering.',
     )
 
 
 def make_flatten_params(dims: tuple[str, ...]) -> type[FlattenParams]:
-    """Create a FlattenParams subclass with ``keep_dim`` narrowed to ``dims``.
+    """Create a FlattenParams subclass with ``axis_x_dims`` narrowed to ``dims``.
 
     Parameters
     ----------
     dims:
-        Dim names of the workflow output template. When exactly three are
-        provided, ``keep_dim`` is narrowed to an ``IntEnum`` mapping each
-        dim name to its position so the UI dropdown shows dim names while
-        the stored value is the integer position. For other arities the
-        unmodified base ``FlattenParams`` is returned (the plotter rejects
-        mismatches at plot time).
+        Dim names of the workflow output template. For ``len(dims) ≥ 2`` the
+        ``axis_x_dims`` field is narrowed to ``set[Dim]`` where ``Dim`` is an
+        ``IntEnum`` mapping each dim name to its position; the dashboard
+        renders this as a multi-select of dim names while the stored value
+        is a set of integer positions. For ``len(dims) < 2`` the unmodified
+        base ``FlattenParams`` is returned (the plotter rejects mismatches
+        at plot time).
 
     Returns
     -------
@@ -86,24 +96,35 @@ def make_flatten_params(dims: tuple[str, ...]) -> type[FlattenParams]:
     Dim names must be valid Python identifiers since they become ``IntEnum``
     member names. All ESS dim names in this codebase satisfy that.
     """
-    if len(dims) != 3:
+    if len(dims) < 2:
         return FlattenParams
 
-    KeepDim = IntEnum('KeepDim', [(d, i) for i, d in enumerate(dims)])
+    n = len(dims)
+    Dim = IntEnum('Dim', [(d, i) for i, d in enumerate(dims)])
 
     class _AxisConfig(FlattenAxisConfig):
-        keep_dim: KeepDim = pydantic.Field(  # type: ignore[valid-type]
-            default=KeepDim(0),
-            title='Keep dim',
-            description='Input dim that stays as one image axis. The other '
-            'two dims are flattened together into the second axis.',
+        axis_x_dims: set[Dim] = pydantic.Field(  # type: ignore[valid-type]
+            default_factory=lambda: {Dim(0)},
+            title='Dims on X axis',
+            description='Input dims that combine into the X image axis. The '
+            'remaining dims form the Y axis. Each group with K ≥ 2 dims is '
+            'flattened together in natural input order.',
         )
+
+        @pydantic.model_validator(mode='after')
+        def _validate_proper_subset(self) -> _AxisConfig:
+            if not 1 <= len(self.axis_x_dims) < n:
+                raise ValueError(
+                    f"axis_x_dims must be a non-empty proper subset of the "
+                    f"{n} input dims; got {len(self.axis_x_dims)} dim(s)"
+                )
+            return self
 
     class _FlattenParams(FlattenParams):
         flatten: _AxisConfig = pydantic.Field(  # type: ignore[valid-type]
             default_factory=_AxisConfig,
-            description='Selection of which input dim stays as one image axis '
-            'and how the remaining two are flattened together.',
+            description='Partition of input dims into X- and Y-axis groups '
+            'and their flatten ordering.',
         )
 
     return _FlattenParams
@@ -197,46 +218,36 @@ def _make_hover_hook(hover: HoverTool):
 class FlattenPlotter(ImagePlotter):
     """Image plotter with static flattening of N-D input to 2D.
 
-    Each image axis is built from one or more input dims via ``x_dims`` and
-    ``y_dims`` — ordered tuples of input-dim positions whose union covers all
-    dims of the input. Axes with K ≥ 2 dims are flattened together (in the
-    given order); axes with K = 1 pass through. A custom hover decomposes
-    each axis cursor back into per-dim labels.
+    The X axis takes the dims at positions in ``axis_x_dims``; Y takes the
+    complement. Within each axis dims are flattened in natural input order,
+    optionally reversed by the per-axis ``transpose_*_flatten`` flag. The
+    global ``transpose`` swaps the resulting X and Y. A custom hover
+    decomposes each axis cursor back into per-dim labels.
     """
 
     def __init__(
         self,
         *,
-        x_dims: tuple[int, ...],
-        y_dims: tuple[int, ...],
+        axis_x_dims: frozenset[int] | set[int],
+        transpose_x_flatten: bool = False,
+        transpose_y_flatten: bool = False,
+        transpose: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        if not x_dims or not y_dims:
-            raise ValueError("x_dims and y_dims must each contain at least one dim")
-        positions = (*x_dims, *y_dims)
-        if sorted(positions) != list(range(len(positions))):
-            raise ValueError(
-                f"x_dims/y_dims positions {positions} must be a permutation of "
-                f"range({len(positions)}); some are out of range or duplicated"
-            )
-        self._x_dims = tuple(int(p) for p in x_dims)
-        self._y_dims = tuple(int(p) for p in y_dims)
+        x = frozenset(int(p) for p in axis_x_dims)
+        if not x:
+            raise ValueError("axis_x_dims must contain at least one position")
+        if any(p < 0 for p in x):
+            raise ValueError(f"Negative position in axis_x_dims: {sorted(x)}")
+        self._axis_x_dims = x
+        self._transpose_x_flatten = transpose_x_flatten
+        self._transpose_y_flatten = transpose_y_flatten
+        self._transpose = transpose
 
     @classmethod
-    def from_axes(
-        cls,
-        params: PlotParams2d,
-        *,
-        x_dims: tuple[int, ...],
-        y_dims: tuple[int, ...],
-    ) -> FlattenPlotter:
-        """Construct from a partition of input dims into two ordered axes.
-
-        ``params`` supplies plot styling only; the axis spec comes from
-        ``x_dims``/``y_dims`` directly. Useful for N-D cases not yet
-        expressible through :class:`FlattenAxisConfig`.
-        """
+    def from_params(cls, params: FlattenParams) -> FlattenPlotter:
+        cfg = params.flatten
         rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
@@ -245,40 +256,33 @@ class FlattenPlotter(ImagePlotter):
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
-            x_dims=x_dims,
-            y_dims=y_dims,
+            axis_x_dims=frozenset(int(p) for p in cfg.axis_x_dims),
+            transpose_x_flatten=cfg.transpose_x_flatten,
+            transpose_y_flatten=cfg.transpose_y_flatten,
+            transpose=cfg.transpose,
         )
-
-    @classmethod
-    def from_params(cls, params: FlattenParams) -> FlattenPlotter:
-        """Construct from a 3D :class:`FlattenAxisConfig`.
-
-        Translates ``keep_dim`` + ``flatten_transposed`` + ``transpose`` into
-        the generic ``(x_dims, y_dims)`` partition.
-        """
-        keep = int(params.flatten.keep_dim)
-        others = [i for i in (0, 1, 2) if i != keep]
-        if params.flatten.flatten_transposed:
-            others = others[::-1]
-        if params.flatten.transpose:
-            x_dims, y_dims = tuple(others), (keep,)
-        else:
-            x_dims, y_dims = (keep,), tuple(others)
-        return cls.from_axes(params, x_dims=x_dims, y_dims=y_dims)
-
-    @property
-    def _ndim(self) -> int:
-        return len(self._x_dims) + len(self._y_dims)
 
     def _resolve_dim_names(
         self, data: sc.DataArray
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        if data.ndim != self._ndim:
+        n = data.ndim
+        if any(p >= n for p in self._axis_x_dims):
             raise ValueError(
-                f"FlattenPlotter requires {self._ndim}D input, got {data.ndim}D"
+                f"axis_x_dims {sorted(self._axis_x_dims)} contains positions "
+                f"out of range for {n}D data"
             )
-        x_names = tuple(data.dims[p] for p in self._x_dims)
-        y_names = tuple(data.dims[p] for p in self._y_dims)
+        x_positions = sorted(self._axis_x_dims)
+        y_positions = [p for p in range(n) if p not in self._axis_x_dims]
+        if not y_positions:
+            raise ValueError(f"All {n} dims assigned to X axis; Y axis would be empty")
+        if self._transpose_x_flatten:
+            x_positions = x_positions[::-1]
+        if self._transpose_y_flatten:
+            y_positions = y_positions[::-1]
+        if self._transpose:
+            x_positions, y_positions = y_positions, x_positions
+        x_names = tuple(data.dims[p] for p in x_positions)
+        y_names = tuple(data.dims[p] for p in y_positions)
         return x_names, y_names
 
     def _flatten_to_2d(
