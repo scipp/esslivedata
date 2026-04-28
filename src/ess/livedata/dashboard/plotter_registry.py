@@ -406,16 +406,16 @@ def _register_all_plotters() -> None:
 
     plotter_registry.register_plotter(
         name='flatten',
-        title='3D Flatten',
+        title='Flatten to 2D',
         description=(
-            'Flatten 3D data to a 2D image with a static (config-time) choice '
-            'of which dim stays as one image axis. The other two dims are '
-            'flattened together; hovering decomposes the synthetic axis back '
-            'into outer/inner labels with their coord values.'
+            'Flatten N-D data (N ≥ 2) to a 2D image with a static '
+            '(config-time) partition of input dims into X- and Y-axis '
+            'groups. Each group with two or more dims is flattened together; '
+            'hovering decomposes each axis back into per-dim labels with '
+            'their coord values.'
         ),
         data_requirements=DataRequirements(
-            min_dims=3,
-            max_dims=3,
+            min_dims=2,
             multiple_datasets=False,
         ),
         factory=FlattenPlotter.from_params,
