@@ -4,6 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 
+import annotated_types
 import panel as pn
 import pydantic
 from pydantic_core import PydanticUndefined
@@ -43,6 +44,43 @@ def _is_set_of_enum(field_type) -> bool:
         return False
     inner = args[0]
     return isinstance(inner, type) and issubclass(inner, Enum)
+
+
+def _length_bounds(
+    field_info: pydantic.fields.FieldInfo,
+) -> tuple[int | None, int | None]:
+    """Extract ``(min_length, max_length)`` from a field's annotated metadata."""
+    min_len = max_len = None
+    for m in field_info.metadata:
+        if isinstance(m, annotated_types.MinLen):
+            min_len = m.min_length
+        elif isinstance(m, annotated_types.MaxLen):
+            max_len = m.max_length
+    return min_len, max_len
+
+
+def _enforce_length_bounds(
+    widget: pn.widgets.MultiSelect,
+    min_len: int | None,
+    max_len: int | None,
+) -> None:
+    """Veto value changes that would violate the configured length bounds.
+
+    Reverts to the previous value when the user adds beyond ``max_len`` or
+    removes below ``min_len``. Cheaper than tracking selection-add events
+    and matches the constraint already enforced by pydantic on submit.
+    """
+    if min_len is None and max_len is None:
+        return
+
+    def _on_change(event):
+        n = len(event.new)
+        if (max_len is not None and n > max_len) or (
+            min_len is not None and n < min_len
+        ):
+            widget.value = event.old
+
+    widget.param.watch(_on_change, 'value')
 
 
 class ParamWidget:
@@ -154,12 +192,15 @@ class ParamWidget:
             (enum_type,) = get_args(field_type)
             options = _enum_options(enum_type)
             default_widget_value = list(default_value) if default_value else []
-            return pn.widgets.MultiSelect(
+            multi_select = pn.widgets.MultiSelect(
                 options=options,
                 value=default_widget_value,
                 size=min(len(options), 10),
                 **shared_options,
             )
+            min_len, max_len = _length_bounds(field_info)
+            _enforce_length_bounds(multi_select, min_len, max_len)
+            return multi_select
         elif get_origin(field_type) is Literal:
             # Handle Literal types (e.g., Literal['a', 'b', 'c'])
             literal_values = get_args(field_type)

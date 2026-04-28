@@ -103,22 +103,18 @@ def make_flatten_params(dims: tuple[str, ...]) -> type[FlattenParams]:
     Dim = IntEnum('Dim', [(d, i) for i, d in enumerate(dims)])
 
     class _AxisConfig(FlattenAxisConfig):
+        # min_length/max_length here are not just validation — ParamWidget
+        # reads them off the field metadata to constrain the MultiSelect
+        # itself, so the user never lands in an empty/full state.
         axis_x_dims: set[Dim] = pydantic.Field(  # type: ignore[valid-type]
             default_factory=lambda: {Dim(0)},
+            min_length=1,
+            max_length=n - 1,
             title='Dims on X axis',
             description='Input dims that combine into the X image axis. The '
             'remaining dims form the Y axis. Each group with K ≥ 2 dims is '
             'flattened together in natural input order.',
         )
-
-        @pydantic.model_validator(mode='after')
-        def _validate_proper_subset(self) -> _AxisConfig:
-            if not 1 <= len(self.axis_x_dims) < n:
-                raise ValueError(
-                    f"axis_x_dims must be a non-empty proper subset of the "
-                    f"{n} input dims; got {len(self.axis_x_dims)} dim(s)"
-                )
-            return self
 
     class _FlattenParams(FlattenParams):
         flatten: _AxisConfig = pydantic.Field(  # type: ignore[valid-type]
