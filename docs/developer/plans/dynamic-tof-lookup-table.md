@@ -167,6 +167,7 @@ TODO:
 - `rotation_speed_setpoint` is the NXlog we need, probably f144, not `tdct`
 - check if latest CODA files have a `phase_setpoint` (or even just `phase`) in their NXdisk_chopper. If so, we do not need `tdct`. Gating in the preprocessor becomes much simpler - we do not need to look at stream contents. Instead we just wait until we have a setpoint pair (rotation-speed and phase) for each chopper, then emit.
 - Look into how this can rely on (or how it interferes with) the existing mechanism for (typically) f144 aux streams that are cached in the preprocessor and fed into newly started jobs. Think about whether this actually makes our approach of creating a unified stream in the adapter chain questionable - should unification happen later (in the preprocessor)?
+- There is also `park_angle`, unclear if we have a use for this?
 
 End-to-end validation runs on the CODA staging environment.
 
