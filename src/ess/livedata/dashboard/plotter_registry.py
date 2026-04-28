@@ -416,6 +416,7 @@ def _register_all_plotters() -> None:
         ),
         data_requirements=DataRequirements(
             min_dims=2,
+            max_dims=6,
             multiple_datasets=False,
         ),
         factory=FlattenPlotter.from_params,
