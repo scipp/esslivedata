@@ -4,13 +4,6 @@
 ESTIA instrument factory implementations.
 """
 
-
-
-
-
-
-
-
 from ess.livedata.config import Instrument
 
 from . import specs
