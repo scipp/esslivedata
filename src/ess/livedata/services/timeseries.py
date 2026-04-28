@@ -57,6 +57,7 @@ def make_timeseries_service_builder(
         preprocessor_factory=preprocessor_factory,
         stream_counter=stream_counter,
         message_batcher=NaiveMessageBatcher(),
+        stream_mapping=scoped,
     )
 
 

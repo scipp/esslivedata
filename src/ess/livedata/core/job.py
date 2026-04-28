@@ -12,6 +12,7 @@ import scipp as sc
 from ess.livedata.handlers.workflow_factory import Workflow
 
 from ..config.workflow_spec import JobId, ResultKey, WorkflowId
+from .message import STATUS_STREAM_ID, Message, StreamId, StreamKind
 from .timestamp import Timestamp
 
 
@@ -54,6 +55,14 @@ class JobResult:
             job_id=self.job_id,
         ).model_dump_json()
 
+    def to_message(self) -> Message:
+        """Convert this result to a publishable data-stream message."""
+        return Message(
+            timestamp=self.start_time or Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=self.stream_name),
+            value=self.data,
+        )
+
 
 @dataclass
 class JobStatus:
@@ -76,6 +85,14 @@ class JobStatus:
     def has_warning(self) -> bool:
         """Check if the job status indicates a warning."""
         return self.state == JobState.warning or self.warning_message is not None
+
+    def to_message(self, timestamp: Timestamp | None = None) -> Message:
+        """Convert this status to a publishable status-stream message."""
+        return Message(
+            timestamp=timestamp or Timestamp.now(),
+            stream=STATUS_STREAM_ID,
+            value=self,
+        )
 
 
 @dataclass
@@ -208,6 +225,7 @@ class Job:
         source_names: list[str],
         aux_source_names: dict[str, str] | None = None,
         reset_on_run_transition: bool = True,
+        is_one_shot: bool = False,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -227,6 +245,11 @@ class Job:
             None if no auxiliary sources are needed.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
+        is_one_shot:
+            Set when the job's primary sources resolve to zero physical streams,
+            i.e. the job will never receive data. JobManager runs such jobs
+            synchronously on schedule (single finalize, no scheduled/active
+            state) instead of waiting for message-driven activation.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -235,6 +258,7 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
+        self._is_one_shot = is_one_shot
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
 
         # Create reverse mapping: stream_name -> list of field_names
@@ -281,6 +305,10 @@ class Job:
     @property
     def reset_on_run_transition(self) -> bool:
         return self._reset_on_run_transition
+
+    @property
+    def is_one_shot(self) -> bool:
+        return self._is_one_shot
 
     def add(self, data: JobData) -> JobReply:
         try:
