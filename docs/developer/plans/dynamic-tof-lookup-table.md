@@ -106,8 +106,8 @@ class LookupTableParams(BaseModel):
     time_resolution: TimeResolution = Field(default_factory=TimeResolution)
     Ltotal_range: LtotalRange = Field(default_factory=LtotalRange)
     num_simulated_neutrons: int = Field(
-        default=10_000_000, ge=1_000_000,
-        description="Neutrons in simulation. Lower for faster turnaround during commissioning."
+        default=10_000_000, ge=1_000,
+        description="Neutrons in simulation. Lower for faster turnaround during commissioning or tests."
     )
 ```
 
@@ -163,13 +163,21 @@ setpoint is the working assumption; readback drives gating, setpoint provides
 the reference). Whether this stays contained in the preprocessor or grows
 into something user-tunable is something we revisit only if reality forces it.
 
+**Observability:** the preprocessor logs structured lines at each state
+transition — `subscribed to N PVs`, `first message from <chopper>`,
+`<chopper> locked`, `all locked, emitting`. The "operator clicked start,
+output topic empty" state is then diagnosable from `journalctl` alone, with
+no behavior change.
+
 ### Output
 
 `LookupTableArray = NewType('LookupTableArray', sc.DataArray)` — the `array`
 field of the upstream `LookupTable`. Published via the existing sink path as a
 single da00 message (~1–2 MB typical, well under the 100 MB Kafka limit).
 
-Output source key: **`'choppers'`** (the same logical name used on ingress).
+Output source key: **`'tof_lookup_table'`** — distinct from the ingress
+logical source name (`'choppers'`) to avoid namespace overlap when consumers
+or future readers grep for either.
 Per-instrument scoping is inherited from the service instance. A/B comparison
 of two param sets would need distinct keys; YAGNI for v1.
 
@@ -212,9 +220,11 @@ async/threading, is what makes blocking tolerable.
 pattern at the routing layer**. A new `MessageAdapter` for the chopper
 flatbuffer rewrites `stream.name` to a single logical source name
 (`'choppers'`) on ingress, just as `Ev44ToDetectorEventsAdapter(merge_detectors=True)`
-does for Bifrost's 45 detector banks. Workflow specs use the logical name;
-`config/route_derivation.py::resolve_stream_names` expands it to the physical
-chopper PVs for Kafka subscription.
+does for Bifrost's 45 detector banks. The workflow spec lists `'choppers'` as
+its **primary** source (not aux); preprocessor gating drives re-execution as
+designed.
+`config/route_derivation.py::resolve_stream_names` expands the logical name
+to the physical chopper PVs for Kafka subscription.
 
 This means JobManager stays 1:1 `(source, workflow)`, the orchestrator stays
 1:1, and routing N→1 happens entirely in the adapter. Option 1
@@ -242,6 +252,26 @@ false. Either add a `chopper` category alongside `detector`/`monitor`, or
 replace the special-case with a generic "logical → physical" mapping. Modest
 cleanup, not architectural change.
 
+### Chopperless instruments
+
+Instruments where no chopper PVs are configured in the stream mapping have
+**zero input streams** for this workflow. JobManager has no message-driven
+trigger and would never call `finalize`. Resolution: extend JobManager so
+that a workflow with **zero input streams** has its `finalize` called once at
+job creation, and the job exits immediately afterwards (it can never be
+triggered again). The workflow then computes a chopperless table
+(`DiskChoppers = {}`) and publishes it once.
+
+This generalizes naturally beyond this workflow — any future zero-input
+"computed once from params" workflow gets the same treatment. We deliberately
+do **not** extend this to "zero primary, some aux" workflows: defining when
+such a workflow first runs (first message on every aux? first on any?) is
+trickier than we need.
+
+If the operator changes params and wants a new table, they stop and restart
+the job — a new job, a new fire. No "reset → re-finalize" on the same
+job instance for v1.
+
 ## Files expected to change
 
 - `src/ess/livedata/parameter_models.py` — new scalar/range models for the params.
@@ -250,9 +280,10 @@ cleanup, not architectural change.
 - `src/ess/livedata/handlers/chopper_preprocessor.py` — combines static NeXus chopper geometry with the live `${instrument}_choppers` stream into a gated `DiskChoppers` output.
 - `src/ess/livedata/kafka/message_adapter.py` (and stream mapping) — route for `${instrument}_choppers` topic; new adapter that rewrites `stream.name` to logical `'choppers'` (mirrors `Ev44ToDetectorEventsAdapter(merge_detectors=True)`); possibly a new flatbuffer schema (`tdct`?).
 - `src/ess/livedata/config/route_derivation.py` — generalize `resolve_stream_names` so the logical→physical expansion isn't Bifrost-only; add a `chopper` category (or replace the special-case with a generic mechanism).
-- `src/ess/livedata/scripts/make_geometry_nexus.py` — verify it preserves chopper info; fix if it strips today.
+- `src/ess/livedata/scripts/make_geometry_nexus.py` — emit sufficient chopper info into the registry artifact (today it likely does not). When this changes, the regenerated artifact must be republished to the pooch registry and consuming hashes bumped.
 - `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults.
 - `src/ess/livedata/services/data_reduction.py` — register the new workflow factory (if option 1).
+- `src/ess/livedata/core/job_manager.py` (or wherever the job lifecycle lives) — extension: jobs whose workflow declares **zero input streams** get `finalize` called once at creation, and exit. Preserves existing behavior for jobs with one or more input streams.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
 - `tests/handlers/lookup_table_workflow_test.py` and chopper-preprocessor tests.
 
@@ -262,8 +293,11 @@ cleanup, not architectural change.
 - Unit: the four input params appear as 0-D coords on the output array, with correct dtypes and units.
 - Unit: chopperless input (`DiskChoppers = {}`) produces a table without raising; values are the chopperless degenerate.
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp` preserves values, variances, dims, and the four scalar coords (regression check).
-- Integration: feed a known LOKI configuration and assert the array agrees with the precomputed `loki-wavelength-lookup-table-no-choppers.h5` to within numerical tolerance.
+- Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify JobManager fires `finalize` once on creation, output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job exits.
+- Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper preprocessor, the adapter rewrite path, and upstream `LookupTableWorkflow` integration before staging.
+- Integration (chopper-equipped, gating behavior): feed chopper messages through the Shape A path; verify the preprocessor gates as expected and the workflow re-runs only on substantial changes.
 - Chopper preprocessor unit: feeding a sequence of small rotation/phase fluctuations does *not* trigger a downstream emit; a step change does. NeXus geometry is preserved across emits.
+- JobManager unit: a job whose workflow declares zero input streams has `finalize` called exactly once at creation and then exits; jobs with ≥1 input stream behave as today.
 
 ## Open questions
 
@@ -275,17 +309,24 @@ answerable at impl time without changing this plan.)
 
 - **Job cardinality / stream model:** Shape A — adapter rewrites
   `stream.name` to logical `'choppers'`, mirroring Bifrost's `unified_detector`
-  pattern at the routing layer. Single job, single logical source. JobManager
-  unchanged. Unlike the Bifrost case, messages are **not** flattened: the
-  preprocessor preserves per-chopper structure (`dict[chopper_name, …]`
+  pattern at the routing layer. The workflow spec lists `'choppers'` as its
+  **primary** source. Unlike the Bifrost case, messages are **not** flattened:
+  the preprocessor preserves per-chopper structure (`dict[chopper_name, …]`
   internally, `sc.DataGroup` keyed by chopper name on emit).
-- **Output source key:** `'choppers'` (single key per instrument-service);
-  A/B with multiple param sets is YAGNI.
+- **Chopperless instruments (no chopper PVs configured):** workflow has zero
+  input streams; JobManager extension fires `finalize` once on job creation
+  and the job exits. Same path serves CI, local-dev, and production
+  chopperless commissioning phases.
+- **Output source key:** `'tof_lookup_table'` (distinct from the input
+  logical source `'choppers'`; single key per instrument-service); A/B with
+  multiple param sets is YAGNI.
 - **Trigger model:** user-triggered start (operator sets params, starts job).
   Debouncing controls re-execution while the job runs.
-- **Bootstrap on start:** wait for the first stable emit from the chopper
-  preprocessor; output topic stays empty until then. Simplest path. Local-dev
-  flow without a chopper topic = feature unusable in local-dev for v1.
+- **Bootstrap on start (chopper-equipped):** wait for the first stable emit
+  from the chopper preprocessor; output topic stays empty until then.
+  Simplest path.
+- **Bootstrap on start (chopperless):** workflow fires immediately on job
+  creation via the JobManager zero-input-streams path (see above).
 - **Gating thresholds:** hardcoded in the chopper preprocessor; not UI
   params.
 - **Readback vs. setpoint:** subscribe to both; readback drives gating,
