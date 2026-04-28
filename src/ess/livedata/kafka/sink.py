@@ -12,6 +12,7 @@ import structlog
 
 from ..config.workflow_spec import ResultKey
 from ..core.message import Message, MessageSink
+from .errors import is_fatal
 
 logger = structlog.get_logger(__name__)
 
@@ -69,6 +70,7 @@ class KafkaSink(MessageSink[T]):
         self._producer: kafka.Producer | None = None
         self._producer_factory = producer_factory
         self._serializer = serializer
+        self._fatal_error: kafka.KafkaError | None = None
         # Metrics tracking
         self._messages_published = 0
         self._publish_errors = 0
@@ -78,10 +80,17 @@ class KafkaSink(MessageSink[T]):
     def publish_messages(self, messages: list[Message[T]]) -> None:
         if self._producer is None:
             raise RuntimeError("KafkaSink must be used as a context manager")
+        if self._fatal_error is not None:
+            raise kafka.KafkaException(self._fatal_error)
 
         def delivery_callback(err, msg):
-            if err is not None:
-                self._publish_errors += 1
+            if err is None:
+                return
+            self._publish_errors += 1
+            if is_fatal(err):
+                self._fatal_error = err
+                logger.error("Fatal delivery error for topic %s: %s", msg.topic(), err)
+            else:
                 logger.error("Failed to deliver message to %s: %s", msg.topic(), err)
 
         logger.debug("Publishing %d messages", len(messages))
@@ -100,12 +109,21 @@ class KafkaSink(MessageSink[T]):
                 )
                 self._producer.poll(0)
             except kafka.KafkaException as e:
+                err = e.args[0] if e.args else None
+                if isinstance(err, kafka.KafkaError) and is_fatal(err):
+                    raise
                 logger.error("Failed to publish message to %s: %s", serialized.topic, e)
 
         try:
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
+            err = e.args[0] if e.args else None
+            if isinstance(err, kafka.KafkaError) and is_fatal(err):
+                raise
             logger.error("Error flushing producer: %s", e)
+
+        if self._fatal_error is not None:
+            raise kafka.KafkaException(self._fatal_error)
 
         self._messages_published += len(messages)
         self._maybe_log_metrics()

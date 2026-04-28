@@ -11,6 +11,7 @@ import structlog
 from confluent_kafka import KafkaException
 
 from ..core.message import MessageSource
+from .errors import is_fatal
 from .message_adapter import KafkaMessage
 
 logger = structlog.get_logger(__name__)
@@ -47,9 +48,19 @@ class KafkaMessageSource(MessageSource[KafkaMessage]):
         self._timeout = timeout
 
     def get_messages(self) -> list[KafkaMessage]:
-        return self._consumer.consume(
+        messages = self._consumer.consume(
             num_messages=self._num_messages, timeout=self._timeout
         )
+        data_messages = []
+        for m in messages:
+            err = m.error()
+            if err is not None:
+                if is_fatal(err):
+                    raise KafkaException(err)
+                logger.warning("kafka_consumer_error", error=err)
+                continue
+            data_messages.append(m)
+        return data_messages
 
 
 @dataclass
@@ -66,7 +77,7 @@ class ConsumerHealthStatus:
     failure_reason: str | None = None
 
 
-class BackgroundMessageSource(MessageSource[KafkaMessage]):
+class BackgroundMessageSource(KafkaMessageSource):
     """
     Message source that consumes messages in a background thread.
 
@@ -105,9 +116,7 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS,
         health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     ):
-        self._consumer = consumer
-        self._num_messages = num_messages
-        self._timeout = timeout
+        super().__init__(consumer=consumer, num_messages=num_messages, timeout=timeout)
         self._queue: queue.Queue[list[KafkaMessage]] = queue.Queue(
             maxsize=max_queue_size
         )
@@ -181,18 +190,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         try:
             while not self._stop_event.is_set():
                 try:
-                    messages = self._consumer.consume(self._num_messages, self._timeout)
-
-                    # Filter out error messages from the consumer
-                    data_messages = []
-                    for m in messages:
-                        if m.error() is not None:
-                            if m.error().fatal():
-                                raise KafkaException(m.error())
-                            logger.warning("kafka_consumer_error", error=m.error())
-                            continue
-                        data_messages.append(m)
-                    messages = data_messages
+                    # Foreground consume + error filter; the public get_messages
+                    # override below dispatches from the queue instead.
+                    messages = super().get_messages()
 
                     # Reset consecutive errors on successful consume
                     self._consecutive_errors = 0
@@ -291,7 +291,12 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
             self._last_metrics_time = now
 
     def get_messages(self) -> list[KafkaMessage]:
-        """Get all messages consumed since the last call."""
+        """Get all messages consumed since the last call.
+
+        Raises ``RuntimeError`` once the background consume thread has died
+        for any non-clean reason and any buffered messages have been drained,
+        so the caller (typically `Service._run_loop`) can fail fast.
+        """
         if not self._started:
             self.start()
 
@@ -302,6 +307,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                 all_messages.extend(batch)
         except queue.Empty:
             pass
+
+        if not all_messages and self._failure_reason is not None:
+            raise RuntimeError(f"Background consumer stopped: {self._failure_reason}")
 
         return all_messages
 
