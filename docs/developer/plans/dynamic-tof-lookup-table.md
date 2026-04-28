@@ -24,7 +24,11 @@ result is deferred to a follow-up.
   the latter once the producer/consumer ends meet.
 - **Standalone "chopperless fallback" path** (#894 as originally framed).
   Once the dynamic producer exists, "chopperless" is just the degenerate input
-  case (`DiskChoppers = {}`); no separate code path is needed.
+  case (`DiskChoppers = {}`); no separate workflow logic is needed. (A small
+  JobManager extension *is* needed to fire `finalize` once for jobs with zero
+  input streams — see the Chopperless instruments section — but that
+  generalizes beyond this workflow rather than being a chopperless-specific
+  code path.)
 
 ## Approach
 
@@ -61,12 +65,16 @@ convention (see `parameter_models.py`: `RangeModel`, `EdgesModel`,
 plus a `StrEnum unit`, with a getter that constructs the `sc.Variable` on
 demand.
 
-Small scalar-with-unit models, added to `parameter_models.py` alongside the
-existing patterns:
+The UI requires `LookupTableParams` to nest pydantic models exactly one level
+deep, so even unitless scalars need a wrapper model rather than a bare
+`int`/`float` field on `LookupTableParams`.
+
+Small wrapper models, added to `parameter_models.py` alongside the existing
+patterns:
 
 ```python
 class PulsePeriod(BaseModel):
-    value: float = Field(default=71.4286, description="Pulse period.")
+    value: float = Field(default=1000.0/14, description="Pulse period.")
     unit: TimeUnit = Field(default=TimeUnit.MS, description="Unit.")
 
     def get(self) -> sc.Variable:
@@ -94,24 +102,30 @@ class LtotalRange(RangeModel):
     start: float = Field(default=5.0, description="Shortest L_total.")
     stop: float = Field(default=200.0, description="Longest L_total.")
     unit: LengthUnit = Field(default=LengthUnit.METER, description="Unit.")
+
+
+class Simulation(BaseModel):
+    pulse_stride: int = Field(default=1, ge=1, description="Pulse stride.")
+    num_simulated_neutrons: int = Field(
+        default=10_000_000, ge=1_000,
+        description="Neutrons in simulation. Lower for faster turnaround during commissioning or tests.",
+    )
 ```
+
+The unitless ints share a single sub-model rather than each getting its own
+wrapper, and need no `get()` method — consumers access `.pulse_stride` /
+`.num_simulated_neutrons` directly.
 
 `LookupTableParams` composes them:
 
 ```python
 class LookupTableParams(BaseModel):
     pulse_period: PulsePeriod = Field(default_factory=PulsePeriod)
-    pulse_stride: int = Field(default=1, ge=1)
     distance_resolution: DistanceResolution = Field(default_factory=DistanceResolution)
     time_resolution: TimeResolution = Field(default_factory=TimeResolution)
     Ltotal_range: LtotalRange = Field(default_factory=LtotalRange)
-    num_simulated_neutrons: int = Field(
-        default=10_000_000, ge=1_000,
-        description="Neutrons in simulation. Lower for faster turnaround during commissioning or tests."
-    )
+    simulation: Simulation = Field(default_factory=Simulation)
 ```
-
-`pulse_stride` and `num_simulated_neutrons` are plain `int`s (no unit).
 
 Per-instrument overrides for `Ltotal_range` defaults are expected
 (LtotalRange varies with detector layout). Quality knobs
@@ -144,8 +158,12 @@ the upstream simulation expects:
    - A new `MessageAdapter` and stream-mapping entry routing the topic to the
      workflow.
    - Possibly a new flatbuffer schema (likely `tdct`, TBC) — depends on which
-     fields the upstream system publishes.
+     fields the upstream system publishes. Concrete schema and fields are
+     determined at impl time by inspecting existing `coda_*.hdf` files in the
+     project root, cross-checked against the upstream chopper class needs.
    - An update to the local-dev `setup-kafka-topics.sh` script.
+
+End-to-end validation runs on the CODA staging environment.
 
 A small **chopper preprocessor** owns the combination: it ingests live
 rotation/phase samples, holds the static NeXus geometry, and emits a
@@ -155,6 +173,10 @@ Workflow execution is **user-triggered**: the operator sets params and starts
 the job manually (no always-on / auto-start). Once the job is running, the
 preprocessor's debouncing controls *re-execution*; it does not control whether
 the job exists.
+
+On job start, the workflow waits for the preprocessor's first stable emit —
+the output topic stays empty until choppers lock. This is the simplest path
+and is consistent with "no recompute unless inputs are stable."
 
 The "substantial change" gating thresholds are **hardcoded inside the
 preprocessor** for v1 — not exposed as UI params. The preprocessor compares
@@ -193,7 +215,9 @@ not a separate format invention.)
 
 Wraps `ess.reduce.unwrap.lut.LookupTableWorkflow`. The workflow takes the
 params + choppers, computes the table, and returns the array with the four
-scalar params attached as coords.
+scalar params attached as coords. A couple of additional providers may need
+to be added to this base workflow, e.g., for turning the `LookupTable`
+output into the `LookupTableArray` described above.
 
 ## Service placement
 
@@ -295,9 +319,11 @@ job instance for v1.
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp` preserves values, variances, dims, and the four scalar coords (regression check).
 - Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify JobManager fires `finalize` once on creation, output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job exits.
 - Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper preprocessor, the adapter rewrite path, and upstream `LookupTableWorkflow` integration before staging.
-- Integration (chopper-equipped, gating behavior): feed chopper messages through the Shape A path; verify the preprocessor gates as expected and the workflow re-runs only on substantial changes.
+- Integration (chopper-equipped, gating behavior): feed chopper messages through the adapter + preprocessor; verify the preprocessor gates as expected and the workflow re-runs only on substantial changes.
 - Chopper preprocessor unit: feeding a sequence of small rotation/phase fluctuations does *not* trigger a downstream emit; a step change does. NeXus geometry is preserved across emits.
 - JobManager unit: a job whose workflow declares zero input streams has `finalize` called exactly once at creation and then exits; jobs with ≥1 input stream behave as today.
+- Message-adapter unit: the new chopper adapter rewrites `stream.name` to `'choppers'` regardless of the physical chopper PV, while preserving the chopper identity in the payload. Mirrors the existing patterns in `tests/kafka/message_adapter_test.py`.
+- `resolve_stream_names` unit: logical `'choppers'` expands to the configured set of physical chopper PV stream names; existing detector/monitor logical-name expansion is unchanged.
 
 ## Open questions
 
@@ -305,44 +331,3 @@ job instance for v1.
 per-instrument `Ltotal_range` defaults, exact gating thresholds — are
 answerable at impl time without changing this plan.)
 
-## Resolved (for v1)
-
-- **Job cardinality / stream model:** Shape A — adapter rewrites
-  `stream.name` to logical `'choppers'`, mirroring Bifrost's `unified_detector`
-  pattern at the routing layer. The workflow spec lists `'choppers'` as its
-  **primary** source. Unlike the Bifrost case, messages are **not** flattened:
-  the preprocessor preserves per-chopper structure (`dict[chopper_name, …]`
-  internally, `sc.DataGroup` keyed by chopper name on emit).
-- **Chopperless instruments (no chopper PVs configured):** workflow has zero
-  input streams; JobManager extension fires `finalize` once on job creation
-  and the job exits. Same path serves CI, local-dev, and production
-  chopperless commissioning phases.
-- **Output source key:** `'tof_lookup_table'` (distinct from the input
-  logical source `'choppers'`; single key per instrument-service); A/B with
-  multiple param sets is YAGNI.
-- **Trigger model:** user-triggered start (operator sets params, starts job).
-  Debouncing controls re-execution while the job runs.
-- **Bootstrap on start (chopper-equipped):** wait for the first stable emit
-  from the chopper preprocessor; output topic stays empty until then.
-  Simplest path.
-- **Bootstrap on start (chopperless):** workflow fires immediately on job
-  creation via the JobManager zero-input-streams path (see above).
-- **Gating thresholds:** hardcoded in the chopper preprocessor; not UI
-  params.
-- **Readback vs. setpoint:** subscribe to both; readback drives gating,
-  setpoint is the reference.
-- **`pulse_period` / `pulse_stride`:** both UI-editable. `pulse_period` is
-  fixed in principle but commissioning may need it; `pulse_stride` is in
-  principle chopper-derivable but operator sets it manually for now.
-- **NeXus geometry source:** existing pooch registry. Update
-  `make_geometry_nexus.py` so the registry artifact carries sufficient
-  chopper info.
-- **Blocking compute:** acceptable in `data_reduction` for v1 (other
-  workflows can't produce anything useful without a fresh table after a
-  param change). Production move to a separate service is expected; no
-  async/threading work for v1.
-- **Upstream chopper topic & schema:** topic + naming non-issue.
-  Concrete schema/fields determined at impl time from existing
-  `coda_*.hdf` files in the project root, cross-checked against the
-  upstream chopper class needs. End-to-end validation runs on the CODA
-  staging environment.
