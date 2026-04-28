@@ -217,19 +217,16 @@ class TestFlattenPlotterPlot:
         assert img.kdims[0].name == 'd'  # x = kept (position 1)
         assert img.kdims[1].name == 'a·c'
 
-    def test_raises_for_keep_dim_out_of_range(self, data_abc, data_key) -> None:
-        # Out-of-range positions are caught at plot time. Pydantic prevents
-        # the narrowed model from constructing one, but the base model
-        # accepts any int — and that's the path saved configs go through on
-        # restore.
+    def test_raises_for_keep_dim_out_of_range(self) -> None:
+        # Saved configs go through the un-narrowed FlattenParams which accepts
+        # any int. The plotter rejects out-of-range positions at construction.
         params = FlattenParams(flatten={'keep_dim': 5})
-        plotter = FlattenPlotter.from_params(params)
         with pytest.raises(ValueError, match='out of range'):
-            plotter.plot(data_abc, data_key)
+            FlattenPlotter.from_params(params)
 
 
 class TestFlattenPlotterHover:
-    """Hover decomposes the flat axis into outer/inner labels."""
+    """Hover decomposes each image axis into per-dim labels."""
 
     def test_hook_replaces_default_hover_with_custom_one(
         self, data_abc, data_key
@@ -243,7 +240,7 @@ class TestFlattenPlotterHover:
         assert len(hovers) == 1
         assert hovers[0] in fig.added_tools
 
-    def test_hover_tooltips_label_keep_outer_inner_and_value(
+    def test_hover_tooltips_one_row_per_dim_then_value(
         self, data_abc, data_key
     ) -> None:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
@@ -251,15 +248,17 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data_abc, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        # x first, y next, value last. Per-dim format directive = dim name.
+        # Each dim's row label carries its unit; values come back unit-less.
         labels = [name for name, _ in hover.tooltips]
-        # Keep dim is 'b' (unit 's'); natural-order outer='a', inner='c'.
-        assert labels == ['b [s]', 'a', 'c', 'value']
-        # Flat axis is y when not transposed; outer/inner both reference it.
+        assert labels == ['b [s]', 'a [m]', 'c [K]', 'value']
         templates = dict(hover.tooltips)
-        assert templates['b [s]'] == '$x'
-        assert templates['a'] == '$y{outer}'
-        assert templates['c'] == '$y{inner}'
+        assert templates['b [s]'] == '$x{b}'
+        assert templates['a [m]'] == '$y{a}'
+        assert templates['c [K]'] == '$y{c}'
         assert templates['value'] == '@image'
+        # Both axes always have a formatter — single-dim axes too.
+        assert '$x' in hover.formatters
         assert '$y' in hover.formatters
 
     def test_hover_kept_dim_label_omits_unit_when_coord_missing(
@@ -281,14 +280,15 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data_abc, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        # Transposed: flat (a, c) on x, kept (b) on y.
+        labels = [name for name, _ in hover.tooltips]
+        assert labels == ['a [m]', 'c [K]', 'b [s]', 'value']
         templates = dict(hover.tooltips)
-        # Transposed: kept on y, flat on x. 'b' has unit 's'.
-        assert templates['b [s]'] == '$y'
-        assert templates['a'] == '$x{outer}'
-        assert templates['c'] == '$x{inner}'
-        assert '$x' in hover.formatters
+        assert templates['a [m]'] == '$x{a}'
+        assert templates['c [K]'] == '$x{c}'
+        assert templates['b [s]'] == '$y{b}'
 
-    def test_hover_formatter_carries_outer_and_inner_coord_values(
+    def test_hover_formatter_args_describe_axis_levels(
         self, data_abc, data_key
     ) -> None:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
@@ -296,28 +296,36 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data_abc, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        fmt = hover.formatters['$y']
-        assert fmt.args['inner_size'] == 5
-        assert len(fmt.args['outer_values']) == 3  # a
-        assert len(fmt.args['inner_values']) == 5  # c
+        # Y axis flattens (a outer, c inner); strides are C-order.
+        y_fmt = hover.formatters['$y']
+        assert y_fmt.args['names'] == ['a', 'c']
+        assert y_fmt.args['sizes'] == [3, 5]
+        assert y_fmt.args['strides'] == [5, 1]
+        assert len(y_fmt.args['values_by_dim'][0]) == 3
+        assert len(y_fmt.args['values_by_dim'][1]) == 5
+        # X axis is single-dim ('b') — one level, stride 1.
+        x_fmt = hover.formatters['$x']
+        assert x_fmt.args['names'] == ['b']
+        assert x_fmt.args['sizes'] == [4]
+        assert x_fmt.args['strides'] == [1]
 
     @pytest.mark.parametrize(
-        ('outer_unit', 'inner_unit', 'expected_outer', 'expected_inner'),
+        ('outer_unit', 'inner_unit', 'expected_a', 'expected_c'),
         [
-            ('m', 'K', '%s m', '%s K'),
-            ('m', None, '%s m', '%s'),
-            (None, 'K', '%s', '%s K'),
-            (None, None, '%s', '%s'),
+            ('m', 'K', 'a [m]', 'c [K]'),
+            ('m', None, 'a [m]', 'c'),
+            (None, 'K', 'a', 'c [K]'),
+            (None, None, 'a', 'c'),
         ],
         ids=['both_units', 'outer_only', 'inner_only', 'no_units'],
     )
-    def test_hover_formatter_template_reflects_coord_unit(
+    def test_hover_row_label_reflects_coord_unit(
         self,
         data_key,
         outer_unit: str | None,
         inner_unit: str | None,
-        expected_outer: str,
-        expected_inner: str,
+        expected_a: str,
+        expected_c: str,
     ) -> None:
         da = sc.DataArray(
             sc.arange('z', 0, 60, dtype='float64').fold(
@@ -337,11 +345,11 @@ class TestFlattenPlotterHover:
         img = plotter.plot(da, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        fmt = hover.formatters['$y']
-        assert fmt.args['outer_template'] == expected_outer
-        assert fmt.args['inner_template'] == expected_inner
+        labels = [name for name, _ in hover.tooltips]
+        assert expected_a in labels
+        assert expected_c in labels
 
-    def test_hover_falls_back_to_index_when_coord_missing(
+    def test_hover_falls_back_to_bare_index_when_coord_missing(
         self, data_abc, data_key
     ) -> None:
         data = data_abc.copy(deep=False)
@@ -351,16 +359,18 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        fmt = hover.formatters['$y']
-        # Inner ('c') has no coord → empty values, bare-index template.
-        assert fmt.args['inner_values'] == []
-        assert fmt.args['inner_template'] == '%d'
-        # Outer ('a') still carries real coord values.
-        assert len(fmt.args['outer_values']) == 3
+        y_fmt = hover.formatters['$y']
+        # 'c' has no coord → empty values list → JS emits the bare index.
+        assert y_fmt.args['values_by_dim'][1] == []
+        # 'a' still carries real coord values.
+        assert len(y_fmt.args['values_by_dim'][0]) == 3
 
-    def test_hover_kept_dim_rounds_to_index_when_no_coord(
+    def test_hover_single_dim_axis_without_coord_emits_index(
         self, data_abc, data_key
     ) -> None:
+        # The single-dim axis goes through the same formatter; with no coord,
+        # the JS emits ``Math.round(value)`` so cursor floats display as clean
+        # integer indices.
         data = data_abc.copy(deep=False)
         del data.coords['b']
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
@@ -368,12 +378,10 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        # No coord on kept dim → rounding formatter on $x so cursor floats
-        # display as clean integer indices.
-        assert '$x' in hover.formatters
-        assert '$y' in hover.formatters  # flat-axis formatter still present
+        x_fmt = hover.formatters['$x']
+        assert x_fmt.args['values_by_dim'] == [[]]
 
-    def test_hover_kept_dim_has_no_rounding_formatter_when_coord_present(
+    def test_hover_single_dim_axis_with_coord_uses_values_lookup(
         self, data_abc, data_key
     ) -> None:
         params = _make_params(('a', 'b', 'c'), keep_dim='b')
@@ -381,9 +389,9 @@ class TestFlattenPlotterHover:
         img = plotter.plot(data_abc, data_key)
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        # Coord present → raw $x float (physical value); no extra formatter.
-        assert '$x' not in hover.formatters
-        assert '$y' in hover.formatters
+        x_fmt = hover.formatters['$x']
+        # 'b' coord is present → values lookup; the row label carries the unit.
+        assert len(x_fmt.args['values_by_dim'][0]) == 4
 
     def test_hook_is_idempotent(self, data_abc, data_key) -> None:
         # HoloViews may invoke hooks on every re-render; the hover must not
@@ -407,6 +415,88 @@ class TestFlattenPlotterHover:
         plot_kwargs = img.opts.get('plot').kwargs
         assert 'xlabel' not in plot_kwargs
         assert 'ylabel' not in plot_kwargs
+
+
+class TestFlattenPlotterNDimGeneralization:
+    """Direct-construction tests demonstrating the internals are not 3D-bound.
+
+    Input params (FlattenAxisConfig) only express the 3D case today;
+    ``from_axes`` exposes the underlying ``(x_dims, y_dims)`` partition for
+    arbitrary arity.
+    """
+
+    @pytest.fixture
+    def data_abcd(self) -> sc.DataArray:
+        da = sc.DataArray(
+            sc.arange('z', 0, 120, dtype='float64').fold(
+                dim='z', sizes={'a': 2, 'b': 3, 'c': 4, 'd': 5}
+            ),
+            coords={
+                'a': sc.linspace('a', 0.0, 1.0, num=2, unit='m'),
+                'b': sc.linspace('b', 0.0, 1.0, num=3, unit='s'),
+                'c': sc.linspace('c', 0.0, 1.0, num=4, unit='K'),
+                'd': sc.linspace('d', 0.0, 1.0, num=5, unit='J'),
+            },
+        )
+        da.data.unit = 'counts'
+        return da
+
+    def test_4d_input_with_two_dims_per_axis(self, data_abcd, data_key) -> None:
+        plotter = FlattenPlotter.from_axes(
+            FlattenParams(),
+            x_dims=(0, 1),  # (a, b) → 'a·b' size 6
+            y_dims=(2, 3),  # (c, d) → 'c·d' size 20
+        )
+        img = plotter.plot(data_abcd, data_key)
+        # HoloViews kdims: x = innermost scipp dim, y = outermost.
+        assert img.kdims[0].name == 'a·b'
+        assert img.kdims[1].name == 'c·d'
+
+    def test_4d_hover_has_one_row_per_input_dim(self, data_abcd, data_key) -> None:
+        plotter = FlattenPlotter.from_axes(
+            FlattenParams(), x_dims=(0, 1), y_dims=(2, 3)
+        )
+        img = plotter.plot(data_abcd, data_key)
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        labels = [name for name, _ in hover.tooltips]
+        assert labels == ['a [m]', 'b [s]', 'c [K]', 'd [J]', 'value']
+        x_fmt = hover.formatters['$x']
+        y_fmt = hover.formatters['$y']
+        assert x_fmt.args['names'] == ['a', 'b']
+        assert x_fmt.args['sizes'] == [2, 3]
+        assert x_fmt.args['strides'] == [3, 1]
+        assert y_fmt.args['names'] == ['c', 'd']
+        assert y_fmt.args['sizes'] == [4, 5]
+        assert y_fmt.args['strides'] == [5, 1]
+
+    def test_3_to_1_partition_keeps_one_dim_unflattened(
+        self, data_abcd, data_key
+    ) -> None:
+        # x = (a, b, c) flattened, y = (d) single-dim.
+        plotter = FlattenPlotter.from_axes(
+            FlattenParams(), x_dims=(0, 1, 2), y_dims=(3,)
+        )
+        img = plotter.plot(data_abcd, data_key)
+        assert img.kdims[0].name == 'a·b·c'
+        assert img.kdims[1].name == 'd'
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        x_fmt = hover.formatters['$x']
+        assert x_fmt.args['names'] == ['a', 'b', 'c']
+        assert x_fmt.args['strides'] == [12, 4, 1]
+
+    def test_init_rejects_position_out_of_range(self) -> None:
+        with pytest.raises(ValueError, match='out of range'):
+            FlattenPlotter.from_axes(FlattenParams(), x_dims=(0,), y_dims=(5,))
+
+    def test_init_rejects_duplicate_position(self) -> None:
+        with pytest.raises(ValueError, match='duplicated'):
+            FlattenPlotter.from_axes(FlattenParams(), x_dims=(0, 1), y_dims=(1, 2))
+
+    def test_init_rejects_empty_axis(self) -> None:
+        with pytest.raises(ValueError, match='at least one'):
+            FlattenPlotter.from_axes(FlattenParams(), x_dims=(), y_dims=(0,))
 
 
 class TestFlattenPlotterCompute:

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Plotter wrapping ImagePlotter with static (config-time) flattening of 3D data.
+"""Plotter wrapping ImagePlotter with static (config-time) flattening of N-D data.
 
-The user picks which input dim stays as one image axis; the other two are
-flattened together into the second image axis. A custom hover decomposes
-the flat-axis cell index back into outer/inner labels (with coord values
-when available) so the plot stays explorable despite the synthetic axis.
+Each image axis is built from one or more input dims, flattened together in a
+fixed order. A custom hover decomposes each axis cursor index back into
+per-dim labels (with coord values when available) so the plot stays explorable
+despite the synthetic axes.
 """
 
 from __future__ import annotations
@@ -122,58 +122,55 @@ def _coord_1d(data: sc.DataArray, dim: str) -> sc.Variable | None:
     return coord
 
 
-def _hover_part(coord: sc.Variable | None) -> tuple[str, list]:
-    """JS-side ``(template, values)`` for one flat-dim slot in the hover.
-
-    Hover tooltip rows already carry the dim name as a label, so the
-    formatter emits only the value (with unit) or — when no coord is
-    available — a bare index, avoiding ``blade: blade=...`` doubling.
-    """
-    if coord is None:
-        return '%d', []
-    values = [float(v) for v in coord.values]
-    unit = '' if coord.unit is None else f' {coord.unit}'
-    return f'%s{unit}', values
+def _joined_dim_name(names: tuple[str, ...], existing: tuple[str, ...]) -> str:
+    """Join dim names with '·', suffixing '_' until unique against ``existing``."""
+    name = '·'.join(names)
+    while name in existing:
+        name = f'{name}_'
+    return name
 
 
-def _build_flat_hover_formatter(
-    outer_coord: sc.Variable | None,
-    inner_coord: sc.Variable | None,
-    inner_size: int,
+def _c_order_strides(sizes: tuple[int, ...]) -> list[int]:
+    """C-order strides for ``sizes``: stride[k] = product of sizes[k+1:]."""
+    strides = [1] * len(sizes)
+    for k in range(len(sizes) - 2, -1, -1):
+        strides[k] = strides[k + 1] * sizes[k + 1]
+    return strides
+
+
+def _build_axis_hover_formatter(
+    names: tuple[str, ...],
+    coords: tuple[sc.Variable | None, ...],
+    sizes: tuple[int, ...],
 ) -> CustomJSHover:
-    """Hover formatter dispatching on ``format`` to outer/inner label.
+    """Hover formatter for one image axis with one or more flattened input dims.
 
-    Used as ``@<flat_field>{outer}`` and ``@<flat_field>{inner}`` so a single
-    formatter instance handles both rows of the decomposition. The flat-axis
-    cursor coord is rounded to the cell index, then split into
-    ``outer = idx // inner_size`` and ``inner = idx %% inner_size``.
+    Tooltip rows reference this formatter via ``${field}{dim_name}``; the JS
+    side splits the rounded cursor index into per-dim indices via stride math
+    and emits the coord value (or bare index) for the dim selected by
+    ``format``.
     """
-    outer_template, outer_values = _hover_part(outer_coord)
-    inner_template, inner_values = _hover_part(inner_coord)
+    strides = _c_order_strides(sizes)
+    values_by_dim = [[] if c is None else [float(v) for v in c.values] for c in coords]
     return CustomJSHover(
         args={
-            'outer_template': outer_template,
-            'outer_values': outer_values,
-            'inner_template': inner_template,
-            'inner_values': inner_values,
-            'inner_size': inner_size,
+            'names': list(names),
+            'sizes': list(sizes),
+            'strides': strides,
+            'values_by_dim': values_by_dim,
         },
         code="""
+        const k = names.indexOf(format);
+        if (k < 0) return '';
         const idx = Math.round(value);
-        if (inner_size <= 0 || idx < 0) return '';
-        let template, values, i;
-        if (format === 'outer') {
-            template = outer_template;
-            values = outer_values;
-            i = Math.floor(idx / inner_size);
-        } else {
-            template = inner_template;
-            values = inner_values;
-            i = ((idx % inner_size) + inner_size) % inner_size;
-        }
-        if (values.length === 0) return template.replace('%d', String(i));
-        if (i >= values.length) return '';
-        return template.replace('%s', String(values[i]));
+        if (idx < 0) return '';
+        const size = sizes[k];
+        const stride = strides[k];
+        const i = ((Math.floor(idx / stride) % size) + size) % size;
+        const vals = values_by_dim[k];
+        if (vals.length === 0) return String(i);
+        if (i >= vals.length) return '';
+        return String(vals[i]);
         """,
     )
 
@@ -198,28 +195,48 @@ def _make_hover_hook(hover: HoverTool):
 
 
 class FlattenPlotter(ImagePlotter):
-    """Image plotter with static flattening of 3D input to 2D.
+    """Image plotter with static flattening of N-D input to 2D.
 
-    Inherits ``compute()`` from ``Plotter``; only ``plot()`` is overridden to
-    flatten the data and attach a hover that decomposes the synthetic flat
-    axis back into outer/inner labels before delegating to ``ImagePlotter``.
+    Each image axis is built from one or more input dims via ``x_dims`` and
+    ``y_dims`` — ordered tuples of input-dim positions whose union covers all
+    dims of the input. Axes with K ≥ 2 dims are flattened together (in the
+    given order); axes with K = 1 pass through. A custom hover decomposes
+    each axis cursor back into per-dim labels.
     """
 
     def __init__(
         self,
         *,
-        keep_dim: int,
-        flatten_transposed: bool,
-        transpose: bool,
+        x_dims: tuple[int, ...],
+        y_dims: tuple[int, ...],
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self._keep_dim = int(keep_dim)
-        self._flatten_transposed = flatten_transposed
-        self._transpose = transpose
+        if not x_dims or not y_dims:
+            raise ValueError("x_dims and y_dims must each contain at least one dim")
+        positions = (*x_dims, *y_dims)
+        if sorted(positions) != list(range(len(positions))):
+            raise ValueError(
+                f"x_dims/y_dims positions {positions} must be a permutation of "
+                f"range({len(positions)}); some are out of range or duplicated"
+            )
+        self._x_dims = tuple(int(p) for p in x_dims)
+        self._y_dims = tuple(int(p) for p in y_dims)
 
     @classmethod
-    def from_params(cls, params: FlattenParams) -> FlattenPlotter:
+    def from_axes(
+        cls,
+        params: PlotParams2d,
+        *,
+        x_dims: tuple[int, ...],
+        y_dims: tuple[int, ...],
+    ) -> FlattenPlotter:
+        """Construct from a partition of input dims into two ordered axes.
+
+        ``params`` supplies plot styling only; the axis spec comes from
+        ``x_dims``/``y_dims`` directly. Useful for N-D cases not yet
+        expressible through :class:`FlattenAxisConfig`.
+        """
         rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
@@ -228,37 +245,66 @@ class FlattenPlotter(ImagePlotter):
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
-            keep_dim=params.flatten.keep_dim,
-            flatten_transposed=params.flatten.flatten_transposed,
-            transpose=params.flatten.transpose,
+            x_dims=x_dims,
+            y_dims=y_dims,
         )
 
-    def _resolve_axes(self, data: sc.DataArray) -> tuple[str, str, str]:
-        """Return (keep, outer, inner) actual data dim names.
+    @classmethod
+    def from_params(cls, params: FlattenParams) -> FlattenPlotter:
+        """Construct from a 3D :class:`FlattenAxisConfig`.
 
-        ``keep_dim`` is a 0-based position into ``data.dims``. The two non-kept
-        dims are taken in their natural input order as (outer, inner);
-        ``flatten_transposed`` swaps them.
+        Translates ``keep_dim`` + ``flatten_transposed`` + ``transpose`` into
+        the generic ``(x_dims, y_dims)`` partition.
         """
-        if data.ndim != 3:
-            raise ValueError(f"FlattenPlotter requires 3D input, got {data.ndim}D")
-        if not 0 <= self._keep_dim < data.ndim:
+        keep = int(params.flatten.keep_dim)
+        others = [i for i in (0, 1, 2) if i != keep]
+        if params.flatten.flatten_transposed:
+            others = others[::-1]
+        if params.flatten.transpose:
+            x_dims, y_dims = tuple(others), (keep,)
+        else:
+            x_dims, y_dims = (keep,), tuple(others)
+        return cls.from_axes(params, x_dims=x_dims, y_dims=y_dims)
+
+    @property
+    def _ndim(self) -> int:
+        return len(self._x_dims) + len(self._y_dims)
+
+    def _resolve_dim_names(
+        self, data: sc.DataArray
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        if data.ndim != self._ndim:
             raise ValueError(
-                f"keep_dim={self._keep_dim} out of range for {data.ndim}D data"
+                f"FlattenPlotter requires {self._ndim}D input, got {data.ndim}D"
             )
-        keep = data.dims[self._keep_dim]
-        others = [d for d in data.dims if d != keep]
-        outer, inner = others if not self._flatten_transposed else others[::-1]
-        return keep, outer, inner
+        x_names = tuple(data.dims[p] for p in self._x_dims)
+        y_names = tuple(data.dims[p] for p in self._y_dims)
+        return x_names, y_names
 
     def _flatten_to_2d(
-        self, data: sc.DataArray, keep: str, outer: str, inner: str
+        self,
+        data: sc.DataArray,
+        x_names: tuple[str, ...],
+        y_names: tuple[str, ...],
     ) -> sc.DataArray:
-        flat_dim = f'{outer}·{inner}'
-        if flat_dim in data.dims:
-            flat_dim = f'{flat_dim}_'
-        order = [outer, inner, keep] if not self._transpose else [keep, outer, inner]
-        return data.transpose(order).flatten(dims=[outer, inner], to=flat_dim)
+        """Flatten ``data`` to 2D with y as the slow (outer) axis.
+
+        Per scipp/HoloViews convention the last (innermost) scipp dim becomes
+        the x kdim and the first becomes y, so we transpose to ``y_names`` →
+        ``x_names`` order before flattening each group.
+        """
+        out = data.transpose([*y_names, *x_names])
+        if len(y_names) > 1:
+            out = out.flatten(
+                dims=list(y_names),
+                to=_joined_dim_name(y_names, out.dims),
+            )
+        if len(x_names) > 1:
+            out = out.flatten(
+                dims=list(x_names),
+                to=_joined_dim_name(x_names, out.dims),
+            )
+        return out
 
     def plot(
         self,
@@ -269,8 +315,8 @@ class FlattenPlotter(ImagePlotter):
         output_display_name: str = '',
         **kwargs,
     ) -> hv.Image:
-        keep, outer, inner = self._resolve_axes(data)
-        flat = self._flatten_to_2d(data, keep, outer, inner)
+        x_names, y_names = self._resolve_dim_names(data)
+        flat = self._flatten_to_2d(data, x_names, y_names)
 
         image = super().plot(
             flat,
@@ -280,33 +326,37 @@ class FlattenPlotter(ImagePlotter):
             **kwargs,
         )
 
-        # $x/$y refer to the cursor position in data space; @x/@y reference
-        # the Image glyph's anchor (a constant) and would freeze the index at 0.
-        flat_field = '$x' if self._transpose else '$y'
-        kept_field = '$y' if self._transpose else '$x'
-        hover_fmt = _build_flat_hover_formatter(
-            _coord_1d(data, outer), _coord_1d(data, inner), data.sizes[inner]
-        )
-        kept_coord = _coord_1d(data, keep)
-        kept_unit = kept_coord.unit if kept_coord is not None else None
-        keep_label = f'{keep} [{kept_unit}]' if kept_unit is not None else keep
-        # When there is no coord, $x/$y is in integer-index space [0, N-1], so
-        # rounding gives the exact bin index. We do not extend this to int coords
-        # with unit=None: there $x is in coord-value space and hovering between
-        # bins would produce values not in the coord — correct display would
-        # require a values-array nearest-neighbour lookup in JS.
-        formatters = {flat_field: hover_fmt}
-        if kept_coord is None:
-            formatters[kept_field] = CustomJSHover(
-                code='return String(Math.round(value));'
-            )
-        hover = HoverTool(
-            tooltips=[
-                (keep_label, kept_field),
-                (outer, f'{flat_field}{{outer}}'),
-                (inner, f'{flat_field}{{inner}}'),
-                ('value', '@image'),
-            ],
-            formatters=formatters,
-        )
+        tooltips, formatters = self._build_hover_spec(data, x_names, y_names)
+        hover = HoverTool(tooltips=tooltips, formatters=formatters)
         return image.opts(hooks=[_make_hover_hook(hover)])
+
+    def _build_hover_spec(
+        self,
+        data: sc.DataArray,
+        x_names: tuple[str, ...],
+        y_names: tuple[str, ...],
+    ) -> tuple[list[tuple[str, str]], dict[str, CustomJSHover]]:
+        """Tooltip rows + per-axis ``CustomJSHover`` dispatcher.
+
+        Each row references its axis formatter via ``${field}{dim_name}``;
+        the formatter looks up the dim by ``format`` and resolves the cursor
+        index → per-dim coord value (or bare index when no coord is present).
+        ``$x``/``$y`` always emit a float cursor position, so even single-dim
+        axes go through a formatter — there is no float-fallback path.
+        """
+        tooltips: list[tuple[str, str]] = []
+        formatters: dict[str, CustomJSHover] = {}
+        for field, names in (('$x', x_names), ('$y', y_names)):
+            coords = tuple(_coord_1d(data, n) for n in names)
+            sizes = tuple(data.sizes[n] for n in names)
+            formatters[field] = _build_axis_hover_formatter(names, coords, sizes)
+            for name, coord in zip(names, coords, strict=True):
+                tooltips.append((_dim_label(name, coord), f'{field}{{{name}}}'))
+        tooltips.append(('value', '@image'))
+        return tooltips, formatters
+
+
+def _dim_label(name: str, coord: sc.Variable | None) -> str:
+    if coord is not None and coord.unit is not None:
+        return f'{name} [{coord.unit}]'
+    return name
