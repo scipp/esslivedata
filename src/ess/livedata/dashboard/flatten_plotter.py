@@ -290,6 +290,16 @@ class FlattenPlotter(ImagePlotter):
         kept_coord = _coord_1d(data, keep)
         kept_unit = kept_coord.unit if kept_coord is not None else None
         keep_label = f'{keep} [{kept_unit}]' if kept_unit is not None else keep
+        # When there is no coord, $x/$y is in integer-index space [0, N-1], so
+        # rounding gives the exact bin index. We do not extend this to int coords
+        # with unit=None: there $x is in coord-value space and hovering between
+        # bins would produce values not in the coord — correct display would
+        # require a values-array nearest-neighbour lookup in JS.
+        formatters = {flat_field: hover_fmt}
+        if kept_coord is None:
+            formatters[kept_field] = CustomJSHover(
+                code='return String(Math.round(value));'
+            )
         hover = HoverTool(
             tooltips=[
                 (keep_label, kept_field),
@@ -297,6 +307,6 @@ class FlattenPlotter(ImagePlotter):
                 (inner, f'{flat_field}{{inner}}'),
                 ('value', '@image'),
             ],
-            formatters={flat_field: hover_fmt},
+            formatters=formatters,
         )
         return image.opts(hooks=[_make_hover_hook(hover)])

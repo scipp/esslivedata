@@ -358,6 +358,33 @@ class TestFlattenPlotterHover:
         # Outer ('a') still carries real coord values.
         assert len(fmt.args['outer_values']) == 3
 
+    def test_hover_kept_dim_rounds_to_index_when_no_coord(
+        self, data_abc, data_key
+    ) -> None:
+        data = data_abc.copy(deep=False)
+        del data.coords['b']
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data, data_key)
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        # No coord on kept dim → rounding formatter on $x so cursor floats
+        # display as clean integer indices.
+        assert '$x' in hover.formatters
+        assert '$y' in hover.formatters  # flat-axis formatter still present
+
+    def test_hover_kept_dim_has_no_rounding_formatter_when_coord_present(
+        self, data_abc, data_key
+    ) -> None:
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data_abc, data_key)
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        # Coord present → raw $x float (physical value); no extra formatter.
+        assert '$x' not in hover.formatters
+        assert '$y' in hover.formatters
+
     def test_hook_is_idempotent(self, data_abc, data_key) -> None:
         # HoloViews may invoke hooks on every re-render; the hover must not
         # be installed multiple times.
