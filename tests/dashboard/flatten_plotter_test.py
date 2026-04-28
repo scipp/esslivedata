@@ -252,15 +252,28 @@ class TestFlattenPlotterHover:
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         labels = [name for name, _ in hover.tooltips]
-        # Keep dim is 'b'; natural-order outer='a', inner='c'.
-        assert labels == ['b', 'a', 'c', 'value']
+        # Keep dim is 'b' (unit 's'); natural-order outer='a', inner='c'.
+        assert labels == ['b [s]', 'a', 'c', 'value']
         # Flat axis is y when not transposed; outer/inner both reference it.
         templates = dict(hover.tooltips)
-        assert templates['b'] == '$x'
+        assert templates['b [s]'] == '$x'
         assert templates['a'] == '$y{outer}'
         assert templates['c'] == '$y{inner}'
         assert templates['value'] == '@image'
         assert '$y' in hover.formatters
+
+    def test_hover_kept_dim_label_omits_unit_when_coord_missing(
+        self, data_abc, data_key
+    ) -> None:
+        data = data_abc.copy(deep=False)
+        del data.coords['b']
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(data, data_key)
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        labels = [name for name, _ in hover.tooltips]
+        assert labels[0] == 'b'
 
     def test_hover_swaps_axes_when_transposed(self, data_abc, data_key) -> None:
         params = _make_params(('a', 'b', 'c'), keep_dim='b', transpose=True)
@@ -269,8 +282,8 @@ class TestFlattenPlotterHover:
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
         templates = dict(hover.tooltips)
-        # Transposed: kept on y, flat on x.
-        assert templates['b'] == '$y'
+        # Transposed: kept on y, flat on x. 'b' has unit 's'.
+        assert templates['b [s]'] == '$y'
         assert templates['a'] == '$x{outer}'
         assert templates['c'] == '$x{inner}'
         assert '$x' in hover.formatters
@@ -287,9 +300,46 @@ class TestFlattenPlotterHover:
         assert fmt.args['inner_size'] == 5
         assert len(fmt.args['outer_values']) == 3  # a
         assert len(fmt.args['inner_values']) == 5  # c
-        # No dim-name prefix in templates: tooltip row already shows the name.
-        assert fmt.args['outer_template'] == '%s m'
-        assert fmt.args['inner_template'] == '%s K'
+
+    @pytest.mark.parametrize(
+        ('outer_unit', 'inner_unit', 'expected_outer', 'expected_inner'),
+        [
+            ('m', 'K', '%s m', '%s K'),
+            ('m', None, '%s m', '%s'),
+            (None, 'K', '%s', '%s K'),
+            (None, None, '%s', '%s'),
+        ],
+        ids=['both_units', 'outer_only', 'inner_only', 'no_units'],
+    )
+    def test_hover_formatter_template_reflects_coord_unit(
+        self,
+        data_key,
+        outer_unit: str | None,
+        inner_unit: str | None,
+        expected_outer: str,
+        expected_inner: str,
+    ) -> None:
+        da = sc.DataArray(
+            sc.arange('z', 0, 60, dtype='float64').fold(
+                dim='z', sizes={'a': 3, 'b': 4, 'c': 5}
+            ),
+            coords={
+                'a': sc.array(dims=['a'], values=[0.0, 0.5, 1.0], unit=outer_unit),
+                'b': sc.linspace('b', 0.0, 1.0, num=4, unit='s'),
+                'c': sc.array(
+                    dims=['c'], values=[0.0, 0.25, 0.5, 0.75, 1.0], unit=inner_unit
+                ),
+            },
+        )
+        da.data.unit = 'counts'
+        params = _make_params(('a', 'b', 'c'), keep_dim='b')
+        plotter = FlattenPlotter.from_params(params)
+        img = plotter.plot(da, data_key)
+        fig = _run_hook(img)
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        fmt = hover.formatters['$y']
+        assert fmt.args['outer_template'] == expected_outer
+        assert fmt.args['inner_template'] == expected_inner
 
     def test_hover_falls_back_to_index_when_coord_missing(
         self, data_abc, data_key

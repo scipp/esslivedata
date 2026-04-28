@@ -287,9 +287,12 @@ class FlattenPlotter(ImagePlotter):
         hover_fmt = _build_flat_hover_formatter(
             _coord_1d(data, outer), _coord_1d(data, inner), data.sizes[inner]
         )
+        kept_coord = _coord_1d(data, keep)
+        kept_unit = kept_coord.unit if kept_coord is not None else None
+        keep_label = f'{keep} [{kept_unit}]' if kept_unit is not None else keep
         hover = HoverTool(
             tooltips=[
-                (keep, kept_field),
+                (keep_label, kept_field),
                 (outer, f'{flat_field}{{outer}}'),
                 (inner, f'{flat_field}{{inner}}'),
                 ('value', '@image'),
