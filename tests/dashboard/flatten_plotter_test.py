@@ -64,39 +64,46 @@ def data_key() -> ResultKey:
     )
 
 
-@pytest.fixture
-def data_abc() -> sc.DataArray:
-    """3D data with dims (a, b, c) and 1-D coords on each."""
+def _make_data(sizes: dict[str, int], units: dict[str, str]) -> sc.DataArray:
+    """Build a DataArray with C-order range data and 1-D coords on each dim."""
+    n = 1
+    for s in sizes.values():
+        n *= s
     da = sc.DataArray(
-        sc.arange('z', 0, 60, dtype='float64').fold(
-            dim='z', sizes={'a': 3, 'b': 4, 'c': 5}
-        ),
+        sc.arange('z', 0, n, dtype='float64').fold(dim='z', sizes=sizes),
         coords={
-            'a': sc.linspace('a', 0.0, 1.0, num=3, unit='m'),
-            'b': sc.linspace('b', 0.0, 1.0, num=4, unit='s'),
-            'c': sc.linspace('c', 0.0, 1.0, num=5, unit='K'),
+            d: sc.linspace(d, 0.0, 1.0, num=size, unit=units[d])
+            for d, size in sizes.items()
         },
     )
     da.data.unit = 'counts'
     return da
+
+
+@pytest.fixture
+def data_ab() -> sc.DataArray:
+    return _make_data({'a': 3, 'b': 4}, {'a': 'm', 'b': 's'})
+
+
+@pytest.fixture
+def data_abc() -> sc.DataArray:
+    return _make_data({'a': 3, 'b': 4, 'c': 5}, {'a': 'm', 'b': 's', 'c': 'K'})
 
 
 @pytest.fixture
 def data_abcd() -> sc.DataArray:
-    """4D data with dims (a, b, c, d) and 1-D coords on each."""
-    da = sc.DataArray(
-        sc.arange('z', 0, 120, dtype='float64').fold(
-            dim='z', sizes={'a': 2, 'b': 3, 'c': 4, 'd': 5}
-        ),
-        coords={
-            'a': sc.linspace('a', 0.0, 1.0, num=2, unit='m'),
-            'b': sc.linspace('b', 0.0, 1.0, num=3, unit='s'),
-            'c': sc.linspace('c', 0.0, 1.0, num=4, unit='K'),
-            'd': sc.linspace('d', 0.0, 1.0, num=5, unit='J'),
-        },
+    return _make_data(
+        {'a': 2, 'b': 3, 'c': 4, 'd': 5},
+        {'a': 'm', 'b': 's', 'c': 'K', 'd': 'J'},
     )
-    da.data.unit = 'counts'
-    return da
+
+
+@pytest.fixture
+def data_abcde() -> sc.DataArray:
+    return _make_data(
+        {'a': 2, 'b': 3, 'c': 4, 'd': 5, 'e': 6},
+        {'a': 'm', 'b': 's', 'c': 'K', 'd': 'J', 'e': 'A'},
+    )
 
 
 def _make_params(
@@ -128,6 +135,18 @@ def _axis_cls(params_cls: type[FlattenParams]) -> type[FlattenAxisConfig]:
     return params_cls.model_fields['flatten'].annotation
 
 
+_ARITY_PARAMS = pytest.mark.parametrize(
+    'dims',
+    [
+        ('a', 'b'),
+        ('a', 'b', 'c'),
+        ('a', 'b', 'c', 'd'),
+        ('a', 'b', 'c', 'd', 'e'),
+    ],
+    ids=['2d', '3d', '4d', '5d'],
+)
+
+
 class TestMakeFlattenParams:
     def test_narrows_axis_x_dims_to_set_of_intenum_with_dim_names(self) -> None:
         Cls = make_flatten_params(('a', 'b', 'c'))
@@ -147,18 +166,21 @@ class TestMakeFlattenParams:
         assert fields['transpose_y_flatten'].annotation is bool
         assert fields['transpose'].annotation is bool
 
-    def test_rejects_empty_axis_x_dims(self) -> None:
-        Cls = make_flatten_params(('a', 'b', 'c'))
+    @_ARITY_PARAMS
+    def test_rejects_empty_axis_x_dims(self, dims) -> None:
+        Cls = make_flatten_params(dims)
         with pytest.raises(pydantic.ValidationError):
             Cls(flatten={'axis_x_dims': set()})
 
-    def test_rejects_axis_x_dims_covering_all_dims(self) -> None:
-        Cls = make_flatten_params(('a', 'b', 'c'))
+    @_ARITY_PARAMS
+    def test_rejects_axis_x_dims_covering_all_dims(self, dims) -> None:
+        Cls = make_flatten_params(dims)
         with pytest.raises(pydantic.ValidationError):
-            Cls(flatten={'axis_x_dims': {0, 1, 2}})
+            Cls(flatten={'axis_x_dims': set(range(len(dims)))})
 
-    def test_rejects_axis_x_dims_with_unknown_position(self) -> None:
-        Cls = make_flatten_params(('a', 'b', 'c'))
+    @_ARITY_PARAMS
+    def test_rejects_axis_x_dims_with_unknown_position(self, dims) -> None:
+        Cls = make_flatten_params(dims)
         with pytest.raises(pydantic.ValidationError):
             Cls(flatten={'axis_x_dims': {99}})
 
@@ -183,7 +205,8 @@ class TestMakeFlattenParams:
         for dims in [('x', 'y'), ('a', 'b', 'c'), ('a', 'b', 'c', 'd')]:
             assert make_flatten_params(dims) is not FlattenParams
 
-    def test_renders_in_model_widget(self) -> None:
+    @_ARITY_PARAMS
+    def test_renders_in_model_widget(self, dims) -> None:
         """Every top-level field must itself be a BaseModel (one tab each).
 
         Regression test: the dashboard's ModelWidget builds tabs by calling
@@ -192,7 +215,7 @@ class TestMakeFlattenParams:
         """
         from ess.livedata.dashboard.widgets.model_widget import ModelWidget
 
-        Cls = make_flatten_params(('a', 'b', 'c'))
+        Cls = make_flatten_params(dims)
         widget = ModelWidget(Cls)
         tab_names = {entry[0] for entry in widget.param_group_tabs}
         assert 'flatten' in tab_names
@@ -208,42 +231,66 @@ class TestFlattenPlotterPlot:
         img = plotter.plot(data_abc, data_key)
         assert isinstance(img, hv.Image)
 
-    def test_x_axis_holds_axis_x_dim_when_not_transposed(
-        self, data_abc, data_key
+    # HoloViews Image: kdims[0] is x, kdims[1] is y. The flat axis name is the
+    # input dim names joined with '·' in the order the dims feed the flatten;
+    # the global ``transpose`` swaps the resulting X and Y wholesale.
+    @pytest.mark.parametrize(
+        ('data_fixture', 'axis_x', 'flags', 'expected_x', 'expected_y'),
+        [
+            # 2D: degenerate, no flatten on either side.
+            ('data_ab', 'b', {}, 'b', 'a'),
+            # 3D: basic, transpose, per-axis flatten reversal.
+            ('data_abc', 'b', {}, 'b', 'a·c'),
+            ('data_abc', 'b', {'transpose': True}, 'a·c', 'b'),
+            ('data_abc', 'b', {'transpose_y_flatten': True}, 'b', 'c·a'),
+            ('data_abc', ('a', 'c'), {'transpose_x_flatten': True}, 'c·a', 'b'),
+            # 4D: 2-2, 3-1, 1-3 partitions; K=3 reversal on each side; transpose.
+            ('data_abcd', ('a', 'b'), {}, 'a·b', 'c·d'),
+            ('data_abcd', ('a', 'b', 'c'), {}, 'a·b·c', 'd'),
+            ('data_abcd', 'a', {}, 'a', 'b·c·d'),
+            (
+                'data_abcd',
+                ('a', 'b', 'c'),
+                {'transpose_x_flatten': True},
+                'c·b·a',
+                'd',
+            ),
+            ('data_abcd', 'a', {'transpose_y_flatten': True}, 'a', 'd·c·b'),
+            ('data_abcd', ('a', 'b'), {'transpose': True}, 'c·d', 'a·b'),
+            # 5D: smoke for scaling beyond 4D.
+            ('data_abcde', ('a', 'b'), {}, 'a·b', 'c·d·e'),
+        ],
+        ids=[
+            '2d',
+            '3d_basic',
+            '3d_transpose',
+            '3d_y_reversed',
+            '3d_x_reversed',
+            '4d_2_2',
+            '4d_3_1',
+            '4d_1_3',
+            '4d_x_k3_reversed',
+            '4d_y_k3_reversed',
+            '4d_transpose',
+            '5d_2_3',
+        ],
+    )
+    def test_kdims_match_partition_and_flags(
+        self,
+        request,
+        data_key,
+        data_fixture,
+        axis_x,
+        flags,
+        expected_x,
+        expected_y,
     ) -> None:
-        params = _make_params(('a', 'b', 'c'), axis_x='b')
+        data = request.getfixturevalue(data_fixture)
+        params = _make_params(data.dims, axis_x=axis_x, **flags)
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        # HoloViews Image: kdims[0] is x, kdims[1] is y
-        assert img.kdims[0].name == 'b'
-        assert img.kdims[1].name == 'a·c'
-
-    def test_global_transpose_swaps_x_and_y(self, data_abc, data_key) -> None:
-        params = _make_params(('a', 'b', 'c'), axis_x='b', transpose=True)
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        assert img.kdims[1].name == 'b'
-        assert img.kdims[0].name == 'a·c'
-
-    def test_transpose_y_flatten_reverses_y_flat_order(
-        self, data_abc, data_key
-    ) -> None:
-        params = _make_params(('a', 'b', 'c'), axis_x='b', transpose_y_flatten=True)
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        assert img.kdims[1].name == 'c·a'
-
-    def test_transpose_x_flatten_reverses_x_flat_order(
-        self, data_abc, data_key
-    ) -> None:
-        # X holds (a, c); reversing → (c, a).
-        params = _make_params(
-            ('a', 'b', 'c'), axis_x=('a', 'c'), transpose_x_flatten=True
-        )
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        assert img.kdims[0].name == 'c·a'
-        assert img.kdims[1].name == 'b'
+        img = plotter.plot(data, data_key)
+        assert img.kdims[0].name == expected_x
+        assert img.kdims[1].name == expected_y
 
     def test_axis_x_dim_unit_is_preserved(self, data_abc, data_key) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
@@ -504,18 +551,12 @@ class TestFlattenPlotterHover:
 
 
 class TestFlattenPlotterNDimGeneralization:
-    """Param model and plotter handle 4D+ inputs uniformly."""
-
-    def test_4d_input_with_two_dims_per_axis(self, data_abcd, data_key) -> None:
-        # X = (a, b), Y = (c, d). Flat axes: 'a·b' size 6 and 'c·d' size 20.
-        params = _make_params(('a', 'b', 'c', 'd'), axis_x=('a', 'b'))
-        plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abcd, data_key)
-        # HoloViews kdims: x = innermost scipp dim, y = outermost.
-        assert img.kdims[0].name == 'a·b'
-        assert img.kdims[1].name == 'c·d'
+    """Hover formatter args at higher arities (kdim names live in the
+    parametrized ``test_kdims_match_partition_and_flags``)."""
 
     def test_4d_hover_has_one_row_per_input_dim(self, data_abcd, data_key) -> None:
+        # 2-2 partition: tooltip rows span all four input dims and each axis
+        # carries a per-dim formatter.
         params = _make_params(('a', 'b', 'c', 'd'), axis_x=('a', 'b'))
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abcd, data_key)
@@ -532,20 +573,45 @@ class TestFlattenPlotterNDimGeneralization:
         assert y_fmt.args['sizes'] == [4, 5]
         assert y_fmt.args['strides'] == [5, 1]
 
-    def test_3_to_1_partition_keeps_one_dim_unflattened(
-        self, data_abcd, data_key
+    @pytest.mark.parametrize(
+        ('axis_x', 'flags', 'fmt_key', 'names', 'sizes', 'strides'),
+        [
+            # K=3 flatten on X (3-1 partition).
+            (('a', 'b', 'c'), {}, '$x', ['a', 'b', 'c'], [2, 3, 4], [12, 4, 1]),
+            # K=3 flatten on Y (1-3 partition) — Y-side stride math.
+            ('a', {}, '$y', ['b', 'c', 'd'], [3, 4, 5], [20, 5, 1]),
+            # K=3 reversal: (a, b, c) → (c, b, a); strides reflect new order.
+            (
+                ('a', 'b', 'c'),
+                {'transpose_x_flatten': True},
+                '$x',
+                ['c', 'b', 'a'],
+                [4, 3, 2],
+                [6, 2, 1],
+            ),
+        ],
+        ids=['k3_x', 'k3_y', 'k3_x_reversed'],
+    )
+    def test_4d_k3_flatten_strides(
+        self,
+        data_abcd,
+        data_key,
+        axis_x,
+        flags,
+        fmt_key,
+        names,
+        sizes,
+        strides,
     ) -> None:
-        # X = (a, b, c) flattened, Y = (d) single-dim.
-        params = _make_params(('a', 'b', 'c', 'd'), axis_x=('a', 'b', 'c'))
+        params = _make_params(('a', 'b', 'c', 'd'), axis_x=axis_x, **flags)
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data_abcd, data_key)
-        assert img.kdims[0].name == 'a·b·c'
-        assert img.kdims[1].name == 'd'
         fig = _run_hook(img)
         [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        x_fmt = hover.formatters['$x']
-        assert x_fmt.args['names'] == ['a', 'b', 'c']
-        assert x_fmt.args['strides'] == [12, 4, 1]
+        fmt = hover.formatters[fmt_key]
+        assert fmt.args['names'] == names
+        assert fmt.args['sizes'] == sizes
+        assert fmt.args['strides'] == strides
 
 
 class TestFlattenPlotterCompute:
