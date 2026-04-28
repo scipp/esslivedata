@@ -118,8 +118,9 @@ class ParamWidget:
                     # (e.g., PlotAspectType.aspect = 'Fixed plot aspect ratio').
                     display_key = enum_val.value
                 else:
-                    # `.name`, not `str(enum_val)` — IntEnum inherits __str__
-                    # from int, so str() returns the integer, not the name.
+                    # `.name` is the member name regardless of __str__.
+                    # IntEnum/IntFlag inherit __str__ from int (returning the
+                    # integer), and plain Enum subclasses may override __str__.
                     display_key = enum_val.name
                 options[display_key] = enum_val
 
