@@ -2041,3 +2041,186 @@ class TestPeekPendingStreams:
         manager.schedule_job("src", config)
 
         assert manager.peek_pending_streams(start_time=100) == {"src"}
+
+
+class _OneShotInstrumentSetup:
+    """Helper for constructing an Instrument + StreamMapping for one-shot tests."""
+
+    @staticmethod
+    def make(
+        *,
+        source_name: str,
+        register_as_detector: bool,
+        physical_detectors: dict | None = None,
+    ):
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.kafka.stream_mapping import StreamMapping
+
+        detector_names = [source_name] if register_as_detector else []
+        instrument = Instrument(name='test', detector_names=detector_names)
+        instrument.active_namespace = 'data_reduction'
+
+        handle = instrument.register_spec(
+            name='wf',
+            version=1,
+            title='Test',
+            description='Test',
+            source_names=[source_name],
+            outputs=SimpleTestOutputs,
+        )
+
+        @handle.attach_factory()
+        def wf_factory():
+            return FakeProcessor()
+
+        mapping = StreamMapping(
+            instrument='test',
+            detectors=physical_detectors or {},
+            monitors={},
+            livedata_commands_topic='cmd',
+            livedata_data_topic='data',
+            livedata_responses_topic='resp',
+            livedata_roi_topic='roi',
+            livedata_status_topic='status',
+        )
+        return instrument, mapping
+
+    @staticmethod
+    def workflow_id():
+        return WorkflowId(
+            instrument='test',
+            namespace='data_reduction',
+            name='wf',
+            version=1,
+        )
+
+
+class TestJobFactoryOneShotDetection:
+    def test_marks_one_shot_when_no_physical_streams_resolved(self):
+        from ess.livedata.kafka.stream_mapping import InputStreamKey
+
+        instrument, mapping = _OneShotInstrumentSetup.make(
+            source_name='choppers',
+            register_as_detector=False,
+            physical_detectors={InputStreamKey(topic='t', source_name='det1'): 'det1'},
+        )
+        factory = JobFactory(instrument, stream_mapping=mapping)
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+        job = factory.create(
+            job_id=JobId(source_name='choppers', job_number='uuid-1'), config=config
+        )
+        assert job.is_one_shot is True
+
+    def test_does_not_mark_one_shot_when_physical_streams_resolved(self):
+        from ess.livedata.kafka.stream_mapping import InputStreamKey
+
+        instrument, mapping = _OneShotInstrumentSetup.make(
+            source_name='det1',
+            register_as_detector=True,
+            physical_detectors={InputStreamKey(topic='t', source_name='det1'): 'det1'},
+        )
+        factory = JobFactory(instrument, stream_mapping=mapping)
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+        job = factory.create(
+            job_id=JobId(source_name='det1', job_number='uuid-2'), config=config
+        )
+        assert job.is_one_shot is False
+
+    def test_does_not_mark_one_shot_when_logical_expands_to_physical(self):
+        """Bifrost-style logical name expands to a non-empty set of physical names."""
+        from ess.livedata.kafka.stream_mapping import InputStreamKey
+
+        instrument, mapping = _OneShotInstrumentSetup.make(
+            source_name='unified_detector',
+            register_as_detector=True,
+            physical_detectors={
+                InputStreamKey(topic='t', source_name='bank_a'): 'bank_a',
+                InputStreamKey(topic='t', source_name='bank_b'): 'bank_b',
+            },
+        )
+        factory = JobFactory(instrument, stream_mapping=mapping)
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+        job = factory.create(
+            job_id=JobId(source_name='unified_detector', job_number='uuid-3'),
+            config=config,
+        )
+        assert job.is_one_shot is False
+
+    def test_disables_detection_when_stream_mapping_is_none(self):
+        instrument, _ = _OneShotInstrumentSetup.make(
+            source_name='choppers', register_as_detector=False
+        )
+        factory = JobFactory(instrument)  # no stream_mapping
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+        job = factory.create(
+            job_id=JobId(source_name='choppers', job_number='uuid-4'), config=config
+        )
+        assert job.is_one_shot is False
+
+
+class TestJobManagerOneShot:
+    def _make_manager(self):
+        instrument, mapping = _OneShotInstrumentSetup.make(
+            source_name='choppers', register_as_detector=False
+        )
+        factory = JobFactory(instrument, stream_mapping=mapping)
+        return JobManager(factory), instrument, mapping
+
+    def test_one_shot_job_finalizes_inline_during_schedule_job(self):
+        from ess.livedata.core.message import StreamKind
+
+        manager, _, _ = self._make_manager()
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+
+        job_id = manager.schedule_job('choppers', config)
+
+        # Result + status available immediately, with no message-driven activation.
+        messages = manager.drain_pending_messages()
+        kinds = [m.stream.kind for m in messages]
+        assert StreamKind.LIVEDATA_DATA in kinds
+        assert StreamKind.LIVEDATA_STATUS in kinds
+
+        status_msgs = [
+            m for m in messages if m.stream.kind == StreamKind.LIVEDATA_STATUS
+        ]
+        assert len(status_msgs) == 1
+        status = status_msgs[0].value
+        assert status.job_id == job_id
+        assert status.state == JobState.stopped
+        assert status.error_message is None
+
+    def test_one_shot_job_does_not_enter_scheduled_or_active_state(self):
+        manager, _, _ = self._make_manager()
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+
+        manager.schedule_job('choppers', config)
+
+        assert manager.all_jobs == []
+        assert manager.active_jobs == []
+
+    def test_drain_pending_messages_clears_buffer(self):
+        manager, _, _ = self._make_manager()
+        config = WorkflowConfig(identifier=_OneShotInstrumentSetup.workflow_id())
+
+        manager.schedule_job('choppers', config)
+        first = manager.drain_pending_messages()
+        second = manager.drain_pending_messages()
+
+        assert len(first) == 2  # data result + stopped-status
+        assert second == []
+
+    def test_normal_job_does_not_produce_pending_messages(self, fake_job_factory):
+        """Sanity check: jobs without one-shot stamping behave as before."""
+        manager = JobManager(fake_job_factory)
+        config = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='wf',
+                version=1,
+            )
+        )
+        manager.schedule_job('det1', config)
+
+        assert manager.drain_pending_messages() == []
+        assert len(manager.all_jobs) == 1

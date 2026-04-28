@@ -34,6 +34,7 @@ from .kafka.source import (
     KafkaMessageSource,
 )
 from .kafka.stream_counter import StreamCounter
+from .kafka.stream_mapping import StreamMapping
 from .logging_config import configure_logging
 from .sinks import PlotToPngSink
 
@@ -64,6 +65,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         job_threads: int = 5,
         stream_counter: StreamCounter | None = None,
         message_batcher: MessageBatcher | None = None,
+        stream_mapping: StreamMapping | None = None,
     ) -> None:
         """
         Parameters
@@ -103,6 +105,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._job_threads = job_threads
         self._stream_counter = stream_counter
         self._message_batcher = message_batcher
+        self._stream_mapping = stream_mapping
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -211,6 +214,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             ),
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
+            stream_mapping=self._stream_mapping,
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
             message_batcher=self._message_batcher,

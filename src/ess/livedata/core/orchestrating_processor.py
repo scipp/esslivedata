@@ -13,9 +13,9 @@ import structlog
 from ess.livedata import __version__
 
 from ..handlers.config_handler import ConfigProcessor
+from ..kafka.stream_mapping import StreamMapping
 from .handler import Accumulator, PreprocessorFactory
 from .job import (
-    JobResult,
     JobState,
     JobStatus,
     ServiceState,
@@ -35,7 +35,6 @@ from .message import (
     RunStart,
     RunStop,
     StreamId,
-    StreamKind,
     Tin,
     Tout,
 )
@@ -148,6 +147,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
+        stream_mapping: StreamMapping | None = None,
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
         stream_stats_provider: StreamStatsProvider | None = None,
@@ -157,7 +157,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=instrument), job_threads=job_threads
+            job_factory=JobFactory(
+                instrument=instrument, stream_mapping=stream_mapping
+            ),
+            job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
@@ -294,9 +297,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._batches_processed += 1
         self._maybe_log_metrics()
 
-        result_messages.extend(
-            [_job_result_to_message(result) for result in valid_results]
-        )
+        result_messages.extend(result.to_message() for result in valid_results)
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:
@@ -308,10 +309,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         # Publish job statuses
         job_statuses = self._job_manager.get_all_job_statuses()
-        messages = [
-            _job_status_to_message(status, timestamp=timestamp)
-            for status in job_statuses
-        ]
+        messages = [status.to_message(timestamp=timestamp) for status in job_statuses]
 
         # Publish service heartbeat
         service_status = self._get_service_status(job_statuses)
@@ -390,9 +388,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         timestamp = Timestamp.now()
         job_statuses = self._job_manager.get_all_job_statuses()
         messages = [
-            _job_status_to_message(
-                replace(status, state=JobState.stopped), timestamp=timestamp
-            )
+            replace(status, state=JobState.stopped).to_message(timestamp=timestamp)
             for status in job_statuses
         ]
         service_status = self._get_service_status(job_statuses)
@@ -403,24 +399,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             logger.exception('Failed to send final heartbeat')
 
         self._job_manager.shutdown()
-
-
-def _job_result_to_message(result: JobResult) -> Message:
-    """
-    Convert a workflow result to a message for publishing.
-
-    JobId is unique on its own, but we include the workflow ID to make it easier to
-    identify the job in the frontend.
-    """
-    return Message(
-        timestamp=result.start_time or Timestamp.from_ns(0),
-        stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
-        value=result.data,
-    )
-
-
-def _job_status_to_message(status: JobStatus, timestamp: Timestamp) -> Message:
-    return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
 
 
 def _service_status_to_message(status: ServiceStatus, timestamp: Timestamp) -> Message:

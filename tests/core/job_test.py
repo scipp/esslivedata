@@ -38,6 +38,43 @@ class TestJobResult:
             '"job_number":"' + str(job_number) + '"},"output_name":"result"}'
         )
 
+    def test_to_message_uses_data_stream_kind(self):
+        from ess.livedata.core.message import StreamKind
+
+        workflow_id = WorkflowId(
+            instrument="TEST",
+            namespace="data_reduction",
+            name="test_workflow",
+            version=1,
+        )
+        result = JobResult(
+            job_id=JobId(source_name="src", job_number=uuid.uuid4()),
+            workflow_id=workflow_id,
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data=sc.DataGroup({'out': sc.DataArray(sc.scalar(3.14))}),
+        )
+        message = result.to_message()
+        assert message.stream.kind == StreamKind.LIVEDATA_DATA
+        assert message.stream.name == result.stream_name
+        assert message.value is result.data
+        assert message.timestamp == Timestamp.from_ns(100)
+
+    def test_to_message_falls_back_to_zero_timestamp(self):
+        result = JobResult(
+            job_id=JobId(source_name="src", job_number=uuid.uuid4()),
+            workflow_id=WorkflowId(
+                instrument="TEST",
+                namespace="data_reduction",
+                name="wf",
+                version=1,
+            ),
+            start_time=None,
+            end_time=None,
+            data=None,
+        )
+        assert result.to_message().timestamp == Timestamp.from_ns(0)
+
 
 class FakeProcessor(Workflow):
     """Fake implementation of Workflow for testing."""

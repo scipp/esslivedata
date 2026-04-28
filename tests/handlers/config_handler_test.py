@@ -323,6 +323,38 @@ class TestConfigProcessor:
         assert len(mock_job_manager.workflow_calls) == 0
         assert len(result_messages) == 0
 
+    def test_process_aggregates_extra_messages_from_action(self):
+        """Actions that return ack + data messages flow both to the response list."""
+        from ess.livedata.core.message import StreamId, StreamKind
+
+        mock_job_manager = MockJobManagerAdapter()
+        data_stream = StreamId(kind=StreamKind.LIVEDATA_DATA, name='one_shot_result')
+        mock_job_manager.extra_messages_for_workflow = [
+            Message(stream=data_stream, value='one_shot_payload')
+        ]
+        processor = ConfigProcessor(job_manager_adapter=mock_job_manager)
+
+        messages = [
+            Message(
+                value=RawConfigItem(
+                    key=b'src/svc/workflow_config',
+                    value=json.dumps({'workflow': 'wf', 'message_id': 'mid'}).encode(
+                        'utf-8'
+                    ),
+                ),
+                timestamp=1,
+                stream=COMMANDS_STREAM_ID,
+            )
+        ]
+
+        result_messages = processor.process_messages(messages)
+
+        # Both the ack (responses stream) and the data-stream message are returned.
+        streams = {m.stream for m in result_messages}
+        assert RESPONSES_STREAM_ID in streams
+        assert data_stream in streams
+        assert len(result_messages) == 2
+
     def test_job_manager_exception_handling(self):
         mock_job_manager = MockJobManagerAdapter()
         mock_job_manager.should_raise_exception = True
@@ -352,29 +384,33 @@ class MockJobManagerAdapter:
     def __init__(self):
         self.workflow_calls = []
         self.job_command_calls = []
+        self.extra_messages_for_workflow: list[Message] = []
         self.should_raise_exception = False
 
     def job_command(self, source_name, command):
         self.job_command_calls.append((source_name, command))
         if self.should_raise_exception:
             raise ValueError("Test exception")
-        # Return acknowledgement only if message_id is present
         message_id = command.get("message_id")
         if message_id is None:
-            return None
-        return CommandAcknowledgement(
+            return []
+        ack = CommandAcknowledgement(
             message_id=message_id,
             device=str(command.get("job_id", "all")),
             response=AcknowledgementResponse.ACK,
         )
+        return [Message(stream=RESPONSES_STREAM_ID, value=ack)]
 
     def set_workflow_with_config(self, source_name, config):
         self.workflow_calls.append((source_name, config))
         if self.should_raise_exception:
             raise ValueError("Test exception")
-        # Return acknowledgement (always for workflow config in mock)
-        return CommandAcknowledgement(
+        ack = CommandAcknowledgement(
             message_id=config.get("message_id", "mock-msg-id"),
             device=source_name,
             response=AcknowledgementResponse.ACK,
         )
+        return [
+            Message(stream=RESPONSES_STREAM_ID, value=ack),
+            *self.extra_messages_for_workflow,
+        ]

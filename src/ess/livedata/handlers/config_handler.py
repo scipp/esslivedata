@@ -9,11 +9,10 @@ from typing import Any
 
 import structlog
 
-from ..config.acknowledgement import CommandAcknowledgement
 from ..config.models import ConfigKey
 from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
-from ..core.message import RESPONSES_STREAM_ID, Message
+from ..core.message import Message
 from ..kafka.message_adapter import RawConfigItem
 
 logger = structlog.get_logger(__name__)
@@ -63,9 +62,7 @@ class ConfigProcessor:
             JobCommand.key: self._job_manager_adapter.job_command,
         }
 
-    def process_messages(
-        self, messages: list[Message[RawConfigItem]]
-    ) -> list[Message[CommandAcknowledgement]]:
+    def process_messages(self, messages: list[Message[RawConfigItem]]) -> list[Message]:
         """
         Process config messages and handle workflow_config and job_command updates.
 
@@ -77,7 +74,9 @@ class ConfigProcessor:
         Returns
         -------
         :
-            List of response messages containing CommandAcknowledgements.
+            Response messages produced by the actions: acknowledgements bound for
+            the responses stream plus any data-stream messages from actions that
+            ran inline (e.g. one-shot job results from ``set_workflow_with_config``).
         """
         # Group latest updates by key and source
         latest_updates: defaultdict[str, dict[str | None, ConfigUpdate]] = defaultdict(
@@ -108,7 +107,7 @@ class ConfigProcessor:
                 logger.exception('error_processing_config_message')
 
         # Process the latest updates
-        response_messages: list[Message[CommandAcknowledgement]] = []
+        response_messages: list[Message] = []
 
         for config_key, source_updates in latest_updates.items():
             for source_name, update in source_updates.items():
@@ -119,12 +118,7 @@ class ConfigProcessor:
                     if (action := self._actions.get(config_key)) is None:
                         logger.debug('unknown_config_key', config_key=config_key)
                         continue
-                    result = action(source_name, update.value)
-                    if result is not None:
-                        response_messages.append(
-                            Message(stream=RESPONSES_STREAM_ID, value=result)
-                        )
-
+                    response_messages.extend(action(source_name, update.value))
                 except Exception:
                     logger.exception(
                         'error_processing_config_key',

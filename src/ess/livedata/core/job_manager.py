@@ -15,6 +15,7 @@ import scipp as sc
 import structlog
 
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.route_derivation import resolve_stream_names
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobSchedule,
@@ -22,9 +23,10 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.kafka.stream_mapping import StreamMapping
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import RunStart, RunStop, StreamId
+from .message import Message, RunStart, RunStop, StreamId
 from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -83,8 +85,24 @@ class JobCommand(pydantic.BaseModel):
 
 
 class JobFactory:
-    def __init__(self, instrument: Instrument) -> None:
+    def __init__(
+        self,
+        instrument: Instrument,
+        stream_mapping: StreamMapping | None = None,
+    ) -> None:
+        """Initialize the factory.
+
+        Parameters
+        ----------
+        instrument:
+            The instrument owning the workflow specs.
+        stream_mapping:
+            Stream mapping used to detect jobs whose primary sources resolve to
+            zero physical streams (one-shot jobs). When ``None``, one-shot
+            detection is disabled and all jobs follow the normal lifecycle.
+        """
         self._instrument = instrument
+        self._stream_mapping = stream_mapping
 
     def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
         """Get the workflow specification for a given workflow ID."""
@@ -162,7 +180,17 @@ class JobFactory:
             # Job will use values for routing and remap keys for workflow
             aux_source_names=rendered_aux_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
+            is_one_shot=self._is_one_shot(job_id.source_name),
         )
+
+    def _is_one_shot(self, source_name: str) -> bool:
+        """A job is one-shot if its primary source has no physical streams routed."""
+        if self._stream_mapping is None:
+            return False
+        resolved = resolve_stream_names(
+            {source_name}, self._instrument, self._stream_mapping
+        )
+        return not resolved
 
 
 class JobManager:
@@ -182,6 +210,11 @@ class JobManager:
         self._jobs_with_primary_data: set[JobId] = set()
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
+        # Messages produced by one-shot jobs that ran inline during schedule_job:
+        # the data result followed by a JobStatus(stopped) so the dashboard can
+        # deactivate the workflow. The caller (typically JobManagerAdapter)
+        # drains them on the same call.
+        self._pending_messages: list[Message] = []
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
@@ -237,11 +270,20 @@ class JobManager:
     def schedule_job(self, source_name: str, config: WorkflowConfig) -> JobId:
         """
         Schedule a new job based on the provided configuration.
+
+        One-shot jobs (whose primary source resolves to zero physical streams)
+        are finalized inline: they never enter ``_scheduled_jobs`` or
+        ``_active_jobs`` and their result is stashed for the caller to retrieve
+        via :meth:`drain_pending_results`. Such jobs cannot be data-driven, so
+        gating them on message-time advancement would never fire.
         """
         job_id = JobId(
             job_number=config.job_number or uuid.uuid4(), source_name=source_name
         )
         job = self._job_factory.create(job_id=job_id, config=config)
+        if job.is_one_shot:
+            self._run_one_shot(job)
+            return job_id
         self._job_schedules[job_id] = config.schedule
         self._job_states[job_id] = JobState.scheduled
         self._scheduled_jobs[job_id] = job
@@ -253,6 +295,43 @@ class JobManager:
             schedule=str(config.schedule),
         )
         return job_id
+
+    def _run_one_shot(self, job: Job) -> None:
+        """Finalize a one-shot job inline and stash messages for draining.
+
+        Produces a result message followed by a ``JobStatus(stopped)`` message
+        so dashboard consumers can deactivate the workflow — without these,
+        the job would never appear or disappear in the regular status stream
+        because it never enters ``_active_jobs``/``_scheduled_jobs``.
+        """
+        result = self._job_factory.enrich_result(job.get())
+        # Use ``stopped`` regardless of error state: the workflow ran exactly
+        # once and is no longer present, ``error_message`` carries the failure
+        # if any. This matches how ``OrchestratingProcessor.finalize`` reports
+        # remaining jobs at service shutdown.
+        status = JobStatus(
+            job_id=job.job_id,
+            workflow_id=job.workflow_id,
+            state=JobState.stopped,
+            error_message=result.error_message,
+            warning_message=result.warning_message,
+            start_time=result.start_time,
+            end_time=result.end_time,
+        )
+        self._pending_messages.append(result.to_message())
+        self._pending_messages.append(status.to_message())
+        logger.info(
+            "one_shot_job_finalized",
+            job_id=str(job.job_id),
+            workflow_id=str(job.workflow_id),
+            has_error=result.error_message is not None,
+        )
+
+    def drain_pending_messages(self) -> list[Message]:
+        """Return and clear messages stashed by inline one-shot jobs."""
+        drained = self._pending_messages
+        self._pending_messages = []
+        return drained
 
     def stop_job(self, job_id: JobId) -> None:
         """Stop a job and remove it from the system."""

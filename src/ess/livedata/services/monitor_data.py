@@ -40,6 +40,7 @@ def make_monitor_service_builder(
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
         stream_counter=stream_counter,
+        stream_mapping=scoped,
     )
 
 
