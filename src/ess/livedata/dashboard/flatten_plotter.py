@@ -90,17 +90,14 @@ def make_flatten_params(dims: tuple[str, ...]) -> type[FlattenParams]:
     -------
     :
         A ``FlattenParams`` subclass.
-
-    Notes
-    -----
-    Dim names must be valid Python identifiers since they become ``IntEnum``
-    member names. All ESS dim names in this codebase satisfy that.
     """
     if len(dims) < 2:
         return FlattenParams
 
     n = len(dims)
-    Dim = IntEnum('Dim', [(d, i) for i, d in enumerate(dims)])
+    Dim = IntEnum(
+        'Dim', [(d if d.isidentifier() else f'dim_{i}', i) for i, d in enumerate(dims)]
+    )
 
     class _AxisConfig(FlattenAxisConfig):
         # min_length/max_length here are not just validation — ParamWidget
