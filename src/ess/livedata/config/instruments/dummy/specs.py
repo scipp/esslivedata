@@ -13,6 +13,9 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
 )
+from ess.livedata.handlers.lookup_table_workflow_specs import (
+    register_lookup_table_workflow_spec,
+)
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -71,6 +74,9 @@ area_panel_view_handle = instrument.register_spec(
     params=None,
     outputs=DetectorViewOutputs,
 )
+
+# Register the chopperless TOF lookup-table spec; factory attached in factories.py.
+lookup_table_handle = register_lookup_table_workflow_spec(instrument)
 
 # Register total counts workflow spec
 total_counts_handle = instrument.register_spec(

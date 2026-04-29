@@ -239,3 +239,41 @@ def make_edges(*, model: EdgesModel, dim: str, unit: str) -> sc.Variable:
     return op(
         dim=dim, start=model.start, stop=model.stop, num=model.num_bins + 1, unit=unit
     )
+
+
+class PulsePeriod(BaseModel):
+    """Source pulse period."""
+
+    value: float = Field(default=1000.0 / 14, description="Pulse period.")
+    unit: TimeUnit = Field(default=TimeUnit.MS, description="Unit.")
+
+    def get(self) -> sc.Variable:
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
+class DistanceResolution(BaseModel):
+    """Resolution of the distance axis in a TOF lookup table."""
+
+    value: float = Field(default=0.1, description="Distance bin resolution.")
+    unit: LengthUnit = Field(default=LengthUnit.METER, description="Unit.")
+
+    def get(self) -> sc.Variable:
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
+class TimeResolution(BaseModel):
+    """Resolution of the time-of-arrival axis in a TOF lookup table."""
+
+    value: float = Field(default=250.0, description="Time bin resolution.")
+    unit: TimeUnit = Field(default=TimeUnit.MICROSECOND, description="Unit.")
+
+    def get(self) -> sc.Variable:
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
+class LtotalRange(RangeModel):
+    """Range of total flight paths covered by the lookup table."""
+
+    start: float = Field(default=5.0, description="Shortest L_total.")
+    stop: float = Field(default=30.0, description="Longest L_total.")
+    unit: LengthUnit = Field(default=LengthUnit.METER, description="Unit.")

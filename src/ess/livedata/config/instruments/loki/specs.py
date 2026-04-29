@@ -22,6 +22,9 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     register_detector_view_spec,
 )
+from ess.livedata.handlers.lookup_table_workflow_specs import (
+    register_lookup_table_workflow_spec,
+)
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
@@ -283,6 +286,10 @@ instrument.add_logical_view(
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
+
+# Register the chopperless TOF lookup-table spec. The factory is attached
+# in factories.py.
+lookup_table_handle = register_lookup_table_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(

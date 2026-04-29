@@ -53,6 +53,17 @@ def setup_factories(instrument: Instrument) -> None:
     # Area detector view for area_panel (ad00 images)
     specs.area_panel_view_handle.attach_factory()(AreaDetectorView.view_factory())
 
+    # Lookup-table workflow factory (chopperless v0)
+    from ess.livedata.handlers.lookup_table_workflow import (
+        create_chopperless_lookup_table_workflow,
+    )
+    from ess.livedata.handlers.lookup_table_workflow_specs import LookupTableParams
+
+    @specs.lookup_table_handle.attach_factory()
+    def _lookup_table_workflow_factory(params: LookupTableParams):
+        """Factory for dummy's chopperless TOF lookup-table workflow."""
+        return create_chopperless_lookup_table_workflow(params=params)
+
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams

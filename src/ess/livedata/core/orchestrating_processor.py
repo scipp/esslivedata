@@ -222,37 +222,45 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._report_status()
 
         message_batch = self._message_batcher.batch(data_messages)
-        if message_batch is None:
-            self._message_batcher.report_batch(None, processing_time_s=0.0)
-            self._empty_batches += 1
-            self._maybe_log_metrics()
-            self._sink.publish_messages(result_messages)
-            if not config_messages:
-                # Avoid busy-waiting if there is no data and no config messages.
-                # If there are config messages, we avoid sleeping, since config messages
-                # may trigger costly workflow creation.
-                time.sleep(0.1)
-            return
 
-        batch_start = time.monotonic()
-
-        # Pre-process message batch
-        workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
-
-        # Seed context data for jobs about to activate.
-        # peek uses the batch start_time to predict which jobs will activate
-        # in the upcoming process_jobs call (which uses the same start_time).
-        # This covers both auxiliary streams (e.g., log data for detector
-        # workflows) and primary streams (e.g., log data for the timeseries
-        # service). Without primary stream seeding, a timeseries job that
-        # activates after its data was already consumed will never receive
-        # historical data from the preprocessor's context accumulators.
-        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
-        if needed:
-            missing = needed - {s.name for s in workflow_data.data}
-            if missing:
-                context = self._message_preprocessor.get_context(missing)
-                workflow_data.data.update(context)
+        # Build workflow_data from the current batch (if any) plus cached
+        # context for streams a scheduled job will need on activation. The
+        # empty-batch branch still runs jobs when cached context can satisfy
+        # them, so services that do not have a continuous data stream (e.g.
+        # the chopperless tof_table service, whose primary signal is a
+        # one-shot synthesized tick) can activate scheduled jobs without
+        # waiting for further input.
+        if message_batch is not None:
+            batch_start = time.monotonic()
+            workflow_data = self._message_preprocessor.preprocess_messages(
+                message_batch
+            )
+            needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
+            if needed:
+                missing = needed - {s.name for s in workflow_data.data}
+                if missing:
+                    context = self._message_preprocessor.get_context(missing)
+                    workflow_data.data.update(context)
+        else:
+            now = Timestamp.now()
+            needed = self._job_manager.peek_pending_streams(now)
+            context = self._message_preprocessor.get_context(needed) if needed else {}
+            if not context:
+                # Truly idle cycle: no batch, and no scheduled job that can be
+                # activated from cached context.
+                self._message_batcher.report_batch(None, processing_time_s=0.0)
+                self._empty_batches += 1
+                self._maybe_log_metrics()
+                self._sink.publish_messages(result_messages)
+                if not config_messages:
+                    # Avoid busy-waiting if there is no data and no config
+                    # messages. If there are config messages, we avoid
+                    # sleeping, since config messages may trigger costly
+                    # workflow creation.
+                    time.sleep(0.1)
+                return
+            batch_start = time.monotonic()
+            workflow_data = WorkflowData(start_time=now, end_time=now, data=context)
 
         # Push data into jobs and compute results in a single pass.
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -291,7 +299,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         processing_time_s = time.monotonic() - batch_start
         self._message_batcher.report_batch(
-            len(message_batch.messages), processing_time_s=processing_time_s
+            len(message_batch.messages) if message_batch is not None else 0,
+            processing_time_s=processing_time_s,
         )
         self._batches_processed += 1
         self._maybe_log_metrics()

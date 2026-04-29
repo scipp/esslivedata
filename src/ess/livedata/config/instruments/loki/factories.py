@@ -124,8 +124,17 @@ def setup_factories(instrument: Instrument) -> None:
             source_name, params, lookup_table_filename=lookup_table_filename
         )
 
+    from ess.livedata.handlers.lookup_table_workflow import (
+        create_chopperless_lookup_table_workflow,
+    )
+    from ess.livedata.handlers.lookup_table_workflow_specs import LookupTableParams
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
+
+    @specs.lookup_table_handle.attach_factory()
+    def _lookup_table_workflow_factory(params: LookupTableParams):
+        """Factory for LOKI's chopperless TOF lookup-table workflow."""
+        return create_chopperless_lookup_table_workflow(params=params)
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
