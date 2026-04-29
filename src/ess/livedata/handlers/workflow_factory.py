@@ -77,9 +77,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         service:
             Name of the backend service responsible for running this workflow.
             Used by ``JobFactory`` to reject workflows not belonging to the
-            current service. Defaults to ``spec.group.name`` (group identifier
-            and service name are identical today; the coupling is removed in
-            a later stage).
+            current service. Defaults to ``spec.group.name``.
 
         Returns
         -------

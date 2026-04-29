@@ -291,8 +291,9 @@ class Instrument:
             If None, identity (no reshaping).
         group:
             Display-oriented :class:`WorkflowGroup` this view belongs to.
-            The group's ``name`` (e.g. ``'detector_data'`` or ``'monitor_data'``)
-            also determines which service runs the workflow today.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
@@ -378,8 +379,7 @@ class Instrument:
             (default: ``REDUCTION``).
         service:
             Name of the backend service responsible for running this workflow.
-            Defaults to ``group.name`` (service and group identifier match
-            today; the coupling is removed in a later stage).
+            Defaults to ``group.name``.
         name:
             Name to register the workflow under.
         version:
