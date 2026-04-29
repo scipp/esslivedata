@@ -19,7 +19,7 @@ from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 
 #: Output key returned by the workflow's ``finalize`` and the field name on
-#: :class:`WavelengthLutOutputs`. Also the namespace/name used in the spec.
+#: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
 
 
@@ -149,13 +149,22 @@ def register_wavelength_lut_workflow_spec(
 ) -> SpecHandle:
     """Register the wavelength lookup-table workflow spec for ``instrument``.
 
+    Hosted by the ``timeseries`` service alongside per-source timeseries
+    workflows: both are f144-driven, share the same source/preprocessor
+    plumbing, and (in v1) the chopper PVs feeding the synthesizer are
+    themselves f144 streams that the timeseries service can plot. The
+    ``ChopperSynthesizer`` emitting the synthetic primary trigger is a
+    temporary stand-in for an upstream-side ``chopper_cascade_reached``
+    f144 stream; once the producer publishes that directly, the wrapper
+    drops out and this is just another timeseries workflow.
+
     The workflow's only ``source_name`` is the synthetic ``chopper_cascade``
     stream emitted by ``ChopperSynthesizer``. The factory must be attached
     later via the returned handle.
     """
     return instrument.register_spec(
-        namespace='wavelength_lut',
-        name='wavelength_lut',
+        namespace='timeseries',
+        name=WAVELENGTH_LUT_OUTPUT,
         version=1,
         title='Wavelength lookup table',
         description=(

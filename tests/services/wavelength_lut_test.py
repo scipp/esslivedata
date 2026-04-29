@@ -12,15 +12,18 @@ import scipp as sc
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
-from ess.livedata.handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
-from ess.livedata.services.wavelength_lut import make_wavelength_lut_service_builder
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_LUT_OUTPUT,
+)
+from ess.livedata.services.timeseries import make_timeseries_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
 
 def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
     cfg = instrument_registry[instrument]
     for wid, spec in cfg.workflow_factory.items():
-        if spec.namespace == 'wavelength_lut' and spec.name == name:
+        if spec.namespace == 'timeseries' and spec.name == name:
             return wid
     raise AssertionError(f"workflow {name!r} not registered for {instrument!r}")
 
@@ -28,15 +31,15 @@ def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
 @pytest.fixture
 def app(caplog: pytest.LogCaptureFixture) -> LivedataApp:
     caplog.set_level(logging.INFO)
-    builder = make_wavelength_lut_service_builder(instrument='dummy')
+    builder = make_timeseries_service_builder(instrument='dummy')
     return LivedataApp.from_service_builder(builder)
 
 
 def _config_message() -> tuple[ConfigKey, dict]:
-    workflow_id = _get_workflow_id('dummy', 'wavelength_lut')
+    workflow_id = _get_workflow_id('dummy', WAVELENGTH_LUT_OUTPUT)
     config_key = ConfigKey(
         source_name=CHOPPER_CASCADE_SOURCE,
-        service_name='wavelength_lut',
+        service_name='timeseries',
         key='workflow_config',
     )
     params = {'simulation': {'num_simulated_neutrons': 50_000}}
