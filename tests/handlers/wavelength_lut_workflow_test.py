@@ -61,13 +61,13 @@ class TestWavelengthLutWorkflow:
             'time_resolution',
         ):
             assert name in table.coords, name
-        assert_identical(table.coords['pulse_period'], params.pulse_period.get())
+        assert_identical(table.coords['pulse_period'], params.pulse.get_period())
         assert_identical(
             table.coords['distance_resolution'],
             params.distance_resolution.get(),
         )
         assert_identical(table.coords['time_resolution'], params.time_resolution.get())
-        assert int(table.coords['pulse_stride'].value) == params.simulation.pulse_stride
+        assert int(table.coords['pulse_stride'].value) == params.pulse.stride
 
     def test_finalize_caches_result(self):
         wf = create_chopperless_wavelength_lut_workflow(params=_params())

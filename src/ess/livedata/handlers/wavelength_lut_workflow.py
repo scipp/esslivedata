@@ -49,8 +49,8 @@ def _attach_provenance_coords(
     without out-of-band coordination on parameter values.
     """
     out = array.copy()
-    out.coords['pulse_period'] = params.pulse_period.get()
-    out.coords['pulse_stride'] = sc.scalar(int(params.simulation.pulse_stride))
+    out.coords['pulse_period'] = params.pulse.get_period()
+    out.coords['pulse_stride'] = sc.scalar(int(params.pulse.stride))
     out.coords['distance_resolution'] = params.distance_resolution.get()
     out.coords['time_resolution'] = params.time_resolution.get()
     return out
@@ -59,8 +59,8 @@ def _attach_provenance_coords(
 def _build_pipeline(params: WavelengthLutParams, choppers: sc.DataGroup) -> Any:
     wf = LookupTableWorkflow()
     wf[DiskChoppers[AnyRun]] = choppers
-    wf[PulsePeriod] = params.pulse_period.get()
-    wf[PulseStride] = int(params.simulation.pulse_stride)
+    wf[PulsePeriod] = params.pulse.get_period()
+    wf[PulseStride] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
     wf[LtotalRange] = (

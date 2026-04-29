@@ -13,7 +13,7 @@ from ..handlers.workflow_factory import SpecHandle
 from ..parameter_models import (
     DistanceResolution,
     LtotalRange,
-    PulsePeriod,
+    Pulse,
     TimeResolution,
 )
 
@@ -29,13 +29,8 @@ WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
 
 
 class Simulation(pydantic.BaseModel):
-    """Simulation knobs that do not carry units."""
+    """Simulation knobs."""
 
-    pulse_stride: int = pydantic.Field(
-        default=1,
-        ge=1,
-        description="Pulse stride (1 unless pulse-skipping is used).",
-    )
     num_simulated_neutrons: int = pydantic.Field(
         default=1_000_000,
         ge=1_000,
@@ -49,10 +44,10 @@ class Simulation(pydantic.BaseModel):
 class WavelengthLutParams(pydantic.BaseModel):
     """User-facing parameters for the wavelength lookup-table workflow."""
 
-    pulse_period: PulsePeriod = pydantic.Field(
-        title='Pulse period',
-        description='Source pulse period.',
-        default_factory=PulsePeriod,
+    pulse: Pulse = pydantic.Field(
+        title='Source pulse',
+        description='Source pulse frequency and stride.',
+        default_factory=Pulse,
     )
     distance_resolution: DistanceResolution = pydantic.Field(
         title='Distance resolution',
@@ -71,7 +66,7 @@ class WavelengthLutParams(pydantic.BaseModel):
     )
     simulation: Simulation = pydantic.Field(
         title='Simulation',
-        description='Simulation knobs (pulse stride, number of neutrons).',
+        description='Simulation knobs.',
         default_factory=Simulation,
     )
 

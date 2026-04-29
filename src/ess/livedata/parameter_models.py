@@ -241,14 +241,24 @@ def make_edges(*, model: EdgesModel, dim: str, unit: str) -> sc.Variable:
     )
 
 
-class PulsePeriod(BaseModel):
-    """Source pulse period."""
+class Pulse(BaseModel):
+    """Source pulse properties.
 
-    value: float = Field(default=1000.0 / 14, description="Pulse period.")
-    unit: TimeUnit = Field(default=TimeUnit.MS, description="Unit.")
+    The unit of ``frequency`` is hardcoded to Hz: there is no realistic case
+    where a neutron-source pulse frequency would be expressed in kHz/MHz, so
+    we skip the dropdown and keep the model tight.
+    """
 
-    def get(self) -> sc.Variable:
-        return sc.scalar(self.value, unit=self.unit.value)
+    frequency: float = Field(default=14.0, gt=0.0, description="Pulse frequency in Hz.")
+    stride: int = Field(
+        default=1,
+        ge=1,
+        description="Pulse stride (1 unless pulse-skipping is used).",
+    )
+
+    def get_period(self) -> sc.Variable:
+        """Return the pulse period as a scipp scalar."""
+        return sc.scalar(1.0 / self.frequency, unit='s')
 
 
 class DistanceResolution(BaseModel):
