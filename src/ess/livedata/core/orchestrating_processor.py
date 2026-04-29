@@ -224,12 +224,15 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         message_batch = self._message_batcher.batch(data_messages)
 
         # Build workflow_data from the current batch (if any) plus cached
-        # context for streams a scheduled job will need on activation. The
-        # empty-batch branch still runs jobs when cached context can satisfy
-        # them, so services that do not have a continuous data stream (e.g.
-        # the chopperless wavelength_lut service, whose primary signal is a
-        # one-shot synthesized tick) can activate scheduled jobs without
-        # waiting for further input.
+        # context for streams a scheduled job will need on activation.
+        # peek_pending_streams uses start_time to predict which jobs will
+        # activate in the upcoming process_jobs call (same start_time),
+        # covering both auxiliary streams (e.g., log data for detector
+        # workflows) and primary streams (e.g., log data for a timeseries
+        # job that activates after its data already passed through, or the
+        # chopperless wavelength_lut tick that fires only once). The
+        # empty-batch branch still runs jobs when cached context alone can
+        # satisfy them.
         if message_batch is not None:
             batch_start = time.monotonic()
             workflow_data = self._message_preprocessor.preprocess_messages(
