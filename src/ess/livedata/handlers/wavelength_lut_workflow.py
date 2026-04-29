@@ -2,16 +2,21 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Wavelength lookup-table workflow.
 
-Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` for use as a livedata
-``Workflow``. The chopperless v0 always supplies an empty ``DiskChoppers``;
-chopper-equipped instruments will require a translation provider that
-combines static NeXus geometry with cached chopper setpoints.
+Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` as a livedata
+``Workflow`` via :class:`StreamProcessorWorkflow`. The synthetic
+``chopper_cascade`` trigger is exposed as a sciline dynamic key whose value
+is consumed by an internal provider that produces ``DiskChoppers``.
+
+For chopperless instruments the provider returns an empty ``DiskChoppers``;
+v1 will replace it with one that assembles real choppers from chopper-PV
+context streams.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import NewType
 
+import sciline
 import scipp as sc
 from ess.reduce.nexus.types import AnyRun, DiskChoppers
 from ess.reduce.unwrap.lut import (
@@ -26,7 +31,7 @@ from ess.reduce.unwrap.lut import (
     TimeResolution,
 )
 
-from ..core.timestamp import Timestamp
+from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
@@ -38,27 +43,50 @@ from .workflow_factory import Workflow
 # upstream simulator, which is empty for chopperless instruments.
 _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
 
+#: The chopper-cascade trigger payload as it reaches the workflow: the
+#: cumulative ``ToNXlog`` timeseries for the synthetic ``chopper_cascade``
+#: stream. The value is ignored by the chopperless provider; only its
+#: presence matters (it drives ``is_active()`` in the orchestrator).
+ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 
-def _attach_provenance_coords(
-    array: sc.DataArray, params: WavelengthLutParams
-) -> sc.DataArray:
+#: Wavelength lookup-table with provenance coords attached.
+WavelengthLut = NewType('WavelengthLut', sc.DataArray)
+
+#: Sciline key for the user-facing parameter bundle, used by the provenance
+#: provider. Distinct from the individual parameter keys (PulsePeriod, etc.)
+#: that the upstream pipeline consumes (and may unit-convert internally).
+ParamsKey = NewType('ParamsKey', WavelengthLutParams)
+
+
+def _empty_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
+    """Provide an empty chopper cascade for chopperless instruments.
+
+    The trigger value is intentionally unused: it acts purely as a "compute
+    now" signal. v1 will replace this provider with one that takes chopper
+    PV context streams as additional inputs and assembles real choppers.
+    """
+    return DiskChoppers[AnyRun](sc.DataGroup({}))
+
+
+def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
     """Attach the four scalar input parameters as 0-D coords on the result.
 
     Makes the published da00 message self-describing: a consumer can
     reconstruct the upstream ``LookupTable`` dataclass from the array alone,
-    without out-of-band coordination on parameter values.
+    without out-of-band coordination on parameter values. Pulling from
+    ``params`` (not ``table``) keeps the units user-facing — the upstream
+    pipeline may convert internally.
     """
-    out = array.copy()
-    out.coords['pulse_period'] = params.pulse.get_period()
-    out.coords['pulse_stride'] = sc.scalar(int(params.pulse.stride))
-    out.coords['distance_resolution'] = params.distance_resolution.get()
-    out.coords['time_resolution'] = params.time_resolution.get()
-    return out
+    arr = table.array.copy()
+    arr.coords['pulse_period'] = params.pulse.get_period()
+    arr.coords['pulse_stride'] = sc.scalar(int(params.pulse.stride))
+    arr.coords['distance_resolution'] = params.distance_resolution.get()
+    arr.coords['time_resolution'] = params.time_resolution.get()
+    return WavelengthLut(arr)
 
 
-def _build_pipeline(params: WavelengthLutParams, choppers: sc.DataGroup) -> Any:
+def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf = LookupTableWorkflow()
-    wf[DiskChoppers[AnyRun]] = choppers
     wf[PulsePeriod] = params.pulse.get_period()
     wf[PulseStride] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
@@ -69,49 +97,10 @@ def _build_pipeline(params: WavelengthLutParams, choppers: sc.DataGroup) -> Any:
     )
     wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
     wf[SourcePosition] = _PLACEHOLDER_SOURCE_POSITION
+    wf[ParamsKey] = params
+    wf.insert(_empty_choppers)
+    wf.insert(_attach_provenance)
     return wf
-
-
-class WavelengthLutWorkflow(Workflow):
-    """Workflow that computes the wavelength lookup table on the first trigger.
-
-    The synthetic ``chopper_cascade`` stream is the trigger; its value is
-    ignored. After the first computation the result is cached so re-finalize
-    calls (e.g., after orchestrator-level retries) return the same table
-    without recomputing. ``clear`` discards the cache so a job reset
-    recomputes on the next trigger.
-    """
-
-    def __init__(self, params: WavelengthLutParams) -> None:
-        self._params = params
-        self._triggered = False
-        self._result: sc.DataArray | None = None
-
-    def accumulate(
-        self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
-    ) -> None:
-        del start_time, end_time
-        if CHOPPER_CASCADE_SOURCE in data:
-            self._triggered = True
-
-    def finalize(self) -> dict[str, sc.DataArray]:
-        if not self._triggered:
-            raise RuntimeError(
-                f"Workflow finalize() called before any '{CHOPPER_CASCADE_SOURCE}' "
-                "trigger was received."
-            )
-        if self._result is None:
-            self._result = self._compute()
-        return {WAVELENGTH_LUT_OUTPUT: self._result}
-
-    def clear(self) -> None:
-        self._triggered = False
-        self._result = None
-
-    def _compute(self) -> sc.DataArray:
-        wf = _build_pipeline(self._params, choppers=sc.DataGroup({}))
-        table: LookupTable = wf.compute(LookupTable)
-        return _attach_provenance_coords(table.array, self._params)
 
 
 def create_chopperless_wavelength_lut_workflow(
@@ -119,7 +108,15 @@ def create_chopperless_wavelength_lut_workflow(
 ) -> Workflow:
     """Factory for the chopperless wavelength lookup-table workflow.
 
-    Always supplies ``DiskChoppers = {}`` to the upstream pipeline. The
-    workflow's only stream input is the synthetic ``chopper_cascade`` trigger.
+    The workflow's only stream input is the synthetic ``chopper_cascade``
+    trigger, exposed to sciline as a dynamic key. ``allow_bypass=True`` is
+    required because the trigger value flows directly to a provider rather
+    than through an accumulator.
     """
-    return WavelengthLutWorkflow(params)
+    return StreamProcessorWorkflow(
+        _build_pipeline(params),
+        dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
+        target_keys={WAVELENGTH_LUT_OUTPUT: WavelengthLut},
+        accumulators={},
+        allow_bypass=True,
+    )
