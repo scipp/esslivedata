@@ -144,15 +144,19 @@ Chopper data is a **separate input** (not part of `LookupTableParams`) and is
 assembled at runtime from two sources, combined into the `DiskChoppers` value
 the upstream simulation expects:
 
-1. **Geometry from the NeXus geometry file.** Slit positions, distances,
-   radii, and other static chopper attributes. Use the upstream helpers
-   documented at
-   <https://scipp.github.io/scippneutron/user-guide/chopper/processing-nexus-choppers.html#NeXus-chopper-data>;
-   do not reinvent. The geometry file is consumed via the existing pooch
-   registry that other reduction workflows already use — no new runtime
-   loading mechanism. The change is to ensure
-   `src/ess/livedata/scripts/make_geometry_nexus.py` emits sufficient chopper
-   info into the registry artifact (today it likely does not).
+1. **Static chopper geometry from the NeXus geometry artifact.** Slit
+   positions/edges, axle position, radius, and `delay` per chopper. Loaded
+   via `GenericNeXusWorkflow`'s `RawChoppers[SampleRun]` provider
+   (`parse_disk_choppers` at `ess/reduce/nexus/workflow.py:482`) — the same
+   path detector workflows already use to load static geometry. Wiring
+   mirrors the detector pattern: `workflow[Filename[SampleRun]] = ...`,
+   with `RawChoppers[SampleRun]` resolving to an
+   `sc.DataGroup[sc.DataGroup[Any]]` keyed by chopper name. The artifact
+   stays the existing pooch geometry file; `make_geometry_nexus.py`
+   currently filters to NXdetector/NXmonitor/NXsource/NXsample/NXtransformations
+   and **does not** copy `NXdisk_chopper` groups — needs ~10 lines added,
+   and per-instrument artifacts must be regenerated and re-published with
+   bumped consuming hashes.
 2. **Synthetic per-chopper setpoint streams**, produced in-process by a
    **chopper signal synthesizer** that wraps the existing `MessageSource`
    (decorator pattern, same protocol — downstream sees a regular message
@@ -201,9 +205,10 @@ abstraction's semantics. Future migration to a producer-side service that
 publishes the synthetic streams to Kafka is a near-trivial relocation: the
 service drops the wrapper and uses a plain source.
 
-`DiskChoppers` assembly happens **inside the workflow** (a sciline provider
-that combines static NeXus chopper geometry with the cached aux setpoints),
-mirroring the detector pattern. Specifics resolved by TODO 2 in "Provider".
+`DiskChoppers` assembly happens **inside the workflow** via a translation
+provider that combines `RawChoppers[SampleRun]` (loaded by
+`GenericNeXusWorkflow` from the pooch geometry artifact) with the cached
+aux setpoints. See "Provider" below for the concrete shape.
 
 Workflow execution is **user-triggered**: the operator sets params and
 starts the job manually (no always-on / auto-start). Once running, the
@@ -257,15 +262,36 @@ not a separate format invention.)
 
 ### Provider
 
-Wraps `ess.reduce.unwrap.lut.LookupTableWorkflow`. The workflow takes the
-params + choppers, computes the table, and returns the array with the four
-scalar params attached as coords. A couple of additional providers may need
-to be added to this base workflow, e.g., for turning the `LookupTable`
-output into the `LookupTableArray` described above.
+Built around `ess.reduce.unwrap.lut.LookupTableWorkflow()` — a sciline
+pipeline factory (`ess/reduce/unwrap/lut.py:446`) whose simulation provider
+`simulate_chopper_cascade_using_tof` (line 392) consumes
+`DiskChoppers[AnyRun]` (a `dict[str, DiskChopper]`). The upstream pipeline
+does **not** load NeXus internally; `DiskChoppers` must be supplied
+externally.
 
-TODO:
-- workflow needs to insert chopper stream info into static info obtained from NeXus file. Mirror the approach taken for detectors and detector events fed via stream. Small difference: We need to deal with multiple choppers (combined from multiple groups in NeXus).
-- look into GenericNeXusWorkflow, it can apparently load choppers, but this is currently not connected to the LookupTableWorkflow. Something like `choppers = workflow.compute(RawChoppers[SampleRun])`, then figure out how to translate to the chopper object the LUT workflow expects.
+Our composition adds three pieces around the upstream pipeline:
+
+1. **Static chopper geometry** via `GenericNeXusWorkflow` providers — the
+   pipeline gets `Filename[SampleRun]` set to the pooch artifact, and
+   `RawChoppers[SampleRun]` resolves through `parse_disk_choppers`.
+2. **Translation provider** (ESSlivedata-side, ~30 lines): consumes
+   `RawChoppers[SampleRun]` plus per-chopper aux setpoints (cached
+   `<chopper>_rotation_speed_setpoint`, synthetic `<chopper>_phase_setpoint`)
+   and produces `DiskChoppers[AnyRun]` by calling
+   `scippneutron.chopper.DiskChopper.from_nexus()` per chopper.
+   `from_nexus` requires a scalar `rotation_speed_setpoint` which
+   `RawChoppers` does **not** contain (NeXus only has the time-dependent
+   NXlog) — supplied by us from the cached aux. The static `delay` (from
+   NeXus) and the synthetic `phase_setpoint` (from plateau detection)
+   thread through orthogonally: `delay` is a calibration constant,
+   `phase_setpoint` is the operator-set angle.
+3. **Output adapter** (small): turn the upstream `LookupTable` dataclass
+   into the published `LookupTableArray` described under "Output",
+   attaching the four scalar input params as 0-D coords.
+
+Additional small providers wire `LookupTableParams` fields into the
+corresponding sciline types (`PulsePeriod`, `PulseStride`,
+`DistanceResolution`, `TimeResolution`, `NumberOfSimulatedNeutrons`).
 
 ## Service placement
 
@@ -331,13 +357,14 @@ the job — a new job, a new fire (cached tick replays on activation). No
 ## Files expected to change
 
 - `src/ess/livedata/parameter_models.py` — new scalar/range models for the params.
-- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + provider. Includes a sciline provider that assembles `DiskChoppers` from static NeXus chopper geometry + cached aux setpoints (specifics resolved by TODO 2 in "Provider"). Registers `'choppers'` primary stream with a context accumulator (`LatestValueHandler`) so the synthesizer's emit is cached and replayed on job-start via the existing `MessagePreprocessor.get_context()` path — this is what lets chopperless instruments use the normal flow with no special handling.
+- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + providers. Composes `GenericNeXusWorkflow` (for `RawChoppers[SampleRun]` and `SourcePosition` from the pooch geometry artifact) with `LookupTableWorkflow()` from `ess.reduce.unwrap.lut`. Adds a `RawChoppers + cached aux setpoints → DiskChoppers` translation provider (~30 lines, calls `scippneutron.chopper.DiskChopper.from_nexus()` per chopper) and a small output adapter producing `LookupTableArray`. Registers `'choppers'` primary stream with a context accumulator (`LatestValueHandler`) so the synthesizer's emit is cached and replayed on job-start via the existing `MessagePreprocessor.get_context()` path — this is what lets chopperless instruments use the normal flow with no special handling.
 - `src/ess/livedata/handlers/lookup_table_workflow_specs.py` — `LookupTableParams` and `LookupTableArray` type.
 - `src/ess/livedata/kafka/chopper_synthesizer.py` (new) — `ChopperSynthesizer`, a stateful wrapper around `MessageSource` (decorator pattern, same protocol). Consumes raw chopper f144 messages from `${instrument}_choppers`, runs per-chopper plateau detection on phase NXlogs, emits synthetic per-chopper `<chopper>_phase_setpoint` aux messages and synthetic primary `setpoints_reached` ticks on logical `'choppers'`. Emits a vacuous `setpoints_reached` at startup for chopperless instruments. Pass-through for `<chopper>_rotation_speed_setpoint`.
 - `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to cover the chopper topic if not already; no `stream.name` rewrite, no new flatbuffer.
 - `src/ess/livedata/config/route_derivation.py` — declare per-instrument chopper-PV streams (the synthesizer's input PVs); when the resolved set is empty, the synthesizer runs in chopperless mode (vacuous emit at startup, no PV subscription). No Bifrost-style logical→physical generalization needed for the workflow's *primary* (`'choppers'` is synthetic).
 - `src/ess/livedata/services/tof_table.py` (new) — dedicated service hosting the lookup-table workflow. Wraps its `MessageSource` with `ChopperSynthesizer` for chopper-equipped instruments; uses a plain source for chopperless.
 - `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults; declare chopper PV streams (or omit for chopperless).
+- `src/ess/livedata/scripts/make_geometry_nexus.py` — extend the per-`nx_class` filter to also copy `NXdisk_chopper` groups (~10 lines). When merged, regenerate per-instrument geometry artifacts and re-publish to the pooch registry with bumped consuming hashes.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
 - `tests/handlers/lookup_table_workflow_test.py`, `tests/kafka/chopper_synthesizer_test.py`, and tof_table service integration tests.
 
@@ -351,13 +378,13 @@ the job — a new job, a new fire (cached tick replays on activation). No
 - Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper synthesizer, the workflow's `DiskChoppers` assembly, and upstream `LookupTableWorkflow` integration before staging.
 - Integration (chopper-equipped, gating behavior): feed raw chopper f144 messages into the wrapped `MessageSource`; verify the synthesizer emits `setpoints_reached` only after every chopper has a stable `phase_setpoint` and a `rotation_speed_setpoint` cached, and that the workflow re-runs accordingly.
 - Chopper synthesizer unit: feeding a sequence of small phase fluctuations does *not* emit `setpoints_reached`; a step change followed by a new plateau does. `<chopper>_rotation_speed_setpoint` messages pass through unchanged. Synthetic per-chopper `<chopper>_phase_setpoint` messages carry the correct `StreamId`, schema, and stable value. tdct messages on the topic are ignored.
+- Translation provider unit: given a `RawChoppers[SampleRun]` DataGroup (realistic NXdisk_chopper fields per chopper) plus per-chopper scalar `rotation_speed_setpoint` and `phase_setpoint` inputs, returns a `DiskChoppers` DataGroup keyed by chopper name with a fully-formed `DiskChopper` per entry. Verifies the cached aux setpoints thread through to the resulting `DiskChopper.frequency` / phase fields.
 - Latched-primary unit: registering `'choppers'` with a context accumulator (e.g., `LatestValueHandler`) causes the synthesizer's emit to be cached and replayed via `MessagePreprocessor.get_context()` on job activation; the workflow fires once on the replayed value. No `is_one_shot` flag, no inline `schedule_job` finalize, no action-signature changes required.
 - `resolve_stream_names` unit: per-instrument chopper-PV set resolves correctly (empty for chopperless instruments, populated for chopper-equipped); existing detector/monitor logical-name expansion is unchanged.
 
 ## Open questions
 
 (None blocking implementation. Remaining details — per-instrument
-`Ltotal_range` defaults, plateau-detection thresholds, and the static-chopper
-geometry source resolved by TODO 2 — are answerable at impl time without
-changing this plan's overall shape.)
+`Ltotal_range` defaults and plateau-detection thresholds — are answerable
+at impl time without changing this plan's overall shape.)
 
