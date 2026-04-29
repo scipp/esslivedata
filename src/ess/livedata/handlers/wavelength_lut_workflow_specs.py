@@ -94,6 +94,11 @@ class WavelengthLutParams(pydantic.BaseModel):
         description='Source pulse frequency and stride.',
         default_factory=Pulse,
     )
+    distance_range: LtotalRange = pydantic.Field(
+        title='Distance range',
+        description='Range of total flight-path lengths covered by the table.',
+        default_factory=LtotalRange,
+    )
     distance_resolution: DistanceResolution = pydantic.Field(
         title='Distance resolution',
         description='Resolution of the distance axis in the lookup table.',
@@ -103,11 +108,6 @@ class WavelengthLutParams(pydantic.BaseModel):
         title='Time resolution',
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
-    )
-    Ltotal_range: LtotalRange = pydantic.Field(
-        title='L_total range',
-        description='Range of total flight-path lengths covered by the table.',
-        default_factory=LtotalRange,
     )
     simulation: Simulation = pydantic.Field(
         title='Simulation',

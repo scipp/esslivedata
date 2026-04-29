@@ -254,9 +254,9 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
             if not config_messages:
-                # Avoid busy-waiting if there is no data and no config
-                # messages. If there are config messages, we avoid sleeping,
-                # since config messages may trigger costly workflow creation.
+                # Avoid busy-waiting if there is no data and no config messages.
+                # If there are config messages, we avoid sleeping, since config messages
+                # may trigger costly workflow creation.
                 time.sleep(0.1)
             return
 

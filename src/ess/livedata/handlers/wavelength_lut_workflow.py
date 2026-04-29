@@ -92,8 +92,8 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
     wf[LtotalRange] = (
-        params.Ltotal_range.get_start(),
-        params.Ltotal_range.get_stop(),
+        params.distance_range.get_start(),
+        params.distance_range.get_stop(),
     )
     wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
     wf[SourcePosition] = _PLACEHOLDER_SOURCE_POSITION
