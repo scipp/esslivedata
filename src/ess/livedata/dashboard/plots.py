@@ -948,6 +948,7 @@ class Overlay1DPlotter(Plotter):
 
             if slice_data.variances is not None and self._errors != 'none':
                 if use_histogram:
+                    # Error elements need midpoint coords (N values, not N+1 edges)
                     mid = slice_data.assign_coords(
                         {
                             slice_data.dim: sc.midpoints(
