@@ -153,50 +153,75 @@ the upstream simulation expects:
    loading mechanism. The change is to ensure
    `src/ess/livedata/scripts/make_geometry_nexus.py` emits sufficient chopper
    info into the registry artifact (today it likely does not).
-2. **Live rotation/phase from the `${instrument}_choppers` Kafka topic.**
-   This route does not exist in ESSlivedata yet; it needs:
-   - A new `MessageAdapter` and stream-mapping entry routing the topic to the
-     workflow.
-   - Possibly a new flatbuffer schema (likely `tdct`, TBC) — depends on which
-     fields the upstream system publishes. Concrete schema and fields are
-     determined at impl time by inspecting existing `coda_*.hdf` files in the
-     project root, cross-checked against the upstream chopper class needs.
-   - An update to the local-dev `setup-kafka-topics.sh` script.
+2. **Synthetic per-chopper setpoint streams**, produced in-process by a
+   **chopper signal synthesizer** that wraps the existing `MessageSource`
+   (decorator pattern, same protocol — downstream sees a regular message
+   source). The synthesizer is internally stateful and consumes raw chopper
+   f144 messages from the `${instrument}_choppers` Kafka topic (which carries
+   multiple chopper PVs distinguished by `source_name`; tdct edge timestamps
+   may also appear and are ignored for v1). No new flatbuffer schema is
+   required — `rotation_speed_setpoint` and `phase` NXlogs are f144, already
+   supported. Per message type:
 
-TODO:
-- `rotation_speed_setpoint` is one of the NXlog we need, this is `f144`, not `tdct`, this is found in the files
-- latest CODA files do not have a `phase_setpoint` (but some do have `phase`) in their NXdisk_chopper. Assuming this is consistent in all new files do not need `tdct`.
-- Gating in the preprocessor would become much simpler if we also had `phase_setpoint` - we do not need to look at stream contents, but for now we do not. In either case, the preprocessor has to wait until we have a setpoint pair - rotation-speed and phase (the latter estimated/computed from a noisy stream) - for each chopper, then emit.
-- Look into how this can rely on (or how it interferes with) the existing mechanism for (typically) f144 aux streams that are cached in the preprocessor and fed into newly started jobs. Think about whether this actually makes our approach of creating a unified stream in the adapter chain questionable - should unification happen later (in the preprocessor)? Based on the decision here, would it make sense to turn the `rotation_speed_setpoint` into aux inputs and have only the `phase` as a primary stream?
-- There is also `park_angle`, unclear if we have a use for this?
+   - `<chopper>_rotation_speed_setpoint` (clean upstream f144) flows through
+     unchanged. Each becomes a **per-chopper aux source** for the workflow,
+     cached via the existing `is_context=True` accumulator mechanism and
+     replayed on job start.
+   - `<chopper>_phase` (noisy f144 readback) is consumed by a per-chopper
+     plateau detector built on top of
+     `scippneutron.chopper.filtering.find_plateaus` +
+     `collapse_plateaus`. When a stable region is identified, the synthesizer
+     emits a synthetic `<chopper>_phase_setpoint` f144 message — the
+     **per-chopper aux** the workflow needs (cached via the same mechanism).
+     Raw phase samples are not forwarded.
+   - When every chopper has both `rotation_speed_setpoint` and a detected
+     `phase_setpoint` available and stable, the synthesizer emits a synthetic
+     **primary tick** on logical source `'choppers'` (`setpoints_reached`).
+     On destabilization, it emits `setpoint_lost`. The primary tick is what
+     drives JobManager to (re-)fire the workflow.
+   - Other raw messages (`rotation_speed` readback, tdct, etc.) feed the
+     synthesizer as state inputs only or are dropped — they are not workflow
+     inputs.
+
+**Why a `MessageSource` wrapper, not an adapter or a preprocessor.**
+`MessageAdapter` is for stateless byte→domain transforms; the synthesizer is
+stateful and N-input→M-output. `MessagePreprocessor` / `Accumulator` is bound
+1:1 input-`StreamId`→output-`StreamId` and cannot cleanly express
+cross-stream aggregation (`setpoints_reached` is global) or
+emit-other-`StreamId` (synthetic `phase_setpoint` differs from the raw
+`phase` input). Wrapping `MessageSource` preserves every existing
+abstraction's semantics. Future migration to a producer-side service that
+publishes the synthetic streams to Kafka is a near-trivial relocation: the
+service drops the wrapper and uses a plain source.
+
+`DiskChoppers` assembly happens **inside the workflow** (a sciline provider
+that combines static NeXus chopper geometry with the cached aux setpoints),
+mirroring the detector pattern. Specifics resolved by TODO 2 in "Provider".
+
+Workflow execution is **user-triggered**: the operator sets params and starts
+the job manually (no always-on / auto-start). Once running, the
+synthesizer's primary `setpoints_reached` ticks drive re-execution. Aux
+setpoints replay from cache on job start so the workflow has the latest
+values immediately, but the output topic stays empty until the synthesizer
+emits the first `setpoints_reached` after job start. If the operator changes
+params and wants a new table, they stop and restart the job.
+
+**Plateau-detection thresholds and the "stable enough" criteria** are
+hardcoded inside the synthesizer for v1 — not exposed as UI params. Whether
+they need to become user-tunable is something we revisit only if reality
+forces it.
+
+**Observability.** The synthesizer logs structured lines at each state
+transition: `subscribed to N PVs`, `first message from <chopper>`,
+`<chopper> phase locked`, `all locked, emitting setpoints_reached`,
+`<chopper> phase lost`. The "operator clicked start, output topic empty"
+state is then diagnosable from `journalctl` alone.
 
 End-to-end validation runs on the CODA staging environment.
 
-A small **chopper preprocessor** owns the combination: it ingests live
-rotation/phase samples, holds the static NeXus geometry, and emits a
-`DiskChoppers` value when chopper state has changed *substantially*.
-
-Workflow execution is **user-triggered**: the operator sets params and starts
-the job manually (no always-on / auto-start). Once the job is running, the
-preprocessor's debouncing controls *re-execution*; it does not control whether
-the job exists.
-
-On job start, the workflow waits for the preprocessor's first stable emit —
-the output topic stays empty until choppers lock. This is the simplest path
-and is consistent with "no recompute unless inputs are stable."
-
-The "substantial change" gating thresholds are **hardcoded inside the
-preprocessor** for v1 — not exposed as UI params. The preprocessor compares
-against setpoint when available (so subscribing to *both* readback and
-setpoint is the working assumption; readback drives gating, setpoint provides
-the reference). Whether this stays contained in the preprocessor or grows
-into something user-tunable is something we revisit only if reality forces it.
-
-**Observability:** the preprocessor logs structured lines at each state
-transition — `subscribed to N PVs`, `first message from <chopper>`,
-`<chopper> locked`, `all locked, emitting`. The "operator clicked start,
-output topic empty" state is then diagnosable from `journalctl` alone, with
-no behavior change.
+TODO:
+- `park_angle` exists in NXdisk_chopper but its use is unclear; out of scope
+  for v1 unless a concrete need surfaces.
 
 ### Output
 
@@ -232,75 +257,55 @@ TODO:
 
 ## Service placement
 
-Two viable options:
+The lookup-table workflow lives in a **new `tof_table` service** from v1, not
+in `data_reduction`. An earlier draft considered a stepping-stone in
+`data_reduction`, but the `MessageSource`-wrapper-based synthesis architecture
+(see "Chopper data" above) makes that stepping-stone unattractive: installing
+the wrapper in `data_reduction` would make every consumer of that service's
+source chopper-aware, hold plateau-detection state at the source level, and
+force the service to subscribe to `${instrument}_choppers` purely to feed one
+workflow. Detector, monitor, and reduction workflows do not need any of that.
+A dedicated service keeps the wrapper contained and gives a clean future
+migration path for moving synthesis into its own producer-side service (the
+wrapper is replaced by a plain Kafka source with no other code change).
 
-1. **Register the workflow in the existing `data_reduction` service.**
-   Reuses the `ReductionHandlerFactory`, sciline pipeline machinery, sink path,
-   and orchestrator. No new docker container, no new lifecycle to manage.
-2. **New `tof_table` service.** Conceptually cleaner separation (the workflow
-   has different cardinality from per-source reduction jobs — one table per
-   instrument config, not one result per detector source).
+**Architectural fit.** Unification of N chopper PVs into a single primary
+source happens at the **`MessageSource`-wrapper layer** (the synthesizer
+described under "Chopper data" above), not at the adapter or routing layer.
+The workflow declares `'choppers'` as its primary and receives synthetic
+ticks; per-chopper aux setpoints (`<chopper>_rotation_speed_setpoint`,
+synthetic `<chopper>_phase_setpoint`) are normal physical f144 streams routed
+through the existing aux-stream cache mechanism. JobManager stays 1:1
+`(source, workflow)`, the orchestrator stays 1:1, and there is no
+Bifrost-style many-physical-to-one-logical rewrite at the adapter layer for
+chopper messages.
 
-Either way, the workflow itself is the same; service choice is purely about
-process boundaries.
+**Per-chopper identity** is preserved trivially: per-chopper aux streams
+each have their own `StreamId`, and `DiskChoppers` (an `sc.DataGroup` keyed by
+chopper name, matching upstream `LookupTable.choppers`) is assembled inside
+the workflow from those aux entries plus static NeXus geometry — nothing
+flattened across choppers, no bespoke per-message state in routing.
 
-**Production trajectory:** option 2 is expected to be the production shape.
-v1 in `data_reduction` is a stepping-stone; we accept that recompute blocks
-other workflows in the shared service because *nothing else can produce
-useful output without a fresh table after a param change anyway*. The
-preprocessor's job is to ensure recomputes are truly necessary — that, not
-async/threading, is what makes blocking tolerable.
-
-**Architectural fit:** resolved by reusing the **Bifrost many-physical-to-one-logical
-pattern at the routing layer**. A new `MessageAdapter` for the chopper
-flatbuffer rewrites `stream.name` to a single logical source name
-(`'choppers'`) on ingress, just as `Ev44ToDetectorEventsAdapter(merge_detectors=True)`
-does for Bifrost's 45 detector banks. The workflow spec lists `'choppers'` as
-its **primary** source (not aux); preprocessor gating drives re-execution as
-designed.
-`config/route_derivation.py::resolve_stream_names` expands the logical name
-to the physical chopper PVs for Kafka subscription.
-
-This means JobManager stays 1:1 `(source, workflow)`, the orchestrator stays
-1:1, and routing N→1 happens entirely in the adapter. Option 1
-(`data_reduction`) is therefore tractable for v1 without abstraction changes
-beyond a small generalization of `resolve_stream_names` — see below.
-
-**Important distinction from the Bifrost case:** the adapter rewrites the
-*routing key* per message but does **not** combine messages from different
-choppers into a flattened log. For ev44, Bifrost's accumulators flatten
-events because events from any detector bank are interchangeable
-(per-event `event_id` is unique). For choppers, **per-chopper identity must
-be preserved**: each chopper has its own rotation/phase time series, and
-flattening would destroy that. The chopper preprocessor is therefore *not*
-an ordinary accumulator — it keeps a `dict[chopper_name, ChopperState]`
-internally, updating the relevant slot per incoming message (chopper
-identity comes from the payload, e.g., `tdct.source_name` field). Its
-emitted `DiskChoppers` is an `sc.DataGroup` keyed by chopper name (matching
-the upstream `LookupTable.choppers: sc.DataGroup | None` shape) — structure
-preserved, nothing flattened.
-
-`resolve_stream_names` currently has a Bifrost-specific compatibility block
-("safe because Bifrost is the only instrument with this many-physical-to-one-logical
-pattern", `route_derivation.py:65`). Adding choppers makes that statement
-false. Either add a `chopper` category alongside `detector`/`monitor`, or
-replace the special-case with a generic "logical → physical" mapping. Modest
-cleanup, not architectural change.
+`config/route_derivation.py::resolve_stream_names` declares the per-instrument
+**input** chopper-PV streams that the synthesizer subscribes to; the
+workflow's primary `'choppers'` is itself synthetic and not mapped to physical
+streams. The Bifrost compatibility block is unaffected by this plan.
 
 ### Chopperless instruments
 
 The workflow spec is unchanged for chopperless instruments: it still declares
-`source_names=['choppers']`. "Chopperless" is a property of the *routing*, not
-the spec — `resolve_stream_names({'choppers'}, instrument, stream_mapping)`
-returns the empty set when no chopper PVs are configured. The dashboard,
-job-start command, and per-source job iteration are all identical to the
-chopper-equipped path; only the JobManager behavior on activation differs.
+`source_names=['choppers']`. "Chopperless" is a property of the *routing*,
+not the spec — the per-instrument chopper-PV stream set is empty, so the
+synthesizer is not installed in the service and `'choppers'` has no producer.
+The dashboard, job-start command, and per-source job iteration are all
+identical to the chopper-equipped path; only the JobManager behavior on
+activation differs.
 
-**Detection.** `JobFactory.create()` resolves the primary source via
-`resolve_stream_names`. An empty resolved set marks the job as one-shot
-(stamp on `Job`, e.g. `Job.is_one_shot`). This is a property of
-`(instrument, source)`, computed at job-creation time, not declared on the
-workflow spec.
+**Detection.** `JobFactory.create()` checks whether a synthesizer is
+configured for `(instrument, source)` (equivalently: whether the
+per-instrument chopper-PV set is empty). When empty, the job is stamped
+one-shot (`Job.is_one_shot`). This is computed at job-creation time, not
+declared on the workflow spec.
 
 **Activation, synchronous.** `JobManager.schedule_job` checks the flag. If
 true, bypass `_scheduled_jobs` and `_active_jobs` entirely: synthesize a
@@ -323,9 +328,9 @@ its own ack message *and* any result messages (using the existing
 the aggregate. No JobManager↔sink coupling, no wallclock tick needed.
 
 This generalizes naturally beyond this workflow — any future
-"computed once from params" workflow whose primary source resolves to zero
-physical streams gets the same treatment, and any future
-command-produces-result pattern can use the same emission seam. We
+"computed once from params" workflow that has no producer for its primary
+source gets the same treatment, and any future command-produces-result
+pattern can use the same emission seam. We
 deliberately do **not** extend the one-shot path to "zero primary, some aux"
 workflows: defining when such a workflow first runs (first message on every
 aux? first on any?) is trickier than we need.
@@ -337,19 +342,18 @@ job instance for v1.
 ## Files expected to change
 
 - `src/ess/livedata/parameter_models.py` — new scalar/range models for the params.
-- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + provider.
+- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + provider. Includes a sciline provider that assembles `DiskChoppers` from static NeXus chopper geometry + cached aux setpoints (specifics resolved by TODO 2 in "Provider").
 - `src/ess/livedata/handlers/lookup_table_workflow_specs.py` — `LookupTableParams` and `LookupTableArray` type.
-- `src/ess/livedata/handlers/chopper_preprocessor.py` — combines static NeXus chopper geometry with the live `${instrument}_choppers` stream into a gated `DiskChoppers` output.
-- `src/ess/livedata/kafka/message_adapter.py` (and stream mapping) — route for `${instrument}_choppers` topic; new adapter that rewrites `stream.name` to logical `'choppers'` (mirrors `Ev44ToDetectorEventsAdapter(merge_detectors=True)`); possibly a new flatbuffer schema (`tdct`?).
-- `src/ess/livedata/config/route_derivation.py` — generalize `resolve_stream_names` so the logical→physical expansion isn't Bifrost-only; add a `chopper` category (or replace the special-case with a generic mechanism).
-- `src/ess/livedata/scripts/make_geometry_nexus.py` — emit sufficient chopper info into the registry artifact (today it likely does not). When this changes, the regenerated artifact must be republished to the pooch registry and consuming hashes bumped.
-- `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults.
-- `src/ess/livedata/services/data_reduction.py` — register the new workflow factory (if option 1).
-- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` consults `resolve_stream_names` and stamps `Job.is_one_shot` when the primary source resolves to zero physical streams; `JobManager.schedule_job` runs one-shot jobs inline (finalize once, no scheduled/active state) and returns the `JobResult` to the caller. Preserves existing behavior for jobs with one or more resolved physical streams.
-- `src/ess/livedata/core/job_manager_adapter.py` — `set_workflow_with_config` and `job_command` return `list[Message]` (ack message + any result messages from inline one-shot finalize) instead of `CommandAcknowledgement | None`.
-- `src/ess/livedata/handlers/config_handler.py` — `ConfigProcessor.process_messages` extends from each action's `list[Message]` instead of wrapping a single ack. The orchestrator's existing per-loop `self._sink.publish_messages(result_messages)` call then carries the result to the sink with no further wiring.
+- `src/ess/livedata/kafka/chopper_synthesizer.py` (new) — `ChopperSynthesizer`, a stateful wrapper around `MessageSource` (decorator pattern, same protocol). Consumes raw chopper f144 messages from `${instrument}_choppers`, runs per-chopper plateau detection on phase NXlogs, emits synthetic per-chopper `<chopper>_phase_setpoint` aux messages and synthetic primary `setpoints_reached` / `setpoint_lost` ticks on logical `'choppers'`. Pass-through for `<chopper>_rotation_speed_setpoint`.
+- `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to cover the chopper topic if not already; no `stream.name` rewrite, no new flatbuffer.
+- `src/ess/livedata/config/route_derivation.py` — declare per-instrument chopper-PV streams (the synthesizer's input PVs); when the resolved set is empty, the synthesizer is not installed and the workflow is one-shot. No Bifrost-style logical→physical generalization needed for the workflow's *primary* (`'choppers'` is synthetic).
+- `src/ess/livedata/services/tof_table.py` (new) — dedicated service hosting the lookup-table workflow. Wraps its `MessageSource` with `ChopperSynthesizer` for chopper-equipped instruments; uses a plain source for chopperless.
+- `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults; declare chopper PV streams (or omit for chopperless).
+- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` stamps `Job.is_one_shot` when no synthesizer is configured for the instrument (equivalently: the resolved chopper-PV set is empty); `JobManager.schedule_job` runs one-shot jobs inline. Preserves existing behavior for non-one-shot jobs.
+- `src/ess/livedata/core/job_manager_adapter.py` — `set_workflow_with_config` and `job_command` return `list[Message]` (ack + any result messages from inline one-shot finalize) instead of `CommandAcknowledgement | None`.
+- `src/ess/livedata/handlers/config_handler.py` — `ConfigProcessor.process_messages` extends from each action's `list[Message]` instead of wrapping a single ack. The orchestrator's existing per-loop `self._sink.publish_messages(result_messages)` call carries the result to the sink with no further wiring.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
-- `tests/handlers/lookup_table_workflow_test.py` and chopper-preprocessor tests.
+- `tests/handlers/lookup_table_workflow_test.py`, `tests/kafka/chopper_synthesizer_test.py`, and tof_table service integration tests.
 
 ## Tests
 
@@ -358,17 +362,17 @@ job instance for v1.
 - Unit: chopperless input (`DiskChoppers = {}`) produces a table without raising; values are the chopperless degenerate.
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp` preserves values, variances, dims, and the four scalar coords (regression check).
 - Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify the start command synchronously produces a published result message (no data-batch traffic involved), output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job leaves no scheduled/active state behind.
-- Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper preprocessor, the adapter rewrite path, and upstream `LookupTableWorkflow` integration before staging.
-- Integration (chopper-equipped, gating behavior): feed chopper messages through the adapter + preprocessor; verify the preprocessor gates as expected and the workflow re-runs only on substantial changes.
-- Chopper preprocessor unit: feeding a sequence of small rotation/phase fluctuations does *not* trigger a downstream emit; a step change does. NeXus geometry is preserved across emits.
-- JobManager unit: a job whose primary source resolves to zero physical streams runs `finalize` synchronously inside `schedule_job`, returns the `JobResult` to the caller, and leaves no entry in `_scheduled_jobs`/`_active_jobs`; jobs with ≥1 resolved physical stream behave as today.
+- Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper synthesizer, the workflow's `DiskChoppers` assembly, and upstream `LookupTableWorkflow` integration before staging.
+- Integration (chopper-equipped, gating behavior): feed raw chopper f144 messages into the wrapped `MessageSource`; verify the synthesizer emits `setpoints_reached` only after every chopper has a stable `phase_setpoint` and a `rotation_speed_setpoint` cached, and that the workflow re-runs accordingly. Verify `setpoint_lost` on destabilization.
+- Chopper synthesizer unit: feeding a sequence of small phase fluctuations does *not* emit `setpoints_reached`; a step change followed by a new plateau does. `<chopper>_rotation_speed_setpoint` messages pass through unchanged. Synthetic per-chopper `<chopper>_phase_setpoint` messages carry the correct `StreamId`, schema, and stable value. tdct messages on the topic are ignored.
+- JobManager unit: a job stamped one-shot (no synthesizer configured for the instrument) runs `finalize` synchronously inside `schedule_job`, returns the `JobResult` to the caller, and leaves no entry in `_scheduled_jobs`/`_active_jobs`; non-one-shot jobs behave as today.
 - ConfigProcessor unit: when `set_workflow_with_config` returns both an ack message and a result message, `process_messages` aggregates both and they reach the orchestrator's sink-publish call.
-- Message-adapter unit: the new chopper adapter rewrites `stream.name` to `'choppers'` regardless of the physical chopper PV, while preserving the chopper identity in the payload. Mirrors the existing patterns in `tests/kafka/message_adapter_test.py`.
-- `resolve_stream_names` unit: logical `'choppers'` expands to the configured set of physical chopper PV stream names; existing detector/monitor logical-name expansion is unchanged.
+- `resolve_stream_names` unit: per-instrument chopper-PV set resolves correctly (empty for chopperless instruments, populated for chopper-equipped); existing detector/monitor logical-name expansion is unchanged.
 
 ## Open questions
 
-(None blocking implementation. Remaining details — exact flatbuffer schema,
-per-instrument `Ltotal_range` defaults, exact gating thresholds — are
-answerable at impl time without changing this plan.)
+(None blocking implementation. Remaining details — per-instrument
+`Ltotal_range` defaults, plateau-detection thresholds, and the static-chopper
+geometry source resolved by TODO 2 — are answerable at impl time without
+changing this plan's overall shape.)
 
