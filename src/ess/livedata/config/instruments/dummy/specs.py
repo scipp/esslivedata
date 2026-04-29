@@ -13,12 +13,12 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
 )
-from ess.livedata.handlers.lookup_table_workflow_specs import (
-    register_lookup_table_workflow_spec,
-)
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
+)
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    register_wavelength_lut_workflow_spec,
 )
 
 
@@ -75,8 +75,9 @@ area_panel_view_handle = instrument.register_spec(
     outputs=DetectorViewOutputs,
 )
 
-# Register the chopperless TOF lookup-table spec; factory attached in factories.py.
-lookup_table_handle = register_lookup_table_workflow_spec(instrument)
+# Register the chopperless wavelength lookup-table spec; factory attached in
+# factories.py.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register total counts workflow spec
 total_counts_handle = instrument.register_spec(

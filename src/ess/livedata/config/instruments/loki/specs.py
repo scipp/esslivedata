@@ -22,12 +22,12 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     register_detector_view_spec,
 )
-from ess.livedata.handlers.lookup_table_workflow_specs import (
-    register_lookup_table_workflow_spec,
-)
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
+)
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    register_wavelength_lut_workflow_spec,
 )
 
 from .views import get_tube_view
@@ -287,9 +287,9 @@ instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register the chopperless TOF lookup-table spec. The factory is attached
+# Register the chopperless wavelength lookup-table spec. The factory is attached
 # in factories.py.
-lookup_table_handle = register_lookup_table_workflow_spec(instrument)
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(

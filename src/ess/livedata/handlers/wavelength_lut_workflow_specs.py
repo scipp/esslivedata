@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Spec registration for the TOF lookup-table workflow."""
+"""Spec registration for the wavelength lookup-table workflow."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ from ..parameter_models import (
 #: instruments). The workflow uses presence of this signal as its trigger.
 CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 
+#: Output key returned by the workflow's ``finalize`` and the field name on
+#: :class:`WavelengthLutOutputs`. Also the namespace/name used in the spec.
+WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
+
 
 class Simulation(pydantic.BaseModel):
     """Simulation knobs that do not carry units."""
@@ -42,8 +46,8 @@ class Simulation(pydantic.BaseModel):
     )
 
 
-class LookupTableParams(pydantic.BaseModel):
-    """User-facing parameters for the TOF lookup-table workflow."""
+class WavelengthLutParams(pydantic.BaseModel):
+    """User-facing parameters for the wavelength lookup-table workflow."""
 
     pulse_period: PulsePeriod = pydantic.Field(
         title='Pulse period',
@@ -72,7 +76,7 @@ class LookupTableParams(pydantic.BaseModel):
     )
 
 
-def _empty_lookup_table_template() -> sc.DataArray:
+def _empty_wavelength_lut_template() -> sc.DataArray:
     """Empty placeholder used by the spec until the first computation."""
     return sc.DataArray(
         sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
@@ -85,12 +89,12 @@ def _empty_lookup_table_template() -> sc.DataArray:
     )
 
 
-class LookupTableOutputs(WorkflowOutputsBase):
-    """Outputs of the TOF lookup-table workflow."""
+class WavelengthLutOutputs(WorkflowOutputsBase):
+    """Outputs of the wavelength lookup-table workflow."""
 
-    lookup_table: sc.DataArray = pydantic.Field(
-        default_factory=_empty_lookup_table_template,
-        title='TOF lookup table',
+    wavelength_lut: sc.DataArray = pydantic.Field(
+        default_factory=_empty_wavelength_lut_template,
+        title='Wavelength lookup table',
         description=(
             'Wavelength as a function of distance and event-time-offset, '
             'computed from the current chopper cascade.'
@@ -98,28 +102,28 @@ class LookupTableOutputs(WorkflowOutputsBase):
     )
 
 
-def register_lookup_table_workflow_spec(
+def register_wavelength_lut_workflow_spec(
     instrument: Instrument,
     *,
-    params: type[LookupTableParams] = LookupTableParams,
+    params: type[WavelengthLutParams] = WavelengthLutParams,
 ) -> SpecHandle:
-    """Register the TOF lookup-table workflow spec for ``instrument``.
+    """Register the wavelength lookup-table workflow spec for ``instrument``.
 
     The workflow's only ``source_name`` is the synthetic ``chopper_cascade``
     stream emitted by ``ChopperSynthesizer``. The factory must be attached
     later via the returned handle.
     """
     return instrument.register_spec(
-        namespace='tof_table',
-        name='lookup_table',
+        namespace='wavelength_lut',
+        name='wavelength_lut',
         version=1,
-        title='TOF lookup table',
+        title='Wavelength lookup table',
         description=(
             'Compute a wavelength lookup table from the current chopper-cascade '
             'configuration. Refires when chopper setpoints change.'
         ),
         source_names=[CHOPPER_CASCADE_SOURCE],
         params=params,
-        outputs=LookupTableOutputs,
+        outputs=WavelengthLutOutputs,
         reset_on_run_transition=False,
     )

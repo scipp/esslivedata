@@ -227,7 +227,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # context for streams a scheduled job will need on activation. The
         # empty-batch branch still runs jobs when cached context can satisfy
         # them, so services that do not have a continuous data stream (e.g.
-        # the chopperless tof_table service, whose primary signal is a
+        # the chopperless wavelength_lut service, whose primary signal is a
         # one-shot synthesized tick) can activate scheduled jobs without
         # waiting for further input.
         if message_batch is not None:

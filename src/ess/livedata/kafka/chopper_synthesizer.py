@@ -21,7 +21,7 @@ import structlog
 from ..core.message import Message, MessageSource, StreamId, StreamKind
 from ..core.timestamp import Timestamp
 from ..handlers.accumulators import LogData
-from ..handlers.lookup_table_workflow_specs import CHOPPER_CASCADE_SOURCE
+from ..handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 
 logger = structlog.get_logger(__name__)
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""TOF lookup-table workflow.
+"""Wavelength lookup-table workflow.
 
 Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` for use as a livedata
 ``Workflow``. The chopperless v0 always supplies an empty ``DiskChoppers``;
@@ -27,7 +27,11 @@ from ess.reduce.unwrap.lut import (
 )
 
 from ..core.timestamp import Timestamp
-from .lookup_table_workflow_specs import CHOPPER_CASCADE_SOURCE, LookupTableParams
+from .wavelength_lut_workflow_specs import (
+    CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_LUT_OUTPUT,
+    WavelengthLutParams,
+)
 from .workflow_factory import Workflow
 
 # Placeholder source position. Only used inside the per-chopper loop in the
@@ -36,7 +40,7 @@ _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
 
 
 def _attach_provenance_coords(
-    array: sc.DataArray, params: LookupTableParams
+    array: sc.DataArray, params: WavelengthLutParams
 ) -> sc.DataArray:
     """Attach the four scalar input parameters as 0-D coords on the result.
 
@@ -52,7 +56,7 @@ def _attach_provenance_coords(
     return out
 
 
-def _build_pipeline(params: LookupTableParams, choppers: sc.DataGroup) -> Any:
+def _build_pipeline(params: WavelengthLutParams, choppers: sc.DataGroup) -> Any:
     wf = LookupTableWorkflow()
     wf[DiskChoppers[AnyRun]] = choppers
     wf[PulsePeriod] = params.pulse_period.get()
@@ -68,8 +72,8 @@ def _build_pipeline(params: LookupTableParams, choppers: sc.DataGroup) -> Any:
     return wf
 
 
-class LookupTableComputeWorkflow(Workflow):
-    """Workflow that computes the TOF lookup table on the first trigger.
+class WavelengthLutWorkflow(Workflow):
+    """Workflow that computes the wavelength lookup table on the first trigger.
 
     The synthetic ``chopper_cascade`` stream is the trigger; its value is
     ignored. After the first computation the result is cached so re-finalize
@@ -78,7 +82,7 @@ class LookupTableComputeWorkflow(Workflow):
     recomputes on the next trigger.
     """
 
-    def __init__(self, params: LookupTableParams) -> None:
+    def __init__(self, params: WavelengthLutParams) -> None:
         self._params = params
         self._triggered = False
         self._result: sc.DataArray | None = None
@@ -98,7 +102,7 @@ class LookupTableComputeWorkflow(Workflow):
             )
         if self._result is None:
             self._result = self._compute()
-        return {'lookup_table': self._result}
+        return {WAVELENGTH_LUT_OUTPUT: self._result}
 
     def clear(self) -> None:
         self._triggered = False
@@ -110,10 +114,12 @@ class LookupTableComputeWorkflow(Workflow):
         return _attach_provenance_coords(table.array, self._params)
 
 
-def create_chopperless_lookup_table_workflow(*, params: LookupTableParams) -> Workflow:
-    """Factory for the chopperless lookup-table workflow.
+def create_chopperless_wavelength_lut_workflow(
+    *, params: WavelengthLutParams
+) -> Workflow:
+    """Factory for the chopperless wavelength lookup-table workflow.
 
     Always supplies ``DiskChoppers = {}`` to the upstream pipeline. The
     workflow's only stream input is the synthetic ``chopper_cascade`` trigger.
     """
-    return LookupTableComputeWorkflow(params)
+    return WavelengthLutWorkflow(params)

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Integration test for the chopperless TOF lookup-table service."""
+"""Integration test for the chopperless wavelength lookup-table service."""
 
 from __future__ import annotations
 
@@ -12,15 +12,15 @@ import scipp as sc
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
-from ess.livedata.handlers.lookup_table_workflow_specs import CHOPPER_CASCADE_SOURCE
-from ess.livedata.services.tof_table import make_tof_table_service_builder
+from ess.livedata.handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
+from ess.livedata.services.wavelength_lut import make_wavelength_lut_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
 
 def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
     cfg = instrument_registry[instrument]
     for wid, spec in cfg.workflow_factory.items():
-        if spec.namespace == 'tof_table' and spec.name == name:
+        if spec.namespace == 'wavelength_lut' and spec.name == name:
             return wid
     raise AssertionError(f"workflow {name!r} not registered for {instrument!r}")
 
@@ -28,15 +28,15 @@ def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
 @pytest.fixture
 def app(caplog: pytest.LogCaptureFixture) -> LivedataApp:
     caplog.set_level(logging.INFO)
-    builder = make_tof_table_service_builder(instrument='dummy')
+    builder = make_wavelength_lut_service_builder(instrument='dummy')
     return LivedataApp.from_service_builder(builder)
 
 
 def _config_message() -> tuple[ConfigKey, dict]:
-    workflow_id = _get_workflow_id('dummy', 'lookup_table')
+    workflow_id = _get_workflow_id('dummy', 'wavelength_lut')
     config_key = ConfigKey(
         source_name=CHOPPER_CASCADE_SOURCE,
-        service_name='tof_table',
+        service_name='wavelength_lut',
         key='workflow_config',
     )
     params = {'simulation': {'num_simulated_neutrons': 50_000}}
@@ -44,10 +44,10 @@ def _config_message() -> tuple[ConfigKey, dict]:
     return config_key, config.model_dump()
 
 
-def test_chopperless_workflow_publishes_lookup_table_after_job_start(
+def test_chopperless_workflow_publishes_wavelength_lut_after_job_start(
     app: LivedataApp,
 ) -> None:
-    """End-to-end: scheduling a job triggers exactly one lookup-table publish.
+    """End-to-end: scheduling a job triggers exactly one wavelength-lut publish.
 
     Realistic ordering: the synthesizer emits its 'chopper_cascade' tick on
     the *first* poll, when no job is yet scheduled. The tick is cached via
@@ -67,7 +67,7 @@ def test_chopperless_workflow_publishes_lookup_table_after_job_start(
     app.publish_config_message(key=key, value=value)
     app.service.step()
 
-    # Lookup-table message should now be on the sink.
+    # Wavelength-lut message should now be on the sink.
     data_messages = [m for m in app.sink.messages if isinstance(m.value, sc.DataArray)]
     assert len(data_messages) == 1
     table = data_messages[0].value
