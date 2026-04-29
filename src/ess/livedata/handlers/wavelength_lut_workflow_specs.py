@@ -10,12 +10,7 @@ import scipp as sc
 from ..config.instrument import Instrument
 from ..config.workflow_spec import WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
-from ..parameter_models import (
-    DistanceResolution,
-    LtotalRange,
-    Pulse,
-    TimeResolution,
-)
+from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 
 #: Logical primary stream name for the synthesized chopper-cascade tick. The
 #: synthesizer emits a single ``LogData`` message with this stream name once
@@ -26,6 +21,56 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: Output key returned by the workflow's ``finalize`` and the field name on
 #: :class:`WavelengthLutOutputs`. Also the namespace/name used in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
+
+
+class Pulse(pydantic.BaseModel):
+    """Source pulse properties.
+
+    The unit of ``frequency`` is hardcoded to Hz: there is no realistic case
+    where a neutron-source pulse frequency would be expressed in kHz/MHz, so
+    we skip the dropdown and keep the model tight.
+    """
+
+    frequency: float = pydantic.Field(
+        default=14.0, gt=0.0, description="Pulse frequency in Hz."
+    )
+    stride: int = pydantic.Field(
+        default=1,
+        ge=1,
+        description="Pulse stride (1 unless pulse-skipping is used).",
+    )
+
+    def get_period(self) -> sc.Variable:
+        """Return the pulse period as a scipp scalar."""
+        return sc.scalar(1.0 / self.frequency, unit='s')
+
+
+class DistanceResolution(pydantic.BaseModel):
+    """Resolution of the distance axis in the lookup table."""
+
+    value: float = pydantic.Field(default=0.1, description="Distance bin resolution.")
+    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+
+    def get(self) -> sc.Variable:
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
+class TimeResolution(pydantic.BaseModel):
+    """Resolution of the event-time-offset axis in the lookup table."""
+
+    value: float = pydantic.Field(default=250.0, description="Time bin resolution.")
+    unit: TimeUnit = pydantic.Field(default=TimeUnit.MICROSECOND, description="Unit.")
+
+    def get(self) -> sc.Variable:
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
+class LtotalRange(RangeModel):
+    """Range of total flight paths covered by the lookup table."""
+
+    start: float = pydantic.Field(default=5.0, description="Shortest L_total.")
+    stop: float = pydantic.Field(default=30.0, description="Longest L_total.")
+    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
 class Simulation(pydantic.BaseModel):
