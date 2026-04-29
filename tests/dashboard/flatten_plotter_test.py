@@ -231,8 +231,8 @@ class TestFlattenPlotterPlot:
         img = plotter.plot(data_abc, data_key)
         assert isinstance(img, hv.Image)
 
-    # HoloViews Image: kdims[0] is x, kdims[1] is y. The flat axis name is the
-    # input dim names joined with '·' in the order the dims feed the flatten;
+    # HoloViews Image: kdims[0] is x, kdims[1] is y. The flat axis name uses
+    # tuple notation for the dims that feed the flatten;
     # the global ``transpose`` swaps the resulting X and Y wholesale.
     @pytest.mark.parametrize(
         ('data_fixture', 'axis_x', 'flags', 'expected_x', 'expected_y'),
@@ -240,25 +240,25 @@ class TestFlattenPlotterPlot:
             # 2D: degenerate, no flatten on either side.
             ('data_ab', 'b', {}, 'b', 'a'),
             # 3D: basic, transpose, per-axis flatten reversal.
-            ('data_abc', 'b', {}, 'b', 'a·c'),
-            ('data_abc', 'b', {'transpose': True}, 'a·c', 'b'),
-            ('data_abc', 'b', {'transpose_y_flatten': True}, 'b', 'c·a'),
-            ('data_abc', ('a', 'c'), {'transpose_x_flatten': True}, 'c·a', 'b'),
+            ('data_abc', 'b', {}, 'b', '(a,c)'),
+            ('data_abc', 'b', {'transpose': True}, '(a,c)', 'b'),
+            ('data_abc', 'b', {'transpose_y_flatten': True}, 'b', '(c,a)'),
+            ('data_abc', ('a', 'c'), {'transpose_x_flatten': True}, '(c,a)', 'b'),
             # 4D: 2-2, 3-1, 1-3 partitions; K=3 reversal on each side; transpose.
-            ('data_abcd', ('a', 'b'), {}, 'a·b', 'c·d'),
-            ('data_abcd', ('a', 'b', 'c'), {}, 'a·b·c', 'd'),
-            ('data_abcd', 'a', {}, 'a', 'b·c·d'),
+            ('data_abcd', ('a', 'b'), {}, '(a,b)', '(c,d)'),
+            ('data_abcd', ('a', 'b', 'c'), {}, '(a,b,c)', 'd'),
+            ('data_abcd', 'a', {}, 'a', '(b,c,d)'),
             (
                 'data_abcd',
                 ('a', 'b', 'c'),
                 {'transpose_x_flatten': True},
-                'c·b·a',
+                '(c,b,a)',
                 'd',
             ),
-            ('data_abcd', 'a', {'transpose_y_flatten': True}, 'a', 'd·c·b'),
-            ('data_abcd', ('a', 'b'), {'transpose': True}, 'c·d', 'a·b'),
+            ('data_abcd', 'a', {'transpose_y_flatten': True}, 'a', '(d,c,b)'),
+            ('data_abcd', ('a', 'b'), {'transpose': True}, '(c,d)', '(a,b)'),
             # 5D: smoke for scaling beyond 4D.
-            ('data_abcde', ('a', 'b'), {}, 'a·b', 'c·d·e'),
+            ('data_abcde', ('a', 'b'), {}, '(a,b)', '(c,d,e)'),
         ],
         ids=[
             '2d',
@@ -308,7 +308,7 @@ class TestFlattenPlotterPlot:
         plotter = FlattenPlotter.from_params(params)
         img = plotter.plot(data, data_key)
         assert img.kdims[0].name == 'd'
-        assert img.kdims[1].name == 'a·c'
+        assert img.kdims[1].name == '(a,c)'
 
     def test_raises_when_axis_x_position_out_of_range_for_data(self, data_key) -> None:
         # Configured for 3D (axis_x position 2), data is 2D → position 2
@@ -539,7 +539,7 @@ class TestFlattenPlotterHover:
         assert len(fig.added_tools) == 1
 
     def test_flat_axis_label_is_not_suppressed(self, data_abc, data_key) -> None:
-        # The synthetic flat-dim name (e.g. "a·c") flows through as the default
+        # The synthetic flat-dim name (e.g. "(a,c)") flows through as the default
         # HoloViews axis label — no xlabel/ylabel opt overriding it.
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)

@@ -137,8 +137,11 @@ def _coord_1d(data: sc.DataArray, dim: str) -> sc.Variable | None:
 
 
 def _joined_dim_name(names: tuple[str, ...], existing: tuple[str, ...]) -> str:
-    """Join dim names with '·', suffixing '_' until unique against ``existing``."""
-    name = '·'.join(names)
+    """Tuple-notation name for a group of flattened dims.
+
+    Unique against ``existing``.
+    """
+    name = f'({",".join(names)})'
     while name in existing:
         name = f'{name}_'
     return name
