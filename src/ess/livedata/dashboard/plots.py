@@ -816,20 +816,36 @@ class BarsPlotter(Plotter):
 
 class Overlay1DPlotter(Plotter):
     """
-    Plotter that slices 2D data along the first dimension and overlays as 1D curves.
+    Plotter that slices 2D data along the first dimension and overlays as 1D elements.
 
-    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D curves,
+    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D elements,
     one for each position along the first dimension. Useful for visualizing multiple
     spectra (e.g., ROI spectra) from a single 2D array.
 
     Colors are assigned by coordinate value (not position) when coordinates are
     integer-like, providing stable color identity across updates.
+
+    Supports the same line style options (mode, errors) as LinePlotter.
     """
+
+    _BASE_METHOD: ClassVar[dict[str, str]] = {
+        'line': 'curve',
+        'points': 'scatter',
+        'histogram': 'histogram',
+    }
+    _ERROR_METHOD: ClassVar[dict[str, str]] = {
+        'bars': 'error_bars',
+        'band': 'spread',
+    }
+    _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
 
     def __init__(
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
+        *,
+        mode: str = 'line',
+        errors: str = 'bars',
         **kwargs,
     ):
         """
@@ -841,10 +857,16 @@ class Overlay1DPlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
+        mode:
+            Rendering mode: 'line', 'points', or 'histogram'.
+        errors:
+            Error display mode: 'bars', 'band', or 'none'.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
+        self._mode = mode
+        self._errors = errors
         self._base_opts: dict[str, Any] = {
             'logx': scale_opts.x_scale == PlotScale.log,
             'logy': scale_opts.y_scale == PlotScale.log,
@@ -864,6 +886,8 @@ class Overlay1DPlotter(Plotter):
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             normalize_to_rate=params.rate.normalize_to_rate,
+            mode=params.line.mode,
+            errors=params.line.errors,
         )
 
     def plot(
@@ -876,9 +900,9 @@ class Overlay1DPlotter(Plotter):
         **kwargs,
     ) -> hv.Overlay | hv.Element:
         """
-        Create overlaid curves from a 2D DataArray.
+        Create overlaid elements from a 2D DataArray.
 
-        Slices along the first dimension and creates a curve for each slice.
+        Slices along the first dimension and creates an element for each slice.
         """
         del kwargs, label  # Unused
         if data.ndim != 2:
@@ -899,10 +923,19 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
-        # Pre-convert bin-edge coords to midpoints (shared across all slices)
-        data = self._convert_bin_edges_to_midpoints(data, dim=data.dims[1])
+        plot_dim = data.dims[1]
+        has_edges = plot_dim in data.coords and data.coords.is_edges(plot_dim)
+        use_histogram = self._mode == 'histogram' and has_edges
+        actual_mode = (
+            self._mode
+            if use_histogram
+            else (self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK)
+        )
 
-        curves: list[hv.Element] = []
+        if not use_histogram:
+            data = self._convert_bin_edges_to_midpoints(data, dim=plot_dim)
+
+        elements: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
             if output_display_name:
@@ -914,12 +947,28 @@ class Overlay1DPlotter(Plotter):
             color = self._colors[color_idx]
 
             curve_label = f"{slice_dim}={coord_val}"
-            curve = to_holoviews(slice_data, label=curve_label)
-            curve = curve.opts(
-                color=color, framewise=framewise, **self._base_opts, **self._sizing_opts
+            converter = HvConverter1d(slice_data, value_label=output_display_name)
+            base_method = getattr(converter, self._BASE_METHOD[actual_mode])
+            base = base_method(label=curve_label).opts(
+                color=color, framewise=framewise, **self._base_opts
             )
-            curves.append(curve)
 
-        if len(curves) == 1:
-            return curves[0]
-        return hv.Overlay(curves).opts(shared_axes=True)
+            if slice_data.variances is not None and self._errors != 'none':
+                if use_histogram:
+                    mid = self._convert_bin_edges_to_midpoints(slice_data)
+                    converter = HvConverter1d(mid, value_label=output_display_name)
+                error_method = getattr(converter, self._ERROR_METHOD[self._errors])
+                error_el = error_method(label=curve_label).opts(
+                    color=color,
+                    framewise=framewise,
+                    **self._base_opts,
+                    **self._sizing_opts,
+                )
+                elements.append(base.opts(**self._sizing_opts))
+                elements.append(error_el)
+            else:
+                elements.append(base.opts(**self._sizing_opts))
+
+        if len(elements) == 1:
+            return elements[0]
+        return hv.Overlay(elements).opts(shared_axes=True)
