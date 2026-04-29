@@ -160,9 +160,9 @@ def _build_axis_hover_formatter(
     """Hover formatter for one image axis with one or more flattened input dims.
 
     Tooltip rows reference this formatter via ``${field}{dim_name}``; the JS
-    side splits the rounded cursor index into per-dim indices via stride math
-    and emits the coord value (or bare index) for the dim selected by
-    ``format``.
+    side either does a binary search (single non-flattened dim with physical
+    coords) or splits the flat integer cursor index via stride math (flattened
+    multi-dim axis where the image always carries integer indices).
     """
     strides = _c_order_strides(sizes)
     values_by_dim = [[] if c is None else [float(v) for v in c.values] for c in coords]
@@ -176,12 +176,28 @@ def _build_axis_hover_formatter(
         code="""
         const k = names.indexOf(format);
         if (k < 0) return '';
+        const vals = values_by_dim[k];
+        if (names.length === 1) {
+            // Single non-flattened dim: value is in image coordinate space
+            // (physical units or integer indices depending on the coord).
+            if (vals.length === 0) return String(Math.round(value));
+            // Binary search for the nearest coordinate value.
+            let lo = 0, hi = vals.length - 1;
+            while (lo < hi) {
+                const mid = lo + ((hi - lo + 1) >> 1);
+                if (vals[mid] <= value) lo = mid; else hi = mid - 1;
+            }
+            if (lo + 1 < vals.length &&
+                    Math.abs(vals[lo + 1] - value) < Math.abs(vals[lo] - value)) lo++;
+            return String(vals[lo]);
+        }
+        // Flattened multi-dim axis: the image always carries integer indices
+        // (0..N-1), so value is the flat integer position.
         const idx = Math.round(value);
         if (idx < 0) return '';
         const size = sizes[k];
         const stride = strides[k];
         const i = ((Math.floor(idx / stride) % size) + size) % size;
-        const vals = values_by_dim[k];
         if (vals.length === 0) return String(i);
         if (i >= vals.length) return '';
         return String(vals[i]);

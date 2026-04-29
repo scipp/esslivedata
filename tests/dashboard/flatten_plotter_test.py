@@ -501,9 +501,8 @@ class TestFlattenPlotterHover:
     def test_hover_single_dim_axis_without_coord_emits_index(
         self, data_abc, data_key
     ) -> None:
-        # The single-dim axis goes through the same formatter; with no coord,
-        # the JS emits ``Math.round(value)`` so cursor floats display as clean
-        # integer indices.
+        # With no coord, the JS returns String(Math.round(value)) — the image
+        # axis uses integer indices so the cursor is already in index space.
         data = data_abc.copy(deep=False)
         del data.coords['b']
         params = _make_params(('a', 'b', 'c'), axis_x='b')
