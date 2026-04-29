@@ -239,7 +239,9 @@ class Wizard:
 
         self._current_step_index = step_index
         self._finished = False
-        self._step_results = []
+        # Pad with None so result indices align with step indices when the user
+        # navigates back and commits a step that was skipped on entry.
+        self._step_results = [None] * step_index
         self._update_content()
 
     def render(self) -> pn.Column:
