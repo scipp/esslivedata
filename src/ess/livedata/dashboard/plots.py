@@ -7,7 +7,7 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 import holoviews as hv
 import numpy as np
@@ -561,6 +561,38 @@ class Plotter:
         )
 
 
+_LINE1D_BASE_METHOD: dict[str, str] = {
+    'line': 'curve',
+    'points': 'scatter',
+    'histogram': 'histogram',
+}
+_LINE1D_ERROR_METHOD: dict[str, str] = {
+    'bars': 'error_bars',
+    'band': 'spread',
+}
+_LINE1D_HISTOGRAM_FALLBACK = 'line'
+
+
+def _resolve_line1d_mode(
+    mode: str, data: sc.DataArray, dim: str | None = None
+) -> tuple[str, sc.DataArray]:
+    """Return (actual_mode, data) with bin edges converted to midpoints if needed.
+
+    When mode is 'histogram' but the data has no bin-edge coordinate on ``dim``,
+    falls back to 'line'. When mode is not 'histogram', bin edges are always
+    converted to midpoints.
+    """
+    if dim is None:
+        dim = data.dim
+    has_edges = dim in data.coords and data.coords.is_edges(dim)
+    if mode == 'histogram' and has_edges:
+        return 'histogram', data
+    actual_mode = mode if mode != 'histogram' else _LINE1D_HISTOGRAM_FALLBACK
+    if has_edges:
+        data = data.assign_coords({dim: sc.midpoints(data.coords[dim])})
+    return actual_mode, data
+
+
 class LinePlotter(Plotter):
     """Plotter for 1D plots from scipp DataArrays.
 
@@ -625,18 +657,6 @@ class LinePlotter(Plotter):
             params, normalize_to_rate=params.rate.normalize_to_rate
         )
 
-    _BASE_METHOD: ClassVar[dict[str, str]] = {
-        'line': 'curve',
-        'points': 'scatter',
-        'histogram': 'histogram',
-    }
-    _ERROR_METHOD: ClassVar[dict[str, str]] = {
-        'bars': 'error_bars',
-        'band': 'spread',
-    }
-
-    _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
-
     def plot(
         self,
         data: sc.DataArray,
@@ -647,29 +667,22 @@ class LinePlotter(Plotter):
         **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
-        converter = HvConverter1d(data, value_label=output_display_name)
-        if self._mode == 'histogram' and converter.has_edges:
-            mode = 'histogram'
-            da = data
-        else:
-            mode = self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK
-            da = self._convert_bin_edges_to_midpoints(data)
-            converter = HvConverter1d(da, value_label=output_display_name)
-
+        mode, da = _resolve_line1d_mode(self._mode, data)
+        converter = HvConverter1d(da, value_label=output_display_name)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
 
-        base_method = getattr(converter, self._BASE_METHOD[mode])
+        base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
         base = base_method(label=label).opts(**opts)
 
         if da.variances is not None and self._errors != 'none':
             if mode == 'histogram':
                 # Error elements need midpoint coords (N values, not N+1 edges)
                 converter = HvConverter1d(
-                    self._convert_bin_edges_to_midpoints(da),
+                    da.assign_coords({da.dim: sc.midpoints(da.coords[da.dim])}),
                     value_label=output_display_name,
                 )
-            error_method = getattr(converter, self._ERROR_METHOD[self._errors])
+            error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
             error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
             # Apply sizing opts to child elements individually. Bokeh needs
             # responsive/aspect on each element to size the figure correctly;
@@ -828,17 +841,6 @@ class Overlay1DPlotter(Plotter):
     Supports the same line style options (mode, errors) as LinePlotter.
     """
 
-    _BASE_METHOD: ClassVar[dict[str, str]] = {
-        'line': 'curve',
-        'points': 'scatter',
-        'histogram': 'histogram',
-    }
-    _ERROR_METHOD: ClassVar[dict[str, str]] = {
-        'bars': 'error_bars',
-        'band': 'spread',
-    }
-    _HISTOGRAM_FALLBACK: ClassVar[str] = 'line'
-
     def __init__(
         self,
         scale_opts: PlotScaleParams,
@@ -923,17 +925,8 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
-        plot_dim = data.dims[1]
-        has_edges = plot_dim in data.coords and data.coords.is_edges(plot_dim)
-        use_histogram = self._mode == 'histogram' and has_edges
-        actual_mode = (
-            self._mode
-            if use_histogram
-            else (self._mode if self._mode != 'histogram' else self._HISTOGRAM_FALLBACK)
-        )
-
-        if not use_histogram:
-            data = self._convert_bin_edges_to_midpoints(data, dim=plot_dim)
+        actual_mode, data = _resolve_line1d_mode(self._mode, data, dim=data.dims[1])
+        use_histogram = actual_mode == 'histogram'
 
         elements: list[hv.Element] = []
         for i in range(slice_size):
@@ -948,16 +941,22 @@ class Overlay1DPlotter(Plotter):
 
             curve_label = f"{slice_dim}={coord_val}"
             converter = HvConverter1d(slice_data, value_label=output_display_name)
-            base_method = getattr(converter, self._BASE_METHOD[actual_mode])
+            base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
             base = base_method(label=curve_label).opts(
                 color=color, framewise=framewise, **self._base_opts
             )
 
             if slice_data.variances is not None and self._errors != 'none':
                 if use_histogram:
-                    mid = self._convert_bin_edges_to_midpoints(slice_data)
+                    mid = slice_data.assign_coords(
+                        {
+                            slice_data.dim: sc.midpoints(
+                                slice_data.coords[slice_data.dim]
+                            )
+                        }
+                    )
                     converter = HvConverter1d(mid, value_label=output_display_name)
-                error_method = getattr(converter, self._ERROR_METHOD[self._errors])
+                error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
                 error_el = error_method(label=curve_label).opts(
                     color=color,
                     framewise=framewise,
