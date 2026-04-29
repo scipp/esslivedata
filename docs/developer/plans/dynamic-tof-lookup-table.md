@@ -177,8 +177,15 @@ the upstream simulation expects:
    - When every chopper has both `rotation_speed_setpoint` and a detected
      `phase_setpoint` available and stable, the synthesizer emits a synthetic
      **primary tick** on logical source `'choppers'` (`setpoints_reached`).
-     On destabilization, it emits `setpoint_lost`. The primary tick is what
-     drives JobManager to (re-)fire the workflow.
+     During instability the synthesizer simply does not emit; the workflow
+     does not refire and the most recent published table stays as the last
+     known-good output. The primary tick is what drives JobManager to
+     (re-)fire the workflow.
+   - For **chopperless instruments** (zero choppers configured), the
+     synthesizer emits a vacuous `setpoints_reached` at startup — no
+     plateau detection, no waiting. Combined with the latched-primary
+     caching below, this makes chopperless a degenerate case of the normal
+     flow with no special-case code path.
    - Other raw messages (`rotation_speed` readback, tdct, etc.) feed the
      synthesizer as state inputs only or are dropped — they are not workflow
      inputs.
@@ -198,12 +205,17 @@ service drops the wrapper and uses a plain source.
 that combines static NeXus chopper geometry with the cached aux setpoints),
 mirroring the detector pattern. Specifics resolved by TODO 2 in "Provider".
 
-Workflow execution is **user-triggered**: the operator sets params and starts
-the job manually (no always-on / auto-start). Once running, the
-synthesizer's primary `setpoints_reached` ticks drive re-execution. Aux
-setpoints replay from cache on job start so the workflow has the latest
-values immediately, but the output topic stays empty until the synthesizer
-emits the first `setpoints_reached` after job start. If the operator changes
+Workflow execution is **user-triggered**: the operator sets params and
+starts the job manually (no always-on / auto-start). Once running, the
+synthesizer's primary `setpoints_reached` ticks drive re-execution. Both
+the aux setpoints AND the primary `'choppers'` tick are cached via the
+existing `is_context=True` accumulator mechanism and replayed on job-start
+— `MessagePreprocessor.get_context()` already covers primary streams as
+well as aux (see `orchestrating_processor.py:240-247`; the timeseries
+service relies on this). If the synthesizer has emitted a
+`setpoints_reached` before the job started — including the chopperless
+case where it emits a vacuous tick at startup — the workflow fires
+immediately on job-start from the cached value. If the operator changes
 params and wants a new table, they stop and restart the job.
 
 **Plateau-detection thresholds and the "stable enough" criteria** are
@@ -293,65 +305,39 @@ streams. The Bifrost compatibility block is unaffected by this plan.
 
 ### Chopperless instruments
 
-The workflow spec is unchanged for chopperless instruments: it still declares
-`source_names=['choppers']`. "Chopperless" is a property of the *routing*,
-not the spec — the per-instrument chopper-PV stream set is empty, so the
-synthesizer is not installed in the service and `'choppers'` has no producer.
-The dashboard, job-start command, and per-source job iteration are all
-identical to the chopper-equipped path; only the JobManager behavior on
-activation differs.
+Chopperless instruments require **no special handling** under the synthesizer
+architecture. The synthesizer for chopperless emits a vacuous
+`setpoints_reached` at startup (zero choppers ⇒ all in phase trivially); the
+existing context-accumulator cache retains it. When the operator starts a
+job, the cached tick is replayed via `MessagePreprocessor.get_context()` (see
+`orchestrating_processor.py:240-247`, which already covers primary streams as
+well as aux — the timeseries service uses this same pattern). The workflow
+fires once and publishes. Stop/restart-to-recompute also works without
+changes: the cached tick is still present, so the new job fires immediately
+on activation.
 
-**Detection.** `JobFactory.create()` checks whether a synthesizer is
-configured for `(instrument, source)` (equivalently: whether the
-per-instrument chopper-PV set is empty). When empty, the job is stamped
-one-shot (`Job.is_one_shot`). This is computed at job-creation time, not
-declared on the workflow spec.
-
-**Activation, synchronous.** `JobManager.schedule_job` checks the flag. If
-true, bypass `_scheduled_jobs` and `_active_jobs` entirely: synthesize a
-finalize call (empty `JobData`, `finalize=True`) inline and capture the
-`JobResult`. Activation does **not** depend on `_advance_to_time` or on any
-incoming message timestamps — relying on traffic side-effects to drive
-activation would break on instruments with quiet topics.
-
-**Emission, via the config-handler return path.** The result must reach the
-data sink without depending on data-batch traffic. The existing config
-plumbing already provides this seam: `ConfigProcessor.process_messages`
-returns messages, and `OrchestratingProcessor.process` publishes them via
-`self._sink.publish_messages(...)` unconditionally on every loop tick (both
-the no-data and data branches). To carry data results alongside acks, action
-signatures (`JobManagerAdapter.set_workflow_with_config`,
-`JobManagerAdapter.job_command`) change from
-`CommandAcknowledgement | None` to `list[Message]`; each action constructs
-its own ack message *and* any result messages (using the existing
-`_job_result_to_message` helper for the latter). `ConfigProcessor` extends
-the aggregate. No JobManager↔sink coupling, no wallclock tick needed.
-
-This generalizes naturally beyond this workflow — any future
-"computed once from params" workflow that has no producer for its primary
-source gets the same treatment, and any future command-produces-result
-pattern can use the same emission seam. We
-deliberately do **not** extend the one-shot path to "zero primary, some aux"
-workflows: defining when such a workflow first runs (first message on every
-aux? first on any?) is trickier than we need.
+This collapses what would otherwise be a chopperless-specific cluster of
+changes (a `Job.is_one_shot` flag, inline `schedule_job` finalize, action
+signature changes to `list[Message]`, `ConfigProcessor` aggregation) into one
+configuration choice in the workflow factory: register the `'choppers'`
+primary stream with a context accumulator (e.g., `LatestValueHandler`)
+instead of a non-context one. No changes to `JobManager`,
+`JobManagerAdapter`, or `ConfigProcessor`.
 
 If the operator changes params and wants a new table, they stop and restart
-the job — a new job, a new fire. No "reset → re-finalize" on the same
-job instance for v1.
+the job — a new job, a new fire (cached tick replays on activation). No
+"reset → re-finalize" on the same job instance for v1.
 
 ## Files expected to change
 
 - `src/ess/livedata/parameter_models.py` — new scalar/range models for the params.
-- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + provider. Includes a sciline provider that assembles `DiskChoppers` from static NeXus chopper geometry + cached aux setpoints (specifics resolved by TODO 2 in "Provider").
+- `src/ess/livedata/handlers/lookup_table_workflow.py` — workflow factory + provider. Includes a sciline provider that assembles `DiskChoppers` from static NeXus chopper geometry + cached aux setpoints (specifics resolved by TODO 2 in "Provider"). Registers `'choppers'` primary stream with a context accumulator (`LatestValueHandler`) so the synthesizer's emit is cached and replayed on job-start via the existing `MessagePreprocessor.get_context()` path — this is what lets chopperless instruments use the normal flow with no special handling.
 - `src/ess/livedata/handlers/lookup_table_workflow_specs.py` — `LookupTableParams` and `LookupTableArray` type.
-- `src/ess/livedata/kafka/chopper_synthesizer.py` (new) — `ChopperSynthesizer`, a stateful wrapper around `MessageSource` (decorator pattern, same protocol). Consumes raw chopper f144 messages from `${instrument}_choppers`, runs per-chopper plateau detection on phase NXlogs, emits synthetic per-chopper `<chopper>_phase_setpoint` aux messages and synthetic primary `setpoints_reached` / `setpoint_lost` ticks on logical `'choppers'`. Pass-through for `<chopper>_rotation_speed_setpoint`.
+- `src/ess/livedata/kafka/chopper_synthesizer.py` (new) — `ChopperSynthesizer`, a stateful wrapper around `MessageSource` (decorator pattern, same protocol). Consumes raw chopper f144 messages from `${instrument}_choppers`, runs per-chopper plateau detection on phase NXlogs, emits synthetic per-chopper `<chopper>_phase_setpoint` aux messages and synthetic primary `setpoints_reached` ticks on logical `'choppers'`. Emits a vacuous `setpoints_reached` at startup for chopperless instruments. Pass-through for `<chopper>_rotation_speed_setpoint`.
 - `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to cover the chopper topic if not already; no `stream.name` rewrite, no new flatbuffer.
-- `src/ess/livedata/config/route_derivation.py` — declare per-instrument chopper-PV streams (the synthesizer's input PVs); when the resolved set is empty, the synthesizer is not installed and the workflow is one-shot. No Bifrost-style logical→physical generalization needed for the workflow's *primary* (`'choppers'` is synthetic).
+- `src/ess/livedata/config/route_derivation.py` — declare per-instrument chopper-PV streams (the synthesizer's input PVs); when the resolved set is empty, the synthesizer runs in chopperless mode (vacuous emit at startup, no PV subscription). No Bifrost-style logical→physical generalization needed for the workflow's *primary* (`'choppers'` is synthetic).
 - `src/ess/livedata/services/tof_table.py` (new) — dedicated service hosting the lookup-table workflow. Wraps its `MessageSource` with `ChopperSynthesizer` for chopper-equipped instruments; uses a plain source for chopperless.
 - `src/ess/livedata/config/instruments/<instrument>/factories.py` — register workflow per instrument; supply per-instrument `Ltotal_range` defaults; declare chopper PV streams (or omit for chopperless).
-- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` stamps `Job.is_one_shot` when no synthesizer is configured for the instrument (equivalently: the resolved chopper-PV set is empty); `JobManager.schedule_job` runs one-shot jobs inline. Preserves existing behavior for non-one-shot jobs.
-- `src/ess/livedata/core/job_manager_adapter.py` — `set_workflow_with_config` and `job_command` return `list[Message]` (ack + any result messages from inline one-shot finalize) instead of `CommandAcknowledgement | None`.
-- `src/ess/livedata/handlers/config_handler.py` — `ConfigProcessor.process_messages` extends from each action's `list[Message]` instead of wrapping a single ack. The orchestrator's existing per-loop `self._sink.publish_messages(result_messages)` call carries the result to the sink with no further wiring.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
 - `tests/handlers/lookup_table_workflow_test.py`, `tests/kafka/chopper_synthesizer_test.py`, and tof_table service integration tests.
 
@@ -361,12 +347,11 @@ job instance for v1.
 - Unit: the four input params appear as 0-D coords on the output array, with correct dtypes and units.
 - Unit: chopperless input (`DiskChoppers = {}`) produces a table without raising; values are the chopperless degenerate.
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp` preserves values, variances, dims, and the four scalar coords (regression check).
-- Integration (chopperless instrument): instantiate workflow on an instrument with zero chopper PVs configured; verify the start command synchronously produces a published result message (no data-batch traffic involved), output matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance, job leaves no scheduled/active state behind.
+- Integration (chopperless instrument): instantiate the synthesizer for an instrument with zero chopper PVs configured; verify a vacuous `setpoints_reached` is emitted at startup and cached. Start a job; verify the workflow fires once via context replay and the published result matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5` reference within numerical tolerance.
 - Integration (chopper-equipped, reference fixture): for one chopper-equipped instrument, commit a small precomputed reference table generated offline from a known minimal chopper config; the integration test feeds the same chopper config and asserts the array agrees with the fixture within numerical tolerance. Catches regressions in the chopper synthesizer, the workflow's `DiskChoppers` assembly, and upstream `LookupTableWorkflow` integration before staging.
-- Integration (chopper-equipped, gating behavior): feed raw chopper f144 messages into the wrapped `MessageSource`; verify the synthesizer emits `setpoints_reached` only after every chopper has a stable `phase_setpoint` and a `rotation_speed_setpoint` cached, and that the workflow re-runs accordingly. Verify `setpoint_lost` on destabilization.
+- Integration (chopper-equipped, gating behavior): feed raw chopper f144 messages into the wrapped `MessageSource`; verify the synthesizer emits `setpoints_reached` only after every chopper has a stable `phase_setpoint` and a `rotation_speed_setpoint` cached, and that the workflow re-runs accordingly.
 - Chopper synthesizer unit: feeding a sequence of small phase fluctuations does *not* emit `setpoints_reached`; a step change followed by a new plateau does. `<chopper>_rotation_speed_setpoint` messages pass through unchanged. Synthetic per-chopper `<chopper>_phase_setpoint` messages carry the correct `StreamId`, schema, and stable value. tdct messages on the topic are ignored.
-- JobManager unit: a job stamped one-shot (no synthesizer configured for the instrument) runs `finalize` synchronously inside `schedule_job`, returns the `JobResult` to the caller, and leaves no entry in `_scheduled_jobs`/`_active_jobs`; non-one-shot jobs behave as today.
-- ConfigProcessor unit: when `set_workflow_with_config` returns both an ack message and a result message, `process_messages` aggregates both and they reach the orchestrator's sink-publish call.
+- Latched-primary unit: registering `'choppers'` with a context accumulator (e.g., `LatestValueHandler`) causes the synthesizer's emit to be cached and replayed via `MessagePreprocessor.get_context()` on job activation; the workflow fires once on the replayed value. No `is_one_shot` flag, no inline `schedule_job` finalize, no action-signature changes required.
 - `resolve_stream_names` unit: per-instrument chopper-PV set resolves correctly (empty for chopperless instruments, populated for chopper-equipped); existing detector/monitor logical-name expansion is unchanged.
 
 ## Open questions
