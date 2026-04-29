@@ -164,9 +164,10 @@ the upstream simulation expects:
    - An update to the local-dev `setup-kafka-topics.sh` script.
 
 TODO:
-- `rotation_speed_setpoint` is the NXlog we need, probably f144, not `tdct`
-- check if latest CODA files have a `phase_setpoint` (or even just `phase`) in their NXdisk_chopper. If so, we do not need `tdct`. Gating in the preprocessor becomes much simpler - we do not need to look at stream contents. Instead we just wait until we have a setpoint pair (rotation-speed and phase) for each chopper, then emit.
-- Look into how this can rely on (or how it interferes with) the existing mechanism for (typically) f144 aux streams that are cached in the preprocessor and fed into newly started jobs. Think about whether this actually makes our approach of creating a unified stream in the adapter chain questionable - should unification happen later (in the preprocessor)?
+- `rotation_speed_setpoint` is one of the NXlog we need, this is `f144`, not `tdct`, this is found in the files
+- latest CODA files do not have a `phase_setpoint` (but some do have `phase`) in their NXdisk_chopper. Assuming this is consistent in all new files do not need `tdct`.
+- Gating in the preprocessor would become much simpler if we also had `phase_setpoint` - we do not need to look at stream contents, but for now we do not. In either case, the preprocessor has to wait until we have a setpoint pair - rotation-speed and phase (the latter estimated/computed from a noisy stream) - for each chopper, then emit.
+- Look into how this can rely on (or how it interferes with) the existing mechanism for (typically) f144 aux streams that are cached in the preprocessor and fed into newly started jobs. Think about whether this actually makes our approach of creating a unified stream in the adapter chain questionable - should unification happen later (in the preprocessor)? Based on the decision here, would it make sense to turn the `rotation_speed_setpoint` into aux inputs and have only the `phase` as a primary stream?
 - There is also `park_angle`, unclear if we have a use for this?
 
 End-to-end validation runs on the CODA staging environment.
