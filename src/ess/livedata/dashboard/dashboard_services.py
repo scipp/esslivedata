@@ -2,12 +2,15 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
+import os
+import signal
 import threading
 import time
 from contextlib import ExitStack
 
 import scipp as sc
 import structlog
+from confluent_kafka import KafkaException
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
@@ -140,6 +143,14 @@ class DashboardServices:
             try:
                 self.orchestrator.update()
                 self.session_registry.cleanup_stale_sessions()
+            except KafkaException:
+                # Auth/fatal Kafka errors are not self-healing. Crash so systemd
+                # restarts the process with a fresh consumer; the in-process
+                # consumer is shared across browser sessions, so a tab reload
+                # would not recover.
+                logger.exception("dashboard_transport_failed")
+                self._on_transport_failure()
+                return
             except Exception:
                 logger.exception("orchestrator_update_error")
 
@@ -148,6 +159,16 @@ class DashboardServices:
             elapsed = time.monotonic() - start
             if elapsed < 0.01:  # < 10ms means no real work
                 self._stop_event.wait(self._update_interval)
+
+    def _on_transport_failure(self) -> None:
+        """Trigger orderly process shutdown after a fatal transport failure.
+
+        Mirrors the worker-thread → main-thread fail-fast path in
+        ``Service._run_loop``: SIGINT is delivered to the main thread, where
+        ``ServiceBase._handle_shutdown`` runs the cleanup and exits.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            os.kill(os.getpid(), signal.SIGINT)
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
