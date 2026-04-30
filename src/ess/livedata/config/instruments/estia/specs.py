@@ -37,6 +37,38 @@ class ThetaEdges(parameter_models.EdgesModel):
         )
 
 
+class IndexLimits(pydantic.BaseModel):
+    """Model for detector index limits."""
+
+    start: int = pydantic.Field(default=0, ge=0, description='First index to include.')
+    stop: int = pydantic.Field(default=1, ge=0, description='Last index to include.')
+
+    @pydantic.field_validator('stop')
+    @classmethod
+    def stop_must_not_be_less_than_start(cls, v, info):
+        start = info.data.get('start')
+        if start is not None and v < start:
+            raise ValueError('stop must be greater than or equal to start')
+        return v
+
+    def get_limits(self) -> tuple[sc.Variable, sc.Variable]:
+        """Get the limits as scipp scalars."""
+        return (sc.scalar(self.start), sc.scalar(self.stop))
+
+
+class BeamDivergenceLimits(parameter_models.RangeModel):
+    """Model for beam divergence limits."""
+
+    unit: parameter_models.AngleUnit = pydantic.Field(
+        default=parameter_models.AngleUnit.DEGREE,
+        description='Unit of the beam divergence limits.',
+    )
+
+    def get_limits(self) -> tuple[sc.Variable, sc.Variable]:
+        """Get the limits as scipp scalars."""
+        return (self.get_start(), self.get_stop())
+
+
 class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
     """Parameters for lightweight ESTIA live reflectometry diagnostics."""
 
@@ -69,6 +101,31 @@ class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
             start=-1.0,
             stop=2.0,
             num_bins=120,
+            unit=parameter_models.AngleUnit.DEGREE,
+        ),
+    )
+    y_index_limits: IndexLimits = pydantic.Field(
+        title='Y index limits',
+        description=(
+            'Define the detector y index limits for the reflectometry workflow.'
+        ),
+        default=IndexLimits(start=0, stop=63),
+    )
+    z_index_limits: IndexLimits = pydantic.Field(
+        title='Z index limits',
+        description=(
+            'Define the detector z index limits for the reflectometry workflow.'
+        ),
+        default=IndexLimits(start=0, stop=1535),
+    )
+    beam_divergence_limits: BeamDivergenceLimits = pydantic.Field(
+        title='Beam divergence limits',
+        description=(
+            'Define the beam divergence limits for the reflectometry workflow.'
+        ),
+        default=BeamDivergenceLimits(
+            start=-0.75,
+            stop=0.75,
             unit=parameter_models.AngleUnit.DEGREE,
         ),
     )

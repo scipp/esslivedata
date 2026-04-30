@@ -68,12 +68,9 @@ def setup_factories(instrument: Instrument) -> None:
         wf[QBins] = params.q_edges.get_edges()
         wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges()
 
-        wf[YIndexLimits] = (sc.scalar(0), sc.scalar(63))
-        wf[ZIndexLimits] = (sc.scalar(0), sc.scalar(1535))
-        wf[BeamDivergenceLimits] = (
-            sc.scalar(-0.75, unit='deg'),
-            sc.scalar(0.75, unit='deg'),
-        )
+        wf[YIndexLimits] = params.y_index_limits.get_limits()
+        wf[ZIndexLimits] = params.z_index_limits.get_limits()
+        wf[BeamDivergenceLimits] = params.beam_divergence_limits.get_limits()
 
         IntensityThetaWavelength = NewType('IntensityThetaWavelength', sc.DataArray)
         IntensityWavelength = NewType('IntensityWavelength', sc.DataArray)
