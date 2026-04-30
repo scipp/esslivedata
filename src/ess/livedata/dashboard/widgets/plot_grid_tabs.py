@@ -131,6 +131,7 @@ class PlotGridTabs:
         plotting_controller,
         workflow_status_widget,
         system_status_widget=None,
+        fom_panel=None,
         *,
         plot_data_service: PlotDataService,
         session_updater: SessionUpdater,
@@ -147,7 +148,8 @@ class PlotGridTabs:
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
-        static_tab_count = 3 if system_status_widget else 2
+        # Static tabs: Workflows + (FOM?) + (System Status?) + Manage Plots
+        static_tab_count = 2 + bool(fom_panel) + bool(system_status_widget)
 
         # Build nth-child selectors for static tabs
         static_tab_selectors = ',\n                '.join(
@@ -215,7 +217,11 @@ class PlotGridTabs:
         # Add Workflows tab (always first)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
-        # Add System Status tab (second, if widget provided)
+        # Add FOM tab (between Workflows and System Status, if provided)
+        if fom_panel is not None:
+            self._tabs.append(('FOM', fom_panel.panel))
+
+        # Add System Status tab (if widget provided)
         if system_status_widget is not None:
             self._tabs.append(('System Status', system_status_widget.panel()))
 

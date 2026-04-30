@@ -21,6 +21,7 @@ from .job_service import JobService
 from .service_registry import ServiceRegistry
 
 if TYPE_CHECKING:
+    from .fom_orchestrator import FOMOrchestrator
     from .job_orchestrator import JobOrchestrator
 
 
@@ -42,12 +43,14 @@ class Orchestrator:
         service_registry: ServiceRegistry,
         job_orchestrator: JobOrchestrator,
         active_job_registry: ActiveJobRegistry,
+        fom_orchestrator: FOMOrchestrator | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
         self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
+        self._fom_orchestrator = fom_orchestrator
         self._active_job_registry = active_job_registry
         self._logger = structlog.get_logger()
 
@@ -111,9 +114,18 @@ class Orchestrator:
         return self._active_job_registry.is_active(job_number)
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
-        """Process a command acknowledgement from the backend."""
+        """Forward a command acknowledgement to all interested orchestrators.
+
+        Each tracker silently ignores ``message_id``s it did not register.
+        """
         self._job_orchestrator.process_acknowledgement(
             message_id=ack.message_id,
             response=ack.response.value,
             error_message=ack.message,
         )
+        if self._fom_orchestrator is not None:
+            self._fom_orchestrator.process_acknowledgement(
+                message_id=ack.message_id,
+                response=ack.response.value,
+                error_message=ack.message,
+            )

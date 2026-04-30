@@ -1,0 +1,826 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Tests for FOMOrchestrator."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pydantic
+import pytest
+import scipp as sc
+
+from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    WorkflowConfig,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
+from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.message import COMMANDS_STREAM_ID
+from ess.livedata.core.stream_alias import BindStreamAlias, UnbindStreamAlias
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
+from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.fom_orchestrator import (
+    FOMOrchestrator,
+    FOMSlot,
+)
+from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.notification_queue import NotificationQueue
+from ess.livedata.fakes import FakeMessageSink
+from ess.livedata.handlers.config_handler import ConfigUpdate
+
+
+class _Params(pydantic.BaseModel):
+    threshold: float = 1.0
+
+
+class _Outputs(WorkflowOutputsBase):
+    result: sc.DataArray = pydantic.Field(title='Result')
+
+
+def _spec(name: str, sources: list[str]) -> WorkflowSpec:
+    return WorkflowSpec(
+        instrument='test',
+        namespace='testing',
+        name=name,
+        version=1,
+        title=name,
+        description='',
+        source_names=sources,
+        params=_Params,
+        outputs=_Outputs,
+    )
+
+
+@pytest.fixture
+def workflow_a() -> WorkflowSpec:
+    return _spec('workflow_a', ['det_1', 'det_2'])
+
+
+@pytest.fixture
+def workflow_b() -> WorkflowSpec:
+    return _spec('workflow_b', ['det_3'])
+
+
+@pytest.fixture
+def sink() -> FakeMessageSink:
+    return FakeMessageSink()
+
+
+@pytest.fixture
+def data_service() -> DataService:
+    return DataService()
+
+
+@pytest.fixture
+def job_service() -> JobService:
+    return JobService()
+
+
+@pytest.fixture
+def active_job_registry(
+    data_service: DataService, job_service: JobService
+) -> ActiveJobRegistry:
+    return ActiveJobRegistry(data_service=data_service, job_service=job_service)
+
+
+@pytest.fixture
+def notification_queue() -> NotificationQueue:
+    return NotificationQueue()
+
+
+def _make_orchestrator(
+    *specs: WorkflowSpec,
+    sink: FakeMessageSink,
+    active_job_registry: ActiveJobRegistry,
+    job_service: JobService,
+    notification_queue: NotificationQueue | None = None,
+    n_slots: int = 2,
+) -> FOMOrchestrator:
+    registry = {spec.get_id(): spec for spec in specs}
+    return FOMOrchestrator(
+        command_service=CommandService(sink=sink),
+        workflow_registry=registry,
+        active_job_registry=active_job_registry,
+        job_service=job_service,
+        notification_queue=notification_queue,
+        n_slots=n_slots,
+    )
+
+
+def _last_batch(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
+    """Return the most recent batch as (config_key, value) tuples."""
+    last = sink.published_messages[-1]
+    return [
+        (msg.value.config_key, msg.value.value)
+        for msg in last
+        if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+    ]
+
+
+class TestSlotCount:
+    def test_default_n_slots_is_two(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        assert orch.slot_names == [FOMSlot('fom-0'), FOMSlot('fom-1')]
+
+    def test_custom_n_slots(self, workflow_a, sink, active_job_registry, job_service):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            n_slots=4,
+        )
+        assert len(orch.slot_names) == 4
+        assert orch.slot_names[-1] == FOMSlot('fom-3')
+
+    def test_zero_slots_rejected(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        with pytest.raises(ValueError, match="n_slots"):
+            _make_orchestrator(
+                workflow_a,
+                sink=sink,
+                active_job_registry=active_job_registry,
+                job_service=job_service,
+                n_slots=0,
+            )
+
+    def test_unknown_slot_raises(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        with pytest.raises(KeyError):
+            orch.commit_slot(
+                FOMSlot('fom-99'),
+                workflow_id=workflow_a.get_id(),
+                source_name='det_1',
+                output_name='result',
+                params={},
+            )
+
+
+class TestCommitEmptySlot:
+    def test_sends_workflow_config_and_bind_only(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        orch.commit_slot(
+            FOMSlot('fom-0'),
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        batch = _last_batch(sink)
+        assert len(batch) == 2
+        kinds = [v.__class__ for _, v in batch]
+        assert WorkflowConfig in kinds
+        assert BindStreamAlias in kinds
+        assert JobCommand not in kinds
+        assert UnbindStreamAlias not in kinds
+
+    def test_state_recorded(self, workflow_a, sink, active_job_registry, job_service):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.workflow_id == workflow_a.get_id()
+        assert state.source_name == 'det_1'
+        assert state.output_name == 'result'
+        assert state.params == {'threshold': 5.0}
+        assert state.job_id == job_id
+
+    def test_bind_command_carries_alias_and_job(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-1')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={},
+        )
+        binds = [v for _, v in _last_batch(sink) if isinstance(v, BindStreamAlias)]
+        assert len(binds) == 1
+        assert binds[0].alias == slot
+        assert binds[0].job_id == job_id
+        assert binds[0].output_name == 'result'
+
+    def test_workflow_config_carries_job_number(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 7.0},
+        )
+        wcs = [v for _, v in _last_batch(sink) if isinstance(v, WorkflowConfig)]
+        assert len(wcs) == 1
+        assert wcs[0].job_number == job_id.job_number
+        assert wcs[0].params == {'threshold': 7.0}
+
+    def test_all_messages_share_message_id(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        orch.commit_slot(
+            FOMSlot('fom-0'),
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        ids = {v.message_id for _, v in _last_batch(sink)}
+        assert len(ids) == 1
+        assert next(iter(ids)) is not None
+
+    def test_active_job_registry_activated(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        job_id = orch.commit_slot(
+            FOMSlot('fom-0'),
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        assert active_job_registry.is_active(job_id.job_number)
+
+    def test_version_bumped(self, workflow_a, sink, active_job_registry, job_service):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        v0 = orch.get_slot_state_version(slot)
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        assert orch.get_slot_state_version(slot) > v0
+
+
+class TestCommitBoundSlot:
+    def test_sends_full_four_command_batch(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={'threshold': 9.0},
+        )
+        batch = _last_batch(sink)
+        kinds = [v.__class__ for _, v in batch]
+        assert kinds.count(JobCommand) == 1
+        assert kinds.count(UnbindStreamAlias) == 1
+        assert kinds.count(WorkflowConfig) == 1
+        assert kinds.count(BindStreamAlias) == 1
+
+    def test_stop_targets_previous_job(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        first = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={},
+        )
+        stops = [
+            v
+            for _, v in _last_batch(sink)
+            if isinstance(v, JobCommand) and v.action == JobAction.stop
+        ]
+        assert len(stops) == 1
+        assert stops[0].job_id == first
+
+    def test_unbind_targets_alias(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={},
+        )
+        unbinds = [v for _, v in _last_batch(sink) if isinstance(v, UnbindStreamAlias)]
+        assert unbinds[0].alias == slot
+
+    def test_previous_job_deactivated(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        first = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        second = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={},
+        )
+        assert not active_job_registry.is_active(first.job_number)
+        assert active_job_registry.is_active(second.job_number)
+
+    def test_state_replaced(
+        self, workflow_a, workflow_b, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            workflow_b,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 1.0},
+        )
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_b.get_id(),
+            source_name='det_3',
+            output_name='result',
+            params={'threshold': 2.0},
+        )
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.workflow_id == workflow_b.get_id()
+        assert state.source_name == 'det_3'
+        assert state.params == {'threshold': 2.0}
+
+
+class TestReleaseSlot:
+    def test_release_empty_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        assert orch.release_slot(FOMSlot('fom-0')) is False
+        assert sink.published_messages == []
+
+    def test_release_bound_sends_stop_and_unbind(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        assert orch.release_slot(slot) is True
+
+        batch = _last_batch(sink)
+        stops = [
+            v
+            for _, v in batch
+            if isinstance(v, JobCommand) and v.action == JobAction.stop
+        ]
+        unbinds = [v for _, v in batch if isinstance(v, UnbindStreamAlias)]
+        assert len(stops) == 1
+        assert stops[0].job_id == job_id
+        assert len(unbinds) == 1
+        assert unbinds[0].alias == slot
+
+    def test_release_clears_state(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        assert orch.get_slot_state(slot) is None
+        assert not active_job_registry.is_active(job_id.job_number)
+
+
+class TestResetSlot:
+    def test_reset_empty_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        assert orch.reset_slot(FOMSlot('fom-0')) is False
+
+    def test_reset_bound_sends_reset(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        assert orch.reset_slot(slot) is True
+        cmds = [v for _, v in _last_batch(sink) if isinstance(v, JobCommand)]
+        assert len(cmds) == 1
+        assert cmds[0].action == JobAction.reset
+        assert cmds[0].job_id == job_id
+
+    def test_reset_does_not_clear_slot(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.reset_slot(slot)
+        assert orch.get_slot_state(slot) is not None
+
+
+class TestMultipleSlots:
+    def test_independent_slots(
+        self, workflow_a, workflow_b, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            workflow_b,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        s0 = FOMSlot('fom-0')
+        s1 = FOMSlot('fom-1')
+        j0 = orch.commit_slot(
+            s0,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        j1 = orch.commit_slot(
+            s1,
+            workflow_id=workflow_b.get_id(),
+            source_name='det_3',
+            output_name='result',
+            params={},
+        )
+        assert j0 != j1
+        assert orch.get_slot_state(s0).source_name == 'det_1'
+        assert orch.get_slot_state(s1).source_name == 'det_3'
+        assert active_job_registry.is_active(j0.job_number)
+        assert active_job_registry.is_active(j1.job_number)
+
+    def test_release_one_does_not_affect_other(
+        self, workflow_a, workflow_b, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            workflow_b,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        s0 = FOMSlot('fom-0')
+        s1 = FOMSlot('fom-1')
+        orch.commit_slot(
+            s0,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.commit_slot(
+            s1,
+            workflow_id=workflow_b.get_id(),
+            source_name='det_3',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(s0)
+        assert orch.get_slot_state(s0) is None
+        assert orch.get_slot_state(s1) is not None
+
+
+class TestAcknowledgement:
+    def test_success_pushes_notification(
+        self,
+        workflow_a,
+        sink,
+        active_job_registry,
+        job_service,
+        notification_queue,
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            notification_queue=notification_queue,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        msg_id = next(iter({v.message_id for _, v in _last_batch(sink)}))
+        # Two ACKs (matches expected_count for empty-slot commit)
+        orch.process_acknowledgement(msg_id, "ACK")
+        orch.process_acknowledgement(msg_id, "ACK")
+        events = notification_queue.get_all_events()
+        assert len(events) == 1
+        assert 'fom-0' in events[0].message
+
+    def test_partial_failure_pushes_error(
+        self,
+        workflow_a,
+        sink,
+        active_job_registry,
+        job_service,
+        notification_queue,
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            notification_queue=notification_queue,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        msg_id = next(iter({v.message_id for _, v in _last_batch(sink)}))
+        orch.process_acknowledgement(msg_id, "ACK")
+        orch.process_acknowledgement(msg_id, "ERR", error_message="alias busy")
+        events = notification_queue.get_all_events()
+        assert any('failed' in e.message for e in events)
+
+    def test_unknown_message_id_ignored(
+        self,
+        workflow_a,
+        sink,
+        active_job_registry,
+        job_service,
+        notification_queue,
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            notification_queue=notification_queue,
+        )
+        orch.process_acknowledgement("does-not-exist", "ACK")
+        assert notification_queue.get_all_events() == []
+
+
+class TestOnJobStatusUpdated:
+    def test_clears_slot_when_backend_reports_stopped(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.on_job_status_updated(
+            JobStatus(
+                job_id=job_id,
+                workflow_id=workflow_a.get_id(),
+                state=JobState.stopped,
+            )
+        )
+        assert orch.get_slot_state(slot) is None
+        assert not active_job_registry.is_active(job_id.job_number)
+
+    def test_active_status_does_not_clear_slot(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.on_job_status_updated(
+            JobStatus(
+                job_id=job_id,
+                workflow_id=workflow_a.get_id(),
+                state=JobState.active,
+            )
+        )
+        assert orch.get_slot_state(slot) is not None
+
+    def test_status_for_unrelated_job_ignored(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        import uuid as _uuid
+
+        unrelated = JobId(source_name='other', job_number=_uuid.uuid4())
+        orch.on_job_status_updated(
+            JobStatus(
+                job_id=unrelated,
+                workflow_id=workflow_a.get_id(),
+                state=JobState.stopped,
+            )
+        )
+        assert orch.get_slot_state(slot) is not None
