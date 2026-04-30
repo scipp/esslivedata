@@ -417,11 +417,12 @@ class TestWizardReset:
         wizard._update_content()
         wizard.advance()
         wizard.advance()
-        assert len(wizard._step_results) > 0
+        assert any(r is not None for r in wizard._step_results)
 
-        # Reset should clear results
+        # Reset pads with None so indices stay aligned; old values are gone.
         wizard.reset_to_step(2)
-        assert wizard._step_results == []
+        assert all(r is None for r in wizard._step_results)
+        assert len(wizard._step_results) == 2
 
     def test_reset_to_step_calls_on_enter_with_none(self):
         steps = [
@@ -465,6 +466,34 @@ class TestWizardReset:
 
         with pytest.raises(ValueError, match="Invalid step index: 2"):
             wizard.reset_to_step(2)
+
+    def test_reset_to_step_then_back_then_forward_passes_commit_result(self):
+        """Regression: committing a step after reset_to_step must reach the next step.
+
+        When the dialog opens in edit mode via reset_to_step(2), then the user
+        navigates back to step 1 and commits a new selection, step 2 must receive
+        that selection rather than None (which would cause it to fall back to the
+        initial config, ignoring the user's change).
+        """
+        step1 = FakeWizardStep("step1", return_value="step1_result")
+        step2 = FakeWizardStep("step2", return_value="step2_result")
+        step3 = FakeWizardStep("step3")
+        wizard = Wizard(
+            steps=[step1, step2, step3],
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        wizard.reset_to_step(2)  # Edit mode: jump straight to step 3
+
+        # User navigates back to step 2 and commits a new choice
+        wizard.back()
+        assert wizard._current_step_index == 1
+        wizard.advance()  # commits step2 → result stored at index 1
+
+        # Step 3 must receive step2's committed result, not None
+        assert wizard._current_step_index == 2
+        assert step3.received_input == "step2_result"
 
     def test_reset_to_step_allows_navigating_back_with_none_input(self):
         steps = [
