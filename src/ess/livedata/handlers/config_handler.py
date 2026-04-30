@@ -14,6 +14,8 @@ from ..config.models import ConfigKey
 from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
 from ..core.message import RESPONSES_STREAM_ID, Message
+from ..core.stream_alias import BindStreamAlias, UnbindStreamAlias
+from ..core.stream_alias_adapter import StreamAliasAdapter
 from ..kafka.message_adapter import RawConfigItem
 
 logger = structlog.get_logger(__name__)
@@ -56,12 +58,17 @@ class ConfigProcessor:
         self,
         *,
         job_manager_adapter: JobManagerAdapter,
+        stream_alias_adapter: StreamAliasAdapter | None = None,
     ) -> None:
         self._job_manager_adapter = job_manager_adapter
+        self._stream_alias_adapter = stream_alias_adapter
         self._actions = {
             'workflow_config': self._job_manager_adapter.set_workflow_with_config,
             JobCommand.key: self._job_manager_adapter.job_command,
         }
+        if stream_alias_adapter is not None:
+            self._actions[BindStreamAlias.key] = stream_alias_adapter.bind
+            self._actions[UnbindStreamAlias.key] = stream_alias_adapter.unbind
 
     def process_messages(
         self, messages: list[Message[RawConfigItem]]

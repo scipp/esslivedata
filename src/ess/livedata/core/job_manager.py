@@ -195,6 +195,10 @@ class JobManager:
             *self._scheduled_jobs.values(),
         ]
 
+    def has_job(self, job_id: JobId) -> bool:
+        """Whether this manager currently hosts the given job (active or scheduled)."""
+        return job_id in self._active_jobs or job_id in self._scheduled_jobs
+
     @property
     def active_jobs(self) -> list[Job]:
         """Get the list of active jobs."""

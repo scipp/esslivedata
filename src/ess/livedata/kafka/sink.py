@@ -11,7 +11,8 @@ import scipp as sc
 import structlog
 
 from ..config.workflow_spec import ResultKey
-from ..core.message import Message, MessageSink
+from ..core.message import Message, MessageSink, StreamKind
+from ..core.stream_alias import AliasedResult, StreamAliasRegistry
 from .errors import is_fatal
 
 logger = structlog.get_logger(__name__)
@@ -168,11 +169,25 @@ class KafkaSink(MessageSink[T]):
 
 
 class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):
-    def __init__(self, sink: MessageSink[T]):
+    """Splits :class:`scipp.DataGroup` results into per-output messages.
+
+    When an :class:`StreamAliasRegistry` is configured, also emits a parallel
+    mirror message with stream kind :class:`StreamKind.LIVEDATA_FOM` for any
+    output whose ``(job_id, output_name)`` is bound. The original
+    ``LIVEDATA_DATA`` emission is unchanged (copy semantics).
+    """
+
+    def __init__(
+        self,
+        sink: MessageSink[T | AliasedResult[T]],
+        *,
+        alias_registry: StreamAliasRegistry | None = None,
+    ) -> None:
         self._sink = sink
+        self._alias_registry = alias_registry
 
     def publish_messages(self, messages: list[Message[T | sc.DataGroup[T]]]) -> None:
-        unrolled: list[Message[T]] = []
+        unrolled: list[Message[T | AliasedResult[T]]] = []
         for msg in messages:
             if isinstance(msg.value, sc.DataGroup):
                 result_key = ResultKey.model_validate_json(msg.stream.name)
@@ -184,6 +199,19 @@ class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):
                     )
                     stream = replace(msg.stream, name=key.model_dump_json())
                     unrolled.append(replace(msg, stream=stream, value=value))
+                    if self._alias_registry is not None:
+                        alias = self._alias_registry.lookup(result_key.job_id, name)
+                        if alias is not None:
+                            mirror_stream = replace(
+                                stream, kind=StreamKind.LIVEDATA_FOM
+                            )
+                            unrolled.append(
+                                replace(
+                                    msg,
+                                    stream=mirror_stream,
+                                    value=AliasedResult(data=value, alias=alias),
+                                )
+                            )
             else:
                 unrolled.append(msg)
         self._sink.publish_messages(unrolled)

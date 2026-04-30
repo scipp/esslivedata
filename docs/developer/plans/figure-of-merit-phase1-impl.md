@@ -187,12 +187,12 @@ all unrolling-only tests), behaviour is identical to today.
 
 #### `src/ess/livedata/kafka/sink_serializers.py`
 
-Add `FomDa00Serializer` and register it. The serializer composes — it
+Add `AliasedDa00Serializer` and register it. The serializer composes — it
 encodes the same Da00 payload as `Da00Serializer` would, then sets the
 Kafka key to `alias.encode('utf-8')`.
 
 ```python
-class FomDa00Serializer(MessageSerializer[AliasedResult[sc.DataArray]]):
+class AliasedDa00Serializer(MessageSerializer[AliasedResult[sc.DataArray]]):
     def __init__(self, *, instrument: str) -> None:
         self._inner = Da00Serializer(instrument=instrument)
 
@@ -213,7 +213,7 @@ return RouteByStreamKindSerializer(
     {
         ...,
         StreamKind.LIVEDATA_DATA: data_serializer,
-        StreamKind.LIVEDATA_FOM: FomDa00Serializer(instrument=instrument),
+        StreamKind.LIVEDATA_FOM: AliasedDa00Serializer(instrument=instrument),
         ...,
     }
 )
@@ -316,7 +316,7 @@ service = builder.from_consumer(
 | `tests/core/stream_alias_test.py` | `StreamAliasRegistry`: bind/unbind/lookup, no-replace raises, unbind unknown is no-op. |
 | `tests/core/stream_alias_adapter_test.py` | `StreamAliasAdapter`: actor ACK success, non-actor returns `None`, no-replace ACK error, unbind unknown returns `None`. Uses real `JobManager` with a scheduled job and an alternate empty `JobManager`. |
 | `tests/kafka/sink_test.py` (extend existing) | `UnrollingSinkAdapter` mirror: bound output emits a parallel `LIVEDATA_FOM` `Message[AliasedResult]`; unbound output emits no mirror; `alias_registry=None` matches current behaviour byte-for-byte. |
-| `tests/kafka/sink_serializers_test.py` (extend existing) | `FomDa00Serializer`: Kafka key equals alias bytes; payload bytes equal `Da00Serializer` output for the same data; topic resolves correctly. |
+| `tests/kafka/sink_serializers_test.py` (extend existing) | `AliasedDa00Serializer`: Kafka key equals alias bytes; payload bytes equal `Da00Serializer` output for the same data; topic resolves correctly. |
 
 ### End-to-end via `LivedataApp`
 
@@ -352,7 +352,7 @@ test via an empty `JobManager`.
 3. `StreamKind.LIVEDATA_FOM` + `streams.py` mapping.
 4. Extend `UnrollingSinkAdapter` → unit tests, including the
    `alias_registry=None` no-op path.
-5. `FomDa00Serializer` + register in `make_default_sink_serializer` →
+5. `AliasedDa00Serializer` + register in `make_default_sink_serializer` →
    unit tests.
 6. Wire `StreamAliasRegistry` through `DataServiceBuilder`,
    `OrchestratingProcessor`, `ConfigProcessor`, production runner, and
@@ -369,5 +369,5 @@ Each step is independently testable; (4) and (5) can be parallelised.
   the data and FOM mirror messages).
 - The unrolling rule for non-`DataGroup` values (passed through
   unchanged).
-- `Da00Serializer` (`FomDa00Serializer` composes it; the existing
+- `Da00Serializer` (`AliasedDa00Serializer` composes it; the existing
   serializer is untouched).

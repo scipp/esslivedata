@@ -44,6 +44,8 @@ from .message_batcher import (
     MessageBatch,
     MessageBatcher,
 )
+from .stream_alias import StreamAliasRegistry
+from .stream_alias_adapter import StreamAliasAdapter
 from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -152,6 +154,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
         stream_stats_provider: StreamStatsProvider | None = None,
+        stream_alias_registry: StreamAliasRegistry | None = None,
     ) -> None:
         self._source = source
         self._sink = sink
@@ -162,9 +165,14 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
+        self._stream_alias_registry = stream_alias_registry or StreamAliasRegistry()
+        self._stream_alias_adapter = StreamAliasAdapter(
+            registry=self._stream_alias_registry, job_manager=self._job_manager
+        )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = ConfigProcessor(
-            job_manager_adapter=self._job_manager_adapter
+            job_manager_adapter=self._job_manager_adapter,
+            stream_alias_adapter=self._stream_alias_adapter,
         )
         self._last_status_update: Timestamp | None = None
         self._status_update_interval = Duration.from_seconds(2)

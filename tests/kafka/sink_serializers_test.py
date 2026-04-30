@@ -42,6 +42,7 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
+from ess.livedata.core.stream_alias import AliasedResult
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka.message_adapter import (
@@ -60,6 +61,7 @@ from ess.livedata.kafka.sink_routing import (
     RouteByStreamKindSerializer,
 )
 from ess.livedata.kafka.sink_serializers import (
+    AliasedDa00Serializer,
     CommandSerializer,
     Da00Serializer,
     F144Serializer,
@@ -139,6 +141,59 @@ class TestDa00Serializer:
         assert sc.identical(decoded.value, data)
         assert decoded.timestamp == Timestamp.from_ns(9_876_543_210)
         assert decoded.stream.name == 'monitor_1'
+
+
+class TestAliasedDa00Serializer:
+    def _make_message(
+        self, *, alias: str, name: str = 'detector'
+    ) -> Message[AliasedResult[sc.DataArray]]:
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[0, 1, 2], unit='mm')},
+        )
+        return Message(
+            timestamp=Timestamp.from_ns(1_234_567_890),
+            stream=StreamId(kind=StreamKind.LIVEDATA_FOM, name=name),
+            value=AliasedResult(data=data, alias=alias),
+        )
+
+    def test_kafka_key_is_alias_bytes(self) -> None:
+        msg = self._make_message(alias='fom-0')
+        result = AliasedDa00Serializer(instrument=INSTRUMENT).serialize(msg)
+        assert result.key == b'fom-0'
+
+    def test_topic_resolves_via_stream_kind(self) -> None:
+        # Phase 1: LIVEDATA_FOM shares the data topic.
+        msg = self._make_message(alias='fom-0')
+        result = AliasedDa00Serializer(instrument=INSTRUMENT).serialize(msg)
+        assert result.topic == f'{INSTRUMENT}_livedata_data'
+
+    def test_payload_matches_da00(self) -> None:
+        msg = self._make_message(alias='fom-0', name='detector')
+        fom_result = AliasedDa00Serializer(instrument=INSTRUMENT).serialize(msg)
+
+        plain_msg = Message(
+            timestamp=msg.timestamp,
+            stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name='detector'),
+            value=msg.value.data,
+        )
+        plain_result = Da00Serializer(instrument=INSTRUMENT).serialize(plain_msg)
+
+        assert fom_result.value == plain_result.value
+
+    def test_decodes_via_da00_adapter(self) -> None:
+        msg = self._make_message(alias='fom-0', name='detector')
+        result = AliasedDa00Serializer(instrument=INSTRUMENT).serialize(msg)
+        adapter = ChainedAdapter(
+            first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_DATA),
+            second=Da00ToScippAdapter(),
+        )
+        decoded = adapter.adapt(
+            FakeKafkaMessage(value=result.value, topic=result.topic)
+        )
+        # Da00 source_name is preserved as the underlying stream name.
+        assert decoded.stream.name == 'detector'
+        assert sc.identical(decoded.value, msg.value.data)
 
 
 class TestF144Serializer:

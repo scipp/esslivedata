@@ -24,6 +24,7 @@ from .core.message_batcher import (
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.rate_aware_batcher import RateAwareMessageBatcher
 from .core.service import Service
+from .core.stream_alias import StreamAliasRegistry
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
@@ -105,6 +106,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._job_threads = job_threads
         self._stream_counter = stream_counter
         self._message_batcher = message_batcher
+        self._stream_alias_registry = StreamAliasRegistry()
 
     @property
     def instrument(self) -> str:
@@ -126,6 +128,11 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
     @message_batcher.setter
     def message_batcher(self, value: MessageBatcher) -> None:
         self._message_batcher = value
+
+    @property
+    def stream_alias_registry(self) -> StreamAliasRegistry:
+        """Per-service registry shared between the binding adapter and sink."""
+        return self._stream_alias_registry
 
     def from_consumer_config(
         self,
@@ -214,6 +221,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
             message_batcher=self._message_batcher,
+            stream_alias_registry=self._stream_alias_registry,
         )
         sink.publish_messages(self._startup_messages)
         return Service(
@@ -342,7 +350,9 @@ class DataServiceRunner:
 
         with ExitStack() as resources:
             sink = resources.enter_context(kafka_sink)
-            sink = UnrollingSinkAdapter(sink)
+            sink = UnrollingSinkAdapter(
+                sink, alias_registry=builder.stream_alias_registry
+            )
 
             with builder.from_consumer_config(
                 kafka_config={**consumer_config, **kafka_config},

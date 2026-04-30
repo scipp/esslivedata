@@ -82,7 +82,9 @@ class LivedataApp:
             builder.message_batcher = NaiveMessageBatcher()
         service = builder.from_consumer(
             consumer=consumer,
-            sink=UnrollingSinkAdapter(sink),
+            sink=UnrollingSinkAdapter(
+                sink, alias_registry=builder.stream_alias_registry
+            ),
             raise_on_adapter_error=False,
             use_background_source=False,
         )

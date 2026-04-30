@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import socket
+from dataclasses import replace
 from typing import TypeVar
 
 import scipp as sc
@@ -26,6 +27,7 @@ from ..config.acknowledgement import CommandAcknowledgement
 from ..config.streams import stream_kind_to_topic
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import Message, StreamKind
+from ..core.stream_alias import AliasedResult
 from ..handlers.config_handler import ConfigUpdate
 from .scipp_da00_compat import scipp_to_da00
 from .sink import MessageSerializer, SerializationError, SerializedMessage
@@ -90,6 +92,30 @@ class Da00Serializer(_TopicResolvingSerializer[sc.DataArray]):
             data=scipp_to_da00(message.value),
         )
         return None, value
+
+
+class AliasedDa00Serializer(MessageSerializer[AliasedResult[sc.DataArray]]):
+    """Serializes :class:`AliasedResult` mirror messages.
+
+    Composes :class:`Da00Serializer` for the payload and sets the Kafka
+    message key to the alias bytes. Stream name (and therefore Da00
+    ``source_name``) stays as the underlying ``ResultKey`` JSON, so consumers
+    extract the originating ``job_id`` exactly as for a normal data message.
+
+    The serializer itself is not FOM-specific — it serves any stream-alias
+    use case. Routing into this serializer happens via
+    :class:`StreamKind.LIVEDATA_FOM` for now.
+    """
+
+    def __init__(self, *, instrument: str) -> None:
+        self._inner = Da00Serializer(instrument=instrument)
+
+    def serialize(
+        self, message: Message[AliasedResult[sc.DataArray]]
+    ) -> SerializedMessage:
+        inner_msg = replace(message, value=message.value.data)
+        serialized = self._inner.serialize(inner_msg)
+        return replace(serialized, key=message.value.alias.encode('utf-8'))
 
 
 class F144Serializer(_TopicResolvingSerializer[sc.DataArray]):
@@ -236,6 +262,7 @@ def make_default_sink_serializer(
             StreamKind.LIVEDATA_RESPONSES: ResponseSerializer(instrument=instrument),
             StreamKind.LIVEDATA_STATUS: status_serializer,
             StreamKind.LIVEDATA_DATA: data_serializer,
+            StreamKind.LIVEDATA_FOM: AliasedDa00Serializer(instrument=instrument),
             StreamKind.LIVEDATA_ROI: data_serializer,
             StreamKind.MONITOR_COUNTS: data_serializer,
             StreamKind.MONITOR_EVENTS: data_serializer,
