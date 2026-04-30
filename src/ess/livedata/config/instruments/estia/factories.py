@@ -14,22 +14,26 @@ def setup_factories(instrument: Instrument) -> None:
 
     The multiblade detector view (with its spectrum output) is wired via
     ``add_logical_view`` in ``specs.py``. The generic ``cbm`` monitor workflow
-    factory and live reflectometry diagnostics are attached here.
+    factory and live reflectometry reduction are attached here.
     """
     from typing import NewType
 
     import sciline.typing
     import scipp as sc
     from ess.estia import EstiaWorkflow
+    from ess.estia import corrections as estia_corrections
     from ess.estia import data as estia_data
     from ess.reduce.nexus.types import NeXusData
+    from ess.reflectometry.corrections import correct_by_proton_current
     from ess.reflectometry.types import (
         BeamDivergenceLimits,
-        CoordTransformGraph,
+        CoordTransformationGraph,
+        CorrectionsToApply,
         Filename,
         LookupTableFilename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
+        ProtonCurrent,
         QBins,
         ReducibleData,
         SampleRun,
@@ -40,7 +44,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
@@ -54,23 +57,34 @@ def setup_factories(instrument: Instrument) -> None:
             coordinate_mode='toa',
         )
 
-    @specs.live_diagnostics_handle.attach_factory()
-    def _live_diagnostics_workflow_factory(
+    @specs.reflectometry_reduction_handle.attach_factory()
+    def _reflectometry_reduction_workflow_factory(
         source_name: str,
-        params: specs.EstiaLiveDiagnosticsParams,
+        params: specs.EstiaReflectometryReductionParams,
     ) -> StreamProcessorWorkflow:
         wf = EstiaWorkflow()
-        wf[Filename[SampleRun]] = get_nexus_geometry_filename('estia')
+        wf[Filename[SampleRun]] = estia_data.estia_mcstas_nexus_sample_example(
+            'Ni/Ti-multilayer'
+        )[0]
         wf[NeXusDetectorName] = source_name
         wf[LookupTableFilename] = estia_data.estia_wavelength_lookup_table()
         wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
-        wf[WavelengthBins] = params.wavelength_edges.get_edges()
-        wf[QBins] = params.q_edges.get_edges()
-        wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges()
+        wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
+        wf[QBins] = params.q_edges.get_edges().to(unit='1/angstrom')
+        wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges().to(unit='rad')
 
         wf[YIndexLimits] = params.y_index_limits.get_limits()
         wf[ZIndexLimits] = params.z_index_limits.get_limits()
-        wf[BeamDivergenceLimits] = params.beam_divergence_limits.get_limits()
+        wf[BeamDivergenceLimits] = [
+            edge.to(unit='rad') for edge in params.beam_divergence_limits.get_limits()
+        ]
+        wf[CorrectionsToApply] = estia_corrections.default_corrections - {
+            correct_by_proton_current
+        }
+        wf[ProtonCurrent[SampleRun]] = sc.DataArray(
+            sc.zeros(dims=['time'], shape=[0], unit='uA'),
+            coords={'time': sc.array(dims=['time'], values=[], unit='ns')},
+        )
 
         IntensityThetaWavelength = NewType('IntensityThetaWavelength', sc.DataArray)
         IntensityWavelength = NewType('IntensityWavelength', sc.DataArray)
@@ -89,10 +103,10 @@ def setup_factories(instrument: Instrument) -> None:
 
         def _intensity_over_q(
             intensity: IntensityThetaWavelength,
-            q_bins: QBins[SampleRun],
-            graph: CoordTransformGraph[SampleRun],
-        ):
-            return (
+            q_bins: QBins,
+            graph: CoordTransformationGraph[SampleRun],
+        ) -> IntensityQ:
+            return IntensityQ(
                 intensity.assign_coords(
                     wavelength=sc.midpoints(intensity.coords['wavelength']),
                     theta=sc.midpoints(intensity.coords['theta']),
@@ -103,8 +117,8 @@ def setup_factories(instrument: Instrument) -> None:
 
         def _intensity_over_wavelength(
             intensity: IntensityThetaWavelength,
-        ):
-            return intensity.sum('theta')
+        ) -> IntensityWavelength:
+            return IntensityWavelength(intensity.sum('theta'))
 
         wf.insert(_intensity_over_wavelength)
         wf.insert(_intensity_over_q)

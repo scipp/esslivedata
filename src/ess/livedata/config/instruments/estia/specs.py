@@ -22,21 +22,6 @@ from .views import get_multiblade_view
 detector_names = ['multiblade_detector']
 
 
-class ThetaEdges(parameter_models.EdgesModel):
-    """Model for theta bin edges."""
-
-    unit: parameter_models.AngleUnit = pydantic.Field(
-        default=parameter_models.AngleUnit.DEGREE,
-        description="Unit of the theta bin edges.",
-    )
-
-    def get_edges(self) -> sc.Variable:
-        """Get the edges as a scipp variable."""
-        return parameter_models.make_edges(
-            model=self, dim='theta', unit=self.unit.value
-        )
-
-
 class IndexLimits(pydantic.BaseModel):
     """Model for detector index limits."""
 
@@ -69,8 +54,8 @@ class BeamDivergenceLimits(parameter_models.RangeModel):
         return (self.get_start(), self.get_stop())
 
 
-class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
-    """Parameters for lightweight ESTIA live reflectometry diagnostics."""
+class EstiaReflectometryReductionParams(pydantic.BaseModel):
+    """Parameters for ESTIA live reflectometry reduction."""
 
     wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
         title='Wavelength bins',
@@ -79,7 +64,7 @@ class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
             start=3.5,
             stop=12.0,
             num_bins=120,
-            scale=parameter_models.Scale.LOG,
+            scale=parameter_models.Scale.LINEAR,
             unit=parameter_models.WavelengthUnit.ANGSTROM,
         ),
     )
@@ -89,18 +74,26 @@ class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
         default=parameter_models.QEdges(
             start=0.01,
             stop=0.5,
-            num_bins=401,
-            scale=parameter_models.Scale.LOG,
+            num_bins=400,
+            scale=parameter_models.Scale.LINEAR,
             unit=parameter_models.QUnit.INVERSE_ANGSTROM,
         ),
     )
-    theta_edges: ThetaEdges = pydantic.Field(
+    theta_edges: parameter_models.ThetaEdges = pydantic.Field(
         title='Theta bins',
         description='Define the bin edges for intensity histograms in theta.',
-        default=ThetaEdges(
+        default=parameter_models.ThetaEdges(
             start=-1.0,
             stop=2.0,
             num_bins=120,
+            unit=parameter_models.AngleUnit.DEGREE,
+        ),
+    )
+    sample_rotation: parameter_models.Angle = pydantic.Field(
+        title='Sample rotation',
+        description='Define the sample rotation for the reflectometry workflow.',
+        default=parameter_models.Angle(
+            value=0.0,
             unit=parameter_models.AngleUnit.DEGREE,
         ),
     )
@@ -132,7 +125,7 @@ class EstiaLiveDiagnosticsParams(pydantic.BaseModel):
 
 
 def _make_wavelength_template() -> sc.DataArray:
-    """Create an empty 1D template for I(wavelength)."""
+    """Create an empty 1D template for I(λ)."""
     return sc.DataArray(
         sc.zeros(dims=['wavelength'], shape=[0], unit='counts'),
         coords={'wavelength': sc.arange('wavelength', 0, unit='angstrom')},
@@ -148,7 +141,7 @@ def _make_q_template() -> sc.DataArray:
 
 
 def _make_theta_wavelength_template() -> sc.DataArray:
-    """Create an empty 2D template for I(theta, wavelength)."""
+    """Create an empty 2D template for I(θ, λ)."""
     return sc.DataArray(
         sc.zeros(dims=['theta', 'wavelength'], shape=[0, 0], unit='counts'),
         coords={
@@ -158,13 +151,13 @@ def _make_theta_wavelength_template() -> sc.DataArray:
     )
 
 
-class EstiaLiveDiagnosticsOutputs(WorkflowOutputsBase):
-    """Outputs for the ESTIA live diagnostics workflow."""
+class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
+    """Outputs for the ESTIA live reflectometry reduction workflow."""
 
     i_of_wavelength: sc.DataArray = pydantic.Field(
         default_factory=_make_wavelength_template,
-        title='I(wavelength)',
-        description='Detector intensity histogrammed by wavelength.',
+        title='I(λ)',
+        description='Detector intensity histogrammed by wavelength λ.',
     )
     i_of_q: sc.DataArray = pydantic.Field(
         default_factory=_make_q_template,
@@ -173,8 +166,8 @@ class EstiaLiveDiagnosticsOutputs(WorkflowOutputsBase):
     )
     i_of_theta_wavelength: sc.DataArray = pydantic.Field(
         default_factory=_make_theta_wavelength_template,
-        title='I(theta, wavelength)',
-        description='Detector intensity histogrammed by theta and wavelength.',
+        title='I(θ, λ)',
+        description='Detector intensity histogrammed by θ and wavelength λ.',
     )
 
 
@@ -215,15 +208,15 @@ instrument.add_logical_view(
     ),
 )
 
-live_diagnostics_handle = instrument.register_spec(
-    name='live_diagnostics',
+reflectometry_reduction_handle = instrument.register_spec(
+    name='reflectometry_reduction',
     version=1,
-    title='Live diagnostics',
+    title='Reflectometry reduction',
     description=(
-        'Raw ESTIA reflectometry diagnostics: detector intensity binned by '
-        'wavelength, Q, and theta versus wavelength.'
+        'ESTIA reflectometry reduction: detector intensity binned by wavelength, '
+        'Q, and theta versus wavelength.'
     ),
     source_names=detector_names,
-    outputs=EstiaLiveDiagnosticsOutputs,
-    params=EstiaLiveDiagnosticsParams,
+    outputs=EstiaReflectometryReductionOutputs,
+    params=EstiaReflectometryReductionParams,
 )
