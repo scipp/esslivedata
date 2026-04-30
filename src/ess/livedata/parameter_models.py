@@ -235,7 +235,7 @@ class EnergyEdges(EdgesModel):
 
 def make_edges(*, model: EdgesModel, dim: str, unit: str) -> sc.Variable:
     """Convert the edges to a scipp variable."""
-    op = {Scale.LINEAR: sc.linspace, Scale.LOG: sc.logspace}[model.scale]
+    op = {Scale.LINEAR: sc.linspace, Scale.LOG: sc.geomspace}[model.scale]
     return op(
         dim=dim, start=model.start, stop=model.stop, num=model.num_bins + 1, unit=unit
     )
