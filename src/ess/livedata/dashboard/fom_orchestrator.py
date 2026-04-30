@@ -1,0 +1,440 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+FOMOrchestrator - Manages stable-alias slot lifecycle for figure-of-merit jobs.
+
+Parallel to :class:`JobOrchestrator`, but slot-keyed instead of workflow-keyed.
+Each slot binds a stable alias (e.g. ``fom-0``) to a single ``(job, output)``
+pair. The orchestrator owns the FOM job's lifecycle: committing or releasing a
+slot composes the explicit Kafka batch (stop previous + unbind + new
+WorkflowConfig + bind) so the dashboard does not depend on backend
+auto-stop-on-rebind semantics.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import NewType
+
+import structlog
+
+import ess.livedata.config.keys as keys
+from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    JobNumber,
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowSpec,
+)
+from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.stream_alias import BindStreamAlias, UnbindStreamAlias
+
+from .active_job_registry import ActiveJobRegistry
+from .command_service import CommandService
+from .job_service import JobService
+from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
+
+logger = structlog.get_logger(__name__)
+
+FOMSlot = NewType('FOMSlot', str)
+FOMAction = str  # "commit" | "release" | "reset"
+
+
+@dataclass(frozen=True, slots=True)
+class FOMSlotState:
+    """In-memory state of a configured FOM slot."""
+
+    workflow_id: WorkflowId
+    source_name: str
+    output_name: str
+    params: dict
+    aux_source_names: dict
+    job_number: JobNumber
+
+    @property
+    def job_id(self) -> JobId:
+        return JobId(source_name=self.source_name, job_number=self.job_number)
+
+
+@dataclass
+class _PendingBatch:
+    slot: FOMSlot
+    action: FOMAction
+    timestamp: float
+    expected_count: int
+    success_count: int = 0
+    error_count: int = 0
+    error_messages: list[str] = field(default_factory=list)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.success_count + self.error_count >= self.expected_count
+
+
+@dataclass(frozen=True)
+class FOMCommandResult:
+    slot: FOMSlot
+    action: FOMAction
+    success_count: int
+    error_count: int
+    error_messages: list[str]
+
+    @property
+    def all_succeeded(self) -> bool:
+        return self.error_count == 0
+
+
+class _FOMPendingTracker:
+    """Slot-scoped variant of :class:`PendingCommandTracker`."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, _PendingBatch] = {}
+
+    def register(
+        self,
+        message_id: str,
+        slot: FOMSlot,
+        action: FOMAction,
+        expected_count: int,
+    ) -> None:
+        self._pending[message_id] = _PendingBatch(
+            slot=slot,
+            action=action,
+            timestamp=time.time(),
+            expected_count=expected_count,
+        )
+
+    def record_response(
+        self, message_id: str, *, success: bool, error_message: str | None = None
+    ) -> FOMCommandResult | None:
+        pending = self._pending.get(message_id)
+        if pending is None:
+            return None
+        if success:
+            pending.success_count += 1
+        else:
+            pending.error_count += 1
+            if error_message:
+                pending.error_messages.append(error_message)
+        if not pending.is_complete:
+            return None
+        del self._pending[message_id]
+        return FOMCommandResult(
+            slot=pending.slot,
+            action=pending.action,
+            success_count=pending.success_count,
+            error_count=pending.error_count,
+            error_messages=pending.error_messages,
+        )
+
+
+class FOMOrchestrator:
+    """Slot-keyed orchestrator for figure-of-merit jobs."""
+
+    def __init__(
+        self,
+        *,
+        command_service: CommandService,
+        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        active_job_registry: ActiveJobRegistry,
+        job_service: JobService,
+        notification_queue: NotificationQueue | None = None,
+        n_slots: int = 2,
+    ) -> None:
+        if n_slots < 1:
+            raise ValueError(f"n_slots must be >= 1, got {n_slots}")
+        self._command_service = command_service
+        self._workflow_registry = workflow_registry
+        self._active_job_registry = active_job_registry
+        self._job_service = job_service
+        self._notification_queue = notification_queue
+        self._slot_names: list[FOMSlot] = [FOMSlot(f"fom-{i}") for i in range(n_slots)]
+        self._slots: dict[FOMSlot, FOMSlotState | None] = dict.fromkeys(
+            self._slot_names
+        )
+        self._versions: dict[FOMSlot, int] = dict.fromkeys(self._slot_names, 0)
+        self._pending = _FOMPendingTracker()
+        self._slot_listeners: list[Callable[[FOMSlot], None]] = []
+
+    # ----- introspection ------------------------------------------------------
+
+    @property
+    def slot_names(self) -> list[FOMSlot]:
+        """Return the list of slot identifiers."""
+        return list(self._slot_names)
+
+    def get_slot_state(self, slot: FOMSlot) -> FOMSlotState | None:
+        """Return the slot's current state, or ``None`` if unbound."""
+        return self._slots.get(slot)
+
+    def get_slot_state_version(self, slot: FOMSlot) -> int:
+        """Version counter incremented on every slot mutation."""
+        return self._versions.get(slot, 0)
+
+    def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        return self._workflow_registry
+
+    def add_slot_changed_listener(self, callback: Callable[[FOMSlot], None]) -> None:
+        """Register a callback fired when a slot's state changes.
+
+        Used by widgets that want push-based update rather than polling.
+        """
+        self._slot_listeners.append(callback)
+
+    # ----- mutations ----------------------------------------------------------
+
+    def commit_slot(
+        self,
+        slot: FOMSlot,
+        *,
+        workflow_id: WorkflowId,
+        source_name: str,
+        output_name: str,
+        params: dict,
+        aux_source_names: dict | None = None,
+    ) -> JobId:
+        """Bind ``slot`` to a fresh job, replacing any existing binding.
+
+        Sends ``[Stop(prev), Unbind, WorkflowConfig(new), Bind]`` (or just
+        ``[WorkflowConfig(new), Bind]`` if the slot is empty) as a single
+        Kafka batch, then updates local state.
+        """
+        self._require_slot(slot)
+
+        prev = self._slots[slot]
+        new_job_number: JobNumber = uuid.uuid4()
+        new_job_id = JobId(source_name=source_name, job_number=new_job_number)
+        message_id = str(uuid.uuid4())
+        aux_dict = aux_source_names or {}
+
+        commands: list[tuple[ConfigKey, object]] = []
+        if prev is not None:
+            commands.append(
+                (
+                    ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
+                    JobCommand(
+                        job_id=prev.job_id,
+                        action=JobAction.stop,
+                        message_id=message_id,
+                    ),
+                )
+            )
+            commands.append(
+                (
+                    ConfigKey(key=UnbindStreamAlias.key, source_name=slot),
+                    UnbindStreamAlias(alias=slot, message_id=message_id),
+                )
+            )
+        commands.append(
+            (
+                keys.WORKFLOW_CONFIG.create_key(source_name=source_name),
+                WorkflowConfig.from_params(
+                    workflow_id=workflow_id,
+                    params=params,
+                    aux_source_names=aux_dict,
+                    job_number=new_job_number,
+                    message_id=message_id,
+                ),
+            )
+        )
+        commands.append(
+            (
+                ConfigKey(key=BindStreamAlias.key, source_name=slot),
+                BindStreamAlias(
+                    alias=slot,
+                    job_id=new_job_id,
+                    output_name=output_name,
+                    message_id=message_id,
+                ),
+            )
+        )
+
+        self._pending.register(message_id, slot, "commit", len(commands))
+        self._command_service.send_batch(commands)
+
+        # Activate the new job inside the ingestion guard so that data
+        # arriving for the new job_number is accepted; deactivate the
+        # previous one to clean up its DataService entries.
+        with self._active_job_registry.ingestion_guard():
+            self._active_job_registry.activate(new_job_number)
+        if prev is not None:
+            self._active_job_registry.deactivate(prev.job_number)
+
+        self._slots[slot] = FOMSlotState(
+            workflow_id=workflow_id,
+            source_name=source_name,
+            output_name=output_name,
+            params=dict(params),
+            aux_source_names=dict(aux_dict),
+            job_number=new_job_number,
+        )
+        self._bump_version(slot)
+
+        logger.info(
+            "fom_slot_committed",
+            slot=slot,
+            workflow_id=str(workflow_id),
+            source=source_name,
+            output=output_name,
+            job_number=str(new_job_number),
+        )
+        return new_job_id
+
+    def release_slot(self, slot: FOMSlot) -> bool:
+        """Stop the bound job and clear the slot.
+
+        Returns False if the slot was already empty (no commands sent).
+        """
+        self._require_slot(slot)
+        prev = self._slots[slot]
+        if prev is None:
+            return False
+
+        message_id = str(uuid.uuid4())
+        commands: list[tuple[ConfigKey, object]] = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
+                JobCommand(
+                    job_id=prev.job_id,
+                    action=JobAction.stop,
+                    message_id=message_id,
+                ),
+            ),
+            (
+                ConfigKey(key=UnbindStreamAlias.key, source_name=slot),
+                UnbindStreamAlias(alias=slot, message_id=message_id),
+            ),
+        ]
+        self._pending.register(message_id, slot, "release", len(commands))
+        self._command_service.send_batch(commands)
+
+        self._active_job_registry.deactivate(prev.job_number)
+        self._slots[slot] = None
+        self._bump_version(slot)
+
+        logger.info("fom_slot_released", slot=slot)
+        return True
+
+    def reset_slot(self, slot: FOMSlot) -> bool:
+        """Send a reset to the bound job. Returns False if the slot is empty."""
+        self._require_slot(slot)
+        prev = self._slots[slot]
+        if prev is None:
+            return False
+
+        message_id = str(uuid.uuid4())
+        cmd = (
+            ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
+            JobCommand(
+                job_id=prev.job_id,
+                action=JobAction.reset,
+                message_id=message_id,
+            ),
+        )
+        self._pending.register(message_id, slot, "reset", 1)
+        self._command_service.send_batch([cmd])
+
+        logger.info("fom_slot_reset", slot=slot)
+        return True
+
+    # ----- ack / status routing -----------------------------------------------
+
+    def process_acknowledgement(
+        self,
+        message_id: str,
+        response: str,
+        error_message: str | None = None,
+    ) -> None:
+        """Record an ACK from the responses topic.
+
+        Ignored if the ``message_id`` is not one we registered.
+        """
+        result = self._pending.record_response(
+            message_id, success=(response == "ACK"), error_message=error_message
+        )
+        if result is None:
+            return
+        total = result.success_count + result.error_count
+        if result.all_succeeded:
+            self._notify_success(
+                result.slot, result.action, result.success_count, total
+            )
+        else:
+            combined = "; ".join(result.error_messages) or "Unknown error"
+            self._notify_error(
+                result.slot, result.action, result.error_count, total, combined
+            )
+
+    def on_job_status_updated(self, job_status: JobStatus) -> None:
+        """Clear a slot when the backend reports its job stopped."""
+        if job_status.state != JobState.stopped:
+            return
+        for slot, state in list(self._slots.items()):
+            if state is None:
+                continue
+            if (
+                job_status.job_id.source_name == state.source_name
+                and job_status.job_id.job_number == state.job_number
+            ):
+                logger.info(
+                    "fom_slot_cleared_by_backend_stop",
+                    slot=slot,
+                    job_number=str(state.job_number),
+                )
+                self._active_job_registry.deactivate(state.job_number)
+                self._slots[slot] = None
+                self._bump_version(slot)
+                return
+
+    # ----- internals ----------------------------------------------------------
+
+    def _require_slot(self, slot: FOMSlot) -> None:
+        if slot not in self._slots:
+            raise KeyError(f"Unknown FOM slot: {slot!r}")
+
+    def _bump_version(self, slot: FOMSlot) -> None:
+        self._versions[slot] = self._versions.get(slot, 0) + 1
+        for listener in self._slot_listeners:
+            try:
+                listener(slot)
+            except Exception:
+                logger.exception("fom_slot_listener_error", slot=slot)
+
+    def _notify_success(
+        self, slot: FOMSlot, action: FOMAction, success: int, total: int
+    ) -> None:
+        if self._notification_queue is None:
+            return
+        verb = {"commit": "Configured", "release": "Released", "reset": "Reset"}.get(
+            action, action.capitalize()
+        )
+        self._notification_queue.push(
+            NotificationEvent(
+                message=f"{verb} FOM slot '{slot}' ({success}/{total} ACKs)",
+                notification_type=NotificationType.SUCCESS,
+            )
+        )
+
+    def _notify_error(
+        self,
+        slot: FOMSlot,
+        action: FOMAction,
+        errors: int,
+        total: int,
+        message: str,
+    ) -> None:
+        if self._notification_queue is None:
+            return
+        self._notification_queue.push(
+            NotificationEvent(
+                message=(
+                    f"FOM slot '{slot}' {action} failed ({errors}/{total}): {message}"
+                ),
+                notification_type=NotificationType.ERROR,
+            )
+        )

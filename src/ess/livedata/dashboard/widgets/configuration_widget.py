@@ -50,8 +50,14 @@ class ConfigurationWidget:
         self._title_pane = self._create_title_pane()
         self._widget = pn.Column(self._build_body(), sizing_mode='stretch_both')
 
-    def _create_source_selector(self) -> pn.widgets.MultiChoice | None:
-        """Create source selection widget, or None if no sources available."""
+    def _create_source_selector(
+        self,
+    ) -> pn.widgets.MultiChoice | pn.widgets.Select | None:
+        """Create source selection widget, or None if no sources available.
+
+        Returns a single-choice ``Select`` when the adapter declares
+        ``single_source=True``; otherwise the default multi-choice widget.
+        """
         # No source selector needed when there are no sources (e.g., static overlays)
         if not self._config.source_names:
             return None
@@ -71,6 +77,19 @@ class ConfigurationWidget:
             for name in self._config.source_names
         }
         sorted_options = dict(sorted(options.items()))
+
+        if self._config.single_source:
+            initial_value = (
+                initial_source_names[0]
+                if initial_source_names
+                else next(iter(sorted_options.values()))
+            )
+            return pn.widgets.Select(
+                name="Source Name",
+                options=sorted_options,
+                value=initial_value,
+                sizing_mode='stretch_width',
+            )
 
         return pn.widgets.MultiChoice(
             name="Source Names",
@@ -208,6 +227,8 @@ class ConfigurationWidget:
         """Get the selected source names."""
         if self._source_selector is None:
             return []
+        if isinstance(self._source_selector, pn.widgets.Select):
+            return [self._source_selector.value] if self._source_selector.value else []
         return self._source_selector.value
 
     @property

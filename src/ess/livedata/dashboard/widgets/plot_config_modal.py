@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import panel as pn
 import pydantic
@@ -275,13 +275,25 @@ class PlotterSelection:
     axis_sources: dict[str, DataSourceConfig] | None = None
 
 
+class WorkflowOutputPrefill(Protocol):
+    """Minimal prefill protocol for workflow + output selection."""
+
+    @property
+    def workflow_id(self) -> WorkflowId: ...
+
+    @property
+    def output_name(self) -> str: ...
+
+
 class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     """Step 1: Select workflow and output (combined for better UX)."""
 
     def __init__(
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        initial_config: PlotConfig | None = None,
+        initial_config: WorkflowOutputPrefill | None = None,
+        *,
+        include_static_overlay: bool = True,
     ) -> None:
         """
         Initialize workflow and output selection step.
@@ -291,11 +303,15 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         workflow_registry
             Registry of available workflows and their specifications.
         initial_config
-            Optional initial configuration for edit mode.
+            Optional initial selection (anything exposing ``workflow_id`` and
+            ``output_name``). For plot-edit mode this is a ``PlotConfig``.
+        include_static_overlay
+            When False, the synthetic Static Overlay namespace is hidden.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._initial_config = initial_config
+        self._include_static_overlay = include_static_overlay
         self._selected_group: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
@@ -352,7 +368,9 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         spec = self._workflow_registry.get(workflow_id)
         return spec.group.name if spec is not None else None
 
-    def _initialize_selections(self, initial_config: PlotConfig | None) -> None:
+    def _initialize_selections(
+        self, initial_config: WorkflowOutputPrefill | None
+    ) -> None:
         """Initialize selections and bind handlers afterward to avoid cascades."""
         # Batch all widget updates to avoid multiple browser render cycles
         with pn.io.hold():
@@ -366,8 +384,9 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._workflow_buttons.value = initial_config.workflow_id
                 self._update_output_options()
                 self._selected_output = initial_config.output_name
-                # Set the appropriate widget value based on whether static overlay
-                if initial_config.is_static():
+                # Static overlay branch only applies when the workflow is the
+                # synthetic static-overlay workflow.
+                if initial_config.workflow_id == STATIC_OVERLAY_WORKFLOW:
                     self._name_input.value = initial_config.output_name
                 else:
                     self._output_buttons.value = initial_config.output_name
@@ -411,7 +430,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             for name, title in sorted(groups.items(), key=lambda item: item[0])
         }
         # Add synthetic "Static Overlay" group for geometric overlays
-        options["Static Overlay"] = STATIC_OVERLAY_GROUP
+        if self._include_static_overlay:
+            options["Static Overlay"] = STATIC_OVERLAY_GROUP
 
         return pn.widgets.RadioButtonGroup(
             name='Group',

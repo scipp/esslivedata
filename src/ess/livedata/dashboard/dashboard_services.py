@@ -21,6 +21,7 @@ from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
+from .fom_orchestrator import FOMOrchestrator
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .notification_queue import NotificationQueue
@@ -233,7 +234,20 @@ class DashboardServices:
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
         )
-        self.job_service.on_status_updated = self.job_orchestrator.on_job_status_updated
+        self.job_service.add_status_listener(
+            self.job_orchestrator.on_job_status_updated
+        )
+
+        self.fom_orchestrator = FOMOrchestrator(
+            command_service=self.command_service,
+            workflow_registry=self.processor_factory,
+            active_job_registry=active_job_registry,
+            job_service=self.job_service,
+            notification_queue=self.notification_queue,
+        )
+        self.job_service.add_status_listener(
+            self.fom_orchestrator.on_job_status_updated
+        )
 
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
@@ -249,4 +263,5 @@ class DashboardServices:
             service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
             active_job_registry=active_job_registry,
+            fom_orchestrator=self.fom_orchestrator,
         )

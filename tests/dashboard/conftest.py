@@ -125,7 +125,7 @@ def job_orchestrator(
         active_job_registry=active_job_registry,
         config_store=None,
     )
-    job_service.on_status_updated = orchestrator.on_job_status_updated
+    job_service.add_status_listener(orchestrator.on_job_status_updated)
     return orchestrator
 
 

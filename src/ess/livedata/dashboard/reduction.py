@@ -17,6 +17,7 @@ from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
+from .widgets.fom_panel import FOMPanel
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -141,6 +142,12 @@ class ReductionApp(DashboardBase):
             job_service=self._services.job_service,
         )
 
+        fom_panel = FOMPanel(
+            orchestrator=self._services.fom_orchestrator,
+            job_service=self._services.job_service,
+            data_service=self._services.data_service,
+        )
+
         system_status_widget = SystemStatusWidget(
             session_registry=self._services.session_registry,
             service_registry=self._services.service_registry,
@@ -156,19 +163,24 @@ class ReductionApp(DashboardBase):
             plotting_controller=self._services.plotting_controller,
             workflow_status_widget=workflow_status_widget,
             system_status_widget=system_status_widget,
+            fom_panel=fom_panel,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
         )
 
-        # Register refresh with visibility gate: skip updates when the
-        # Workflows tab (index 0) is not the active tab.
+        # Tab order: Workflows (0), FOM (1), System Status (2), Manage Plots (3),
+        # then user grids. Refresh visibility gates match.
         workflow_status_widget.register_periodic_refresh(
             session_updater,
             is_visible=lambda: plot_grid_tabs.active_tab_index == 0,
         )
-        system_status_widget.register_periodic_refresh(
+        fom_panel.register_periodic_refresh(
             session_updater,
             is_visible=lambda: plot_grid_tabs.active_tab_index == 1,
+        )
+        system_status_widget.register_periodic_refresh(
+            session_updater,
+            is_visible=lambda: plot_grid_tabs.active_tab_index == 2,
         )
 
         return plot_grid_tabs.panel

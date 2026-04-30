@@ -78,6 +78,82 @@ class SourceStatus:
     error_summary: str | None
 
 
+def make_status_badge_html(status: str, status_color: str) -> str:
+    """Generate HTML for a status badge."""
+    return (
+        f'<span style="padding: 2px 8px; border-radius: 3px; font-size: 11px; '
+        f'font-weight: bold; color: white; background: {status_color};">'
+        f'{status}</span>'
+    )
+
+
+def make_timing_html(timing_text: str) -> str:
+    """Generate HTML for a timing/info display."""
+    return (
+        f'<span style="font-size: 12px; '
+        f'color: {Colors.TEXT_MUTED};">'
+        f'{timing_text}</span>'
+    )
+
+
+def make_status_dots_html(sources: list[SourceStatus]) -> str:
+    """Generate HTML for per-source status indicator dots.
+
+    Each dot represents one source, colored by its job state.
+    """
+    if not sources:
+        return ''
+    dots = []
+    for s in sources:
+        color = WorkflowWidgetStyles.STATUS_COLORS.get(
+            s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+        )
+        tooltip = f'{s.display_title}: {s.state.value}'
+        if s.error_summary:
+            tooltip += f' — {s.error_summary}'
+        dots.append(
+            f'<span title="{tooltip}" style="'
+            f'display: inline-block; width: 8px; height: 8px; '
+            f'border-radius: 50%; background: {color}; '
+            f'cursor: default;'
+            f'"></span>'
+        )
+    return (
+        '<span style="display: inline-flex; align-items: center; gap: 4px;">'
+        + ''.join(dots)
+        + '</span>'
+    )
+
+
+def format_active_timing(earliest_start) -> str:
+    """Format start-time + duration text for an active job/slot.
+
+    Returns 'Starting...' when ``earliest_start`` is None, otherwise
+    'HH:MM:SS (Xs)' / 'HH:MM:SS (Xm Ys)' / 'HH:MM:SS (Xh Ym)'.
+    """
+    from datetime import UTC, datetime
+
+    if earliest_start is None:
+        return 'Starting...'
+
+    start_dt = earliest_start.to_datetime(tz=UTC)
+    now = datetime.now(tz=UTC)
+    duration_secs = int((now - start_dt).total_seconds())
+
+    if duration_secs < 60:
+        duration_str = f'{duration_secs}s'
+    elif duration_secs < 3600:
+        mins = duration_secs // 60
+        secs = duration_secs % 60
+        duration_str = f'{mins}m {secs}s'
+    else:
+        hours = duration_secs // 3600
+        mins = (duration_secs % 3600) // 60
+        duration_str = f'{hours}h {mins}m'
+
+    return f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
+
+
 @dataclass(frozen=True)
 class ConfigGroup:
     """A group of sources sharing the same configuration."""
@@ -288,19 +364,19 @@ class WorkflowStatusWidget:
         # Status badge, per-source dots, and timing info (store references for updates)
         status, status_color, timing_text, _, per_source = self._get_status_and_timing()
         self._status_badge = pn.pane.HTML(
-            self._make_status_badge_html(status, status_color),
+            make_status_badge_html(status, status_color),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
         self._status_dots = pn.pane.HTML(
-            self._make_status_dots_html(per_source),
+            make_status_dots_html(per_source),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
         self._timing_html = pn.pane.HTML(
-            self._make_timing_html(timing_text),
+            make_timing_html(timing_text),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={'display': 'flex', 'align-items': 'center'},
         )
@@ -672,52 +748,6 @@ class WorkflowStatusWidget:
             margin=0,
         )
 
-    def _make_status_badge_html(self, status: str, status_color: str) -> str:
-        """Generate HTML for the status badge."""
-        return (
-            f'<span style="padding: 2px 8px; border-radius: 3px; font-size: 11px; '
-            f'font-weight: bold; color: white; background: {status_color};">'
-            f'{status}</span>'
-        )
-
-    @staticmethod
-    def _make_timing_html(timing_text: str) -> str:
-        """Generate HTML for the timing display."""
-        return (
-            f'<span style="font-size: 12px; '
-            f'color: {Colors.TEXT_MUTED};">'
-            f'{timing_text}</span>'
-        )
-
-    @staticmethod
-    def _make_status_dots_html(sources: list[SourceStatus]) -> str:
-        """Generate HTML for per-source status indicator dots.
-
-        Each dot represents one source, colored by its job state.
-        """
-        if not sources:
-            return ''
-        dots = []
-        for s in sources:
-            color = WorkflowWidgetStyles.STATUS_COLORS.get(
-                s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
-            )
-            tooltip = f'{s.display_title}: {s.state.value}'
-            if s.error_summary:
-                tooltip += f' \u2014 {s.error_summary}'
-            dots.append(
-                f'<span title="{tooltip}" style="'
-                f'display: inline-block; width: 8px; height: 8px; '
-                f'border-radius: 50%; background: {color}; '
-                f'cursor: default;'
-                f'"></span>'
-            )
-        return (
-            '<span style="display: inline-flex; align-items: center; gap: 4px;">'
-            + ''.join(dots)
-            + '</span>'
-        )
-
     def _get_status_and_timing(
         self,
     ) -> tuple[str, str, str, str | None, list[SourceStatus]]:
@@ -731,11 +761,6 @@ class WorkflowStatusWidget:
             Tuple of (status_text, status_color, timing_text, error_html,
             per_source_statuses).
         """
-        # Deferred import: datetime is only needed for active workflows with
-        # a start_time, and importing at module level would add unnecessary
-        # startup cost for a rarely-used module.
-        from datetime import UTC, datetime
-
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
@@ -837,26 +862,7 @@ class WorkflowStatusWidget:
             worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
         )
 
-        # Build timing text
-        if earliest_start is None:
-            timing_text = 'Starting...'
-        else:
-            start_dt = earliest_start.to_datetime(tz=UTC)
-            now = datetime.now(tz=UTC)
-            duration_secs = int((now - start_dt).total_seconds())
-
-            if duration_secs < 60:
-                duration_str = f'{duration_secs}s'
-            elif duration_secs < 3600:
-                mins = duration_secs // 60
-                secs = duration_secs % 60
-                duration_str = f'{mins}m {secs}s'
-            else:
-                hours = duration_secs // 3600
-                mins = (duration_secs % 3600) // 60
-                duration_str = f'{hours}h {mins}m'
-
-            timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
+        timing_text = format_active_timing(earliest_start)
 
         return status_text, status_color, timing_text, error_html, per_source_list
 
@@ -979,17 +985,17 @@ class WorkflowStatusWidget:
         status, status_color, timing_text, _, per_source = self._get_status_and_timing()
 
         if self._status_badge is not None:
-            new_badge = self._make_status_badge_html(status, status_color)
+            new_badge = make_status_badge_html(status, status_color)
             if self._status_badge.object != new_badge:
                 self._status_badge.object = new_badge
 
         if self._status_dots is not None:
-            new_dots = self._make_status_dots_html(per_source)
+            new_dots = make_status_dots_html(per_source)
             if self._status_dots.object != new_dots:
                 self._status_dots.object = new_dots
 
         if self._timing_html is not None:
-            new_timing = self._make_timing_html(timing_text)
+            new_timing = make_timing_html(timing_text)
             if self._timing_html.object != new_timing:
                 self._timing_html.object = new_timing
 
