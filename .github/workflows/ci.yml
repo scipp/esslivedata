@@ -48,6 +48,73 @@ jobs:
       tox-env: ${{ matrix.python.tox-env }}
     secrets: inherit
 
+  instrument-check:
+    # Verify that an instrument deployment can construct its backend services
+    # using only the dependencies declared in its extras. Catches imports that
+    # accidentally depend on packages installed only via ``[test]`` or another
+    # instrument's extras, which would break in production.
+    name: Backend deps (${{ matrix.instrument }})
+    needs: formatting
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { instrument: dummy, extras: '' }
+          - { instrument: tbl, extras: '' }
+          - { instrument: bifrost, extras: bifrost }
+          - { instrument: dream, extras: dream }
+          - { instrument: loki, extras: loki }
+          - { instrument: odin, extras: odin }
+          - { instrument: estia, extras: estia }
+          - { instrument: nmx, extras: nmx }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.github/workflows/python-version-ci'
+      - run: python -m pip install --upgrade pip
+      - name: Install package with instrument extras
+        run: |
+          if [ -n "${{ matrix.extras }}" ]; then
+            python -m pip install ".[${{ matrix.extras }}]"
+          else
+            python -m pip install .
+          fi
+      - name: Smoke-check backend services
+        run: |
+          for svc in monitor_data detector_data data_reduction timeseries; do
+            echo "::group::$svc"
+            python -m ess.livedata.services.$svc \
+              --instrument ${{ matrix.instrument }} --check
+            echo "::endgroup::"
+          done
+
+  dashboard-check:
+    # Verify the dashboard can be constructed for every instrument using only
+    # the [dashboard] extra (which has no instrument-specific dependencies).
+    # If this fails for some instrument, either the dashboard has acquired a
+    # hidden instrument dependency or [dashboard] is missing something.
+    name: Dashboard deps
+    needs: formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.github/workflows/python-version-ci'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install ".[dashboard]"
+      - name: Smoke-check dashboard for each instrument
+        run: |
+          for inst in dummy tbl bifrost dream loki odin estia nmx; do
+            echo "::group::$inst"
+            python -m ess.livedata.dashboard.reduction \
+              --instrument $inst --transport none \
+              --no-fetch-announcements --check
+            echo "::endgroup::"
+          done
+
   docs:
     needs: tests
     uses: ./.github/workflows/docs.yml
