@@ -1,30 +1,9 @@
 # FOM Phase 1 — Frontend Design
 
-Companion to `figure-of-merit-concept.md` (operational picture),
-`figure-of-merit-phase1-impl.md` (backend, shipped), and
-`figure-of-merit-phase1-dashboard.md` (which presented Options 1/2/3
-without recommendation).
+Companion to `figure-of-merit-concept.md` (operational picture) and
+`figure-of-merit-phase1-impl.md` (backend, shipped).
 
-This document supersedes the option-choice section of the dashboard
-options doc by reframing the decision as **structural**, with placement
-following.
-
-## Reframing: structure first, placement second
-
-The original Options 1/2/3 conflated two orthogonal questions:
-
-- **Structural**: where does FOM lifecycle state live in the dashboard?
-  Inside `JobOrchestrator`'s existing state, as a sub-structure within
-  it, or in a parallel orchestrator.
-- **Placement**: where does the configuration UI live? Affordance on the
-  workflow widget, dedicated panel, or separate app.
-
-Once the structural answer is fixed, placement falls out. The original
-Option 1 implied embedding state inside `JobOrchestrator`; Options 2 and
-3 are compatible with a parallel structure but did not name it as the
-load-bearing choice.
-
-## Why FOM state cannot live inside `JobOrchestrator`
+## Why FOM state lives outside `JobOrchestrator`
 
 `JobOrchestrator` is a 1-workflow-1-jobset state machine.
 `WorkflowState[workflow_id]` carries at most one `current` `JobSet`,
@@ -33,27 +12,26 @@ replaced atomically by `commit_workflow` (`job_orchestrator.py:354`).
 — workflow-level, not job-level (`:756`, `:831`). The dashboard exposes
 no per-job controls.
 
-If FOM inhabits this state machine:
+Three reasons FOM cannot share this state:
 
-1. **Coexistence is blocked.** The same workflow can run either as FOM
-   or as a regular configuration, not both. The instrument scientist
-   cannot run an interactive parameter sweep of workflow X while NICOS
-   is using X as a FOM. Today's plan calls this "duplicate computation"
-   in Option 2's downsides — inverted, it is the *correctness property*
-   that isolates FOM from data exploration.
+1. **Coexistence.** The same workflow must be runnable as a FOM and as
+   a regular configuration concurrently — the instrument scientist may
+   want to sweep parameters on workflow X while NICOS uses X as the
+   FOM.
 2. **The Stop button on the workflow card is the FOM stop.** Workflow
    cards expose Stop/Reset/Reconfigure prominently; these are daily
    actions for the scientist. Confirmation modals do not gate this
-   safely. The risk is wasted beam time mid-scan.
+   safely; the risk is wasted beam time mid-scan.
 3. **Keying mismatch.** FOM state's natural key is the slot
    (`fom-0`..`fom-N`), not the workflow. Two slots can legitimately use
    the same workflow with different parameters.
 
-## The design
+## Structure: `FOMOrchestrator` parallel to `JobOrchestrator`
 
-### Structure: `FOMOrchestrator` parallel to `JobOrchestrator`
-
-A sibling class taking the same dependencies, with slot-keyed state:
+A sibling class instantiated once in `DashboardServices` alongside
+`JobOrchestrator`, sharing dependencies (`command_service`,
+`workflow_registry`, `active_job_registry`, `job_service`,
+`notification_queue`).
 
 ```python
 class FOMOrchestrator:
@@ -65,9 +43,10 @@ class FOMOrchestrator:
         active_job_registry: ActiveJobRegistry,
         job_service: JobService,
         notification_queue: NotificationQueue | None = None,
+        n_slots: int = 2,
     ) -> None: ...
 
-    _slots: dict[FOMSlot, FOMSlotState]  # FOMSlot = "fom-0".."fom-N"
+    _slots: dict[FOMSlot, FOMSlotState]  # FOMSlot = "fom-0".."fom-{n-1}"
 
     def commit_slot(
         self,
@@ -77,258 +56,203 @@ class FOMOrchestrator:
         source_name: str,
         output_name: str,
         params: dict,
+        aux_source_names: dict,
     ) -> JobId: ...
 
     def release_slot(self, slot: FOMSlot) -> None: ...
     def reset_slot(self, slot: FOMSlot) -> None: ...
-    def reconfigure_slot(self, slot: FOMSlot, **kw) -> None: ...
+
+    def get_slot_state_version(self, slot: FOMSlot) -> int: ...
+    def process_acknowledgement(
+        self, message_id: str, response: str, error_message: str | None = None
+    ) -> None: ...
+    def on_job_status_updated(self, job_status: JobStatus) -> None: ...
 ```
 
-`FOMSlotState` carries the workflow + source + output + params + the
-`JobNumber` that `commit_slot` generated.
+`FOMSlotState` carries `(workflow_id, source_name, output_name, params,
+aux_source_names, job_number)`.
 
-Consequences:
+`n_slots` defaults to 2 (operational expectation: one or two parallel
+FOMs). The slot rows are fixed: `fom-0`..`fom-{n_slots-1}`.
 
-- The FOM job has its own `JobNumber`. `JobOrchestrator._workflows` is
-  unaware of it. The regular workflow card cannot reach it.
-- The regular workflow status list still *displays* the FOM-owned job
-  (via `JobService` heartbeats), rendered read-only with a "managed by
-  FOM panel" indicator.
-- `commit_slot` sends `WorkflowConfig` + `BindStreamAlias` as one batch
-  via `CommandService.send_batch` (one Kafka flush, atomic to the
-  dashboard).
+The FOM job has its own `JobNumber`. `JobOrchestrator._workflows` is
+unaware of it — the regular workflow card cannot reach it. This is the
+load-bearing isolation property.
 
-### Placement: panel inside the dashboard
+### Command composition
 
-A dedicated FOM panel, listing slots `fom-0`..`fom-N` with per-slot
-state and actions (Configure / Reset / Reconfigure / Release). This is
-the cheap default; with `FOMOrchestrator` as the boundary, moving to a
-separate app later is a packaging change (a thin Panel app importing
-`FOMOrchestrator` and the slot widgets). Do not pre-build that.
+The shipped backend has no-replace alias semantics and idempotent
+unbind (no auto-stop). The dashboard composes lifecycle explicitly,
+sending a single batched Kafka flush per operation.
 
-### Configuration UI: reuse the wizard, slot from launch context
+| Operation | Slot state before | Batch contents |
+|---|---|---|
+| `commit_slot` | unbound | `[WorkflowConfig(new), Bind]` |
+| `commit_slot` | bound | `[Stop(prev), Unbind, WorkflowConfig(new), Bind]` |
+| `release_slot` | bound | `[Stop(prev), Unbind]` |
+| `reset_slot` | bound | `[JobCommand(reset, prev)]` |
 
-The slot is determined by which button the operator clicked on the FOM
-panel, not by a wizard step. The wizard reduces to two steps, both
-reused from the existing plot-config modal machinery
-(`widgets/wizard.py` is generic; `widgets/plot_config_modal.py:279`
-defines `WorkflowAndOutputSelectionStep`):
+`commit_slot` always uses a fresh `JobNumber` so the new job is
+distinct from the one being stopped.
 
-- **Step 1**: `WorkflowAndOutputSelectionStep`, reused as-is. Add an
-  optional output predicate so non-scalar outputs can be filtered out.
-- **Step 2**: workflow parameter configuration — wrap the existing
-  parameter widget (driven by `WorkflowConfigurationAdapter`, 78 lines)
-  as a `WizardStep`. Final commit calls
-  `FOMOrchestrator.commit_slot(slot=<launch-context-slot>, ...)`.
+### Acknowledgement routing
 
-Each slot row in the FOM panel has a single Configure button. When the
-slot is unbound, it opens an empty wizard. When the slot is bound, it
-opens the wizard prefilled from the slot's current state (workflow,
-output, params). This subsumes both "configure" and "reconfigure" into
-one entry point and gives the operator a way to *inspect* the current
-binding by opening and closing the wizard without committing.
+`FOMOrchestrator` owns its own `PendingCommandTracker`. Each batch
+shares one `message_id` across all four messages with
+`expected_count = len(batch)`; the existing tracker counts ACKs and
+fires success/error notifications.
 
-The replace-and-stop confirmation guard for an already-bound slot
-fires as a modal before the final wizard commit (not as a wizard
-step), naming the alias and the workflow being replaced.
+`Orchestrator._process_response` (`orchestrator.py:113`) fans the
+`CommandAcknowledgement` out to *both* orchestrators; unknown
+`message_id`s are silently ignored by each tracker.
 
-The wizard skeleton, the workflow+output selector, and the parameter
-widget are all reused unchanged. New code is roughly: `FOMOrchestrator`,
-a thin shim wrapping the parameter widget as a `WizardStep`, and the
-FOM panel.
+### Job-status routing
 
-### Slot-row widget: targeted reuse, not class-level sharing
+`JobService.on_status_updated` becomes a fan-out (list of listeners or
+composed dispatch). `FOMOrchestrator.on_job_status_updated` registers
+alongside `JobOrchestrator.on_job_status_updated` so FOM reacts to its
+own jobs reporting `stopped`.
 
-Question raised: can the FOM panel's per-slot rows reuse
-`WorkflowStatusWidget` (`widgets/workflow_status_widget.py`, 1164 lines)
-directly, or via a common base + adapter?
+## Placement
 
-What is genuinely shared between a workflow card and a slot row:
+A dedicated FOM tab inserted between Workflows and System Status in
+`PlotGridTabs`. The tab hosts a panel with one `FOMSlotWidget` per
+slot, laid out side-by-side (optimised for `n_slots=2`).
 
-- **Header pattern**: title + status badge + per-source dots + timing +
-  action buttons.
-- **Status derivation** (`_get_status_and_timing`): filters
-  `JobService.job_statuses` for a `JobId` set and aggregates
-  state/timing/error. For a FOM slot the set is size one.
-- **Styling constants** (`WorkflowWidgetStyles`, status colors, dots
-  HTML).
-- **Refresh-by-version pattern**:
-  `FOMOrchestrator.get_slot_state_version(slot)` parallels
-  `JobOrchestrator.get_workflow_state_version(workflow_id)`.
+A separate Panel app remains a future option; the orchestrator
+boundary makes that move cheap. Not in scope here.
 
-What does not fit (the bulk of the widget — roughly 700 of the 1164
-lines is in the body):
+## Slot-row widget
 
-- **Staging area with config toolbars grouped by config equality**
-  assumes multi-source workflows where different sources can hold
-  different configs. A slot has one source, one config — the grouping
-  and unconfigured-source machinery are dead weight.
-- **Output chips** show all of a workflow's outputs. A slot has one
-  bound output.
-- **Commit row** ("Commit & Restart" / "Start") assumes the
-  staging-then-commit lifecycle. The FOM panel commits via the
-  wizard's terminal action.
-- **`ConfigurationModal` opened from the gear button** is the
-  existing single-step config UI; FOM uses the wizard.
-- **Live value readout** (numeric display subscribed to
-  `LIVEDATA_FOM`) is needed by the slot row and absent from
-  `WorkflowStatusWidget`.
+`FOMSlotWidget` is a fresh widget — not a subclass or adapter of
+`WorkflowStatusWidget`. The shared elements are small and concrete:
 
-Decomposing the widget into a common base and an adapter that
-abstracts "workflow over sources" vs "slot over single binding" would
-push conditionals throughout the body code; the readability cost likely
-exceeds the saved lines.
+- `WorkflowWidgetStyles` (status colours, dimensions).
+- Status-and-timing aggregation, dots renderer — lifted from
+  `workflow_status_widget.py` to module scope as free functions so
+  both widgets can use them without subclassing.
+- Refresh-by-version pattern: `FOMOrchestrator.get_slot_state_version`
+  parallels `JobOrchestrator.get_workflow_state_version`.
 
-**Recommendation for v1**: build a fresh `FOMSlotWidget` that imports
-and uses the small reusable pieces directly — `WorkflowWidgetStyles`,
-the status-color/dots HTML helpers, and the version-based refresh
-pattern. Lift the small reusable helpers (status-and-timing
-aggregation, dots renderer) to module-level free functions if they
-aren't already, so `FOMSlotWidget` can use them without subclassing.
-That is a ~50-line reshuffle, not a hierarchy change.
+A `FOMSlotWidget` shows the slot name, status badge, single-source
+status dot, timing, **live numeric readout**, and Configure / Reset /
+Release buttons.
 
-After both widgets exist and the genuine shared shape is visible, a
-base class or shared component can be extracted opportunistically.
-Doing the extraction up front, before `FOMSlotWidget` exists, risks
-shaping the new widget around what looks shareable rather than what
-the slot row actually needs.
+The live readout subscribes to
+`data_service[ResultKey(workflow_id, job_id, output_name)]` like a
+regular plot. The `LIVEDATA_FOM` mirror is for NICOS only — the
+dashboard never consumes it.
 
-## State and persistence — v1 minimum
+## Configuration UI: two-step wizard, slot from launch context
 
-v1 deliberately ships without dashboard-side persistence, without
-multi-session reconstruction, and without restart correctness. We do
-not yet have operational experience to justify those costs; revisit
-once practice tells us where the pain is.
+The slot is determined by which slot row's Configure button was
+clicked; it is not a wizard step.
 
-### What v1 does
+- **Step 1**: workflow + output selection. The existing
+  `WorkflowAndOutputSelectionStep` (`plot_config_modal.py:279`) is
+  generalised: its `initial_config` parameter accepts a small
+  `Protocol` exposing `workflow_id` and `output_name` (both
+  `PlotConfig` and a new `FOMSlotPrefill` satisfy it). The "Static
+  Overlay" namespace is suppressed via a constructor flag.
+- **Step 2**: workflow parameter configuration — the existing
+  parameter widget wrapped as a `WizardStep`. The source selector is
+  rendered as a single-choice `Select` (FOM binds one source per slot)
+  rather than the default `MultiChoice`. Final commit calls
+  `FOMOrchestrator.commit_slot(slot, ...)`.
 
-- `FOMOrchestrator._slots` is in-memory, single-session. Configured
-  slots survive within a session but not across dashboard restarts.
-- The originating session is the only session that sees the rich slot
-  state (workflow + params + output) on the FOM panel. Other sessions
-  see slots as "configured elsewhere — value live, full state on
-  originating session" (or simply blank rows; see open questions).
-- Restart-during-experiment is recovered by hand: the previous FOM job
-  is visible in the regular workflow status list as an ordinary
-  running job, and can be stopped from there if needed. Auto-stop in
-  the backend (recommended below) means a fresh `Bind` to the same
-  slot from a new session cleans up the previous job automatically.
+When the slot is unbound, Configure opens an empty wizard. When the
+slot is bound, the wizard prefills from the slot's current state
+(workflow, output, source, params); cancelling without committing
+gives the operator a way to inspect the binding. A
+replace-confirmation modal fires before the final commit on a bound
+slot, naming the alias and the workflow being replaced.
 
-### Backend change: auto-stop on alias rebind/unbind
+## State, persistence, multi-session
 
-Without it, reconfigure requires the dashboard to track the previous
-`(JobId, source)` so it can compose unbind + stop + config + bind. With
-it, reconfigure is `WorkflowConfig + Bind` and the backend handles the
-cascade.
+`FOMOrchestrator` is a process-singleton in `DashboardServices`,
+shared across all browser sessions in the same process. All sessions
+see the same slot state. Each session's `FOMSlotWidget` polls
+`get_slot_state_version` and rebuilds on change — the standard
+version-based refresh pattern.
 
-Proposal:
-
-- **`UnbindStreamAlias`**: holder service stops the bound job, then
-  removes the binding, then ACKs.
-- **`BindStreamAlias` for an alias already bound elsewhere**: current
-  holder stops its job and clears its binding silently; the new actor
-  binds and ACKs. Today's no-replace rule (concept-doc D1) becomes
-  replace-and-stop.
-
-This makes the FOM slot the owner of its job's lifecycle. The mechanism
-remains generic in code, but the lifecycle coupling becomes a property
-of the binding: holding an alias means owning the bound job. If a later
-use case wants the no-coupling variant, it can be added as a flag on
-the bind command — non-breaking, deferred until needed.
-
-Adopting auto-stop is the load-bearing simplification that lets v1
-ignore dashboard persistence entirely. Without it, in-memory-only slot
-state would orphan jobs on every dashboard restart.
-
-### Deferred to follow-ups (post-v1)
-
-These are real concerns, but premature to solve before we run v1:
-
-- **Heartbeat extension** (`bound_aliases: list[str]` on `JobStatus`).
-  Enables: multi-session slot visibility, badging FOM-owned jobs in the
-  regular status list, restart-aware slot reconstruction.
-- **Slot-state reconstruction from heartbeats** in `FOMOrchestrator`.
-  Builds on the heartbeat extension.
-- **Read-only badging of bound jobs in the regular workflow status
-  list**. Builds on the heartbeat extension. Note that with the
-  Case-C structural separation, the regular workflow card cannot reach
-  the FOM job in the first place — `stop_workflow` operates on
-  `state.current.job_ids()` which excludes the FOM `JobNumber`. So
-  v1's lack of badging is a clarity gap, not a safety gap. The Stop
-  button silently does nothing for the FOM job; not ideal, but not
-  dangerous.
+`_slots` is in-memory only. v1 ships without persistence and without
+restart recovery: dashboard restart with active FOM jobs orphans the
+backend jobs, cleared by restarting backend services. The footgun is
+acceptable for local testing and early operational use.
 
 ## What does not change
 
 - Backend stream-alias schema and plumbing (already shipped).
 - `JobOrchestrator`, `WorkflowConfigurationAdapter`, the wizard
-  framework, the workflow+output selector, or any plot widget. They
-  acquire one new consumer (`FOMOrchestrator`) without internal
-  changes.
-- `LIVEDATA_DATA` copy semantics. Verification by viewing the FOM
-  workflow's regular plot still works: subscribe via `PlotOrchestrator`
-  to the FOM job's `JobNumber` like any other plot.
+  framework, the parameter widget, or any plot widget. They acquire
+  one new consumer (`FOMOrchestrator`) without internal changes — the
+  exception is `JobService.on_status_updated` becoming a fan-out, and
+  `Orchestrator._process_response` fanning ACKs to both orchestrators.
+- `LIVEDATA_DATA` copy semantics: regular subscribers (including any
+  plot pointed at the FOM workflow when configured normally via
+  `JobOrchestrator`) are unaffected.
 
-## Implementation sketch (v1)
+## Implementation sketch
 
-1. **Backend**: switch alias semantics to auto-stop on rebind/unbind.
-   Update `figure-of-merit-phase1-impl.md` D1 and concept-doc D1.
-2. **Dashboard**: `FOMOrchestrator` with in-memory `_slots` (no
-   reconstruction, no persistence).
-3. **Dashboard**: `commit_slot` sends `WorkflowConfig + BindStreamAlias`
-   in one batch; `release_slot` sends `UnbindStreamAlias` (which
-   auto-stops the job in the backend); `reconfigure_slot` is just
-   `commit_slot` to a slot that may or may not be currently bound.
-4. **Dashboard**: wrap the existing parameter widget as a `WizardStep`.
-   Wire it together with `WorkflowAndOutputSelectionStep` into a
-   two-step FOM wizard, parameterized by the launching slot. Terminal
-   action is `FOMOrchestrator.commit_slot(slot, ...)`. When opened on
-   a bound slot, prefill from current state and gate the commit behind
-   a replace-confirmation modal.
-5. **Dashboard**: lift the small reusable helpers from
-   `workflow_status_widget.py` (status-color/dots HTML, status-and-
-   timing aggregation) to module scope so they can be used without
-   subclassing. No behavior change to `WorkflowStatusWidget`.
-6. **Dashboard**: `FOMSlotWidget` — a fresh widget for a single slot
-   row showing title (slot name), status, timing, live value readout,
-   and Configure / Reset / Release buttons. Reuses
-   `WorkflowWidgetStyles` and the helpers from step 5.
-7. **Dashboard**: FOM panel listing slots with one `FOMSlotWidget` per
-   slot. Configure button launches the wizard scoped to that slot.
-8. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
-   reset, reconfigure, multi-slot.
+1. **Dashboard**: lift status-and-timing aggregation and dots renderer
+   from `workflow_status_widget.py` to module scope. No behaviour
+   change to `WorkflowStatusWidget`.
+2. **Dashboard**: generalise `WorkflowAndOutputSelectionStep`'s prefill
+   parameter to a `Protocol`; add a flag to suppress the
+   "Static Overlay" namespace.
+3. **Dashboard**: add a single-source mode to `ConfigurationWidget` /
+   `ConfigurationAdapter` (`Select` instead of `MultiChoice`).
+4. **Dashboard**: `FOMOrchestrator` with in-memory `_slots`,
+   `PendingCommandTracker`, slot-state version, `commit_slot` /
+   `release_slot` / `reset_slot` composing the explicit batches above.
+5. **Dashboard**: convert `JobService.on_status_updated` to fan-out
+   and register `FOMOrchestrator.on_job_status_updated`.
+6. **Dashboard**: fan ACKs out to both orchestrators in
+   `Orchestrator._process_response`.
+7. **Dashboard**: wrap the parameter widget as a `WizardStep`. Wire
+   together with the generalised step 1 into a two-step FOM wizard
+   parameterised by the launching slot. Prefill on bound-slot opens;
+   replace-confirmation modal before final commit on bound slot.
+8. **Dashboard**: `FOMSlotWidget` — slot row showing title, status,
+   timing, live numeric readout, and Configure / Reset / Release
+   buttons.
+9. **Dashboard**: FOM panel hosting `n_slots` `FOMSlotWidget`s
+   side-by-side, mounted as a new top-level tab in `PlotGridTabs`
+   between Workflows and System Status.
+10. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
+    reset, multi-slot, and ACK handling.
 
-Step 1 is backend; the rest are dashboard. Steps 2 and 4 can proceed
-in parallel.
+Steps 1–3 are independent refactors and can land first. Steps 4–6 are
+orchestrator wiring. Steps 7–9 are UI.
+
+## Known v1 limitations (accepted)
+
+- Dashboard restart with active FOM jobs orphans them; cleared by
+  restarting backend services.
+- A failed `Bind` (e.g., transient stale-alias state) leaves the slot
+  inconsistent; operator releases and retries.
+- FOM jobs do not appear in the regular workflow status list (no
+  badging). With the structural separation, the regular workflow card
+  cannot reach the FOM job, so this is a clarity gap, not a safety
+  gap.
+- No cross-restart slot reconstruction; sessions in the same process
+  see consistent state, but a fresh process starts with empty slots.
 
 ## Open questions
 
-- **Slot count and naming**. Plan defaults to `fom-0`..`fom-7`. Fixed
-  list (simpler, matches the documented convention) vs arbitrary names
-  (preserves the alias mechanism's genericity in the UI). Recommend
-  fixed list rendered as the panel's slot rows; the alias schema stays
-  string-typed so other consumers can use any naming.
-- **Output eligibility predicate**. The wizard's Step 1 should filter
-  workflow outputs to those producing a scalar. Concrete predicate
-  TBD — likely "output type is `sc.DataArray` with scalar shape", but
-  may need workflow-author annotation if the runtime type isn't known
-  ahead of time.
 - **Embedded plot in FOM panel**. Show a small live plot of the bound
-  output? Probably yes long-term, no in the initial cut. The bound
-  output's `LIVEDATA_DATA` plot is available in the regular dashboard.
-- **What does the FOM panel show in a session that did not configure
-  the slot?** With in-memory v1 state, the originating session has
-  full info; other sessions and post-restart sessions have none. Two
-  options: (a) panel shows empty rows, operator reconfigures from
-  scratch when needed; (b) panel subscribes to `LIVEDATA_FOM` and
-  shows alias + last value + `(JobId, output)` from the mirror, but no
-  workflow/params metadata. (b) is cheap and useful for sanity-checking
-  "is fom-0 actually producing?" without solving full reconstruction.
+  output? Probably yes long-term, no in v1. The bound output's
+  `LIVEDATA_DATA` plot remains available in the regular dashboard
+  *only* when the workflow is also configured normally via
+  `JobOrchestrator` (FOM-only configuration leaves
+  `JobOrchestrator`/`PlotOrchestrator` unaware of the job).
 
 ## Out of scope
 
-- Phase 2 backend work (dedicated `_livedata_fom` topic).
-- Phase 3 backend work (scheduled reset/start).
+- Backend changes (auto-stop on rebind, dedicated `_livedata_fom`
+  topic, scheduled reset/start). Revisit once v1 operational evidence
+  exists.
 - NICOS-side interface — owned by the NICOS team.
 - Separate frontend app — defer until operational evidence justifies
   it; the structural design here makes that future move cheap.
+- Slot-state persistence and reconstruction from heartbeats.
