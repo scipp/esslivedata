@@ -159,10 +159,19 @@ class PlotterFactory(Protocol, Generic[P]):
 
 @dataclass
 class PlotterEntry:
-    """Entry combining a plotter specification with its factory."""
+    """Entry combining a plotter specification with its factory.
+
+    ``params_factory`` is an optional callable that returns a parameters model
+    specialized for the dims of the chosen workflow output. When set, the
+    plot config modal calls it with the output template's dim names instead of
+    using the static ``spec.params`` class. It lives here (alongside
+    ``factory``) rather than on ``spec`` so ``PlotterSpec`` stays a pure
+    pydantic-validated metadata record.
+    """
 
     spec: PlotterSpec
     factory: PlotterFactory[Any]  # Use Any since we store different param types
+    params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None = None
 
 
 class PlotterRegistry(UserDict[str, PlotterEntry]):
@@ -175,6 +184,8 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         factory: PlotterFactory[P],
         spec_requirements: SpecRequirements | None = None,
         category: PlotterCategory = PlotterCategory.DATA,
+        params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]]
+        | None = None,
     ) -> None:
         # Try to get the type hint of the 'params' argument if it exists
         # Use get_type_hints to resolve forward references, in case we used
@@ -189,7 +200,9 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             spec_requirements=spec_requirements or SpecRequirements(),
             category=category,
         )
-        self[name] = PlotterEntry(spec=spec, factory=factory)
+        self[name] = PlotterEntry(
+            spec=spec, factory=factory, params_factory=params_factory
+        )
 
     def get_compatible_plotters(
         self, data: dict[Any, sc.DataArray]
@@ -256,6 +269,12 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         """Get specification for a specific plotter."""
         return self[name].spec
 
+    def get_params_factory(
+        self, name: str
+    ) -> Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None:
+        """Get the dim-specialized params factory for a plotter, if any."""
+        return self[name].params_factory
+
     def create_plotter(self, name: str, params: pydantic.BaseModel) -> Plotter:
         """Create a plotter instance with the given parameters."""
         return self[name].factory(params)
@@ -301,6 +320,7 @@ def _register_all_plotters() -> None:
         CorrelationHistogram2dPlotter,
     )
     from .extractors import FullHistoryExtractor
+    from .flatten_plotter import FlattenPlotter, make_flatten_params
     from .plots import (
         BarsPlotter,
         ImagePlotter,
@@ -382,6 +402,25 @@ def _register_all_plotters() -> None:
             custom_validators=[_all_coords_evenly_spaced],
         ),
         factory=SlicerPlotter.from_params,
+    )
+
+    plotter_registry.register_plotter(
+        name='flatten',
+        title='Flatten to 2D',
+        description=(
+            'Flatten N-D data (N ≥ 3) to a 2D image with a static '
+            '(config-time) partition of input dims into X- and Y-axis '
+            'groups. Each group with two or more dims is flattened together; '
+            'hovering decomposes each axis back into per-dim labels with '
+            'their coord values.'
+        ),
+        data_requirements=DataRequirements(
+            min_dims=3,
+            max_dims=6,
+            multiple_datasets=False,
+        ),
+        factory=FlattenPlotter.from_params,
+        params_factory=make_flatten_params,
     )
 
     plotter_registry.register_plotter(
