@@ -37,6 +37,14 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
             return f'{instrument}_motion'
         case StreamKind.LIVEDATA_DATA:
             return f'{instrument}_livedata_data'
+        case StreamKind.LIVEDATA_FOM:
+            # Phase 1 of the FOM mechanism: mirror messages share the data
+            # topic; NICOS filters by the Kafka message key (the alias).
+            # Phase 2 will switch to a dedicated f'{instrument}_livedata_fom'
+            # topic. The kind name is FOM-specific by convention even though
+            # the underlying stream-alias mechanism is generic; rename if
+            # other use cases of stream aliasing emerge.
+            return f'{instrument}_livedata_data'
         case StreamKind.LIVEDATA_ROI:
             return f'{instrument}_livedata_roi'
         case StreamKind.LIVEDATA_COMMANDS:

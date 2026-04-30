@@ -24,6 +24,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import RunStart, RunStop, StreamId
+from .stream_alias import BindStreamAlias, UnbindStreamAlias
 from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -81,7 +82,10 @@ class JobCommand(pydantic.BaseModel):
     action: JobAction = pydantic.Field(description="Action to perform on the job.")
 
 
-Command = Annotated[WorkflowConfig | JobCommand, pydantic.Field(discriminator='kind')]
+Command = Annotated[
+    WorkflowConfig | JobCommand | BindStreamAlias | UnbindStreamAlias,
+    pydantic.Field(discriminator='kind'),
+]
 """
 Wire type for the ``livedata_commands`` topic.
 
@@ -203,6 +207,10 @@ class JobManager:
             *self._active_jobs.values(),
             *self._scheduled_jobs.values(),
         ]
+
+    def has_job(self, job_id: JobId) -> bool:
+        """Whether this manager currently hosts the given job (active or scheduled)."""
+        return job_id in self._active_jobs or job_id in self._scheduled_jobs
 
     @property
     def active_jobs(self) -> list[Job]:
