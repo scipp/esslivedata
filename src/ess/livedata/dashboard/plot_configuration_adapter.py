@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import pydantic
@@ -37,6 +38,9 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         initial_source_names: list[str] | None = None,
         instrument_config: Instrument | None = None,
         hidden_fields: frozenset[str] = frozenset(),
+        output_template_dims: tuple[str, ...] | None = None,
+        params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]]
+        | None = None,
     ):
         """
         Initialize plot configuration adapter.
@@ -57,6 +61,15 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             Optional instrument configuration for source metadata lookup.
         hidden_fields:
             Field names to hide in the parameter configuration UI.
+        output_template_dims:
+            Dim names of the workflow output template. Passed to
+            ``params_factory`` (when set) to build a parameters model
+            specialized for these dims.
+        params_factory:
+            Optional factory returning a parameters model specialized for the
+            output template dims. When both this and ``output_template_dims``
+            are provided, the factory's result is used in place of
+            ``plot_spec.params``.
         """
         super().__init__(
             config_state=config_state, initial_source_names=initial_source_names
@@ -66,6 +79,8 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self._success_callback = success_callback
         self._instrument_config = instrument_config
         self._hidden_fields = hidden_fields
+        self._output_template_dims = output_template_dims
+        self._params_factory = params_factory
 
     @property
     def hidden_fields(self) -> frozenset[str]:
@@ -83,7 +98,14 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         return self._plot_spec.description
 
     def model_class(self) -> type[pydantic.BaseModel] | None:
-        """Get the pydantic model class for plotter parameters."""
+        """Get the pydantic model class for plotter parameters.
+
+        When a ``params_factory`` and output template dims are both available,
+        returns a model specialized for those dims. Falls back to the static
+        ``plot_spec.params`` class otherwise.
+        """
+        if self._params_factory is not None and self._output_template_dims is not None:
+            return self._params_factory(self._output_template_dims)
         return self._plot_spec.params
 
     @property
