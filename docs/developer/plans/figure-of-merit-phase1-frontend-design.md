@@ -137,6 +137,62 @@ widget are all reused unchanged. New code is roughly: `FOMOrchestrator`,
 a thin shim wrapping the parameter widget as a `WizardStep`, and the
 FOM panel.
 
+### Slot-row widget: targeted reuse, not class-level sharing
+
+Question raised: can the FOM panel's per-slot rows reuse
+`WorkflowStatusWidget` (`widgets/workflow_status_widget.py`, 1164 lines)
+directly, or via a common base + adapter?
+
+What is genuinely shared between a workflow card and a slot row:
+
+- **Header pattern**: title + status badge + per-source dots + timing +
+  action buttons.
+- **Status derivation** (`_get_status_and_timing`): filters
+  `JobService.job_statuses` for a `JobId` set and aggregates
+  state/timing/error. For a FOM slot the set is size one.
+- **Styling constants** (`WorkflowWidgetStyles`, status colors, dots
+  HTML).
+- **Refresh-by-version pattern**:
+  `FOMOrchestrator.get_slot_state_version(slot)` parallels
+  `JobOrchestrator.get_workflow_state_version(workflow_id)`.
+
+What does not fit (the bulk of the widget — roughly 700 of the 1164
+lines is in the body):
+
+- **Staging area with config toolbars grouped by config equality**
+  assumes multi-source workflows where different sources can hold
+  different configs. A slot has one source, one config — the grouping
+  and unconfigured-source machinery are dead weight.
+- **Output chips** show all of a workflow's outputs. A slot has one
+  bound output.
+- **Commit row** ("Commit & Restart" / "Start") assumes the
+  staging-then-commit lifecycle. The FOM panel commits via the
+  wizard's terminal action.
+- **`ConfigurationModal` opened from the gear button** is the
+  existing single-step config UI; FOM uses the wizard.
+- **Live value readout** (numeric display subscribed to
+  `LIVEDATA_FOM`) is needed by the slot row and absent from
+  `WorkflowStatusWidget`.
+
+Decomposing the widget into a common base and an adapter that
+abstracts "workflow over sources" vs "slot over single binding" would
+push conditionals throughout the body code; the readability cost likely
+exceeds the saved lines.
+
+**Recommendation for v1**: build a fresh `FOMSlotWidget` that imports
+and uses the small reusable pieces directly — `WorkflowWidgetStyles`,
+the status-color/dots HTML helpers, and the version-based refresh
+pattern. Lift the small reusable helpers (status-and-timing
+aggregation, dots renderer) to module-level free functions if they
+aren't already, so `FOMSlotWidget` can use them without subclassing.
+That is a ~50-line reshuffle, not a hierarchy change.
+
+After both widgets exist and the genuine shared shape is visible, a
+base class or shared component can be extracted opportunistically.
+Doing the extraction up front, before `FOMSlotWidget` exists, risks
+shaping the new widget around what looks shareable rather than what
+the slot row actually needs.
+
 ## State and persistence — v1 minimum
 
 v1 deliberately ships without dashboard-side persistence, without
@@ -229,10 +285,17 @@ These are real concerns, but premature to solve before we run v1:
    action is `FOMOrchestrator.commit_slot(slot, ...)`. When opened on
    a bound slot, prefill from current state and gate the commit behind
    a replace-confirmation modal.
-5. **Dashboard**: FOM panel widget listing slots with per-slot status,
-   live value, and a Configure button. Button launches the wizard
-   scoped to that slot.
-6. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
+5. **Dashboard**: lift the small reusable helpers from
+   `workflow_status_widget.py` (status-color/dots HTML, status-and-
+   timing aggregation) to module scope so they can be used without
+   subclassing. No behavior change to `WorkflowStatusWidget`.
+6. **Dashboard**: `FOMSlotWidget` — a fresh widget for a single slot
+   row showing title (slot name), status, timing, live value readout,
+   and Configure / Reset / Release buttons. Reuses
+   `WorkflowWidgetStyles` and the helpers from step 5.
+7. **Dashboard**: FOM panel listing slots with one `FOMSlotWidget` per
+   slot. Configure button launches the wizard scoped to that slot.
+8. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
    reset, reconfigure, multi-slot.
 
 Step 1 is backend; the rest are dashboard. Steps 2 and 4 can proceed
