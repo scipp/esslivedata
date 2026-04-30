@@ -54,7 +54,7 @@ jobs:
     # accidentally depend on packages installed only via ``[test]`` or another
     # instrument's extras, which would break in production.
     name: Backend deps (${{ matrix.instrument }})
-    needs: formatting
+    needs: tests
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -82,7 +82,7 @@ jobs:
     # If this fails for some instrument, either the dashboard has acquired a
     # hidden instrument dependency or [dashboard] is missing something.
     name: Dashboard deps
-    needs: formatting
+    needs: tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
