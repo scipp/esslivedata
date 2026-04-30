@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any, Generic, NoReturn, TypeVar
@@ -260,6 +261,14 @@ class DataServiceRunner:
             ' SimpleMessageBatcher (pre-existing default); "rate-aware" uses'
             ' RateAwareMessageBatcher (per-stream pulse-slot completion).',
         )
+        self._parser.add_argument(
+            '--check',
+            action='store_true',
+            default=False,
+            help='Build the service for the selected instrument and exit '
+            'without connecting to Kafka. Verifies that all dependencies '
+            'required by the instrument are importable.',
+        )
 
     @property
     def parser(self) -> argparse.ArgumentParser:
@@ -300,7 +309,11 @@ class DataServiceRunner:
         sink_type = args.pop('sink_type')
         job_threads = args.pop('job_threads')
         batcher_name = args.pop('batcher')
+        check = args.pop('check')
         builder = self._make_builder(**args)
+        if check:
+            logger.info("check_ok", instrument=builder.instrument)
+            sys.exit(0)
         builder.job_threads = job_threads
         if job_threads > 1:
             logger.info("job_threads", threads=job_threads)

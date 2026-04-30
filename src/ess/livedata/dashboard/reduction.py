@@ -201,6 +201,15 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Cookie secret for basic authentication sessions. '
         'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
     )
+    parser.add_argument(
+        '--check',
+        action='store_true',
+        default=False,
+        help='Construct the dashboard for the selected instrument and exit '
+        'without starting the Bokeh server. Combine with --transport none to '
+        'verify all required dependencies are importable without contacting '
+        'Kafka.',
+    )
     return parser
 
 
@@ -220,7 +229,10 @@ def main() -> None:
         disable_stdout=no_stdout_log,
     )
 
+    check = args.pop('check')
     app = ReductionApp(log_level=log_level, **args)
+    if check:
+        return
     app.start(blocking=True)
 
 
