@@ -1,0 +1,1309 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Livedata Dashboard Architecture &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=7f76b32a3354e82990f2" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=7f76b32a3354e82990f2" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=7f76b32a3354e82990f2"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=7f76b32a3354e82990f2" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=7f76b32a3354e82990f2" />
+
+    <script src="../../_static/documentation_options.js?v=e982da87"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
+
+
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = `pre.mermaid {
+    /* Same as .mermaid-container > pre */
+    display: block;
+    width: 100%;
+}
+
+pre.mermaid > svg {
+    /* Same as .mermaid-container > pre > svg */
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}`;
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = `.mermaid-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+}
+
+.mermaid-container > pre {
+    display: block;
+    width: 100%;
+}
+
+.mermaid-container > pre > svg {
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}
+
+.mermaid-fullscreen-btn {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    color: #333;
+}
+
+.mermaid-fullscreen-btn:hover {
+    opacity: 100% !important;
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-btn.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-btn.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal {
+    display: none;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 95vw;
+    height: 100vh;
+    background: rgba(255, 255, 255, 0.98);
+    z-index: 9999;
+    padding: 20px;
+    overflow: auto;
+}
+
+.mermaid-fullscreen-modal.dark-theme {
+    background: rgba(0, 0, 0, 0.98);
+}
+
+.mermaid-fullscreen-modal.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen {
+    position: relative;
+    width: 95vw;
+    height: 90vh;
+    max-width: 95vw;
+    max-height: 90vh;
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen.dark-theme {
+    background: #1a1a1a;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+}
+
+.mermaid-container-fullscreen pre.mermaid {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen .mermaid svg {
+    height: 100% !important;
+    width: 100% !important;
+    cursor: grab;
+}
+
+.mermaid-fullscreen-close {
+    position: fixed !important;
+    top: 20px !important;
+    right: 20px !important;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s;
+    font-size: 24px;
+    line-height: 1;
+    color: #333;
+}
+
+.mermaid-fullscreen-close:hover {
+    background: white;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-close.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-close.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal .mermaid-fullscreen-btn {
+    display: none !important;
+}`;
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        all_mermaids.forEach((el) => {
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+        await mermaid.run();
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    const mermaids_processed = document.querySelectorAll(".mermaid[data-processed='true']");
+
+    if ("False" === "True") {
+        const mermaids_to_add_zoom = -1 === -1 ? all_mermaids.length : -1;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("");
+            if(all_mermaids.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else if(svgs.size() !== mermaids_to_add_zoom) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else {
+                svgs.each(function() {
+                    var svg = d3.select(this);
+                    svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+                    var inner = svg.select("g");
+                    var zoom = d3.zoom().on("zoom", function(event) {
+                        inner.attr("transform", event.transform);
+                    });
+                    svg.call(zoom);
+                });
+            }
+        }
+    } else if(all_mermaids.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if ("True" !== "True") return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    const closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            closeModal();
+        }
+    });
+
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = '⛶';
+        fullscreenBtn.style.opacity = '50%';
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scroll, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.sdisplay = 'block';
+
+                if ("False" === "True") {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+const load = async () => {
+    initStyles();
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...JSON.parse(
+                    `{"startOnLoad": false}`
+                ),
+                ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...JSON.parse(
+        `{"startOnLoad": false}`
+    ),
+    ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+    }
+);
+
+window.addEventListener("load", load);
+window.runMermaid = runMermaid;</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/design/dashboard-architecture';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Orchestrator Flow: Plot Creation Lifecycle" href="orchestrator-flow.html" />
+    <link rel="prev" title="Message Flow and Transformation" href="message-flow-and-transformation.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.5.0" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#system-context">System Context</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layered-architecture">Layered Architecture</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#service-composition">Service Composition</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow">Data Flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#workflow-lifecycle">Workflow Lifecycle</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#plot-orchestration">Plot Orchestration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#threading-model">Threading Model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#session-management">Session Management</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration-adapters">Configuration Adapters</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#transport-abstraction">Transport Abstraction</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-widget-components">Key Widget Components</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/design/dashboard-architecture.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Livedata Dashboard Architecture</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="livedata-dashboard-architecture">
+<h1>Livedata Dashboard Architecture<a class="headerlink" href="#livedata-dashboard-architecture" title="Link to this heading">#</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>The Livedata dashboard is a real-time data visualization system built on Panel/HoloViews. It consumes processed detector data from Kafka, displays it as interactive plots, and publishes user commands back to backend services. The architecture supports multiple concurrent browser sessions with shared state and per-session rendering.</p>
+<p>Data updates arrive at ~1 Hz. User controls (workflow start/stop, plot configuration) result in commands published to Kafka for backend consumption.</p>
+</section>
+<section id="system-context">
+<h2>System Context<a class="headerlink" href="#system-context" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        flowchart TD
+    ECDCTopic([&quot;ECDC Topics&quot;])
+    DataTopic([&quot;Livedata Data Topic&quot;])
+    StatusTopic([&quot;Livedata Status Topic&quot;])
+    ResponsesTopic([&quot;Livedata Responses Topic&quot;])
+    CommandsTopic([&quot;Livedata Commands Topic&quot;])
+
+    subgraph BackendServices[&quot;Livedata Backend Services&quot;]
+        MonitorData[&quot;monitor_data&quot;]
+        DetectorData[&quot;detector_data&quot;]
+        DataReduction[&quot;data_reduction&quot;]
+    end
+
+    DashboardApp[&quot;Dashboard&quot;]
+
+    ECDCTopic --&gt; BackendServices
+    MonitorData -- publishes --&gt; DataTopic
+    DetectorData -- publishes --&gt; DataTopic
+    DataReduction -- publishes --&gt; DataTopic
+    DataReduction -- publishes --&gt; StatusTopic
+    DataReduction -- publishes --&gt; ResponsesTopic
+
+    DataTopic --&gt; DashboardApp
+    StatusTopic --&gt; DashboardApp
+    ResponsesTopic --&gt; DashboardApp
+    DashboardApp -- publishes --&gt; CommandsTopic
+    CommandsTopic --&gt; DataReduction
+
+    classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
+    classDef backend fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+    classDef dashboard fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    class DataTopic,StatusTopic,ResponsesTopic,CommandsTopic,ECDCTopic kafka;
+    class MonitorData,DetectorData,DataReduction backend;
+    class DashboardApp dashboard;
+    </pre><p>The dashboard publishes job commands (start/stop workflows) to the Commands topic and receives acknowledgements via the Responses topic. Job and service status updates arrive via the Status topic.</p>
+</section>
+<section id="layered-architecture">
+<h2>Layered Architecture<a class="headerlink" href="#layered-architecture" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        graph TD
+    subgraph &quot;Infrastructure Layer&quot;
+        T[&quot;Transport&lt;br&gt;(Kafka / Null)&quot;]
+        MS[&quot;MessageSource&quot;]
+        CS[&quot;CommandService&quot;]
+    end
+
+    subgraph &quot;Application Layer&quot;
+        O[&quot;Orchestrator&quot;]
+        DS[&quot;DataService&quot;]
+        JO[&quot;JobOrchestrator&quot;]
+        AJR[&quot;ActiveJobRegistry&quot;]
+        PO[&quot;PlotOrchestrator&quot;]
+        PC[&quot;PlottingController&quot;]
+        SM[&quot;StreamManager&quot;]
+        WC[&quot;WorkflowController&quot;]
+    end
+
+    subgraph &quot;Presentation Layer&quot;
+        PGT[&quot;PlotGridTabs&quot;]
+        WSW[&quot;WorkflowStatusWidget&quot;]
+        CW[&quot;ConfigurationWidget&quot;]
+        Plots[&quot;Plots&lt;br&gt;(HoloViews)&quot;]
+    end
+
+    T --&gt; MS
+    MS --&gt; O
+    O --&gt; DS
+    O --&gt; AJR
+    CS --&gt; T
+    JO --&gt; CS
+    WC --&gt; JO
+    PO --&gt; PC
+    PC --&gt; SM
+    SM --&gt; DS
+    PO --&gt; JO
+    PGT --&gt; PO
+    WSW --&gt; JO
+    CW --&gt; WC
+    DS -.-&gt;|notifies| Plots
+
+    classDef infra fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+    classDef app fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    classDef presentation fill:#e8f5e9,stroke:#388e3c,color:#1b5e20;
+    class T,MS,CS infra;
+    class O,DS,JO,AJR,PO,PC,SM,WC app;
+    class PGT,WSW,CW,Plots presentation;
+    </pre><ul class="simple">
+<li><p><strong>Infrastructure</strong>: Transport abstraction (Kafka or Null for testing), message sources and sinks</p></li>
+<li><p><strong>Application</strong>: Data management, workflow lifecycle, plot orchestration</p></li>
+<li><p><strong>Presentation</strong>: Panel widgets and HoloViews plots</p></li>
+</ul>
+</section>
+<section id="service-composition">
+<h2>Service Composition<a class="headerlink" href="#service-composition" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">DashboardServices</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/dashboard_services.py</span></code>) wires all components together. It is the central composition root, created once per dashboard process, and shared across all browser sessions.</p>
+<pre  class="mermaid">
+        flowchart TD
+    DS[DashboardServices]
+    DS --&gt; Transport
+    DS --&gt; Orchestrator
+    DS --&gt; DataService
+    DS --&gt; JobOrchestrator
+    DS --&gt; PlotOrchestrator
+    DS --&gt; WorkflowController
+    DS --&gt; CommandService
+    DS --&gt; ActiveJobRegistry
+    DS --&gt; SessionRegistry
+    DS --&gt; PlotDataService
+    DS --&gt; NotificationQueue
+    </pre><p><code class="docutils literal notranslate"><span class="pre">DashboardBase</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/dashboard.py</span></code>) is the entry point. It creates <code class="docutils literal notranslate"><span class="pre">DashboardServices</span></code>, starts the Panel server, and creates per-session layouts via <code class="docutils literal notranslate"><span class="pre">create_layout()</span></code>.</p>
+</section>
+<section id="data-flow">
+<h2>Data Flow<a class="headerlink" href="#data-flow" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant K as Kafka
+    participant O as Orchestrator
+    participant AJR as ActiveJobRegistry
+    participant DS as DataService
+    participant Sub as Plot Subscribers
+    participant UI as HoloViews Plots
+
+    K-&gt;&gt;O: Raw messages (polled in background thread)
+    O-&gt;&gt;AJR: ingestion_guard()
+    Note over O,AJR: Serializes against job stop/cleanup
+    O-&gt;&gt;O: Filter by active job number
+    O-&gt;&gt;DS: transaction { store values }
+    DS-&gt;&gt;Sub: Notify subscribers (batched)
+    Sub-&gt;&gt;UI: Update plot data (via Pipe)
+    </pre><p>The <code class="docutils literal notranslate"><span class="pre">Orchestrator</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/orchestrator.py</span></code>) is the message pump. It consumes from the <code class="docutils literal notranslate"><span class="pre">MessageSource</span></code>, filters messages by active job numbers, and stores data in <code class="docutils literal notranslate"><span class="pre">DataService</span></code>. Status messages and command acknowledgements are routed to <code class="docutils literal notranslate"><span class="pre">JobOrchestrator</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">DataService</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/data_service.py</span></code>) is a dict-like store keyed by <code class="docutils literal notranslate"><span class="pre">ResultKey</span></code>. Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.</p>
+</section>
+<section id="workflow-lifecycle">
+<h2>Workflow Lifecycle<a class="headerlink" href="#workflow-lifecycle" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">JobOrchestrator</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/job_orchestrator.py</span></code>) manages the full lifecycle of workflow jobs using a two-phase commit pattern:</p>
+<pre  class="mermaid">
+        stateDiagram-v2
+    [*] --&gt; Staging: stage_config()
+    Staging --&gt; Staging: stage_config() (more sources)
+    Staging --&gt; Committed: commit_workflow()
+    Committed --&gt; [*]: stop_workflow()
+    Committed --&gt; Committed: Receives acknowledgement
+
+    note right of Staging
+        Per-source configs staged
+        in memory. No Kafka commands
+        sent yet.
+    end note
+
+    note right of Committed
+        Commands sent to backend.
+        PendingCommandTracker awaits
+        acknowledgements.
+    end note
+    </pre><p>Key responsibilities:</p>
+<ul class="simple">
+<li><p><strong>Staging</strong>: Collects per-source configurations before committing. Subscribers are notified of staging changes for UI preview.</p></li>
+<li><p><strong>Commit</strong>: Sends <code class="docutils literal notranslate"><span class="pre">JobCommand</span></code> messages via <code class="docutils literal notranslate"><span class="pre">CommandService</span></code>, assigns job numbers, activates jobs in <code class="docutils literal notranslate"><span class="pre">ActiveJobRegistry</span></code>.</p></li>
+<li><p><strong>Stop</strong>: Sends stop commands, deactivates jobs (which cleans up <code class="docutils literal notranslate"><span class="pre">DataService</span></code> buffers via <code class="docutils literal notranslate"><span class="pre">ActiveJobRegistry</span></code>).</p></li>
+<li><p><strong>Acknowledgement processing</strong>: Tracks pending commands and processes backend responses.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">WorkflowController</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/workflow_controller.py</span></code>) is the interface between widgets and <code class="docutils literal notranslate"><span class="pre">JobOrchestrator</span></code>. It translates Pydantic model parameters into orchestrator calls and creates <code class="docutils literal notranslate"><span class="pre">WorkflowConfigurationAdapter</span></code> instances for the configuration UI.</p>
+</section>
+<section id="plot-orchestration">
+<h2>Plot Orchestration<a class="headerlink" href="#plot-orchestration" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">PlotOrchestrator</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/plot_orchestrator.py</span></code>) manages the plot grid lifecycle:</p>
+<ul class="simple">
+<li><p>Creates and removes plot grids (tab-level containers)</p></li>
+<li><p>Manages plot cells within grids (add, remove, configure)</p></li>
+<li><p>Subscribes to <code class="docutils literal notranslate"><span class="pre">JobOrchestrator</span></code> workflow events to create plots when jobs start</p></li>
+<li><p>Persists grid configurations via <code class="docutils literal notranslate"><span class="pre">ConfigStore</span></code></p></li>
+<li><p>Loads grid templates for instrument-specific default layouts</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">PlottingController</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/plotting_controller.py</span></code>) handles the mechanics of plot creation: finding compatible plotters for a given data shape, setting up data pipelines via <code class="docutils literal notranslate"><span class="pre">StreamManager</span></code>, and creating plotter instances.</p>
+<p><code class="docutils literal notranslate"><span class="pre">PlotDataService</span></code> holds per-plot shared state (Presenters with dirty flags) that is read by per-session <code class="docutils literal notranslate"><span class="pre">SessionPlotManager</span></code> instances during periodic updates.</p>
+</section>
+<section id="threading-model">
+<h2>Threading Model<a class="headerlink" href="#threading-model" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        flowchart LR
+    subgraph &quot;Background Thread&quot;
+        UL[&quot;Update Loop&lt;br&gt;(DashboardServices)&quot;]
+        UL --&gt; O[&quot;Orchestrator.update()&quot;]
+        UL --&gt; SC[&quot;SessionRegistry.cleanup_stale_sessions()&quot;]
+    end
+
+    subgraph &quot;Per-Session Periodic Callback&lt;br&gt;(Tornado IOLoop)&quot;
+        SU[&quot;SessionUpdater.periodic_update()&quot;]
+        SU --&gt; HB[&quot;Browser heartbeat check&quot;]
+        SU --&gt; NQ[&quot;Poll NotificationQueue&quot;]
+        SU --&gt; CH[&quot;Custom handlers&lt;br&gt;(plot pipe updates,&lt;br&gt;status widget refresh)&quot;]
+    end
+
+    O -.-&gt;|writes| DS[&quot;DataService&lt;br&gt;(shared state)&quot;]
+    CH -.-&gt;|reads| DS
+    </pre><p>Two threading contexts exist:</p>
+<ol class="arabic simple">
+<li><p><strong>Background thread</strong> (<code class="docutils literal notranslate"><span class="pre">orchestrator-update</span></code>): Runs <code class="docutils literal notranslate"><span class="pre">Orchestrator.update()</span></code> in a loop at ~5 Hz. Consumes Kafka messages and writes to <code class="docutils literal notranslate"><span class="pre">DataService</span></code>. Uses <code class="docutils literal notranslate"><span class="pre">ActiveJobRegistry.ingestion_guard()</span></code> to serialize against UI-thread job cleanup.</p></li>
+<li><p><strong>Per-session Tornado callbacks</strong>: Each browser session has a <code class="docutils literal notranslate"><span class="pre">SessionUpdater</span></code> that runs in the Tornado IOLoop at ~1 Hz. It batches all UI mutations inside <code class="docutils literal notranslate"><span class="pre">pn.io.hold()</span></code> + <code class="docutils literal notranslate"><span class="pre">doc.models.freeze()</span></code> to minimize Bokeh model recomputation.</p></li>
+</ol>
+</section>
+<section id="session-management">
+<h2>Session Management<a class="headerlink" href="#session-management" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        flowchart TD
+    Browser1[&quot;Browser Session A&quot;] --&gt; SU1[&quot;SessionUpdater A&quot;]
+    Browser2[&quot;Browser Session B&quot;] --&gt; SU2[&quot;SessionUpdater B&quot;]
+    SU1 --&gt; SR[&quot;SessionRegistry&quot;]
+    SU2 --&gt; SR
+    SR --&gt; Cleanup[&quot;Stale session cleanup&lt;br&gt;(heartbeat timeout)&quot;]
+    </pre><p>Each browser session creates a <code class="docutils literal notranslate"><span class="pre">SessionUpdater</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/session_updater.py</span></code>) which:</p>
+<ul class="simple">
+<li><p>Registers with <code class="docutils literal notranslate"><span class="pre">SessionRegistry</span></code> for lifecycle tracking</p></li>
+<li><p>Embeds an invisible <code class="docutils literal notranslate"><span class="pre">HeartbeatWidget</span></code> that sends browser-side heartbeats via JavaScript</p></li>
+<li><p>Runs custom handlers (plot updates, status widgets) in the correct session/document context</p></li>
+<li><p>Batches all UI operations using <code class="docutils literal notranslate"><span class="pre">pn.io.hold()</span></code> + <code class="docutils literal notranslate"><span class="pre">doc.models.freeze()</span></code></p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">SessionRegistry</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/session_registry.py</span></code>) tracks active sessions with heartbeat-based stale detection. Sessions are cleaned up when <code class="docutils literal notranslate"><span class="pre">pn.state.on_session_destroyed()</span></code> fires, or after a heartbeat timeout (defense-in-depth for browser crashes).</p>
+</section>
+<section id="configuration-adapters">
+<h2>Configuration Adapters<a class="headerlink" href="#configuration-adapters" title="Link to this heading">#</a></h2>
+<p>Configuration widgets use the <code class="docutils literal notranslate"><span class="pre">ConfigurationAdapter</span></code> pattern (see <code class="docutils literal notranslate"><span class="pre">dashboard/configuration_adapter.py</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ConfigurationAdapter</span></code> is an abstract base providing: title, description, model class for parameters, available source names, aux source definitions, and a start action</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowConfigurationAdapter</span></code> implements this for workflow start dialogs</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PlotConfigurationAdapter</span></code> implements this for plot configuration modals</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ConfigurationState</span></code> persists parameter choices across sessions via <code class="docutils literal notranslate"><span class="pre">ConfigStore</span></code></p></li>
+</ul>
+<p>The generic <code class="docutils literal notranslate"><span class="pre">ConfigurationWidget</span></code> (see <code class="docutils literal notranslate"><span class="pre">widgets/configuration_widget.py</span></code>) renders any adapter into a Panel form with source selection, parameter inputs, and a start button.</p>
+</section>
+<section id="transport-abstraction">
+<h2>Transport Abstraction<a class="headerlink" href="#transport-abstraction" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">Transport</span></code> protocol (see <code class="docutils literal notranslate"><span class="pre">dashboard/transport.py</span></code>) abstracts message infrastructure:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DashboardKafkaTransport</span></code> (see <code class="docutils literal notranslate"><span class="pre">dashboard/kafka_transport.py</span></code>): Connects to Kafka, provides <code class="docutils literal notranslate"><span class="pre">MessageSource</span></code> (consumer) and <code class="docutils literal notranslate"><span class="pre">MessageSink</span></code> instances (for commands and ROI updates)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NullTransport</span></code>: No-op implementation for testing</p></li>
+</ul>
+<p>Both return <code class="docutils literal notranslate"><span class="pre">DashboardResources</span></code> containing a <code class="docutils literal notranslate"><span class="pre">MessageSource</span></code>, a command <code class="docutils literal notranslate"><span class="pre">MessageSink</span></code>, and an ROI <code class="docutils literal notranslate"><span class="pre">MessageSink</span></code>.</p>
+</section>
+<section id="key-widget-components">
+<h2>Key Widget Components<a class="headerlink" href="#key-widget-components" title="Link to this heading">#</a></h2>
+<p>Widgets live in <code class="docutils literal notranslate"><span class="pre">dashboard/widgets/</span></code> and follow a pattern of receiving shared services in their constructor and registering periodic refresh handlers with <code class="docutils literal notranslate"><span class="pre">SessionUpdater</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">PlotGridTabs</span></code>: Tab container managing multiple plot grids, workflow configuration, and system status</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowStatusListWidget</span></code>: Displays active workflow jobs and their status</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SystemStatusWidget</span></code>: Shows session count, backend worker status, heartbeat info</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ConfigurationWidget</span></code>: Generic form builder driven by <code class="docutils literal notranslate"><span class="pre">ConfigurationAdapter</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PlotConfigModal</span></code>: Modal dialog for configuring individual plot cells</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="message-flow-and-transformation.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Message Flow and Transformation</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="orchestrator-flow.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Orchestrator Flow: Plot Creation Lifecycle</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=7f76b32a3354e82990f2"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=7f76b32a3354e82990f2"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.5.0 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.17.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
