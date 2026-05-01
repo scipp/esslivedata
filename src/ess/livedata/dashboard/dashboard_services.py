@@ -85,6 +85,7 @@ class DashboardServices:
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
         self.plotter_config_store = config_manager.get_store('plotter_configs')
+        self.fom_slot_config_store = config_manager.get_store('fom_slot_configs')
 
         # Shared state stores for multi-session support
         self.plot_data_service = PlotDataService()
@@ -244,6 +245,7 @@ class DashboardServices:
             active_job_registry=active_job_registry,
             job_service=self.job_service,
             notification_queue=self.notification_queue,
+            config_store=self.fom_slot_config_store,
         )
         self.job_service.add_status_listener(
             self.fom_orchestrator.on_job_status_updated

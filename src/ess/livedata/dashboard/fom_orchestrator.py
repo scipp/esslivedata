@@ -17,8 +17,9 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import NewType
+from typing import Any, NewType
 
+import pydantic
 import structlog
 
 import ess.livedata.config.keys as keys
@@ -36,6 +37,7 @@ from ess.livedata.core.stream_alias import BindStreamAlias, UnbindStreamAlias
 
 from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
+from .config_store import ConfigStore
 from .job_service import JobService
 from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
 
@@ -43,6 +45,10 @@ logger = structlog.get_logger(__name__)
 
 FOMSlot = NewType('FOMSlot', str)
 FOMAction = str  # "commit" | "release" | "reset"
+
+# On-disk schema version for persisted slot state.
+# Bump and add migration when changing the persisted layout.
+_SLOT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +160,7 @@ class FOMOrchestrator:
         active_job_registry: ActiveJobRegistry,
         job_service: JobService,
         notification_queue: NotificationQueue | None = None,
+        config_store: ConfigStore | None = None,
         n_slots: int = 2,
     ) -> None:
         if n_slots < 1:
@@ -163,6 +170,7 @@ class FOMOrchestrator:
         self._active_job_registry = active_job_registry
         self._job_service = job_service
         self._notification_queue = notification_queue
+        self._config_store = config_store
         self._slot_names: list[FOMSlot] = [FOMSlot(f"fom-{i}") for i in range(n_slots)]
         self._slots: dict[FOMSlot, FOMSlotState | None] = dict.fromkeys(
             self._slot_names
@@ -170,6 +178,7 @@ class FOMOrchestrator:
         self._versions: dict[FOMSlot, int] = dict.fromkeys(self._slot_names, 0)
         self._pending = _FOMPendingTracker()
         self._slot_listeners: list[Callable[[FOMSlot], None]] = []
+        self._load_from_store()
 
     # ----- introspection ------------------------------------------------------
 
@@ -468,11 +477,114 @@ class FOMOrchestrator:
 
     def _bump_version(self, slot: FOMSlot) -> None:
         self._versions[slot] = self._versions.get(slot, 0) + 1
+        self._persist_slot(slot)
         for listener in self._slot_listeners:
             try:
                 listener(slot)
             except Exception:
                 logger.exception("fom_slot_listener_error", slot=slot)
+
+    def _persist_slot(self, slot: FOMSlot) -> None:
+        """Write the slot's state to ``config_store`` (or remove if empty).
+
+        Persisting ``job_number`` is intentional even though it is currently
+        ignored on restore: future work may use it to reconcile with the
+        backend. Treating the persisted state as config-only keeps restart
+        behaviour predictable (every slot loads as STOPPED).
+        """
+        if self._config_store is None:
+            return
+        state = self._slots[slot]
+        if state is None:
+            try:
+                del self._config_store[slot]
+            except KeyError:
+                pass
+            return
+        self._config_store[slot] = {
+            'version': _SLOT_SCHEMA_VERSION,
+            'workflow_id': str(state.workflow_id),
+            'source_name': state.source_name,
+            'output_name': state.output_name,
+            'params': dict(state.params),
+            'aux_source_names': dict(state.aux_source_names),
+            'job_number': (
+                str(state.job_number) if state.job_number is not None else None
+            ),
+        }
+
+    def _load_from_store(self) -> None:
+        """Restore slot configurations from ``config_store``.
+
+        Stale entries (unknown workflow, source, or output; invalid params)
+        are dropped with a warning. ``job_number`` is always discarded —
+        slots load as STOPPED so the user explicitly re-launches.
+        """
+        if self._config_store is None:
+            return
+        for slot in self._slot_names:
+            data = self._config_store.get(slot)
+            if data is None:
+                continue
+            state = self._deserialize_slot(slot, data)
+            if state is None:
+                continue
+            self._slots[slot] = state
+
+    def _deserialize_slot(
+        self, slot: FOMSlot, data: dict[str, Any]
+    ) -> FOMSlotState | None:
+        version = data.get('version')
+        if version != _SLOT_SCHEMA_VERSION:
+            logger.warning(
+                "fom_slot_load_unknown_schema_version", slot=slot, version=version
+            )
+            return None
+        try:
+            workflow_id = WorkflowId.from_string(data['workflow_id'])
+        except (KeyError, ValueError):
+            logger.warning(
+                "fom_slot_load_bad_workflow_id",
+                slot=slot,
+                raw=data.get('workflow_id'),
+            )
+            return None
+        spec = self._workflow_registry.get(workflow_id)
+        if spec is None:
+            logger.warning(
+                "fom_slot_load_unknown_workflow",
+                slot=slot,
+                workflow_id=str(workflow_id),
+            )
+            return None
+        source_name = data.get('source_name')
+        if source_name not in spec.source_names:
+            logger.warning(
+                "fom_slot_load_unknown_source", slot=slot, source_name=source_name
+            )
+            return None
+        output_name = data.get('output_name')
+        if spec.outputs is None or output_name not in spec.outputs.model_fields:
+            logger.warning(
+                "fom_slot_load_unknown_output", slot=slot, output_name=output_name
+            )
+            return None
+        params = data.get('params') or {}
+        if spec.params is not None:
+            try:
+                spec.params.model_validate(params)
+            except pydantic.ValidationError as e:
+                logger.warning("fom_slot_load_invalid_params", slot=slot, error=str(e))
+                return None
+        aux = data.get('aux_source_names') or {}
+        return FOMSlotState(
+            workflow_id=workflow_id,
+            source_name=source_name,
+            output_name=output_name,
+            params=dict(params),
+            aux_source_names=dict(aux),
+            job_number=None,
+        )
 
     def _notify_success(
         self, slot: FOMSlot, action: FOMAction, success: int, total: int
