@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import json
+import random
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -67,8 +68,16 @@ class LogProducerWidget:
         return config_dir / f'log_producer_{self._instrument}.json'
 
     def _create_slider(self, config: dict) -> pn.widgets.FloatSlider:
-        """Create a slider widget from configuration."""
+        """Create a slider widget from configuration.
+
+        Optional config keys ``noise_stddev`` and ``publish_rate_hz`` turn the
+        slider into a streaming source: every 1/rate seconds, the slider's
+        current value plus Gaussian noise is published. This simulates noisy
+        f144 readbacks (e.g. chopper phase) without a separate producer.
+        """
         stream_name = config['stream_name']
+        noise_stddev = config.get('noise_stddev')
+        publish_rate_hz = config.get('publish_rate_hz')
 
         slider = pn.widgets.FloatSlider(
             name=config['label'],
@@ -79,12 +88,31 @@ class LogProducerWidget:
             width=300,
         )
 
-        # Create callback with stream_name captured in closure
-        def callback(event, stream=stream_name):
-            self._publish_message(event.new, stream)
+        if publish_rate_hz is not None:
+            interval_ms = max(1, int(1000.0 / float(publish_rate_hz)))
+            pn.state.add_periodic_callback(
+                lambda s=slider, n=stream_name, sd=noise_stddev: self._publish_message(
+                    self._sample(s.value, sd), n
+                ),
+                period=interval_ms,
+            )
+        else:
 
-        slider.param.watch(callback, 'value')
+            def callback(event, stream=stream_name, sd=noise_stddev):
+                self._publish_message(self._sample(event.new, sd), stream)
+
+            slider.param.watch(callback, 'value')
+            # Publish the initial value so downstream consumers see a value
+            # even if the operator never touches this slider — e.g. a chopper
+            # rotation_speed_setpoint left at its default.
+            self._publish_message(self._sample(slider.value, noise_stddev), stream_name)
         return slider
+
+    @staticmethod
+    def _sample(value: float, noise_stddev: float | None) -> float:
+        if noise_stddev is None:
+            return value
+        return value + random.gauss(0.0, noise_stddev)
 
     def _publish_message(self, value: float, stream_name: str):
         """Publish a message to the specified stream."""

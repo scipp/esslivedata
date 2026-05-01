@@ -27,6 +27,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    make_single_chopper_aux_sources,
     register_wavelength_lut_workflow_spec,
 )
 
@@ -187,11 +188,34 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # f144 log streams for LOKI.
 # The detector carriage readback is the position dependency of loki_detector_0
 # (depends_on -> /entry/instrument/detector_carriage/value in the NeXus file).
+#
+# Chopper PVs feed the in-process ChopperSynthesizer (see
+# services/timeseries.py). For the prototype, real ``chopper1_phase`` /
+# ``chopper1_rotation_speed_setpoint`` arrive as dev-mode log messages from the
+# log_producer widget; ``chopper1_phase_setpoint`` is itself synthesized
+# (passed through the same f144 plumbing) and is registered here so the
+# preprocessor accepts it. Production source PV names are placeholders until
+# the upstream control system is hooked up.
 f144_log_streams = {
     'detector_carriage': {
         'source': 'LOKI-DtCar1:MC-LinX-01:Mtr.RBV',
         'topic': 'loki_motion',
         'units': 'mm',
+    },
+    'chopper1_phase': {
+        'source': 'LOKI-Chop1:Phase-RBV',
+        'topic': 'loki_motion',
+        'units': 'deg',
+    },
+    'chopper1_rotation_speed_setpoint': {
+        'source': 'LOKI-Chop1:Speed-SP',
+        'topic': 'loki_motion',
+        'units': 'Hz',
+    },
+    'chopper1_phase_setpoint': {
+        'source': 'LOKI-Chop1:Phase-Locked',
+        'topic': 'loki_motion',
+        'units': 'deg',
     },
 }
 
@@ -287,9 +311,17 @@ instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register the chopperless wavelength lookup-table spec. The factory is attached
-# in factories.py.
-wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
+# Register the single-chopper wavelength lookup-table spec. Geometry is
+# hardcoded in the factory until the NeXus geometry artifact carries
+# NXdisk_chopper groups; rotation_speed and phase come from the cached aux
+# setpoint streams produced by ``ChopperSynthesizer``.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(
+    instrument,
+    aux_sources=make_single_chopper_aux_sources(
+        speed_setpoint_stream='chopper1_rotation_speed_setpoint',
+        phase_setpoint_stream='chopper1_phase_setpoint',
+    ),
+)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(
