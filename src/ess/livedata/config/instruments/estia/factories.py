@@ -14,10 +14,38 @@ def setup_factories(instrument: Instrument) -> None:
 
     The multiblade detector view (with its spectrum output) is wired via
     ``add_logical_view`` in ``specs.py``. The generic ``cbm`` monitor workflow
-    factory is attached here.
+    factory and live reflectometry reduction are attached here.
     """
+    from typing import NewType
+
+    import sciline.typing
+    import scipp as sc
+    from ess.estia import EstiaWorkflow
+    from ess.estia import corrections as estia_corrections
+    from ess.estia import data as estia_data
+    from ess.reduce.nexus.types import NeXusData
+    from ess.reflectometry.types import (
+        BeamDivergenceLimits,
+        CoordTransformationGraph,
+        CorrectionsToApply,
+        Filename,
+        LookupTableFilename,
+        LookupTableRelativeErrorThreshold,
+        NeXusDetectorName,
+        ProtonCurrent,
+        QBins,
+        ReducibleData,
+        SampleRun,
+        ThetaBins,
+        WavelengthBins,
+        YIndexLimits,
+        ZIndexLimits,
+    )
+    from scippnexus import NXdetector
+
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
@@ -26,4 +54,90 @@ def setup_factories(instrument: Instrument) -> None:
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode='toa',
+        )
+
+    @specs.reflectometry_reduction_handle.attach_factory()
+    def _reflectometry_reduction_workflow_factory(
+        source_name: str,
+        params: specs.EstiaReflectometryReductionParams,
+    ) -> StreamProcessorWorkflow:
+        wf = EstiaWorkflow()
+        # TODO: Once the Estia NeXus files have all logs we need
+        # (currently missing sample_rotation) replace this file
+        # with a real nexus template file.
+        wf[Filename[SampleRun]] = estia_data.estia_mcstas_nexus_sample_example(
+            'Ni/Ti-multilayer'
+        )[0]
+        wf[NeXusDetectorName] = source_name
+        wf[LookupTableFilename] = estia_data.estia_wavelength_lookup_table()
+        wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
+        wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
+        wf[QBins] = params.q_edges.get_edges().to(unit='1/angstrom')
+        wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges().to(unit='rad')
+
+        wf[YIndexLimits] = params.y_index_limits.get_limits()
+        wf[ZIndexLimits] = params.z_index_limits.get_limits()
+        wf[BeamDivergenceLimits] = [
+            edge.to(unit='rad') for edge in params.beam_divergence_limits.get_limits()
+        ]
+        wf[CorrectionsToApply] = estia_corrections.default_corrections
+        # TODO: Currently we don't have proton current data,
+        # so for now just set it to constant 1uA.
+        wf[ProtonCurrent[SampleRun]] = sc.DataArray(
+            sc.ones(dims=['time'], shape=[1], unit='uA'),
+            coords={
+                'time': sc.datetime(0, unit='ns')
+                + sc.array(dims=['time'], values=[1], unit='ns')
+            },
+        )
+
+        IntensityThetaWavelength = NewType('IntensityThetaWavelength', sc.DataArray)
+        IntensityWavelength = NewType('IntensityWavelength', sc.DataArray)
+        IntensityQ = NewType('IntensityQ', sc.DataArray)
+
+        def _intensity_over_theta_wavelength(
+            events: ReducibleData[SampleRun],
+            wavelength_bins: WavelengthBins,
+            theta_bins: ThetaBins[SampleRun],
+        ) -> IntensityThetaWavelength:
+            return IntensityThetaWavelength(
+                events.hist(
+                    theta=theta_bins, wavelength=wavelength_bins, dim=events.dims
+                ).transpose(['theta', 'wavelength'])
+            )
+
+        def _intensity_over_q(
+            intensity: IntensityThetaWavelength,
+            q_bins: QBins,
+            graph: CoordTransformationGraph[SampleRun],
+        ) -> IntensityQ:
+            return IntensityQ(
+                intensity.assign_coords(
+                    wavelength=sc.midpoints(intensity.coords['wavelength']),
+                    theta=sc.midpoints(intensity.coords['theta']),
+                )
+                .transform_coords('Q', graph=graph)
+                .hist(Q=q_bins)
+            )
+
+        def _intensity_over_wavelength(
+            intensity: IntensityThetaWavelength,
+        ) -> IntensityWavelength:
+            return IntensityWavelength(intensity.sum('theta'))
+
+        wf.insert(_intensity_over_wavelength)
+        wf.insert(_intensity_over_q)
+        wf.insert(_intensity_over_theta_wavelength)
+
+        target_keys: dict[str, sciline.typing.Key] = {
+            'i_of_wavelength': IntensityWavelength,
+            'i_of_q': IntensityQ,
+            'i_of_theta_wavelength': IntensityThetaWavelength,
+        }
+
+        return StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            target_keys=target_keys,
+            accumulators=(IntensityThetaWavelength,),
         )

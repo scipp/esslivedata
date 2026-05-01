@@ -120,6 +120,17 @@ class QUnit(StrEnum):
     INVERSE_NANOMETER = '1/nm'
 
 
+class Angle(BaseModel):
+    """Model for an angle value."""
+
+    value: float = Field(default=0.0, description="Angle value.")
+    unit: AngleUnit = Field(default=AngleUnit.DEGREE, description="Unit of the angle.")
+
+    def get_value(self) -> sc.Variable:
+        """Get the angle as a scipp scalar."""
+        return sc.scalar(self.value, unit=self.unit.value)
+
+
 class Filename(BaseModel):
     value: Path = Field(..., description="Path to the file.")
 
@@ -202,6 +213,18 @@ class TwoTheta(EdgesModel):
     def get_edges(self) -> sc.Variable:
         """Get the edges as a scipp variable."""
         return make_edges(model=self, dim='two_theta', unit=self.unit.value)
+
+
+class ThetaEdges(EdgesModel):
+    """Model for theta bin edges."""
+
+    unit: AngleUnit = Field(
+        default=AngleUnit.DEGREE, description="Unit of the theta bin edges."
+    )
+
+    def get_edges(self) -> sc.Variable:
+        """Get the edges as a scipp variable."""
+        return make_edges(model=self, dim='theta', unit=self.unit.value)
 
 
 class QEdges(EdgesModel):
