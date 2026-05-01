@@ -128,8 +128,6 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
             return None
         return self._captured
 
-    # internals -----------------------------------------------------------
-
     def _build_panel(self) -> None:
         if self._workflow_id is None:
             return
@@ -346,9 +344,6 @@ class FOMConfigWizard:
         self._close_modal()
 
 
-# ----- Slot row widget ------------------------------------------------------
-
-
 def _format_value_text(value) -> str:
     """Render a scipp DataArray scalar (or other) as a single-line readout."""
     try:
@@ -406,8 +401,6 @@ class FOMSlotWidget:
             return
         # Status & readout updates only.
         self._update_dynamic()
-
-    # ----- internals ------------------------------------------------------
 
     def _build(self) -> None:
         with pn.io.hold():
@@ -471,7 +464,7 @@ class FOMSlotWidget:
                             'background': 'white',
                         },
                         sizing_mode='stretch_width',
-                        margin=(0, 0, 0, 0),
+                        margin=(0, 0, 8, 0),
                     )
                 ]
             )
@@ -575,10 +568,23 @@ class FOMSlotWidget:
     def _render_binding_summary(self, state: FOMSlotState | None) -> str:
         if state is None:
             return ''
+        rows = [
+            ('WORKFLOW', state.workflow_id.name),
+            ('SOURCE', state.source_name),
+            ('OUTPUT', state.output_name),
+        ]
+        row_html = ''.join(
+            f'<tr>'
+            f'<td style="padding: 1px 8px 1px 0; '
+            f'color: {Colors.TEXT_MUTED}; white-space: nowrap;">{label}</td>'
+            f'<td style="padding: 1px 0;"><code>{value}</code></td>'
+            f'</tr>'
+            for label, value in rows
+        )
         return (
-            f'<div>Workflow: <code>{state.workflow_id.name}</code> '
-            f'· Source: <code>{state.source_name}</code> '
-            f'· Output: <code>{state.output_name}</code></div>'
+            f'<table style="border-collapse: collapse; font-size: 12px;">'
+            f'{row_html}'
+            f'</table>'
         )
 
     def _make_buttons(self, *, bound: bool) -> pn.Row:
@@ -626,9 +632,6 @@ class FOMSlotWidget:
         self._orchestrator.release_slot(self._slot)
 
 
-# ----- Top-level panel ------------------------------------------------------
-
-
 class FOMPanel:
     """Top-level FOM panel hosting one row per slot."""
 
@@ -653,8 +656,7 @@ class FOMPanel:
             for slot in orchestrator.slot_names
         }
 
-        # Side-by-side layout, optimised for n_slots=2.
-        slot_row = pn.Row(
+        slot_list = pn.Column(
             *(w.panel() for w in self._slot_widgets.values()),
             sizing_mode='stretch_width',
         )
@@ -670,7 +672,7 @@ class FOMPanel:
 
         self._panel = pn.Column(
             header,
-            slot_row,
+            slot_list,
             self._modal_container,
             sizing_mode='stretch_width',
             margin=(10, 10),
