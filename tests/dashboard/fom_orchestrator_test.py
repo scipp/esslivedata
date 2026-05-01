@@ -1115,11 +1115,14 @@ class TestPersistence:
         orch.clear_slot(slot)
         assert slot not in store
 
-    def test_restore_loads_slot_as_stopped(
+    def test_restore_loads_running_slot_as_probing(
         self, workflow_a, sink, active_job_registry, job_service
     ):
+        import uuid as _uuid
+
         store = InMemoryConfigStore()
         slot = FOMSlot('fom-0')
+        job_number = _uuid.uuid4()
         store[slot] = {
             'version': 1,
             'workflow_id': str(workflow_a.get_id()),
@@ -1127,7 +1130,7 @@ class TestPersistence:
             'output_name': 'result',
             'params': {'threshold': 7.0},
             'aux_source_names': {},
-            'job_number': str(__import__('uuid').uuid4()),
+            'job_number': str(job_number),
         }
         orch = _make_orchestrator(
             workflow_a,
@@ -1139,12 +1142,36 @@ class TestPersistence:
         state = orch.get_slot_state(slot)
         assert state is not None
         assert state.workflow_id == workflow_a.get_id()
-        assert state.source_name == 'det_1'
-        assert state.output_name == 'result'
         assert state.params == {'threshold': 7.0}
-        # job_number is intentionally discarded on restore.
-        assert state.job_number is None
+        assert state.job_number == job_number
+        assert state.is_running is True
+        assert active_job_registry.is_active(job_number)
+
+    def test_restore_loads_stopped_slot(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        slot = FOMSlot('fom-0')
+        store[slot] = {
+            'version': 1,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_1',
+            'output_name': 'result',
+            'params': {'threshold': 7.0},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        state = orch.get_slot_state(slot)
+        assert state is not None
         assert state.is_running is False
+        assert state.job_number is None
 
     def test_restore_drops_unknown_workflow(
         self, workflow_a, sink, active_job_registry, job_service
@@ -1273,3 +1300,163 @@ class TestPersistence:
         )
         orch.release_slot(FOMSlot('fom-0'))
         orch.clear_slot(FOMSlot('fom-0'))
+
+
+def _persisted_running(workflow_a: WorkflowSpec, job_number) -> dict:
+    return {
+        'version': 1,
+        'workflow_id': str(workflow_a.get_id()),
+        'source_name': 'det_1',
+        'output_name': 'result',
+        'params': {'threshold': 1.0},
+        'aux_source_names': {},
+        'job_number': str(job_number) if job_number is not None else None,
+    }
+
+
+def _orch_with_probe(
+    workflow_a, sink, active_job_registry, job_service, store, *, timeout=0.0
+) -> FOMOrchestrator:
+    return FOMOrchestrator(
+        command_service=CommandService(sink=sink),
+        workflow_registry={workflow_a.get_id(): workflow_a},
+        active_job_registry=active_job_registry,
+        job_service=job_service,
+        config_store=store,
+        n_slots=2,
+        probe_timeout_seconds=timeout,
+    )
+
+
+class TestProbe:
+    def test_tick_before_deadline_is_noop(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        import uuid as _uuid
+
+        store = InMemoryConfigStore()
+        job_number = _uuid.uuid4()
+        store[FOMSlot('fom-0')] = _persisted_running(workflow_a, job_number)
+        orch = _orch_with_probe(
+            workflow_a,
+            sink,
+            active_job_registry,
+            job_service,
+            store,
+            timeout=60.0,
+        )
+        orch.tick()
+        state = orch.get_slot_state(FOMSlot('fom-0'))
+        assert state is not None
+        assert state.is_running is True
+        assert active_job_registry.is_active(job_number)
+
+    def test_tick_after_deadline_without_status_clears_job_number(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        import uuid as _uuid
+
+        store = InMemoryConfigStore()
+        job_number = _uuid.uuid4()
+        store[FOMSlot('fom-0')] = _persisted_running(workflow_a, job_number)
+        orch = _orch_with_probe(
+            workflow_a, sink, active_job_registry, job_service, store
+        )
+        orch.tick()
+        state = orch.get_slot_state(FOMSlot('fom-0'))
+        assert state is not None
+        assert state.is_running is False
+        assert state.params == {'threshold': 1.0}  # config retained
+        assert not active_job_registry.is_active(job_number)
+        assert store[FOMSlot('fom-0')]['job_number'] is None
+
+    def test_fresh_status_resolves_probe(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        import uuid as _uuid
+
+        store = InMemoryConfigStore()
+        job_number = _uuid.uuid4()
+        store[FOMSlot('fom-0')] = _persisted_running(workflow_a, job_number)
+        orch = _orch_with_probe(
+            workflow_a, sink, active_job_registry, job_service, store
+        )
+        job_id = JobId(source_name='det_1', job_number=job_number)
+        job_service.status_updated(
+            JobStatus(
+                job_id=job_id,
+                workflow_id=workflow_a.get_id(),
+                state=JobState.active,
+            )
+        )
+        orch.on_job_status_updated(job_service.job_statuses[job_id])
+        orch.tick()
+        state = orch.get_slot_state(FOMSlot('fom-0'))
+        assert state is not None
+        assert state.is_running is True
+        assert state.job_number == job_number
+
+    def test_stopped_status_during_probe_transitions_to_stopped(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        import uuid as _uuid
+
+        store = InMemoryConfigStore()
+        job_number = _uuid.uuid4()
+        store[FOMSlot('fom-0')] = _persisted_running(workflow_a, job_number)
+        orch = _orch_with_probe(
+            workflow_a, sink, active_job_registry, job_service, store
+        )
+        job_id = JobId(source_name='det_1', job_number=job_number)
+        orch.on_job_status_updated(
+            JobStatus(
+                job_id=job_id,
+                workflow_id=workflow_a.get_id(),
+                state=JobState.stopped,
+            )
+        )
+        state = orch.get_slot_state(FOMSlot('fom-0'))
+        assert state is not None
+        assert state.is_running is False
+        assert state.params == {'threshold': 1.0}
+
+    def test_user_commit_during_probe_supersedes_probe(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        import uuid as _uuid
+
+        store = InMemoryConfigStore()
+        old_job_number = _uuid.uuid4()
+        store[FOMSlot('fom-0')] = _persisted_running(workflow_a, old_job_number)
+        orch = _orch_with_probe(
+            workflow_a, sink, active_job_registry, job_service, store
+        )
+        new_job = orch.commit_slot(
+            FOMSlot('fom-0'),
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={'threshold': 9.0},
+        )
+        # tick() must not undo the just-committed job.
+        orch.tick()
+        state = orch.get_slot_state(FOMSlot('fom-0'))
+        assert state is not None
+        assert state.is_running is True
+        assert state.job_number == new_job.job_number
+        assert active_job_registry.is_active(new_job.job_number)
+        assert not active_job_registry.is_active(old_job_number)
+
+    def test_no_probe_for_stopped_persisted_slot(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        slot = FOMSlot('fom-0')
+        store[slot] = _persisted_running(workflow_a, None)
+        orch = _orch_with_probe(
+            workflow_a, sink, active_job_registry, job_service, store
+        )
+        orch.tick()  # nothing pending; no-op
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.is_running is False
