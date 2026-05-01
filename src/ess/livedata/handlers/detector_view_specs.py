@@ -26,7 +26,13 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxInput, AuxSources, JobId, WorkflowOutputsBase
+from ..config.workflow_spec import (
+    DETECTORS,
+    AuxInput,
+    AuxSources,
+    JobId,
+    WorkflowOutputsBase,
+)
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
@@ -567,7 +573,7 @@ def register_detector_view_spec(
         raise ValueError(f"Unsupported projection: {projection}")
 
     return instrument.register_spec(
-        namespace="detector_data",
+        group=DETECTORS,
         name=name,
         version=1,
         title=title,

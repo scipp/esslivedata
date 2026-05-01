@@ -11,7 +11,12 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
-from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import (
+    MONITORS,
+    AuxInput,
+    AuxSources,
+    WorkflowOutputsBase,
+)
 from ess.livedata.handlers.detector_view.types import TransformValueStream
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
@@ -20,6 +25,9 @@ from ess.livedata.handlers.detector_view_specs import (
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
+)
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    register_wavelength_lut_workflow_spec,
 )
 
 from .views import get_tube_view
@@ -256,7 +264,7 @@ instrument.add_logical_view(
     title='Beam monitor: counts per pixel',
     description='Per-pixel event counts for pixellated beam monitors.',
     source_names=['beam_monitor_m3'],
-    namespace='monitor_data',
+    group=MONITORS,
     roi_support=False,
     output_ndim=1,
 )
@@ -278,6 +286,10 @@ instrument.add_logical_view(
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
+
+# Register the chopperless wavelength lookup-table spec. The factory is attached
+# in factories.py.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(

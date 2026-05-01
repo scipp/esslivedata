@@ -23,16 +23,15 @@ from ess.livedata.dashboard.workflow_configuration_adapter import (
 )
 
 
-def _is_slow_workflow(workflow_id):
+def _is_slow_workflow(workflow_id, spec):
     """Check if a workflow is known to be slow (>2s)."""
+    from ess.livedata.config.workflow_spec import REDUCTION
+
     # Bifrost data reduction workflows are slow due to complex spectroscopy setup
-    if (
-        workflow_id.instrument == 'bifrost'
-        and workflow_id.namespace == 'data_reduction'
-    ):
+    if workflow_id.instrument == 'bifrost' and spec.group is REDUCTION:
         return True
     # LOKI i_of_q workflows are slow due to SANS reduction complexity
-    if workflow_id.instrument == 'loki' and workflow_id.namespace == 'data_reduction':
+    if workflow_id.instrument == 'loki' and spec.group is REDUCTION:
         if workflow_id.name.startswith('i_of_q'):
             return True
     return False
@@ -50,7 +49,8 @@ def _collect_workflow_factories():
         instrument = instrument_registry[instrument_name]
         instrument.load_factories()
         for workflow_id in instrument.workflow_factory:
-            marks = [pytest.mark.slow] if _is_slow_workflow(workflow_id) else []
+            spec = instrument.workflow_factory[workflow_id]
+            marks = [pytest.mark.slow] if _is_slow_workflow(workflow_id, spec) else []
             workflows.append(
                 pytest.param(
                     instrument_name, workflow_id, id=str(workflow_id), marks=marks
@@ -97,7 +97,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     4. Backend can instantiate workflow from config (JobFactory)
     """
     # Skip known workflows that require data files not available in CI
-    if str(workflow_id) == "dream/data_reduction/powder_reduction_with_vanadium/1":
+    if str(workflow_id) == "dream/powder_reduction_with_vanadium/1":
         pytest.skip(
             "Workflow requires vanadium data file "
             "(268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf) "
@@ -144,19 +144,13 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     # Pick the first available source, or use empty string if none specified
     source_name = spec.source_names[0] if spec.source_names else "test_source"
 
-    # Set active namespace to match the workflow namespace
-    # (in production this is set when the service starts)
-    original_namespace = instrument.active_namespace
-    instrument.active_namespace = workflow_id.namespace
-    try:
-        job_factory = JobFactory(instrument)
-        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+    # Use the workflow's registered service name (in production set by the service)
+    service_name = instrument.workflow_factory.get_service(workflow_id)
+    job_factory = JobFactory(instrument, service_name=service_name)
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
 
-        # This should not raise - it validates params and aux_sources internally
-        job = job_factory.create(job_id=job_id, config=workflow_config)
-    finally:
-        # Restore original namespace
-        instrument.active_namespace = original_namespace
+    # This should not raise - it validates params and aux_sources internally
+    job = job_factory.create(job_id=job_id, config=workflow_config)
 
     # Verify job was created successfully
     assert job is not None

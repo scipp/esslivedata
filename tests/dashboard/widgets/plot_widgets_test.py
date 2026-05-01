@@ -4,6 +4,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -63,7 +64,7 @@ class TestGetPlotCellDisplayInfo:
                 title='Cumulative',
             )
 
-        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
         spec = WorkflowSpec(
             instrument='test',
             name='wf',
@@ -73,6 +74,7 @@ class TestGetPlotCellDisplayInfo:
             outputs=CumulativeOutputs,
             params=None,
             source_names=['src1'],
+            group=REDUCTION,
         )
         registry = {wf_id: spec}
 
@@ -108,7 +110,7 @@ class TestGetPlotCellDisplayInfo:
                 title='Current',
             )
 
-        wf_id = WorkflowId(instrument='test', namespace='ns', name='wf', version=1)
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
         spec = WorkflowSpec(
             instrument='test',
             name='wf',
@@ -118,6 +120,7 @@ class TestGetPlotCellDisplayInfo:
             outputs=CurrentOutputs,
             params=None,
             source_names=['src1'],
+            group=REDUCTION,
         )
         registry = {wf_id: spec}
 

@@ -35,9 +35,7 @@ def _make_line_renderer() -> LinePlotter:
 def _make_result_key(source_name: str) -> ResultKey:
     """Create a ResultKey for testing with the given source name."""
     return ResultKey(
-        workflow_id=WorkflowId(
-            instrument='test', namespace='test', name='test', version=1
-        ),
+        workflow_id=WorkflowId(instrument='test', name='test', version=1),
         job_id=JobId(source_name=source_name, job_number=1),
         output_name='result',
     )

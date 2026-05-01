@@ -565,14 +565,15 @@ class TestRegisterMonitorWorkflowSpecs:
         handle = register_monitor_workflow_specs(test_instrument, source_names=[])
         assert handle is None
 
-    def test_registered_spec_has_correct_namespace(self, test_instrument):
-        """Verify the spec is registered in monitor_data namespace."""
+    def test_registered_spec_has_correct_group(self, test_instrument):
+        """Verify the spec is registered in the monitor_data group."""
         # Explicit registration
         handle = register_monitor_workflow_specs(
             test_instrument, source_names=['monitor_1', 'monitor_2']
         )
         assert handle is not None
-        assert handle.workflow_id.namespace == 'monitor_data'
+        spec = test_instrument.workflow_factory[handle.workflow_id]
+        assert spec.group.name == 'monitor_data'
 
     def test_spec_uses_monitor_data_params(self, test_instrument):
         """Verify the spec uses MonitorDataParams by default."""
@@ -679,7 +680,6 @@ class TestDreamMonitorWorkflowFactory:
         setup_factories(instrument)
         workflow_id = WorkflowId(
             instrument='dream',
-            namespace='monitor_data',
             name='monitor_histogram',
             version=1,
         )

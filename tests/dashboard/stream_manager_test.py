@@ -34,7 +34,7 @@ def sample_data() -> sc.DataArray:
 @pytest.fixture
 def workflow_id() -> WorkflowId:
     """Sample workflow ID."""
-    return WorkflowId(instrument="test", namespace="ns", name="wf", version=1)
+    return WorkflowId(instrument="test", name="wf", version=1)
 
 
 def make_key(workflow_id: WorkflowId, source_name: str = "source") -> ResultKey:

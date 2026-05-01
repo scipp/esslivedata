@@ -126,6 +126,17 @@ def setup_factories(instrument: Instrument) -> None:
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
+    from ess.livedata.handlers.wavelength_lut_workflow import (
+        create_chopperless_wavelength_lut_workflow,
+    )
+    from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+        WavelengthLutParams,
+    )
+
+    @specs.wavelength_lut_handle.attach_factory()
+    def _wavelength_lut_workflow_factory(params: WavelengthLutParams):
+        """Factory for LOKI's chopperless wavelength lookup-table workflow."""
+        return create_chopperless_wavelength_lut_workflow(params=params)
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):

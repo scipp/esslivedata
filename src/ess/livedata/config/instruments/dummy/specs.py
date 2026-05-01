@@ -8,7 +8,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.config.workflow_spec import WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
@@ -16,6 +16,9 @@ from ess.livedata.handlers.detector_view_specs import (
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
+)
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    register_wavelength_lut_workflow_spec,
 )
 
 
@@ -50,7 +53,7 @@ monitor_handle = register_monitor_workflow_specs(
 # Note: We don't use register_detector_view_specs here because dummy uses
 # DetectorLogicalView which doesn't follow the projection pattern.
 panel_0_view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='panel_0_xy',
     version=1,
     title='Panel 0',
@@ -62,7 +65,7 @@ panel_0_view_handle = instrument.register_spec(
 
 # Register area detector view spec
 area_panel_view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='area_panel_xy',
     version=1,
     title='Area Panel',
@@ -71,6 +74,10 @@ area_panel_view_handle = instrument.register_spec(
     params=None,
     outputs=DetectorViewOutputs,
 )
+
+# Register the chopperless wavelength lookup-table spec; factory attached in
+# factories.py.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register total counts workflow spec
 total_counts_handle = instrument.register_spec(

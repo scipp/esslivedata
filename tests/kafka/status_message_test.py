@@ -42,7 +42,6 @@ def make_job_status(**overrides) -> JobStatus:
         "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
         "workflow_id": WorkflowId(
             instrument="test_inst",
-            namespace="data_reduction",
             name="test_workflow",
             version=1,
         ),
@@ -60,7 +59,7 @@ def make_service_status(**overrides) -> ServiceStatus:
     """Create a ServiceStatus with defaults that can be overridden."""
     defaults = {
         "instrument": "dream",
-        "namespace": "data_reduction",
+        "service_name": "data_reduction",
         "worker_id": str(uuid.uuid4()),
         "state": ServiceState.running,
         "started_at": Timestamp.from_ns(1000000000),
@@ -244,9 +243,7 @@ class TestJobStatusMessage:
     def test_to_job_status_minimal(self):
         """Test converting minimal JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
@@ -271,9 +268,7 @@ class TestJobStatusMessage:
     def test_to_job_status_complete(self):
         """Test converting complete JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
@@ -428,7 +423,6 @@ class TestRoundTripConversion:
         """Test round-trip conversion with complex WorkflowId."""
         workflow_id = WorkflowId(
             instrument="complex-instrument-name",
-            namespace="special_namespace",
             name="workflow_with_underscores",
             version=42,
         )
@@ -604,9 +598,7 @@ class TestMessageTypeField:
         """Test that x5f2 serialized job status includes message_type in status_json."""
         job_status = JobStatus(
             job_id=JobId(source_name="test", job_number=uuid.uuid4()),
-            workflow_id=WorkflowId(
-                instrument="test", namespace="ns", name="wf", version=1
-            ),
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
             state=JobState.active,
         )
 
@@ -652,7 +644,7 @@ class TestServiceServiceId:
         service_id = ServiceServiceId.from_string(service_id_str)
 
         assert service_id.instrument == "dream"
-        assert service_id.namespace == "data_reduction"
+        assert service_id.service_name == "data_reduction"
         assert service_id.worker_id == worker_id
 
     def test_from_string_invalid_format_no_colons(self):
@@ -670,7 +662,7 @@ class TestServiceServiceId:
         worker_id = str(uuid.uuid4())
         status = ServiceStatus(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000000000),
@@ -679,14 +671,14 @@ class TestServiceServiceId:
         service_id = ServiceServiceId.from_service_status(status)
 
         assert service_id.instrument == "dream"
-        assert service_id.namespace == "data_reduction"
+        assert service_id.service_name == "data_reduction"
         assert service_id.worker_id == worker_id
 
     def test_to_string(self):
         """Test converting ServiceServiceId to string format."""
         worker_id = str(uuid.uuid4())
         service_id = ServiceServiceId(
-            instrument="dream", namespace="data_reduction", worker_id=worker_id
+            instrument="dream", service_name="data_reduction", worker_id=worker_id
         )
 
         expected = f"dream:data_reduction:{worker_id}"
@@ -697,7 +689,7 @@ class TestServiceServiceId:
         """Test that string conversion is reversible."""
         original = ServiceServiceId(
             instrument="bifrost",
-            namespace="monitor_data",
+            service_name="monitor_data",
             worker_id=str(uuid.uuid4()),
         )
 
@@ -706,7 +698,7 @@ class TestServiceServiceId:
         parsed = ServiceServiceId.from_string(service_id_str)
 
         assert parsed.instrument == original.instrument
-        assert parsed.namespace == original.namespace
+        assert parsed.service_name == original.service_name
         assert parsed.worker_id == original.worker_id
 
 
@@ -718,7 +710,7 @@ class TestServiceStatusPayload:
         worker_id = str(uuid.uuid4())
         payload = ServiceStatusPayload(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000000000),
@@ -728,7 +720,7 @@ class TestServiceStatusPayload:
 
         assert payload.message_type == "service"
         assert payload.instrument == "dream"
-        assert payload.namespace == "data_reduction"
+        assert payload.service_name == "data_reduction"
         assert payload.worker_id == worker_id
         assert payload.state == ServiceState.running
         assert payload.active_job_count == 5
@@ -737,7 +729,7 @@ class TestServiceStatusPayload:
         """Test creating ServiceStatusPayload with error."""
         payload = ServiceStatusPayload(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id=str(uuid.uuid4()),
             state=ServiceState.error,
             started_at=Timestamp.from_ns(1000000000),
@@ -759,7 +751,7 @@ class TestServiceStatusMessage:
 
         assert msg.software_name == "livedata"
         assert msg.service_id.instrument == status.instrument
-        assert msg.service_id.namespace == status.namespace
+        assert msg.service_id.service_name == status.service_name
         assert msg.service_id.worker_id == status.worker_id
         assert msg.status_json.message.state == status.state
         assert msg.status_json.message.active_job_count == status.active_job_count
@@ -787,7 +779,7 @@ class TestServiceStatusMessage:
         converted = msg.to_service_status()
 
         assert converted.instrument == original.instrument
-        assert converted.namespace == original.namespace
+        assert converted.service_name == original.service_name
         assert converted.worker_id == original.worker_id
         assert converted.state == original.state
         assert converted.started_at == original.started_at
@@ -812,7 +804,7 @@ class TestServiceStatusX5F2Integration:
         first heartbeat after PR #829 introduced Timestamp."""
         status = ServiceStatus(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id=str(uuid.uuid4()),
             state=ServiceState.running,
             started_at=Timestamp.now(),
@@ -844,7 +836,7 @@ class TestServiceStatusX5F2Integration:
         converted = x5f2_to_service_status(x5f2_data)
 
         assert converted.instrument == original.instrument
-        assert converted.namespace == original.namespace
+        assert converted.service_name == original.service_name
         assert converted.worker_id == original.worker_id
         assert converted.state == original.state
         assert converted.started_at == original.started_at
@@ -893,7 +885,7 @@ class TestServiceStatusX5F2Integration:
         """Test that service_id has the correct format."""
         status = make_service_status(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id="7c9e6679-7425-40de-944b-e07fc1f90ae7",
         )
         x5f2_data = service_status_to_x5f2(status)
@@ -937,9 +929,7 @@ class TestX5f2ToStatusDiscriminator:
         """Test that job status with message_type='job' returns JobStatus."""
         job_status = JobStatus(
             job_id=JobId(source_name="detector1", job_number=uuid.uuid4()),
-            workflow_id=WorkflowId(
-                instrument="test", namespace="ns", name="wf", version=1
-            ),
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
             state=JobState.active,
         )
 
@@ -956,9 +946,7 @@ class TestX5f2ToStatusDiscriminator:
         Legacy messages without message_type field should return JobStatus.
         """
         job_id = JobId(source_name="detector1", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
         # Manually create x5f2 data WITHOUT message_type field (legacy format)
         status_json = json.dumps(
@@ -1004,7 +992,7 @@ class TestX5f2ToStatusDiscriminator:
         worker_id = str(uuid.uuid4())
         service_status = ServiceStatus(
             instrument="dream",
-            namespace="data_reduction",
+            service_name="data_reduction",
             worker_id=worker_id,
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000000000),
@@ -1016,7 +1004,7 @@ class TestX5f2ToStatusDiscriminator:
 
         assert isinstance(result, ServiceStatus)
         assert result.instrument == service_status.instrument
-        assert result.namespace == service_status.namespace
+        assert result.service_name == service_status.service_name
         assert result.worker_id == service_status.worker_id
         assert result.state == service_status.state
 

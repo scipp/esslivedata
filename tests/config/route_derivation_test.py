@@ -7,7 +7,14 @@ from ess.livedata.config.route_derivation import (
     gather_source_names,
     resolve_stream_names,
 )
-from ess.livedata.config.workflow_spec import AuxInput, AuxSources, DefaultOutputs
+from ess.livedata.config.workflow_spec import (
+    DETECTORS,
+    MONITORS,
+    REDUCTION,
+    AuxInput,
+    AuxSources,
+    DefaultOutputs,
+)
 from ess.livedata.kafka.stream_mapping import InputStreamKey, StreamMapping
 
 
@@ -20,7 +27,7 @@ def instrument_with_specs() -> Instrument:
         monitors=["mon_1", "mon_2"],
     )
     instrument.register_spec(
-        namespace="detector_data",
+        group=DETECTORS,
         name="projection",
         version=1,
         title="Projection",
@@ -33,7 +40,7 @@ def instrument_with_specs() -> Instrument:
         outputs=DefaultOutputs,
     )
     instrument.register_spec(
-        namespace="detector_data",
+        group=DETECTORS,
         name="special_view",
         version=1,
         title="Special",
@@ -41,7 +48,7 @@ def instrument_with_specs() -> Instrument:
         outputs=DefaultOutputs,
     )
     instrument.register_spec(
-        namespace="data_reduction",
+        group=REDUCTION,
         name="reduction",
         version=1,
         title="Reduction",
@@ -56,7 +63,7 @@ def instrument_with_specs() -> Instrument:
         outputs=DefaultOutputs,
     )
     instrument.register_spec(
-        namespace="monitor_data",
+        group=MONITORS,
         name="monitor_workflow",
         version=1,
         title="Monitor",

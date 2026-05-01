@@ -25,7 +25,6 @@ hv.extension('bokeh')
 def result_key() -> ResultKey:
     workflow_id = WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )

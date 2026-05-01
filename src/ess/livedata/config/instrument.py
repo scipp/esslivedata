@@ -16,7 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .workflow_spec import AuxSources, WorkflowSpec
+from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 
 class SourceMetadata(pydantic.BaseModel):
@@ -93,7 +93,6 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
-    active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
@@ -258,7 +257,8 @@ class Instrument:
         description: str,
         source_names: Sequence[str],
         transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
-        namespace: str = 'detector_data',
+        group: WorkflowGroup = DETECTORS,
+        service: str | None = None,
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -273,7 +273,7 @@ class Instrument:
         Parameters
         ----------
         name:
-            Unique name for the view within the given namespace.
+            Unique name for the view within the given group.
         title:
             Human-readable title for the view.
         description:
@@ -289,9 +289,11 @@ class Instrument:
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
             If None, identity (no reshaping).
-        namespace:
-            Service namespace this view belongs to. Determines which service
-            runs the workflow (e.g. ``'detector_data'`` or ``'monitor_data'``).
+        group:
+            Display-oriented :class:`WorkflowGroup` this view belongs to.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
@@ -321,7 +323,8 @@ class Instrument:
         )
         params = make_detector_view_params(spectrum_view=spectrum_view)
         handle = self.register_spec(
-            namespace=namespace,
+            group=group,
+            service=service,
             name=name,
             version=1,
             title=title,
@@ -350,7 +353,8 @@ class Instrument:
     def register_spec(
         self,
         *,
-        namespace: str = 'data_reduction',
+        group: WorkflowGroup = REDUCTION,
+        service: str | None = None,
         name: str,
         version: int,
         title: str,
@@ -370,8 +374,12 @@ class Instrument:
 
         Parameters
         ----------
-        namespace:
-            Namespace for the workflow (default: 'data_reduction').
+        group:
+            Display-oriented :class:`WorkflowGroup` for the workflow
+            (default: ``REDUCTION``).
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
         name:
             Name to register the workflow under.
         version:
@@ -404,7 +412,7 @@ class Instrument:
         """
         spec = WorkflowSpec(
             instrument=self.name,
-            namespace=namespace,
+            group=group,
             name=name,
             version=version,
             title=title,
@@ -415,7 +423,7 @@ class Instrument:
             outputs=outputs,
             reset_on_run_transition=reset_on_run_transition,
         )
-        return self.workflow_factory.register_spec(spec)
+        return self.workflow_factory.register_spec(spec, service=service)
 
     def load_factories(self) -> None:
         """

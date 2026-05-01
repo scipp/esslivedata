@@ -30,7 +30,6 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     # Define workflow parameters for monitor histogram workflow
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
@@ -72,7 +71,6 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
 
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )

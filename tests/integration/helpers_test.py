@@ -41,7 +41,6 @@ def make_workflow_id(name: str, version: int = 1) -> WorkflowId:
     """Helper to create WorkflowId for tests."""
     return WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name=name,
         version=version,
     )
