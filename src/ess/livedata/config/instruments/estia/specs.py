@@ -157,17 +157,26 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
     i_of_wavelength: sc.DataArray = pydantic.Field(
         default_factory=_make_wavelength_template,
         title='I(λ)',
-        description='Detector intensity histogrammed by wavelength λ.',
+        description=(
+            'Detector intensity corrected by footprint correction '
+            'and proton current, histogrammed by wavelength λ.'
+        ),
     )
     i_of_q: sc.DataArray = pydantic.Field(
         default_factory=_make_q_template,
         title='I(Q)',
-        description='Detector intensity histogrammed by momentum transfer Q.',
+        description=(
+            'Detector intensity corrected by footprint correction '
+            'and proton current, histogrammed by momentum transfer Q.'
+        ),
     )
     i_of_theta_wavelength: sc.DataArray = pydantic.Field(
         default_factory=_make_theta_wavelength_template,
         title='I(θ, λ)',
-        description='Detector intensity histogrammed by θ and wavelength λ.',
+        description=(
+            'Detector intensity corrected by footprint correction '
+            'and proton current, histogrammed by θ and wavelength λ.'
+        ),
     )
 
 

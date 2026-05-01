@@ -24,7 +24,6 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.estia import corrections as estia_corrections
     from ess.estia import data as estia_data
     from ess.reduce.nexus.types import NeXusData
-    from ess.reflectometry.corrections import correct_by_proton_current
     from ess.reflectometry.types import (
         BeamDivergenceLimits,
         CoordTransformationGraph,
@@ -78,12 +77,15 @@ def setup_factories(instrument: Instrument) -> None:
         wf[BeamDivergenceLimits] = [
             edge.to(unit='rad') for edge in params.beam_divergence_limits.get_limits()
         ]
-        wf[CorrectionsToApply] = estia_corrections.default_corrections - {
-            correct_by_proton_current
-        }
+        wf[CorrectionsToApply] = estia_corrections.default_corrections
+        # TODO: Currently we don't have proton current data,
+        # so for now just set it to constant 1uA.
         wf[ProtonCurrent[SampleRun]] = sc.DataArray(
-            sc.zeros(dims=['time'], shape=[0], unit='uA'),
-            coords={'time': sc.array(dims=['time'], values=[], unit='ns')},
+            sc.ones(dims=['time'], shape=[1.0], unit='uA'),
+            coords={
+                'time': sc.datetime(0, unit='ns')
+                + sc.array(dims=['time'], values=[1.0], unit='ns')
+            },
         )
 
         IntensityThetaWavelength = NewType('IntensityThetaWavelength', sc.DataArray)
