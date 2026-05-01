@@ -162,6 +162,7 @@ class FOMOrchestrator:
         notification_queue: NotificationQueue | None = None,
         config_store: ConfigStore | None = None,
         n_slots: int = 2,
+        probe_timeout_seconds: float = 10.0,
     ) -> None:
         if n_slots < 1:
             raise ValueError(f"n_slots must be >= 1, got {n_slots}")
@@ -178,6 +179,13 @@ class FOMOrchestrator:
         self._versions: dict[FOMSlot, int] = dict.fromkeys(self._slot_names, 0)
         self._pending = _FOMPendingTracker()
         self._slot_listeners: list[Callable[[FOMSlot], None]] = []
+        # Slots restored from store with a non-None job_number start as
+        # "probing": tentatively running until a fresh JobStatus arrives or
+        # the probe deadline elapses. Backend services and their alias
+        # registries share an in-memory lifetime, so JobStatus presence is
+        # sufficient evidence the binding is still live.
+        self._probe_pending: set[FOMSlot] = set()
+        self._probe_deadline = time.monotonic() + probe_timeout_seconds
         self._load_from_store()
 
     # ----- introspection ------------------------------------------------------
@@ -439,19 +447,24 @@ class FOMOrchestrator:
             )
 
     def on_job_status_updated(self, job_status: JobStatus) -> None:
-        """Mark a slot as stopped when the backend reports its job stopped.
+        """React to a backend-reported job status.
 
-        Retains the slot's configuration so the user can restart or tweak it.
+        Any fresh status for a probing slot's job confirms the backend still
+        hosts the job: the slot is taken out of ``_probe_pending`` so the
+        timeout in :meth:`tick` does not later clear it. A ``stopped`` status
+        additionally transitions the slot to STOPPED while retaining its
+        configuration.
         """
-        if job_status.state != JobState.stopped:
-            return
         for slot, state in list(self._slots.items()):
             if state is None or not state.is_running:
                 continue
             if (
-                job_status.job_id.source_name == state.source_name
-                and job_status.job_id.job_number == state.job_number
+                job_status.job_id.source_name != state.source_name
+                or job_status.job_id.job_number != state.job_number
             ):
+                continue
+            self._probe_pending.discard(slot)
+            if job_status.state == JobState.stopped:
                 logger.info(
                     "fom_slot_stopped_by_backend",
                     slot=slot,
@@ -467,7 +480,53 @@ class FOMOrchestrator:
                     job_number=None,
                 )
                 self._bump_version(slot)
-                return
+            return
+
+    def tick(self) -> None:
+        """Resolve pending probes that have not seen a fresh JobStatus.
+
+        Called periodically (e.g. from the dashboard's update loop). Until
+        the probe deadline, restored slots stay tentatively running so the
+        widget shows PENDING. Once the deadline has passed, any slot that
+        has not had a fresh ``JobStatus`` arrive is treated as orphaned
+        (the backend was restarted while the dashboard was down) and is
+        transitioned to STOPPED — config retained, ``job_number`` cleared.
+        """
+        if not self._probe_pending:
+            return
+        if time.monotonic() < self._probe_deadline:
+            return
+        for slot in list(self._probe_pending):
+            state = self._slots[slot]
+            if state is None or not state.is_running:
+                self._probe_pending.discard(slot)
+                continue
+            job_id = state.job_id
+            if (
+                job_id is not None
+                and self._job_service.job_statuses.get(job_id) is not None
+                and not self._job_service.is_status_stale(job_id)
+            ):
+                # A fresh status arrived between the listener firing and
+                # tick(); treat as confirmed.
+                self._probe_pending.discard(slot)
+                continue
+            logger.info(
+                "fom_slot_probe_timed_out",
+                slot=slot,
+                job_number=str(state.job_number),
+            )
+            self._active_job_registry.deactivate(state.job_number)
+            self._slots[slot] = FOMSlotState(
+                workflow_id=state.workflow_id,
+                source_name=state.source_name,
+                output_name=state.output_name,
+                params=state.params,
+                aux_source_names=state.aux_source_names,
+                job_number=None,
+            )
+            self._probe_pending.discard(slot)
+            self._bump_version(slot)
 
     # ----- internals ----------------------------------------------------------
 
@@ -476,6 +535,10 @@ class FOMOrchestrator:
             raise KeyError(f"Unknown FOM slot: {slot!r}")
 
     def _bump_version(self, slot: FOMSlot) -> None:
+        # Any explicit mutation supersedes a pending probe — otherwise
+        # tick() could later kill a freshly committed job whose status has
+        # not yet arrived.
+        self._probe_pending.discard(slot)
         self._versions[slot] = self._versions.get(slot, 0) + 1
         self._persist_slot(slot)
         for listener in self._slot_listeners:
@@ -485,13 +548,7 @@ class FOMOrchestrator:
                 logger.exception("fom_slot_listener_error", slot=slot)
 
     def _persist_slot(self, slot: FOMSlot) -> None:
-        """Write the slot's state to ``config_store`` (or remove if empty).
-
-        Persisting ``job_number`` is intentional even though it is currently
-        ignored on restore: future work may use it to reconcile with the
-        backend. Treating the persisted state as config-only keeps restart
-        behaviour predictable (every slot loads as STOPPED).
-        """
+        """Write the slot's state to ``config_store`` (or remove if empty)."""
         if self._config_store is None:
             return
         state = self._slots[slot]
@@ -517,8 +574,11 @@ class FOMOrchestrator:
         """Restore slot configurations from ``config_store``.
 
         Stale entries (unknown workflow, source, or output; invalid params)
-        are dropped with a warning. ``job_number`` is always discarded —
-        slots load as STOPPED so the user explicitly re-launches.
+        are dropped with a warning. Slots persisted with a non-None
+        ``job_number`` are restored as probing: ``active_job_registry`` is
+        primed so incoming results are accepted, and the slot is added to
+        ``_probe_pending`` until a fresh ``JobStatus`` confirms the backend
+        still hosts the job (or the probe deadline elapses).
         """
         if self._config_store is None:
             return
@@ -530,6 +590,9 @@ class FOMOrchestrator:
             if state is None:
                 continue
             self._slots[slot] = state
+            if state.job_number is not None:
+                self._active_job_registry.restore(state.job_number)
+                self._probe_pending.add(slot)
 
     def _deserialize_slot(
         self, slot: FOMSlot, data: dict[str, Any]
@@ -577,13 +640,23 @@ class FOMOrchestrator:
                 logger.warning("fom_slot_load_invalid_params", slot=slot, error=str(e))
                 return None
         aux = data.get('aux_source_names') or {}
+        job_number_raw = data.get('job_number')
+        try:
+            job_number = (
+                uuid.UUID(job_number_raw) if job_number_raw is not None else None
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "fom_slot_load_bad_job_number", slot=slot, raw=job_number_raw
+            )
+            job_number = None
         return FOMSlotState(
             workflow_id=workflow_id,
             source_name=source_name,
             output_name=output_name,
             params=dict(params),
             aux_source_names=dict(aux),
-            job_number=None,
+            job_number=job_number,
         )
 
     def _notify_success(

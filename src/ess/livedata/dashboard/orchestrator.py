@@ -61,23 +61,26 @@ class Orchestrator:
         messages = self._message_source.get_messages()
         self._logger.debug("Consumed %d messages", len(messages))
 
-        if not messages:
-            return
+        if messages:
+            # The ingestion guard serializes message processing against
+            # active-set mutations and DataService cleanup in
+            # ActiveJobRegistry.deactivate() (called from the UI thread).
+            # Without this, the background thread could iterate or write to
+            # DataService while the UI thread deletes buffers, causing
+            # dict-iteration crashes or orphaned buffers.
+            #
+            # Batch all updates in a transaction to avoid repeated UI
+            # updates. Reason:
+            # - Some listeners depend on multiple streams.
+            # - There may be multiple messages for the same stream, only the
+            #   last one should trigger an update.
+            with self._active_job_registry.ingestion_guard():
+                with self._data_service.transaction():
+                    for message in messages:
+                        self.forward(stream_id=message.stream, value=message.value)
 
-        # The ingestion guard serializes message processing against active-set
-        # mutations and DataService cleanup in ActiveJobRegistry.deactivate()
-        # (called from the UI thread). Without this, the background thread
-        # could iterate or write to DataService while the UI thread deletes
-        # buffers, causing dict-iteration crashes or orphaned buffers.
-        #
-        # Batch all updates in a transaction to avoid repeated UI updates. Reason:
-        # - Some listeners depend on multiple streams.
-        # - There may be multiple messages for the same stream, only the last one
-        #   should trigger an update.
-        with self._active_job_registry.ingestion_guard():
-            with self._data_service.transaction():
-                for message in messages:
-                    self.forward(stream_id=message.stream, value=message.value)
+        if self._fom_orchestrator is not None:
+            self._fom_orchestrator.tick()
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
