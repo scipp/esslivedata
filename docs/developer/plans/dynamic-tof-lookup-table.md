@@ -354,9 +354,119 @@ Chopper-equipped extension:
   correctly (empty for chopperless, populated for chopper-equipped);
   existing detector/monitor logical-name expansion is unchanged.
 
+## Status
+
+Shipped (chopperless + single-chopper prototype):
+
+- `ChopperSynthesizer` with rolling-window stability detector (mean/std-based
+  lock, exact-equality change detection on `_rotation_speed_setpoint`,
+  noise-floor compare on locked phase mean). Chopperless mode preserved.
+- `create_single_chopper_wavelength_lut_workflow` consumes cached
+  `rotation_speed_setpoint` and `phase_setpoint` via `context_keys` keyed by
+  the spec's logical aux-input field names; provider builds one
+  `DiskChopper` with hardcoded geometry.
+- LOKI wired to the single-chopper variant. `_CHOPPERS_BY_INSTRUMENT` in
+  `services/timeseries.py` is a temporary hardcoded map.
+- `log_producer_widget` extended with optional `noise_stddev` /
+  `publish_rate_hz` per slider, and publishes initial values on creation
+  so a default-position slider still emits one message.
+
+Deviation from this plan: raw `<chopper>_phase` is forwarded (tap, not
+filter) so the noisy readback is plottable in dev mode. Decide before
+productionising whether to revert to drop.
+
+## Remaining work
+
+### NeXus chopper geometry (replaces the hardcoded provider)
+
+- Extend `scripts/make_geometry_nexus.py` to copy `NXdisk_chopper` groups
+  (~10 lines).
+- Regenerate per-instrument geometry artifacts, re-publish to pooch with
+  bumped consuming hashes.
+- New provider taking `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`
+  plus per-chopper aux setpoints, calling `DiskChopper.from_nexus()` per
+  chopper. Wire `Filename[SampleRun]` and replace placeholder
+  `SourcePosition`.
+
+### Multi-chopper generalisation
+
+- Synthesizer takes a list — needs a unit test exercising "all locked"
+  gating across multiple choppers.
+- `DiskChoppers` provider iterates over all configured choppers (today the
+  hardcoded provider knows only `'chopper1'`).
+
+### Real chopper PVs (off the dev/log-producer path)
+
+- Chopper topic (e.g. `${instrument}_choppers`) added in
+  `setup-kafka-topics.sh` and the f144 routing in `message_adapter.py`.
+- Replace hardcoded `_CHOPPERS_BY_INSTRUMENT` with
+  `route_derivation.py::resolve_stream_names`. Empty resolved set ⇒
+  chopperless (no PV subscription, vacuous startup tick).
+- Per-instrument PV name declarations alongside `f144_log_streams`.
+
+### Per-instrument adoption
+
+LOKI is wired today. DREAM / BIFROST / ODIN / NMX each need:
+
+- chopper PV stream declarations,
+- `LtotalRange` defaults for the instrument's detector layout,
+- factory switched to the chopper-equipped variant once the geometry
+  artifact carries `NXdisk_chopper`.
+
+### Tests
+
+- Reference fixture: precomputed table for one chopper-equipped instrument,
+  integration test that feeds chopper f144s and asserts agreement.
+- Round-trip `scipp_to_da00` ↔ `da00_to_scipp` preserves values + the four
+  scalar coords.
+- Service-level integration: gating behaviour (no cascade until both
+  setpoints), refire on plateau change.
+
+### Producer/consumer end meeting (synthesizer's exit)
+
+Once an upstream service publishes `chopper_cascade_reached` directly, drop
+`ChopperSynthesizer`, `_CHOPPERS_BY_INSTRUMENT`, the `outer_source_wrapper`
+plumbing, and `_SYNTHETIC_LOG_ATTRS`. The workflow becomes a plain f144
+consumer.
+
+Then deprecate the static `loki_lookup_table_no_choppers` path: LOKI's
+monitor / I(Q) workflows currently load via `LookupTableFilename`; switch
+them to consume the dynamically-published `wavelength_lut` da00 message.
+
+## Backpressure and rate limiting
+
+The synthesizer can in principle emit cascades faster than a Monte-Carlo
+recompute can finish (~seconds at 1M neutrons). The current design has
+two implicit dampers and one open verification gap:
+
+1. **Plateau detector debounce.** A window of stable phase samples is
+   required before a new lock; rapid operator nudges produce no
+   intermediate cascades. Once locked, only a *new* mean (drift > `atol`)
+   re-fires.
+2. **One compute per orchestrator cycle, on latest values.** The cascade
+   stream is f144 → `ToNXlog` (`is_context=True`); the provider reads
+   `[time, -1].data` from the chopper logs. N cascades arriving in one
+   cycle's batch collapse into one compute on the latest setpoints. The
+   gating in `JobManager.process_jobs` (`_jobs_with_primary_data`) ensures
+   no spurious refires when no new primary data arrives — the
+   `test_subsequent_steps_do_not_republish` test already covers this for
+   the chopperless case.
+3. **Open: behaviour under sustained backpressure.** If recompute is
+   slower than the trigger rate, Kafka messages pile up in the consumer
+   queue (`consumer_lag` grows in metrics) and each cycle processes a
+   larger batch — still one compute per cycle, on the latest values, so
+   the queue eventually drains. Not yet load-tested. Worth adding a
+   stress test that fires cascades faster than the compute can finish and
+   asserts (a) no compute backlog (output count ≤ cycle count, not
+   trigger count), and (b) each emitted LUT reflects the latest setpoints
+   at compute start (not stale ones from when the trigger arrived).
+
 ## Open questions
 
 - `park_angle` exists in NXdisk_chopper but its use is unclear; out of
   scope unless a concrete need surfaces.
 - Per-instrument `LtotalRange` defaults and plateau-detection thresholds
   are answerable at impl time without changing this plan's overall shape.
+- Should the synthesizer drop or forward raw `<chopper>_phase`? Plan
+  originally said drop; prototype forwards. Decision driven by whether
+  operators want the noisy readback plotted.
