@@ -17,6 +17,9 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    register_wavelength_lut_workflow_spec,
+)
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -71,6 +74,10 @@ area_panel_view_handle = instrument.register_spec(
     params=None,
     outputs=DetectorViewOutputs,
 )
+
+# Register the chopperless wavelength lookup-table spec; factory attached in
+# factories.py.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register total counts workflow spec
 total_counts_handle = instrument.register_spec(

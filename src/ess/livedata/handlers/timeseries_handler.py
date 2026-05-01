@@ -12,12 +12,24 @@ from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId
 from .accumulators import LogData
 from .to_nxlog import ToNXlog
+from .wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 from .workflow_factory import Workflow
 
 if TYPE_CHECKING:
     from ..config.instrument import Instrument
 
 logger = structlog.get_logger(__name__)
+
+#: Attributes used by ``ToNXlog`` for synthetic LOG streams that are not real
+#: upstream f144s and therefore not in :attr:`Instrument.f144_attribute_registry`
+#: (registering them there would also register unwanted timeseries workflows).
+#: The ``chopper_cascade`` tick from :class:`ChopperSynthesizer` is the only
+#: such stream today; its value is a boolean "at setpoint" indicator and
+#: carries no unit (distinct from ``'dimensionless'``, which a number with
+#: cancelled units would have).
+_SYNTHETIC_LOG_ATTRS: dict[str, dict[str, Any]] = {
+    CHOPPER_CASCADE_SOURCE: {},
+}
 
 
 class TimeseriesStreamProcessor(Workflow):
@@ -95,6 +107,8 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
     def make_preprocessor(self, key: StreamId) -> ToNXlog | None:
         source_name = key.name
         attrs = self._attribute_registry.get(source_name)
+        if attrs is None:
+            attrs = _SYNTHETIC_LOG_ATTRS.get(source_name)
         if attrs is None:
             logger.warning(
                 "No attributes found for source name '%s'. Messages will be dropped.",
