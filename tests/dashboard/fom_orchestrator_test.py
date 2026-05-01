@@ -12,6 +12,7 @@ import scipp as sc
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     JobId,
     WorkflowConfig,
     WorkflowOutputsBase,
@@ -46,7 +47,7 @@ class _Outputs(WorkflowOutputsBase):
 def _spec(name: str, sources: list[str]) -> WorkflowSpec:
     return WorkflowSpec(
         instrument='test',
-        namespace='testing',
+        group=REDUCTION,
         name=name,
         version=1,
         title=name,
