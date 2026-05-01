@@ -694,11 +694,8 @@ class FOMPanel:
         header = pn.pane.HTML(
             '<h3 style="margin: 0 0 12px 0;">Figures of Merit</h3>'
             '<p style="margin: 0 0 12px 0; color: #666; font-size: 12px;">'
-            'Each slot binds a stable alias (consumed by NICOS) to one workflow '
-            'output. Slot configurations persist across dashboard restarts; '
-            'restored slots reconnect to the running backend job when '
-            'available, otherwise they appear as stopped and can be '
-            'restarted with one click.</p>',
+            'Each slot binds a stable alias (consumed by NICOS) to one '
+            'workflow output.</p>',
             sizing_mode='stretch_width',
         )
 
