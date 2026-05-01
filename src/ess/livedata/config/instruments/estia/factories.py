@@ -62,6 +62,9 @@ def setup_factories(instrument: Instrument) -> None:
         params: specs.EstiaReflectometryReductionParams,
     ) -> StreamProcessorWorkflow:
         wf = EstiaWorkflow()
+        # TODO: Once the Estia NeXus files have all logs we need
+        # (currently missing sample_rotation) replace this file
+        # with a real nexus template file.
         wf[Filename[SampleRun]] = estia_data.estia_mcstas_nexus_sample_example(
             'Ni/Ti-multilayer'
         )[0]
