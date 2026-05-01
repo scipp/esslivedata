@@ -38,17 +38,13 @@ def temp_config_file():
 @pytest.fixture
 def workflow_id_1():
     """First test WorkflowId."""
-    return WorkflowId(
-        instrument='dummy', namespace='reduction', name='powder_workflow', version=1
-    )
+    return WorkflowId(instrument='dummy', name='powder_workflow', version=1)
 
 
 @pytest.fixture
 def workflow_id_2():
     """Second test WorkflowId."""
-    return WorkflowId(
-        instrument='dummy', namespace='reduction', name='imaging_workflow', version=1
-    )
+    return WorkflowId(instrument='dummy', name='imaging_workflow', version=1)
 
 
 @pytest.fixture
@@ -121,7 +117,6 @@ class TestInMemoryConfigStore:
         for i in range(6):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -131,12 +126,8 @@ class TestInMemoryConfigStore:
         assert len(store) == 4
 
         # First two should be evicted (oldest)
-        wf_id_0 = WorkflowId(
-            instrument='dummy', namespace='reduction', name='workflow_0', version=1
-        )
-        wf_id_1 = WorkflowId(
-            instrument='dummy', namespace='reduction', name='workflow_1', version=1
-        )
+        wf_id_0 = WorkflowId(instrument='dummy', name='workflow_0', version=1)
+        wf_id_1 = WorkflowId(instrument='dummy', name='workflow_1', version=1)
         assert str(wf_id_0) not in store
         assert str(wf_id_1) not in store
 
@@ -144,7 +135,6 @@ class TestInMemoryConfigStore:
         for i in range(2, 6):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -158,7 +148,6 @@ class TestInMemoryConfigStore:
         for i in range(150):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -283,7 +272,6 @@ class TestFileBackedConfigStore:
         for i in range(6):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -293,12 +281,8 @@ class TestFileBackedConfigStore:
         assert len(store) == 4
 
         # First two should be evicted (oldest)
-        wf_id_0 = WorkflowId(
-            instrument='dummy', namespace='reduction', name='workflow_0', version=1
-        )
-        wf_id_1 = WorkflowId(
-            instrument='dummy', namespace='reduction', name='workflow_1', version=1
-        )
+        wf_id_0 = WorkflowId(instrument='dummy', name='workflow_0', version=1)
+        wf_id_1 = WorkflowId(instrument='dummy', name='workflow_1', version=1)
         assert str(wf_id_0) not in store
         assert str(wf_id_1) not in store
 
@@ -306,7 +290,6 @@ class TestFileBackedConfigStore:
         for i in range(2, 6):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -362,9 +345,7 @@ class TestFileBackedConfigStore:
             nested_path = Path(tmpdir) / 'subdir1' / 'subdir2' / 'config.yaml'
 
             store = FileBackedConfigStore(nested_path)
-            wf_id = WorkflowId(
-                instrument='dummy', namespace='reduction', name='test', version=1
-            )
+            wf_id = WorkflowId(instrument='dummy', name='test', version=1)
             store[str(wf_id)] = {'params': {}}
 
             assert nested_path.exists()
@@ -389,7 +370,6 @@ class TestFileBackedConfigStore:
         for i in range(150):
             wf_id = WorkflowId(
                 instrument='dummy',
-                namespace='reduction',
                 name=f'workflow_{i}',
                 version=1,
             )
@@ -448,9 +428,7 @@ class TestConfigStoreManager:
             assert store1 is store2
 
             # Add data to first reference
-            wf_id = WorkflowId(
-                instrument='dummy', namespace='reduction', name='test', version=1
-            )
+            wf_id = WorkflowId(instrument='dummy', name='test', version=1)
             store1[str(wf_id)] = {'params': {'value': 42}}
 
             # Data should be visible through second reference
@@ -470,9 +448,7 @@ class TestConfigStoreManager:
 
             # Add 6 configs to trigger eviction
             for i in range(6):
-                wf_id = WorkflowId(
-                    instrument='dummy', namespace='reduction', name=f'wf_{i}', version=1
-                )
+                wf_id = WorkflowId(instrument='dummy', name=f'wf_{i}', version=1)
                 store[str(wf_id)] = {'params': {'value': i}}
 
             # Should have evicted 40% (2 configs), leaving 4
@@ -481,9 +457,7 @@ class TestConfigStoreManager:
     def test_file_stores_persist_data(self):
         """Test that file stores created by manager persist data."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            wf_id = WorkflowId(
-                instrument='dummy', namespace='reduction', name='test', version=1
-            )
+            wf_id = WorkflowId(instrument='dummy', name='test', version=1)
             config_value = {'params': {'value': 42}}
 
             # Create manager and store data
@@ -506,12 +480,8 @@ class TestConfigStoreManager:
             workflow_store = manager.get_store('workflow_configs')
             plotter_store = manager.get_store('plotter_configs')
 
-            wf_id1 = WorkflowId(
-                instrument='dummy', namespace='reduction', name='wf1', version=1
-            )
-            wf_id2 = WorkflowId(
-                instrument='dummy', namespace='plotting', name='plot1', version=1
-            )
+            wf_id1 = WorkflowId(instrument='dummy', name='wf1', version=1)
+            wf_id2 = WorkflowId(instrument='dummy', name='plot1', version=1)
 
             # Add to different stores
             workflow_store[str(wf_id1)] = {'params': {'a': 1}}
@@ -535,12 +505,8 @@ class TestConfigStoreManager:
             dream_store = manager_dream.get_store('workflow_configs')
 
             # Create WorkflowIds for each instrument
-            dummy_wf_id = WorkflowId(
-                instrument='dummy', namespace='reduction', name='workflow1', version=1
-            )
-            dream_wf_id = WorkflowId(
-                instrument='dream', namespace='reduction', name='workflow1', version=1
-            )
+            dummy_wf_id = WorkflowId(instrument='dummy', name='workflow1', version=1)
+            dream_wf_id = WorkflowId(instrument='dream', name='workflow1', version=1)
 
             dummy_config = {'params': {'threshold': 100.0}}
             dream_config = {'params': {'threshold': 200.0}}

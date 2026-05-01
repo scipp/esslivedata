@@ -141,7 +141,7 @@ class ServiceStatus:
     """Complete status information for a backend service worker."""
 
     instrument: str
-    namespace: str
+    service_name: str
     worker_id: str  # UUID as string
     state: ServiceState
     started_at: Timestamp

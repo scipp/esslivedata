@@ -11,6 +11,7 @@ from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
+from ess.livedata.kafka.chopper_synthesizer import ChopperSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
@@ -57,6 +58,12 @@ def make_timeseries_service_builder(
         preprocessor_factory=preprocessor_factory,
         stream_counter=stream_counter,
         message_batcher=NaiveMessageBatcher(),
+        # Wraps the source so the wavelength_lut workflow's primary
+        # ``chopper_cascade`` trigger is synthesized in-process. This is
+        # scaffolding for an upstream-side gap (the producer does not yet
+        # publish a ``chopper_cascade_reached`` f144); when it does, drop
+        # the wrapper and the workflow becomes a plain f144 consumer.
+        outer_source_wrapper=ChopperSynthesizer,
     )
 
 

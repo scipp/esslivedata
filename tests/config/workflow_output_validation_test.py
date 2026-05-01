@@ -42,7 +42,7 @@ def _get_source_name_for_workflow(
     if workflow_spec.source_names:
         return workflow_spec.source_names[0]
     # Fallback mappings for namespaces without explicit source_names
-    namespace = workflow_spec.namespace
+    namespace = workflow_spec.group.name
     if namespace == 'timeseries':
         # Timeseries workflows don't need a specific source
         return 'timeseries'
@@ -62,7 +62,7 @@ def _collect_workflow_outputs_for_validation():
 
         for workflow_id in instrument.workflow_factory:
             spec = instrument.workflow_factory[workflow_id]
-            builder_fn = _get_service_builder(spec.namespace)
+            builder_fn = _get_service_builder(spec.group.name)
             if builder_fn is None:
                 # Skip workflows in unknown namespaces
                 continue
@@ -130,16 +130,16 @@ def test_workflow_outputs_match_declared_model(
     4. Validates that each output matches its declared template
     """
     # Skip workflows that require external data files
-    if str(workflow_id) == "dream/data_reduction/powder_reduction_with_vanadium/1":
+    if str(workflow_id) == "dream/powder_reduction_with_vanadium/1":
         pytest.skip("Requires vanadium data file not available in test environment")
 
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
 
     # Get the appropriate service builder for this namespace
-    builder_fn = _get_service_builder(spec.namespace)
+    builder_fn = _get_service_builder(spec.group.name)
     if builder_fn is None:
-        pytest.skip(f"No service builder for namespace '{spec.namespace}'")
+        pytest.skip(f"No service builder for namespace '{spec.group.name}'")
 
     # Create the service
     builder = builder_fn(instrument=instrument_name)
@@ -149,7 +149,7 @@ def test_workflow_outputs_match_declared_model(
     source_name = _get_source_name_for_workflow(instrument_name, spec)
     config_key = models.ConfigKey(
         source_name=source_name,
-        service_name=spec.namespace,
+        service_name=spec.group.name,
         key="workflow_config",
     )
     workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
@@ -158,11 +158,11 @@ def test_workflow_outputs_match_declared_model(
 
     # Publish fake events to trigger workflow execution
     # Different namespaces need different event types
-    if spec.namespace in ('detector_data', 'data_reduction'):
+    if spec.group.name in ('detector_data', 'data_reduction'):
         app.publish_events(size=1000, time=1)
-    if spec.namespace in ('monitor_data', 'data_reduction'):
+    if spec.group.name in ('monitor_data', 'data_reduction'):
         app.publish_monitor_events(size=500, time=1)
-    if spec.namespace == 'timeseries':
+    if spec.group.name == 'timeseries':
         # Timeseries needs log data
         app.publish_log_message(source_name='proton_charge', time=1.0, value=100.0)
 

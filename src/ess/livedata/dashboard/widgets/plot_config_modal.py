@@ -46,10 +46,9 @@ from .wizard import Wizard, WizardStep
 logger = structlog.get_logger(__name__)
 
 # Synthetic workflow ID for static overlays (no actual workflow subscription)
-STATIC_OVERLAY_NAMESPACE = "static_overlay"
+STATIC_OVERLAY_GROUP = "static_overlay"
 STATIC_OVERLAY_WORKFLOW = WorkflowId(
     instrument="static",
-    namespace=STATIC_OVERLAY_NAMESPACE,
     name="geometric",
     version=1,
 )
@@ -297,7 +296,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._initial_config = initial_config
-        self._selected_namespace: str | None = None
+        self._selected_group: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
 
@@ -307,7 +306,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._output_container = pn.Column(sizing_mode='stretch_width')
 
         # Create all button widgets once (reuse by updating options)
-        self._namespace_buttons = self._create_namespace_buttons()
+        self._group_buttons = self._create_group_buttons()
         self._workflow_buttons = self._create_workflow_buttons()
         self._output_buttons = self._create_output_buttons()
         self._workflow_description = pn.pane.HTML(
@@ -346,12 +345,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         """Description text for this step."""
         return "Choose the workflow and output to visualize."
 
-    def _format_namespace_label(self, namespace: str) -> str:
-        """Format namespace name for display.
-
-        Example: 'data_reduction' -> 'Data Reduction'.
-        """
-        return namespace.replace('_', ' ').title()
+    def _group_for_workflow(self, workflow_id: WorkflowId) -> str | None:
+        """Return the group identifier for a workflow id, or None if unknown."""
+        if workflow_id == STATIC_OVERLAY_WORKFLOW:
+            return STATIC_OVERLAY_GROUP
+        spec = self._workflow_registry.get(workflow_id)
+        return spec.group.name if spec is not None else None
 
     def _initialize_selections(self, initial_config: PlotConfig | None) -> None:
         """Initialize selections and bind handlers afterward to avoid cascades."""
@@ -359,8 +358,9 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         with pn.io.hold():
             if initial_config is not None:
                 # Edit mode: pre-select from config
-                self._selected_namespace = initial_config.workflow_id.namespace
-                self._namespace_buttons.value = initial_config.workflow_id.namespace
+                group_value = self._group_for_workflow(initial_config.workflow_id)
+                self._selected_group = group_value
+                self._group_buttons.value = group_value
                 self._update_workflow_options()
                 self._selected_workflow_id = initial_config.workflow_id
                 self._workflow_buttons.value = initial_config.workflow_id
@@ -371,11 +371,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                     self._name_input.value = initial_config.output_name
                 else:
                     self._output_buttons.value = initial_config.output_name
-            elif self._namespace_buttons.options:
+            elif self._group_buttons.options:
                 # New mode: select first available option
-                namespace_value = next(iter(self._namespace_buttons.options.values()))
-                self._selected_namespace = namespace_value
-                self._namespace_buttons.value = namespace_value
+                group_value = next(iter(self._group_buttons.options.values()))
+                self._selected_group = group_value
+                self._group_buttons.value = group_value
                 self._update_workflow_options()
                 if self._workflow_buttons.options:
                     workflow_value = next(iter(self._workflow_buttons.options.values()))
@@ -392,7 +392,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                             self._output_buttons.value = output_value
 
         # Bind handlers after initial values are set
-        self._namespace_buttons.param.watch(self._on_namespace_change, 'value')
+        self._group_buttons.param.watch(self._on_group_change, 'value')
         self._workflow_buttons.param.watch(self._on_workflow_change, 'value')
         self._output_buttons.param.watch(self._on_output_change, 'value')
         self._name_input.param.watch(self._on_name_input_change, 'value')
@@ -400,18 +400,21 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._update_output_description()
         self._validate()
 
-    def _create_namespace_buttons(self) -> pn.widgets.RadioButtonGroup:
-        """Create namespace selection radio buttons (handler bound later)."""
-        namespaces = sorted(
-            {wid.namespace for wid in self._workflow_registry.keys()},
-            reverse=True,
-        )
-        options = {self._format_namespace_label(ns): ns for ns in namespaces}
-        # Add synthetic "Static Overlay" namespace for geometric overlays
-        options["Static Overlay"] = STATIC_OVERLAY_NAMESPACE
+    def _create_group_buttons(self) -> pn.widgets.RadioButtonGroup:
+        """Create workflow-group selection radio buttons (handler bound later)."""
+        # Deduplicate by group identifier; keep first-seen title for display.
+        groups: dict[str, str] = {}
+        for spec in self._workflow_registry.values():
+            groups.setdefault(spec.group.name, spec.group.title)
+        options = {
+            title: name
+            for name, title in sorted(groups.items(), key=lambda item: item[0])
+        }
+        # Add synthetic "Static Overlay" group for geometric overlays
+        options["Static Overlay"] = STATIC_OVERLAY_GROUP
 
         return pn.widgets.RadioButtonGroup(
-            name='Namespace',
+            name='Group',
             options=options,
             orientation='horizontal',
             button_type='primary',
@@ -452,12 +455,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             sizing_mode='stretch_width',
         )
 
-    def _on_namespace_change(self, event) -> None:
-        """Handle namespace selection change."""
+    def _on_group_change(self, event) -> None:
+        """Handle workflow-group selection change."""
         # Batch all cascading widget updates
         with pn.io.hold():
             if event.new is not None:
-                self._selected_namespace = event.new
+                self._selected_group = event.new
                 self._selected_workflow_id = None
                 self._selected_output = None
                 self._update_workflow_options()
@@ -476,7 +479,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                         self._selected_output = first_output
                         self._output_buttons.value = first_output
             else:
-                self._selected_namespace = None
+                self._selected_group = None
                 self._selected_workflow_id = None
                 self._selected_output = None
         self._update_workflow_description()
@@ -549,20 +552,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._validate()
 
     def _update_workflow_options(self) -> None:
-        """Update workflow button options based on selected namespace."""
-        if self._selected_namespace is None:
+        """Update workflow button options based on selected group."""
+        if self._selected_group is None:
             self._workflow_buttons.options = {}
             return
 
-        # Handle synthetic static overlay namespace
-        if self._selected_namespace == STATIC_OVERLAY_NAMESPACE:
+        # Handle synthetic static overlay group
+        if self._selected_group == STATIC_OVERLAY_GROUP:
             self._workflow_buttons.options = {"Geometric": STATIC_OVERLAY_WORKFLOW}
             return
 
         filtered_workflows = [
             (wid, spec)
             for wid, spec in self._workflow_registry.items()
-            if wid.namespace == self._selected_namespace
+            if spec.group.name == self._selected_group
         ]
 
         if not filtered_workflows:
@@ -609,13 +612,13 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._output_buttons.options = options
 
     def _update_content(self) -> None:
-        """Update content with namespace selector above workflow/output columns."""
+        """Update content with group selector above workflow/output columns."""
         self._content_container.clear()
 
-        # Namespace selector on top (horizontal)
-        namespace_section = pn.Column(
-            pn.pane.Markdown("**Namespace**"),
-            self._namespace_buttons,
+        # Group selector on top (horizontal)
+        group_section = pn.Column(
+            pn.pane.Markdown("**Group**"),
+            self._group_buttons,
             sizing_mode='stretch_width',
         )
 
@@ -634,22 +637,22 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
 
         two_columns = pn.Row(workflow_col, output_col, sizing_mode='stretch_width')
 
-        self._content_container.append(namespace_section)
+        self._content_container.append(group_section)
         self._content_container.append(two_columns)
 
     def _validate(self) -> None:
         """Update validity based on selections."""
         is_valid = (
-            self._selected_namespace is not None
+            self._selected_group is not None
             and self._selected_workflow_id is not None
             and self._selected_output is not None
         )
         self._notify_ready_changed(is_valid)
 
     def is_valid(self) -> bool:
-        """Whether namespace, workflow, and output have all been selected."""
+        """Whether group, workflow, and output have all been selected."""
         return (
-            self._selected_namespace is not None
+            self._selected_group is not None
             and self._selected_workflow_id is not None
             and self._selected_output is not None
         )
@@ -1200,6 +1203,14 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         if initial_source_names is None and not hints.preselect_all_sources:
             initial_source_names = []
 
+        output_template_dims: tuple[str, ...] | None = None
+        if not is_static:
+            template = workflow_spec.get_output_template(
+                self._plotter_selection.output_name
+            )
+            if template is not None:
+                output_template_dims = tuple(template.dims)
+
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
             source_names=source_names,
@@ -1208,6 +1219,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             initial_source_names=initial_source_names,
             instrument_config=self._instrument_config,
             hidden_fields=hints.hidden_fields,
+            output_template_dims=output_template_dims,
+            params_factory=self._plotting_controller.get_params_factory(
+                self._plotter_selection.plot_name
+            ),
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)

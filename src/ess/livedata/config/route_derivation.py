@@ -26,7 +26,7 @@ def gather_source_names(
     """
     names: set[str] = set()
     for spec in instrument.workflow_factory.values():
-        if spec.namespace != namespace:
+        if spec.group.name != namespace:
             continue
         names.update(spec.source_names)
         if spec.aux_sources:

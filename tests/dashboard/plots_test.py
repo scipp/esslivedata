@@ -44,7 +44,6 @@ def data_key():
     """Create a test ResultKey."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )
@@ -886,7 +885,6 @@ class TestSlicerPlotter:
 
         workflow_id2 = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -979,7 +977,6 @@ class TestPlotterLabelChanges:
         """Create a test ResultKey with output_name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1027,7 +1024,6 @@ class TestPlotterOverlayMode:
         """Create first test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1041,7 +1037,6 @@ class TestPlotterOverlayMode:
         """Create second test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1195,7 +1190,6 @@ class TestBarsPlotter:
         """Test that output_name is used as the vdims column name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1249,7 +1243,6 @@ class TestBarsPlotter:
 
         workflow_id = WorkflowId(
             instrument='test',
-            namespace='test',
             name='test',
             version=1,
         )
@@ -1517,6 +1510,118 @@ class TestOverlay1DPlotter:
             vdim = curve.vdims[0]
             assert vdim.label == 'values'
 
+    def test_points_mode_produces_scatter(self, data_2d_with_roi_coord, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.points))
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+        assert isinstance(result, hv.Overlay)
+        for elem in result:
+            assert isinstance(elem, hv.Scatter)
+
+    def test_histogram_mode_produces_histograms(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        toa_edges = sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us')
+        data = sc.DataArray(
+            sc.array(dims=['roi', 'toa'], values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        for elem in result:
+            assert isinstance(elem, hv.Histogram)
+
+    def test_histogram_mode_without_bin_edges_falls_back_to_curve(
+        self, data_2d_with_roi_coord, data_key
+    ):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+        for elem in result:
+            assert isinstance(elem, hv.Curve)
+
+    def test_error_bars_with_variances(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[1.0, 2.0], [3.0, 4.0]],
+                variances=[[0.1, 0.2], [0.3, 0.4]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0], unit='us'),
+            },
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        elements = list(result)
+        # 2 slices x (Curve + ErrorBars)
+        assert len(elements) == 4
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.ErrorBars)
+        assert isinstance(elements[2], hv.Curve)
+        assert isinstance(elements[3], hv.ErrorBars)
+
+    def test_error_band_with_variances(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.band)
+        )
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[1.0, 2.0], [3.0, 4.0]],
+                variances=[[0.1, 0.2], [0.3, 0.4]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0], unit='us'),
+            },
+        )
+        result = plotter.plot(data, data_key)
+        elements = list(result)
+        assert isinstance(elements[0], hv.Curve)
+        assert isinstance(elements[1], hv.Spread)
+
+    def test_errors_none_suppresses_error_display(self, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[1.0, 2.0], [3.0, 4.0]],
+                variances=[[0.1, 0.2], [0.3, 0.4]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0], unit='us'),
+            },
+        )
+        result = plotter.plot(data, data_key)
+        for elem in result:
+            assert isinstance(elem, hv.Curve)
+
+    def test_no_variances_no_errors_displayed(self, data_2d_with_roi_coord, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+        for elem in result:
+            assert isinstance(elem, hv.Curve)
+
 
 class TestLagIndicator:
     """Tests for lag indicator functionality in plotters."""
@@ -1526,7 +1631,6 @@ class TestLagIndicator:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1588,7 +1692,6 @@ class TestLagIndicator:
 
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1652,7 +1755,6 @@ class TestTwoStageArchitecture:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1754,7 +1856,6 @@ class TestSaveFilenameHookOnDynamicMap:
     def _make_key(source_name: str) -> ResultKey:
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1985,7 +2086,6 @@ class TestRateNormalizationIntegration:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )

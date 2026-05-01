@@ -18,7 +18,6 @@ class TestJobResult:
         """stream_name uses default output_name; UnrollingSinkAdapter replaces it."""
         workflow_id = WorkflowId(
             instrument="TEST",
-            namespace="data_reduction",
             name="test_workflow",
             version=1,
         )
@@ -33,7 +32,7 @@ class TestJobResult:
             error_message=None,
         )
         assert result.stream_name == (
-            '{"workflow_id":{"instrument":"TEST","namespace":"data_reduction",'
+            '{"workflow_id":{"instrument":"TEST",'
             '"name":"test_workflow","version":1},"job_id":{"source_name":"test_source",'
             '"job_number":"' + str(job_number) + '"},"output_name":"result"}'
         )
@@ -86,7 +85,6 @@ def fake_processor():
 def sample_workflow_id():
     return WorkflowId(
         instrument="TEST",
-        namespace="data_reduction",
         name="test_workflow",
         version=1,
     )

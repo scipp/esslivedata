@@ -26,7 +26,13 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxInput, AuxSources, JobId, WorkflowOutputsBase
+from ..config.workflow_spec import (
+    DETECTORS,
+    AuxInput,
+    AuxSources,
+    JobId,
+    WorkflowOutputsBase,
+)
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
@@ -290,7 +296,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
 def _make_spectrum_template(output_dims: list[str]) -> sc.DataArray:
     # Append a placeholder spectral dim so the template has the right ndim for
     # plotter selection. The actual dim name is determined at runtime by the transform.
-    dims = [*output_dims, 'spectrum']
+    dims = [*output_dims, '<spectral_coord>']
     return sc.DataArray(sc.zeros(dims=dims, shape=[0] * len(dims), unit='counts'))
 
 
@@ -567,7 +573,7 @@ def register_detector_view_spec(
         raise ValueError(f"Unsupported projection: {projection}")
 
     return instrument.register_spec(
-        namespace="detector_data",
+        group=DETECTORS,
         name=name,
         version=1,
         title=title,

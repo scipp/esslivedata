@@ -66,9 +66,11 @@ ESSlivedata uses a **two-phase registration pattern** to separate specifications
 Register workflow specifications with explicit metadata and return a handle:
 
 ```python
+from ess.livedata.config.workflow_spec import DETECTORS, REDUCTION
+
 # Register a detector view spec
 view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='detector1_xy',
     version=1,
     title='Detector 1 XY View',
@@ -79,7 +81,7 @@ view_handle = instrument.register_spec(
 
 # Register a data reduction workflow spec
 workflow_handle = instrument.register_spec(
-    namespace='data_reduction',
+    group=REDUCTION,
     name='my_workflow',
     version=1,
     title='My Workflow',
@@ -442,6 +444,7 @@ __all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
 
 ```python
 from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
 # Create instrument
@@ -457,7 +460,7 @@ instrument_registry.register(instrument)
 
 # Register detector view spec
 panel_0_view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='panel_0_xy',
     version=1,
     title='Panel 0',

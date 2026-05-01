@@ -16,12 +16,12 @@ from ess.livedata.dashboard.widgets.backend_status_widget import (
 def _make_status(
     *,
     worker_id: str = "worker1",
-    namespace: str = "ns1",
+    service_name: str = "ns1",
     state: ServiceState = ServiceState.running,
 ) -> ServiceStatus:
     return ServiceStatus(
         instrument="dream",
-        namespace=namespace,
+        service_name=service_name,
         worker_id=worker_id,
         state=state,
         started_at=Timestamp.now(),

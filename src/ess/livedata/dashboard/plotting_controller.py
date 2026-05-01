@@ -112,6 +112,12 @@ class PlottingController:
         """
         return plotter_registry.get_spec(plot_name)
 
+    def get_params_factory(
+        self, plot_name: str
+    ) -> Callable[[tuple[str, ...]], type[pydantic.BaseModel]] | None:
+        """Get the dim-specialized params factory for a plotter, if any."""
+        return plotter_registry.get_params_factory(plot_name)
+
     def get_static_plotters(self) -> dict[str, PlotterSpec]:
         """
         Get available static plotters (for overlays without data sources).

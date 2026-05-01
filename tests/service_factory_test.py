@@ -56,6 +56,18 @@ def test_job_threads_flag_defaults_to_five():
     assert args.job_threads == 5
 
 
+def test_check_flag_defaults_to_false():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--instrument', 'dummy'])
+    assert args.check is False
+
+
+def test_check_flag_is_registered():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--check', '--instrument', 'dummy'])
+    assert args.check is True
+
+
 def test_sciline_with_sync_pool_runs_on_calling_thread():
     """Setting dask pool to SynchronousExecutor makes sciline run on the calling thread.
 

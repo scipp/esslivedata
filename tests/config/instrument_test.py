@@ -9,7 +9,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.workflow_spec import WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import MONITORS, REDUCTION, WorkflowOutputsBase
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
     WorkflowFactory,
@@ -82,7 +82,6 @@ class TestInstrument:
         assert instrument.name == "test_instrument"
         assert isinstance(instrument.workflow_factory, WorkflowFactory)
         assert instrument.f144_attribute_registry == {}
-        assert instrument.active_namespace is None
         assert instrument.detector_names == []
 
     def test_instrument_creation_with_custom_values(self):
@@ -94,13 +93,11 @@ class TestInstrument:
             name="custom_instrument",
             workflow_factory=custom_factory,
             f144_attribute_registry=f144_registry,
-            active_namespace="custom_namespace",
         )
 
         assert instrument.name == "custom_instrument"
         assert instrument.workflow_factory is custom_factory
         assert instrument.f144_attribute_registry == f144_registry
-        assert instrument.active_namespace == "custom_namespace"
 
     def test_configure_detector_with_explicit_number(self):
         """Test configuring detector with explicit detector number."""
@@ -190,7 +187,7 @@ class TestInstrument:
 
         # Phase 1: Register spec
         handle = instrument.register_spec(
-            namespace="test_namespace",
+            group=MONITORS,
             name="test_workflow",
             version=1,
             title="Test Workflow",
@@ -204,7 +201,7 @@ class TestInstrument:
         assert len(specs) == 1
         spec = next(iter(specs.values()))
         assert spec.instrument == "test_instrument"
-        assert spec.namespace == "test_namespace"
+        assert spec.group is MONITORS
         assert spec.name == "test_workflow"
         assert spec.version == 1
         assert spec.title == "Test Workflow"
@@ -249,7 +246,7 @@ class TestInstrument:
         specs = instrument.workflow_factory
         assert len(specs) == 1
         spec = next(iter(specs.values()))
-        assert spec.namespace == "data_reduction"  # default
+        assert spec.group is REDUCTION  # default
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
@@ -343,7 +340,7 @@ class TestInstrumentRegisterSpec:
         instrument = Instrument(name="test_instrument")
 
         handle = instrument.register_spec(
-            namespace="custom_namespace",
+            group=REDUCTION,
             name="test_workflow",
             version=1,
             title="Test Workflow",
@@ -360,7 +357,7 @@ class TestInstrumentRegisterSpec:
         spec_id = handle.workflow_id
         spec = instrument.workflow_factory[spec_id]
         assert spec.instrument == "test_instrument"
-        assert spec.namespace == "custom_namespace"
+        assert spec.group is REDUCTION
         assert spec.name == "test_workflow"
         assert spec.version == 1
         assert spec.title == "Test Workflow"
@@ -382,7 +379,7 @@ class TestInstrumentRegisterSpec:
         )
 
         spec = instrument.workflow_factory[handle.workflow_id]
-        assert spec.namespace == "data_reduction"  # default
+        assert spec.group is REDUCTION  # default
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
         assert spec.params is None  # default

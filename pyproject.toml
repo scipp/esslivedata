@@ -64,18 +64,20 @@ bifrost = [
 dream = [
     "essdiffraction>=26.4.0",
 ]
-loki = [
-    "esssans>=26.4.0",
-]
-odin = [
-    "essimaging>=26.4.0",
-]
+dummy = []
 estia = [
     "essreflectometry>=26.4.0",
+]
+loki = [
+    "esssans>=26.4.0",
 ]
 nmx = [
     "essnmx>=26.4.0",
 ]
+odin = [
+    "essimaging>=26.4.0",
+]
+tbl = []
 dashboard = [
   "bokeh",
   "holoviews",

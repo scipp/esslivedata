@@ -33,7 +33,6 @@ hv.extension('bokeh')
 def workflow_id():
     return WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )

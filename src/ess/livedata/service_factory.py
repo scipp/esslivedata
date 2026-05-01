@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any, Generic, NoReturn, TypeVar
@@ -13,7 +14,7 @@ import structlog
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
-from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
+from .core.handler import PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.message_batcher import (
     AdaptiveMessageBatcher,
@@ -64,6 +65,10 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         job_threads: int = 5,
         stream_counter: StreamCounter | None = None,
         message_batcher: MessageBatcher | None = None,
+        outer_source_wrapper: Callable[
+            [MessageSource[Message[Tin]]], MessageSource[Message[Tin]]
+        ]
+        | None = None,
     ) -> None:
         """
         Parameters
@@ -91,8 +96,14 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             default is used.  Services that require a specific batcher should
             set this explicitly; otherwise ``DataServiceRunner`` will assign
             one based on its CLI argument.
+        outer_source_wrapper:
+            Optional callable that wraps the (already-adapted) message source
+            before it is handed to the processor. Used by services that need
+            to inject synthetic messages or filter raw streams at the
+            domain-level (e.g. the chopper-cascade synthesizer).
         """
         self._name = f'{instrument}_{name}'
+        self._service_name = name
         self._log_level = log_level
         self._topics: list[KafkaTopic] | None = None
         self._instrument = instrument
@@ -103,9 +114,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._job_threads = job_threads
         self._stream_counter = stream_counter
         self._message_batcher = message_batcher
-        if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
-            # Ensure only jobs from the active namespace can be created by JobFactory.
-            preprocessor_factory.instrument.active_namespace = name
+        self._outer_source_wrapper = outer_source_wrapper
 
     @property
     def instrument(self) -> str:
@@ -200,17 +209,23 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             instrument=self._instrument,
             preprocessor_factory=type(self._preprocessor_factory).__name__,
         )
-        processor = self._processor_cls(
-            source=source
+        adapted_source: MessageSource = (
+            source
             if self._adapter is None
             else AdaptingMessageSource(
                 source=source,
                 adapter=self._adapter,
                 raise_on_error=raise_on_adapter_error,
                 stream_counter=self._stream_counter,
-            ),
+            )
+        )
+        if self._outer_source_wrapper is not None:
+            adapted_source = self._outer_source_wrapper(adapted_source)
+        processor = self._processor_cls(
+            source=adapted_source,
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
+            service_name=self._service_name,
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
             message_batcher=self._message_batcher,
@@ -260,6 +275,14 @@ class DataServiceRunner:
             ' SimpleMessageBatcher (pre-existing default); "rate-aware" uses'
             ' RateAwareMessageBatcher (per-stream pulse-slot completion).',
         )
+        self._parser.add_argument(
+            '--check',
+            action='store_true',
+            default=False,
+            help='Build the service for the selected instrument and exit '
+            'without connecting to Kafka. Verifies that all dependencies '
+            'required by the instrument are importable.',
+        )
 
     @property
     def parser(self) -> argparse.ArgumentParser:
@@ -300,7 +323,11 @@ class DataServiceRunner:
         sink_type = args.pop('sink_type')
         job_threads = args.pop('job_threads')
         batcher_name = args.pop('batcher')
+        check = args.pop('check')
         builder = self._make_builder(**args)
+        if check:
+            logger.info("check_ok", instrument=builder.instrument)
+            sys.exit(0)
         builder.job_threads = job_threads
         if job_threads > 1:
             logger.info("job_threads", threads=job_threads)

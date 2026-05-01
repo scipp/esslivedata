@@ -38,7 +38,6 @@ def test_my_workflow(integration_env):
     # Define the workflow type to test
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )

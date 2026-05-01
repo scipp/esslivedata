@@ -148,6 +148,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
+        service_name: str,
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
         stream_stats_provider: StreamStatsProvider | None = None,
@@ -157,7 +158,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=instrument), job_threads=job_threads
+            job_factory=JobFactory(instrument=instrument, service_name=service_name),
+            job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
@@ -169,7 +171,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         # Service heartbeat state
         self._instrument = instrument.name
-        self._namespace = instrument.active_namespace or "unknown"
+        self._service_name = service_name
         self._worker_id = str(uuid.uuid4())
         self._started_at = Timestamp.now()
         self._service_state = ServiceState.starting
@@ -220,7 +222,33 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._report_status()
 
         message_batch = self._message_batcher.batch(data_messages)
-        if message_batch is None:
+        batch_start = time.monotonic()
+
+        if message_batch is not None:
+            workflow_data = self._message_preprocessor.preprocess_messages(
+                message_batch
+            )
+        else:
+            now = Timestamp.now()
+            workflow_data = WorkflowData(start_time=now, end_time=now, data={})
+
+        # Enrich workflow_data with cached context for streams that scheduled
+        # jobs will need on activation. peek_pending_streams uses start_time
+        # to predict which jobs will activate in the upcoming process_jobs
+        # call (same start_time), covering both auxiliary streams (e.g., log
+        # data for detector workflows) and primary streams (e.g., log data
+        # for a timeseries job that activates after its data already passed
+        # through, or the chopperless wavelength_lut tick that fires only
+        # once). Lets the empty-batch branch run jobs from cached context
+        # alone.
+        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
+        missing = needed - {s.name for s in workflow_data.data}
+        if missing:
+            workflow_data.data.update(self._message_preprocessor.get_context(missing))
+
+        # Truly idle cycle: no batch waiting, and no cached context to
+        # activate any scheduled job.
+        if message_batch is None and not workflow_data.data:
             self._message_batcher.report_batch(None, processing_time_s=0.0)
             self._empty_batches += 1
             self._maybe_log_metrics()
@@ -231,26 +259,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 # may trigger costly workflow creation.
                 time.sleep(0.1)
             return
-
-        batch_start = time.monotonic()
-
-        # Pre-process message batch
-        workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
-
-        # Seed context data for jobs about to activate.
-        # peek uses the batch start_time to predict which jobs will activate
-        # in the upcoming process_jobs call (which uses the same start_time).
-        # This covers both auxiliary streams (e.g., log data for detector
-        # workflows) and primary streams (e.g., log data for the timeseries
-        # service). Without primary stream seeding, a timeseries job that
-        # activates after its data was already consumed will never receive
-        # historical data from the preprocessor's context accumulators.
-        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
-        if needed:
-            missing = needed - {s.name for s in workflow_data.data}
-            if missing:
-                context = self._message_preprocessor.get_context(missing)
-                workflow_data.data.update(context)
 
         # Push data into jobs and compute results in a single pass.
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -289,7 +297,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         processing_time_s = time.monotonic() - batch_start
         self._message_batcher.report_batch(
-            len(message_batch.messages), processing_time_s=processing_time_s
+            len(message_batch.messages) if message_batch is not None else 0,
+            processing_time_s=processing_time_s,
         )
         self._batches_processed += 1
         self._maybe_log_metrics()
@@ -325,7 +334,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._pending_stream_stats = None
         return ServiceStatus(
             instrument=self._instrument,
-            namespace=self._namespace,
+            service_name=self._service_name,
             worker_id=self._worker_id,
             state=self._service_state,
             started_at=self._started_at,

@@ -27,7 +27,7 @@ def _get_workflow_from_registry(
     instrument_config = instrument_registry[instrument]
     workflow_registry = instrument_config.workflow_factory
     for wid, spec in workflow_registry.items():
-        if spec.namespace == namespace:
+        if spec.group.name == namespace:
             return wid, spec
     raise ValueError(f"Namespace {namespace} not found in specs")
 

@@ -4,6 +4,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -29,7 +30,7 @@ class FakeInstrumentConfig:
 
 
 def _make_workflow_id(name: str = "timeseries") -> WorkflowId:
-    return WorkflowId(instrument="test", namespace="ns", name=name, version=1)
+    return WorkflowId(instrument="test", name=name, version=1)
 
 
 class Bins(pydantic.BaseModel):
@@ -217,6 +218,7 @@ def _make_workflow_spec(title: str, outputs: type[WorkflowOutputsBase]) -> Workf
         description="",
         params=None,
         outputs=outputs,
+        group=REDUCTION,
     )
 
 

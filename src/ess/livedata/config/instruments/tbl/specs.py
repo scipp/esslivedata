@@ -5,6 +5,7 @@ TBL workflow spec registration.
 """
 
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
+from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -85,7 +86,7 @@ instrument.add_logical_view(
 )
 
 orca_view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='tbl_area_detector_orca',
     version=1,
     title='Orca Detector',
