@@ -23,6 +23,7 @@ from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.core.stream_alias import BindStreamAlias, UnbindStreamAlias
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.dashboard.config_store import ConfigStore, InMemoryConfigStore
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.fom_orchestrator import (
     FOMOrchestrator,
@@ -99,6 +100,7 @@ def _make_orchestrator(
     active_job_registry: ActiveJobRegistry,
     job_service: JobService,
     notification_queue: NotificationQueue | None = None,
+    config_store: ConfigStore | None = None,
     n_slots: int = 2,
 ) -> FOMOrchestrator:
     registry = {spec.get_id(): spec for spec in specs}
@@ -108,6 +110,7 @@ def _make_orchestrator(
         active_job_registry=active_job_registry,
         job_service=job_service,
         notification_queue=notification_queue,
+        config_store=config_store,
         n_slots=n_slots,
     )
 
@@ -1035,3 +1038,238 @@ class TestOnJobStatusUpdated:
             )
         )
         assert orch.get_slot_state(slot) is not None
+
+
+class TestPersistence:
+    def test_commit_writes_to_store(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        slot = FOMSlot('fom-0')
+        job_id = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        entry = store[slot]
+        assert entry['version'] == 1
+        assert entry['workflow_id'] == str(workflow_a.get_id())
+        assert entry['source_name'] == 'det_1'
+        assert entry['output_name'] == 'result'
+        assert entry['params'] == {'threshold': 5.0}
+        assert entry['job_number'] == str(job_id.job_number)
+
+    def test_release_persists_with_null_job_number(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        orch.release_slot(slot)
+        entry = store[slot]
+        assert entry['job_number'] is None
+        assert entry['params'] == {'threshold': 5.0}
+
+    def test_clear_removes_from_store(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        orch.clear_slot(slot)
+        assert slot not in store
+
+    def test_restore_loads_slot_as_stopped(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        slot = FOMSlot('fom-0')
+        store[slot] = {
+            'version': 1,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_1',
+            'output_name': 'result',
+            'params': {'threshold': 7.0},
+            'aux_source_names': {},
+            'job_number': str(__import__('uuid').uuid4()),
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.workflow_id == workflow_a.get_id()
+        assert state.source_name == 'det_1'
+        assert state.output_name == 'result'
+        assert state.params == {'threshold': 7.0}
+        # job_number is intentionally discarded on restore.
+        assert state.job_number is None
+        assert state.is_running is False
+
+    def test_restore_drops_unknown_workflow(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        store[FOMSlot('fom-0')] = {
+            'version': 1,
+            'workflow_id': 'other/ns/missing/1',
+            'source_name': 'det_1',
+            'output_name': 'result',
+            'params': {},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        assert orch.get_slot_state(FOMSlot('fom-0')) is None
+
+    def test_restore_drops_unknown_source(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        store[FOMSlot('fom-0')] = {
+            'version': 1,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_does_not_exist',
+            'output_name': 'result',
+            'params': {},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        assert orch.get_slot_state(FOMSlot('fom-0')) is None
+
+    def test_restore_drops_unknown_output(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        store[FOMSlot('fom-0')] = {
+            'version': 1,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_1',
+            'output_name': 'no_such_output',
+            'params': {},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        assert orch.get_slot_state(FOMSlot('fom-0')) is None
+
+    def test_restore_drops_invalid_params(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        store[FOMSlot('fom-0')] = {
+            'version': 1,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_1',
+            'output_name': 'result',
+            'params': {'threshold': 'not-a-float'},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        assert orch.get_slot_state(FOMSlot('fom-0')) is None
+
+    def test_restore_drops_unknown_schema_version(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        store[FOMSlot('fom-0')] = {
+            'version': 999,
+            'workflow_id': str(workflow_a.get_id()),
+            'source_name': 'det_1',
+            'output_name': 'result',
+            'params': {},
+            'aux_source_names': {},
+            'job_number': None,
+        }
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        assert orch.get_slot_state(FOMSlot('fom-0')) is None
+
+    def test_no_store_works(self, workflow_a, sink, active_job_registry, job_service):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        # Without a store, mutations must not raise.
+        orch.commit_slot(
+            FOMSlot('fom-0'),
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(FOMSlot('fom-0'))
+        orch.clear_slot(FOMSlot('fom-0'))
