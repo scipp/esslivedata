@@ -81,10 +81,10 @@ def setup_factories(instrument: Instrument) -> None:
         # TODO: Currently we don't have proton current data,
         # so for now just set it to constant 1uA.
         wf[ProtonCurrent[SampleRun]] = sc.DataArray(
-            sc.ones(dims=['time'], shape=[1.0], unit='uA'),
+            sc.ones(dims=['time'], shape=[1], unit='uA'),
             coords={
                 'time': sc.datetime(0, unit='ns')
-                + sc.array(dims=['time'], values=[1.0], unit='ns')
+                + sc.array(dims=['time'], values=[1], unit='ns')
             },
         )
 
