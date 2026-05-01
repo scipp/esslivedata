@@ -5,6 +5,7 @@ NMX instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
@@ -34,7 +35,7 @@ monitor_handle = register_monitor_workflow_specs(
 
 # Register detector view spec for the panel_xy view
 panel_xy_view_handle = instrument.register_spec(
-    namespace='detector_data',
+    group=DETECTORS,
     name='panel_xy',
     version=1,
     title='Detector counts',

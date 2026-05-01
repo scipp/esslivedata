@@ -219,7 +219,7 @@ class TestF144Serializer:
 def _make_service_status(**overrides) -> ServiceStatus:
     defaults: dict = {
         'instrument': 'dream',
-        'namespace': 'data_reduction',
+        'service_name': 'data_reduction',
         'worker_id': str(uuid.uuid4()),
         'state': ServiceState.running,
         'started_at': Timestamp.from_ns(1_700_000_000_000_000_000),
@@ -235,7 +235,6 @@ def _make_job_status(**overrides) -> JobStatus:
         'job_id': JobId(source_name='detector_1', job_number=uuid.uuid4()),
         'workflow_id': WorkflowId(
             instrument='test_inst',
-            namespace='data_reduction',
             name='test_workflow',
             version=1,
         ),

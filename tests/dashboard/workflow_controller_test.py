@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -75,9 +76,7 @@ def source_names() -> list[str]:
 @pytest.fixture
 def workflow_id() -> WorkflowId:
     """Test workflow ID."""
-    return WorkflowId(
-        instrument='test_instrument', namespace='abc', name="test_workflow", version=1
-    )
+    return WorkflowId(instrument='test_instrument', name="test_workflow", version=1)
 
 
 @pytest.fixture
@@ -85,13 +84,13 @@ def workflow_spec(workflow_id: WorkflowId) -> WorkflowSpec:
     """Test workflow specification."""
     return WorkflowSpec(
         instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
         name=workflow_id.name,
         version=workflow_id.version,
         title="Test Workflow",
         description="A test workflow for unit testing",
         source_names=["detector_1", "detector_2"],
         params=SomeWorkflowParams,
+        group=REDUCTION,
     )
 
 
@@ -266,6 +265,7 @@ class TestWorkflowController:
             description="First workflow",
             source_names=sources_1,
             params=SomeWorkflowParams,
+            group=REDUCTION,
         )
         workflow_spec_2 = WorkflowSpec(
             instrument="test_instrument",
@@ -275,6 +275,7 @@ class TestWorkflowController:
             description="Second workflow",
             source_names=sources_2,
             params=SomeWorkflowParams,
+            group=REDUCTION,
         )
         workflow_id_1 = workflow_spec_1.get_id()
         workflow_id_2 = workflow_spec_2.get_id()
@@ -411,9 +412,7 @@ class TestWorkflowController:
         workflow_controller: WorkflowControllerFixture,
     ):
         """Test that get_workflow_config returns None for non-existent workflow."""
-        nonexistent_id = WorkflowId(
-            instrument='test', namespace='test', name='nonexistent', version=1
-        )
+        nonexistent_id = WorkflowId(instrument='test', name='nonexistent', version=1)
 
         # Act
         result = workflow_controller.controller.get_workflow_config(nonexistent_id)

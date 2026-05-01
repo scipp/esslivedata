@@ -6,6 +6,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    REDUCTION,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
@@ -61,6 +62,7 @@ class TestGetAvailablePlottersFromSpec:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
@@ -93,6 +95,7 @@ class TestGetAvailablePlottersFromSpec:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
@@ -117,6 +120,7 @@ class TestGetAvailablePlottersFromSpec:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
@@ -220,6 +224,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -250,6 +255,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -290,6 +296,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -334,6 +341,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -390,6 +398,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -434,6 +443,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -473,6 +483,7 @@ class TestGetAvailableOverlays:
             description='Test',
             outputs=TestOutputs,
             params=None,
+            group=REDUCTION,
         )
 
         overlays = plotting_controller.get_available_overlays(
@@ -566,6 +577,7 @@ class TestOutputHasTimeCoord:
             description='D',
             outputs=Outputs,
             params=None,
+            group=REDUCTION,
         )
         assert output_has_time_coord(spec, 'current') is True
 
@@ -586,6 +598,7 @@ class TestOutputHasTimeCoord:
             description='D',
             outputs=Outputs,
             params=None,
+            group=REDUCTION,
         )
         assert output_has_time_coord(spec, 'cumulative') is False
 
@@ -601,5 +614,6 @@ class TestOutputHasTimeCoord:
             description='D',
             outputs=Outputs,
             params=None,
+            group=REDUCTION,
         )
         assert output_has_time_coord(spec, 'result') is True

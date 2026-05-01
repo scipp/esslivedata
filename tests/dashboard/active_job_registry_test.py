@@ -10,7 +10,7 @@ from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 
-_workflow_id = WorkflowId(instrument="test", namespace="ns", name="wf", version=1)
+_workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
 
 def _make_result_key(job_number, source_name="det1", output_name="result"):

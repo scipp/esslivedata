@@ -19,7 +19,6 @@ def workflow_id() -> WorkflowId:
     """Sample workflow ID."""
     return WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )

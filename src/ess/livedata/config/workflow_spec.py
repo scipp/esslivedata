@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -41,26 +41,59 @@ class DefaultOutputs(WorkflowOutputsBase):
     result: sc.DataArray = Field(title='Result', description='Workflow output.')
 
 
+class WorkflowGroup(BaseModel, frozen=True):
+    """Display-oriented grouping for workflow specs.
+
+    Groups bundle related workflows for the dashboard UI. Identity is by
+    the ``name`` field; the ``Literal`` constraint locks the set of legal
+    categories to prevent ad-hoc construction sneaking in new ones.
+    """
+
+    name: Literal['data_reduction', 'monitor_data', 'detector_data', 'timeseries']
+    title: str
+    description: str = ''
+
+
+REDUCTION = WorkflowGroup(
+    name='data_reduction',
+    title='Reduction',
+    description='Scientific data reduction workflows.',
+)
+MONITORS = WorkflowGroup(
+    name='monitor_data',
+    title='Monitors',
+    description='Beam monitor data workflows.',
+)
+DETECTORS = WorkflowGroup(
+    name='detector_data',
+    title='Detectors',
+    description='Detector data workflows.',
+)
+TIMESERIES = WorkflowGroup(
+    name='timeseries',
+    title='Timeseries',
+    description='Timeseries log data workflows.',
+)
+
+
 class WorkflowId(BaseModel, frozen=True):
     instrument: str
-    namespace: str
     name: str
     version: int
 
     def __str__(self) -> str:
-        return f"{self.instrument}/{self.namespace}/{self.name}/{self.version}"
+        return f"{self.instrument}/{self.name}/{self.version}"
 
     @staticmethod
     def from_string(workflow_id_str: str) -> WorkflowId:
         """Parse WorkflowId from string representation."""
         parts = workflow_id_str.split('/')
-        if len(parts) != 4:
+        if len(parts) != 3:
             raise ValueError(f"Invalid WorkflowId string format: {workflow_id_str}")
         return WorkflowId(
             instrument=parts[0],
-            namespace=parts[1],
-            name=parts[2],
-            version=int(parts[3]),
+            name=parts[1],
+            version=int(parts[2]),
         )
 
 
@@ -184,9 +217,13 @@ class WorkflowSpec(BaseModel):
     instrument: str = Field(
         description="Name of the instrument this workflow is associated with."
     )
-    namespace: str = Field(
-        default='data_reduction',
-        description="Namespace for the workflow, used to group workflows logically.",
+    group: WorkflowGroup = Field(
+        description=(
+            "Display-oriented group this workflow belongs to. Carries the UI "
+            "title and description; the ``name`` field is the canonical category "
+            "identifier (one of ``data_reduction``, ``monitor_data``, "
+            "``detector_data``, ``timeseries``)."
+        ),
     )
     name: str = Field(description="Name of the workflow. Used internally.")
     version: int = Field(description="Version of the workflow.")
@@ -270,11 +307,10 @@ class WorkflowSpec(BaseModel):
         """
         Get a unique identifier for the workflow.
 
-        The identifier is a combination of instrument, namespace, name, and version.
+        The identifier is a combination of instrument, name, and version.
         """
         return WorkflowId(
             instrument=self.instrument,
-            namespace=self.namespace,
             name=self.name,
             version=self.version,
         )

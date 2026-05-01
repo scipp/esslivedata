@@ -9,7 +9,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSources, WorkflowOutputsBase
+from ..config.workflow_spec import MONITORS, AuxSources, WorkflowOutputsBase
 from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
@@ -235,7 +235,7 @@ def register_monitor_workflow_specs(
         description = f"{description}<br><br>{extra_description}"
 
     return instrument.register_spec(
-        namespace='monitor_data',
+        group=MONITORS,
         name='monitor_histogram',
         version=1,
         title="Beam monitor",

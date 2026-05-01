@@ -44,7 +44,6 @@ def data_key():
     """Create a test ResultKey."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
-        namespace='test_namespace',
         name='test_workflow',
         version=1,
     )
@@ -886,7 +885,6 @@ class TestSlicerPlotter:
 
         workflow_id2 = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -979,7 +977,6 @@ class TestPlotterLabelChanges:
         """Create a test ResultKey with output_name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1027,7 +1024,6 @@ class TestPlotterOverlayMode:
         """Create first test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1041,7 +1037,6 @@ class TestPlotterOverlayMode:
         """Create second test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1195,7 +1190,6 @@ class TestBarsPlotter:
         """Test that output_name is used as the vdims column name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1249,7 +1243,6 @@ class TestBarsPlotter:
 
         workflow_id = WorkflowId(
             instrument='test',
-            namespace='test',
             name='test',
             version=1,
         )
@@ -1638,7 +1631,6 @@ class TestLagIndicator:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1700,7 +1692,6 @@ class TestLagIndicator:
 
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1764,7 +1755,6 @@ class TestTwoStageArchitecture:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -1866,7 +1856,6 @@ class TestSaveFilenameHookOnDynamicMap:
     def _make_key(source_name: str) -> ResultKey:
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )
@@ -2097,7 +2086,6 @@ class TestRateNormalizationIntegration:
         """Create a test ResultKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
-            namespace='test_namespace',
             name='test_workflow',
             version=1,
         )

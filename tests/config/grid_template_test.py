@@ -31,7 +31,7 @@ def _make_plot_cell(
     config = PlotConfig(
         data_sources={
             PRIMARY: DataSourceConfig(
-                workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+                workflow_id=WorkflowId.from_string('test/wf/1'),
                 output_name='output',
                 source_names=['source1'],
             )

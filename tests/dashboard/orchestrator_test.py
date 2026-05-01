@@ -141,7 +141,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -170,13 +169,11 @@ class TestOrchestrator:
 
         workflow_id1 = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="workflow1",
             version=1,
         )
         workflow_id2 = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="workflow2",
             version=1,
         )
@@ -216,7 +213,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -250,7 +246,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -279,7 +274,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -325,7 +319,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -380,7 +373,6 @@ class TestOrchestrator:
 
         workflow_id = WorkflowId(
             instrument="test_instrument",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -483,7 +475,7 @@ class TestOrchestratorServiceStatusRouting:
 
         status = ServiceStatus(
             instrument="dream",
-            namespace="test_namespace",
+            service_name="test_namespace",
             worker_id="worker123",
             state=ServiceState.running,
             started_at=1000000000,
@@ -516,7 +508,6 @@ class TestOrchestratorServiceStatusRouting:
 
         workflow_id = WorkflowId(
             instrument="dream",
-            namespace="test_namespace",
             name="test_workflow",
             version=1,
         )
@@ -556,9 +547,7 @@ class TestOrchestratorJobFiltering:
         job_number = make_job_number()
         orchestrator, data_service, _ = self._make_orchestrator([job_number])
 
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
         job_id = JobId(source_name="det1", job_number=job_number)
         result_key = ResultKey(
             workflow_id=workflow_id, job_id=job_id, output_name="result"
@@ -573,9 +562,7 @@ class TestOrchestratorJobFiltering:
         inactive_number = make_job_number()
         orchestrator, data_service, _ = self._make_orchestrator([active_number])
 
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
         job_id = JobId(source_name="det1", job_number=inactive_number)
         result_key = ResultKey(
             workflow_id=workflow_id, job_id=job_id, output_name="result"
@@ -591,9 +578,7 @@ class TestOrchestratorJobFiltering:
         job_number = make_job_number()
         orchestrator, _, job_service = self._make_orchestrator([job_number])
 
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
         job_id = JobId(source_name="det1", job_number=job_number)
         status = JobStatus(
             job_id=job_id, workflow_id=workflow_id, state=JobState.active
@@ -609,9 +594,7 @@ class TestOrchestratorJobFiltering:
         inactive_number = make_job_number()
         orchestrator, _, job_service = self._make_orchestrator([active_number])
 
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
         job_id = JobId(source_name="det1", job_number=inactive_number)
         status = JobStatus(
             job_id=job_id, workflow_id=workflow_id, state=JobState.active

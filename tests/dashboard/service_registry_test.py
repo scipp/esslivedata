@@ -13,7 +13,7 @@ class TestMakeWorkerKey:
     def test_creates_key_from_status(self) -> None:
         status = ServiceStatus(
             instrument="dream",
-            namespace="test_namespace",
+            service_name="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -28,7 +28,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="test_namespace",
+            service_name="test_namespace",
             worker_id="abc123",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -45,7 +45,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status1 = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -53,7 +53,7 @@ class TestServiceRegistry:
         )
         status2 = ServiceStatus(
             instrument="dream",
-            namespace="ns2",
+            service_name="ns2",
             worker_id="worker2",
             state=ServiceState.starting,
             started_at=Timestamp.from_ns(2000),
@@ -71,7 +71,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status_old = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -79,7 +79,7 @@ class TestServiceRegistry:
         )
         status_new = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -97,7 +97,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -114,7 +114,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)  # 1 ms
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -135,7 +135,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)  # 1 ms
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,  # Terminal state
             started_at=Timestamp.from_ns(1000),
@@ -158,7 +158,7 @@ class TestServiceRegistry:
         # Add a worker that will become stale
         status_stale = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="stale_worker",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -172,7 +172,7 @@ class TestServiceRegistry:
         # Add a fresh worker
         status_fresh = ServiceStatus(
             instrument="dream",
-            namespace="ns2",
+            service_name="ns2",
             worker_id="fresh_worker",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(2000),
@@ -190,7 +190,7 @@ class TestServiceRegistry:
         started_at_ns = Timestamp.now() - Duration.from_seconds(60)
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=started_at_ns,
@@ -213,7 +213,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -237,7 +237,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -259,7 +259,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.stopped,
             started_at=Timestamp.from_ns(1000),
@@ -272,7 +272,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -286,7 +286,7 @@ class TestServiceRegistry:
         registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="worker1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -300,7 +300,7 @@ class TestServiceRegistry:
 
         stopped = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="stopped1",
             state=ServiceState.stopped,
             started_at=Timestamp.from_ns(1000),
@@ -308,7 +308,7 @@ class TestServiceRegistry:
         )
         stale = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="stale1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
@@ -321,7 +321,7 @@ class TestServiceRegistry:
         # Add a fresh running worker
         fresh = ServiceStatus(
             instrument="dream",
-            namespace="ns1",
+            service_name="ns1",
             worker_id="fresh1",
             state=ServiceState.running,
             started_at=Timestamp.from_ns(1000),
