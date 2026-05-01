@@ -33,7 +33,7 @@ from .plot_config_modal import (
     OutputSelection,
     WorkflowAndOutputSelectionStep,
 )
-from .styles import Colors, HoverColors, ModalSizing, StatusColors
+from .styles import Colors, HoverColors, ModalSizing, StatusColors, WarningBox
 from .wizard import Wizard, WizardStep
 from .workflow_status_widget import (
     SourceStatus,
@@ -45,6 +45,78 @@ from .workflow_status_widget import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+_NICOS_SCAN_WARNING = (
+    "If NICOS is currently using this figure-of-merit to control a scan, "
+    "this action will likely break or interfere with the scan. "
+    "Double-check that no scan is in progress before continuing."
+)
+
+
+def _show_dangerous_confirm(
+    *,
+    modal_container: pn.layout.ListLike,
+    title: str,
+    warning: str,
+    notes: str | None = None,
+    action_label: str,
+    on_confirm: Callable[[], object],
+) -> None:
+    """Open a styled confirm modal for an action that risks wasting beam time."""
+    confirm_btn = pn.widgets.Button(name=action_label, button_type="danger")
+    cancel_btn = pn.widgets.Button(name="Cancel", button_type="light")
+
+    title_html = pn.pane.HTML(
+        f'<div style="font-size: 16px; font-weight: 700; '
+        f'color: {Colors.TEXT_DARK}; margin-bottom: 4px;">{title}</div>'
+    )
+    warning_html = pn.pane.HTML(
+        f'<div style="background: {WarningBox.BG}; '
+        f'border-left: 4px solid {WarningBox.BORDER}; '
+        f'color: {WarningBox.TEXT}; padding: 10px 12px; border-radius: 4px; '
+        f'font-size: 13px; line-height: 1.45;">'
+        f'<strong>Caution &mdash; potential beam-time impact.</strong><br>'
+        f'{warning}</div>',
+        sizing_mode='stretch_width',
+    )
+
+    items: list = [title_html, warning_html]
+    if notes:
+        items.append(
+            pn.pane.HTML(
+                f'<div style="font-size: 12px; color: {Colors.TEXT_MUTED};">'
+                f'{notes}</div>'
+            )
+        )
+    items.append(
+        pn.Row(pn.Spacer(), cancel_btn, confirm_btn, sizing_mode='stretch_width')
+    )
+
+    modal = pn.Modal(
+        pn.Column(*items, sizing_mode='stretch_width'),
+        name=action_label,
+        margin=20,
+        width=460,
+    )
+
+    def _dismiss() -> None:
+        modal.open = False
+        if modal in modal_container:
+            modal_container.remove(modal)
+
+    def _on_confirm_click(_event) -> None:
+        _dismiss()
+        on_confirm()
+
+    def _on_cancel_click(_event) -> None:
+        _dismiss()
+
+    confirm_btn.on_click(_on_confirm_click)
+    cancel_btn.on_click(_on_cancel_click)
+
+    modal_container.append(modal)
+    modal.open = True
 
 
 @dataclass(frozen=True)
@@ -179,13 +251,14 @@ class FOMConfigWizard:
         *,
         slot: FOMSlot,
         orchestrator: FOMOrchestrator,
+        modal_container: pn.layout.Column | pn.layout.Row,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         self._slot = slot
         self._orchestrator = orchestrator
+        self._modal_container = modal_container
         self._on_close = on_close
         self._modal: pn.Modal | None = None
-        self._confirm_modal: pn.Modal | None = None
         self._pending_commit: (
             tuple[WorkflowId, str, str, pydantic.BaseModel | None, dict[str, str]]
             | None
@@ -282,41 +355,23 @@ class FOMConfigWizard:
         existing_label = (
             existing.workflow_id.name if existing is not None else self._slot
         )
-        confirm_btn = pn.widgets.Button(name="Replace", button_type="primary")
-        cancel_btn = pn.widgets.Button(name="Cancel", button_type="light")
 
-        def _do_replace(_event) -> None:
+        def _do_replace() -> None:
             args = self._pending_commit
             self._pending_commit = None
             if args is not None:
                 self._do_commit(args)
-            if self._confirm_modal is not None:
-                self._confirm_modal.open = False
 
-        def _abort(_event) -> None:
-            self._pending_commit = None
-            if self._confirm_modal is not None:
-                self._confirm_modal.open = False
-
-        confirm_btn.on_click(_do_replace)
-        cancel_btn.on_click(_abort)
-
-        body = pn.Column(
-            pn.pane.Markdown(
-                f"**Slot `{self._slot}` is currently bound to "
-                f"`{existing_label}`.**\n\n"
-                "Replacing will stop the running job and start a new one. "
-                "Continue?"
+        _show_dangerous_confirm(
+            modal_container=self._modal_container,
+            title=(
+                f"Replace slot `{self._slot}` (currently bound to `{existing_label}`)?"
             ),
-            pn.Row(pn.Spacer(), cancel_btn, confirm_btn, sizing_mode='stretch_width'),
-            sizing_mode='stretch_width',
+            warning=_NICOS_SCAN_WARNING,
+            notes="Replacing will stop the running job and start a new one.",
+            action_label="Replace",
+            on_confirm=_do_replace,
         )
-        self._confirm_modal = pn.Modal(
-            body, name="Replace bound slot?", margin=20, width=400
-        )
-        # Mount in modal's parent if present, otherwise rely on the FOMPanel
-        # to surface confirmation modals via its own container.
-        self._confirm_modal.open = True
 
     def _do_commit(
         self,
@@ -639,6 +694,7 @@ class FOMSlotWidget:
         self._wizard = FOMConfigWizard(
             slot=self._slot,
             orchestrator=self._orchestrator,
+            modal_container=self._modal_container,
             on_close=self._cleanup_modal,
         )
         self._modal_container.append(self._wizard.modal)
@@ -650,10 +706,23 @@ class FOMSlotWidget:
         self._wizard = None
 
     def _on_reset_click(self) -> None:
-        self._orchestrator.reset_slot(self._slot)
+        _show_dangerous_confirm(
+            modal_container=self._modal_container,
+            title=f"Reset accumulated data for slot `{self._slot}`?",
+            warning=_NICOS_SCAN_WARNING,
+            action_label="Reset",
+            on_confirm=lambda: self._orchestrator.reset_slot(self._slot),
+        )
 
     def _on_stop_click(self) -> None:
-        self._orchestrator.release_slot(self._slot)
+        _show_dangerous_confirm(
+            modal_container=self._modal_container,
+            title=f"Stop the running job in slot `{self._slot}`?",
+            warning=_NICOS_SCAN_WARNING,
+            notes="Slot configuration is retained and can be restarted.",
+            action_label="Stop",
+            on_confirm=lambda: self._orchestrator.release_slot(self._slot),
+        )
 
     def _on_start_click(self) -> None:
         self._orchestrator.start_slot(self._slot)
