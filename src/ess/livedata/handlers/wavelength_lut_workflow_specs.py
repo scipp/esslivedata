@@ -8,7 +8,7 @@ import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import TIMESERIES, WorkflowOutputsBase
+from ..config.workflow_spec import TIMESERIES, AuxSources, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 
@@ -21,6 +21,11 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: Output key returned by the workflow's ``finalize`` and the field name on
 #: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
+
+#: Logical aux input names for chopper setpoint streams. Mapped to physical
+#: per-chopper stream names via :class:`AuxSources` per instrument.
+CHOPPER_SPEED_SETPOINT_INPUT = 'rotation_speed_setpoint'
+CHOPPER_PHASE_SETPOINT_INPUT = 'phase_setpoint'
 
 
 class Pulse(pydantic.BaseModel):
@@ -142,17 +147,37 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
     )
 
 
+def make_single_chopper_aux_sources(
+    *,
+    speed_setpoint_stream: str,
+    phase_setpoint_stream: str,
+) -> AuxSources:
+    """Single-choice aux sources for a one-chopper prototype workflow.
+
+    Used by chopper-equipped instruments to bind the workflow's logical
+    aux inputs to the per-chopper stream names emitted by
+    :class:`ChopperSynthesizer`.
+    """
+    return AuxSources(
+        {
+            CHOPPER_SPEED_SETPOINT_INPUT: speed_setpoint_stream,
+            CHOPPER_PHASE_SETPOINT_INPUT: phase_setpoint_stream,
+        }
+    )
+
+
 def register_wavelength_lut_workflow_spec(
     instrument: Instrument,
     *,
     params: type[WavelengthLutParams] = WavelengthLutParams,
+    aux_sources: AuxSources | None = None,
 ) -> SpecHandle:
     """Register the wavelength lookup-table workflow spec for ``instrument``.
 
     Hosted by the ``timeseries`` service alongside per-source timeseries
     workflows: both are f144-driven, share the same source/preprocessor
-    plumbing, and (in v1) the chopper PVs feeding the synthesizer are
-    themselves f144 streams that the timeseries service can plot. The
+    plumbing, and the chopper PVs feeding the synthesizer are themselves
+    f144 streams that the timeseries service can plot. The
     ``ChopperSynthesizer`` emitting the synthetic primary trigger is a
     temporary stand-in for an upstream-side ``chopper_cascade_reached``
     f144 stream; once the producer publishes that directly, the wrapper
@@ -160,7 +185,9 @@ def register_wavelength_lut_workflow_spec(
 
     The workflow's only ``source_name`` is the synthetic ``chopper_cascade``
     stream emitted by ``ChopperSynthesizer``. The factory must be attached
-    later via the returned handle.
+    later via the returned handle. ``aux_sources`` is set by chopper-equipped
+    instruments via :func:`make_single_chopper_aux_sources`; chopperless
+    instruments leave it ``None``.
     """
     return instrument.register_spec(
         group=TIMESERIES,
@@ -172,6 +199,7 @@ def register_wavelength_lut_workflow_spec(
             'configuration. Refires when chopper setpoints change.'
         ),
         source_names=[CHOPPER_CASCADE_SOURCE],
+        aux_sources=aux_sources,
         params=params,
         outputs=WavelengthLutOutputs,
         reset_on_run_transition=False,

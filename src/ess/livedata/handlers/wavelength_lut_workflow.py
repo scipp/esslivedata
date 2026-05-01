@@ -7,9 +7,11 @@ Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` as a livedata
 ``chopper_cascade`` trigger is exposed as a sciline dynamic key whose value
 is consumed by an internal provider that produces ``DiskChoppers``.
 
-For chopperless instruments the provider returns an empty ``DiskChoppers``;
-v1 will replace it with one that assembles real choppers from chopper-PV
-context streams.
+For chopperless instruments the provider returns an empty ``DiskChoppers``.
+For single-chopper prototype mode the provider takes cached
+``rotation_speed_setpoint`` and ``phase_setpoint`` aux streams and assembles
+one ``DiskChopper`` with hardcoded geometry — this is a stand-in until the
+NeXus geometry artifact carries ``NXdisk_chopper`` groups.
 """
 
 from __future__ import annotations
@@ -30,10 +32,13 @@ from ess.reduce.unwrap.lut import (
     SourcePosition,
     TimeResolution,
 )
+from scippneutron.chopper import DiskChopper
 
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    CHOPPER_PHASE_SETPOINT_INPUT,
+    CHOPPER_SPEED_SETPOINT_INPUT,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
 )
@@ -57,15 +62,44 @@ WavelengthLut = NewType('WavelengthLut', sc.DataArray)
 #: that the upstream pipeline consumes (and may unit-convert internally).
 ParamsKey = NewType('ParamsKey', WavelengthLutParams)
 
+#: Cumulative NXlog DataArrays for the chopper aux streams, delivered via
+#: ``StreamProcessorWorkflow.context_keys``. The provider extracts the most
+#: recent sample.
+ChopperSpeedSetpointLog = NewType('ChopperSpeedSetpointLog', sc.DataArray)
+ChopperPhaseSetpointLog = NewType('ChopperPhaseSetpointLog', sc.DataArray)
+
 
 def _empty_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
     """Provide an empty chopper cascade for chopperless instruments.
 
     The trigger value is intentionally unused: it acts purely as a "compute
-    now" signal. v1 will replace this provider with one that takes chopper
-    PV context streams as additional inputs and assembles real choppers.
+    now" signal.
     """
     return DiskChoppers[AnyRun](sc.DataGroup({}))
+
+
+def _hardcoded_single_chopper(
+    speed_log: ChopperSpeedSetpointLog,
+    phase_log: ChopperPhaseSetpointLog,
+    _: ChopperCascadeTrigger,
+) -> DiskChoppers[AnyRun]:
+    """Assemble a single ``DiskChopper`` with hardcoded geometry.
+
+    Rotation speed and phase come from the latest sample of the cached
+    setpoint NXlogs; everything else (axle position, beam position, slit
+    edges, radius) is hardcoded. This stands in for full NeXus-driven
+    geometry assembly — see plan ``dynamic-tof-lookup-table.md``.
+    """
+    chopper = DiskChopper(
+        axle_position=sc.vector([0.0, 0.0, 15.0], unit='m'),
+        beam_position=sc.scalar(0.0, unit='deg'),
+        frequency=speed_log['time', -1].data,
+        phase=phase_log['time', -1].data,
+        slit_begin=sc.array(dims=['slit'], values=[0.0], unit='deg'),
+        slit_end=sc.array(dims=['slit'], values=[90.0], unit='deg'),
+        radius=sc.scalar(0.35, unit='m'),
+    )
+    return DiskChoppers[AnyRun](sc.DataGroup({'chopper1': chopper}))
 
 
 def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
@@ -98,7 +132,6 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
     wf[SourcePosition] = _PLACEHOLDER_SOURCE_POSITION
     wf[ParamsKey] = params
-    wf.insert(_empty_choppers)
     wf.insert(_attach_provenance)
     return wf
 
@@ -113,9 +146,38 @@ def create_chopperless_wavelength_lut_workflow(
     required because the trigger value flows directly to a provider rather
     than through an accumulator.
     """
+    pipeline = _build_pipeline(params)
+    pipeline.insert(_empty_choppers)
     return StreamProcessorWorkflow(
-        _build_pipeline(params),
+        pipeline,
         dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
+        target_keys={WAVELENGTH_LUT_OUTPUT: WavelengthLut},
+        accumulators={},
+        allow_bypass=True,
+    )
+
+
+def create_single_chopper_wavelength_lut_workflow(
+    *,
+    params: WavelengthLutParams,
+) -> Workflow:
+    """Factory for a wavelength LUT workflow with one hardcoded chopper.
+
+    Cached chopper aux setpoint NXlogs reach the workflow via the spec's
+    aux_sources mechanism. ``Job.add`` remaps stream names to field names
+    before calling ``accumulate``, so ``context_keys`` is keyed by the
+    logical aux-input field names — not the per-instrument stream names.
+    The hardcoded provider pulls the latest scalar from each.
+    """
+    pipeline = _build_pipeline(params)
+    pipeline.insert(_hardcoded_single_chopper)
+    return StreamProcessorWorkflow(
+        pipeline,
+        dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
+        context_keys={
+            CHOPPER_SPEED_SETPOINT_INPUT: ChopperSpeedSetpointLog,
+            CHOPPER_PHASE_SETPOINT_INPUT: ChopperPhaseSetpointLog,
+        },
         target_keys={WAVELENGTH_LUT_OUTPUT: WavelengthLut},
         accumulators={},
         allow_bypass=True,

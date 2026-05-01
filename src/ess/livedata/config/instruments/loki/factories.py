@@ -127,7 +127,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
     from ess.livedata.handlers.wavelength_lut_workflow import (
-        create_chopperless_wavelength_lut_workflow,
+        create_single_chopper_wavelength_lut_workflow,
     )
     from ess.livedata.handlers.wavelength_lut_workflow_specs import (
         WavelengthLutParams,
@@ -135,8 +135,13 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.wavelength_lut_handle.attach_factory()
     def _wavelength_lut_workflow_factory(params: WavelengthLutParams):
-        """Factory for LOKI's chopperless wavelength lookup-table workflow."""
-        return create_chopperless_wavelength_lut_workflow(params=params)
+        """Factory for LOKI's single-chopper wavelength lookup-table workflow.
+
+        Geometry is hardcoded inside the workflow; rotation_speed and phase
+        come from cached aux setpoint streams produced by
+        ``ChopperSynthesizer``.
+        """
+        return create_single_chopper_wavelength_lut_workflow(params=params)
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
