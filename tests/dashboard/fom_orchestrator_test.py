@@ -520,7 +520,7 @@ class TestReleaseSlot:
         assert len(unbinds) == 1
         assert unbinds[0].alias == slot
 
-    def test_release_clears_state(
+    def test_release_retains_config_with_no_job_number(
         self, workflow_a, sink, active_job_registry, job_service
     ):
         orch = _make_orchestrator(
@@ -535,11 +535,197 @@ class TestReleaseSlot:
             workflow_id=workflow_a.get_id(),
             source_name='det_1',
             output_name='result',
+            params={'threshold': 3.0},
+        )
+        orch.release_slot(slot)
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.workflow_id == workflow_a.get_id()
+        assert state.source_name == 'det_1'
+        assert state.output_name == 'result'
+        assert state.params == {'threshold': 3.0}
+        assert state.job_number is None
+        assert state.is_running is False
+        assert not active_job_registry.is_active(job_id.job_number)
+
+    def test_release_already_stopped_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
             params={},
         )
         orch.release_slot(slot)
+        n_batches = len(sink.published_messages)
+        assert orch.release_slot(slot) is False
+        assert len(sink.published_messages) == n_batches
+
+
+class TestStartSlot:
+    def test_start_empty_returns_none(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        assert orch.start_slot(FOMSlot('fom-0')) is None
+
+    def test_start_running_returns_none(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        n_batches = len(sink.published_messages)
+        assert orch.start_slot(slot) is None
+        assert len(sink.published_messages) == n_batches
+
+    def test_start_stopped_relaunches_with_same_config(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        first = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        orch.release_slot(slot)
+        new_id = orch.start_slot(slot)
+        assert new_id is not None
+        assert new_id.source_name == 'det_1'
+        assert new_id != first
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.is_running is True
+        assert state.params == {'threshold': 5.0}
+        assert active_job_registry.is_active(new_id.job_number)
+        # No Stop / Unbind since previous slot was already stopped.
+        kinds = [v.__class__ for _, v in _last_batch(sink)]
+        assert JobCommand not in kinds
+        assert UnbindStreamAlias not in kinds
+        assert WorkflowConfig in kinds
+        assert BindStreamAlias in kinds
+
+
+class TestClearSlot:
+    def test_clear_empty_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        assert orch.clear_slot(FOMSlot('fom-0')) is False
+
+    def test_clear_running_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        assert orch.clear_slot(slot) is False
+        assert orch.get_slot_state(slot) is not None
+
+    def test_clear_stopped_drops_state(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        v0 = orch.get_slot_state_version(slot)
+        assert orch.clear_slot(slot) is True
         assert orch.get_slot_state(slot) is None
-        assert not active_job_registry.is_active(job_id.job_number)
+        assert orch.get_slot_state_version(slot) > v0
+
+
+class TestCommitStoppedSlot:
+    def test_commit_after_release_skips_stop_and_unbind(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_2',
+            output_name='result',
+            params={},
+        )
+        kinds = [v.__class__ for _, v in _last_batch(sink)]
+        assert JobCommand not in kinds
+        assert UnbindStreamAlias not in kinds
+        assert kinds.count(WorkflowConfig) == 1
+        assert kinds.count(BindStreamAlias) == 1
 
 
 class TestResetSlot:
@@ -553,6 +739,26 @@ class TestResetSlot:
             job_service=job_service,
         )
         assert orch.reset_slot(FOMSlot('fom-0')) is False
+
+    def test_reset_stopped_returns_false(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_name='det_1',
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        assert orch.reset_slot(slot) is False
 
     def test_reset_bound_sends_reset(
         self, workflow_a, sink, active_job_registry, job_service
@@ -658,8 +864,10 @@ class TestMultipleSlots:
             params={},
         )
         orch.release_slot(s0)
-        assert orch.get_slot_state(s0) is None
+        assert orch.get_slot_state(s0) is not None
+        assert orch.get_slot_state(s0).is_running is False
         assert orch.get_slot_state(s1) is not None
+        assert orch.get_slot_state(s1).is_running is True
 
 
 class TestAcknowledgement:
@@ -743,7 +951,7 @@ class TestAcknowledgement:
 
 
 class TestOnJobStatusUpdated:
-    def test_clears_slot_when_backend_reports_stopped(
+    def test_marks_slot_stopped_when_backend_reports_stopped(
         self, workflow_a, sink, active_job_registry, job_service
     ):
         orch = _make_orchestrator(
@@ -758,7 +966,7 @@ class TestOnJobStatusUpdated:
             workflow_id=workflow_a.get_id(),
             source_name='det_1',
             output_name='result',
-            params={},
+            params={'threshold': 4.0},
         )
         orch.on_job_status_updated(
             JobStatus(
@@ -767,7 +975,10 @@ class TestOnJobStatusUpdated:
                 state=JobState.stopped,
             )
         )
-        assert orch.get_slot_state(slot) is None
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.is_running is False
+        assert state.params == {'threshold': 4.0}
         assert not active_job_registry.is_active(job_id.job_number)
 
     def test_active_status_does_not_clear_slot(
