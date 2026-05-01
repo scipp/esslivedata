@@ -8,7 +8,7 @@ import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import WorkflowOutputsBase
+from ..config.workflow_spec import TIMESERIES, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 
@@ -163,7 +163,7 @@ def register_wavelength_lut_workflow_spec(
     later via the returned handle.
     """
     return instrument.register_spec(
-        namespace='timeseries',
+        group=TIMESERIES,
         name=WAVELENGTH_LUT_OUTPUT,
         version=1,
         title='Wavelength lookup table',

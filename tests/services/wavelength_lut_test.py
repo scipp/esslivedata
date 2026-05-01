@@ -23,7 +23,7 @@ from tests.helpers.livedata_app import LivedataApp
 def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
     cfg = instrument_registry[instrument]
     for wid, spec in cfg.workflow_factory.items():
-        if spec.namespace == 'timeseries' and spec.name == name:
+        if spec.group.name == 'timeseries' and spec.name == name:
             return wid
     raise AssertionError(f"workflow {name!r} not registered for {instrument!r}")
 
