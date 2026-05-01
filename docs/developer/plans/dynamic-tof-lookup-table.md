@@ -388,12 +388,55 @@ productionising whether to revert to drop.
   chopper. Wire `Filename[SampleRun]` and replace placeholder
   `SourcePosition`.
 
-### Multi-chopper generalisation
+### Chopper-count-independent factory and provider
 
-- Synthesizer takes a list — needs a unit test exercising "all locked"
-  gating across multiple choppers.
-- `DiskChoppers` provider iterates over all configured choppers (today the
-  hardcoded provider knows only `'chopper1'`).
+Today there are two factories — `create_chopperless_wavelength_lut_workflow`
+and `create_single_chopper_wavelength_lut_workflow` — differing only in
+which provider is inserted and which `context_keys` are declared. Collapse
+them into a single factory parameterised by a list of chopper names
+(zero ⇒ empty cascade, N ⇒ N entries):
+
+- Provider iterates over the configured choppers, calling
+  `DiskChopper.from_nexus()` (or the hardcoded geometry stand-in) per
+  entry, returning a `DiskChoppers` `DataGroup` keyed by chopper name.
+- `context_keys` constructed from the chopper list — one field-name per
+  chopper per setpoint (`<chopper>_rotation_speed_setpoint`,
+  `<chopper>_phase_setpoint`).
+- `aux_sources` in the spec constructed from the same list so `Job.add`'s
+  stream→field remap stays in sync.
+
+Open design choice: per-chopper sciline keys (`Chopper1Speed`,
+`Chopper2Speed`, …) vs a single `DataGroup`-valued key holding all chopper
+speeds keyed by chopper name. The latter is more uniform and avoids a key
+explosion; it moves "which chopper is missing data" from a sciline graph
+error into a runtime check inside the provider.
+
+The synthesizer already takes a list — what's missing is a unit test
+exercising "all locked" gating across multiple choppers.
+
+### Per-instrument defaults and hardcoded values
+
+Several values are per-instrument-fixed but currently global Pydantic
+defaults: `LtotalRange` (5–30 m suits LOKI; DREAM/BIFROST will differ),
+`pulse.frequency`, plateau-detection thresholds, and the hardcoded chopper
+geometry until NeXus lands. Decide on one mechanism and apply it
+uniformly:
+
+- **Per-instrument param subclass.** `register_wavelength_lut_workflow_spec`
+  already accepts `params: type[WavelengthLutParams]`; instruments pass a
+  subclass with overridden field defaults. Simple, but proliferates
+  classes for what amounts to value overrides.
+- **`param_defaults` dict at registration.**
+  `register_wavelength_lut_workflow_spec(..., param_defaults=...)` merged
+  into the model's field defaults at spec build time. No class
+  proliferation; needs care with nested models.
+- **Carry on the `Instrument` object.** The same object that holds
+  `detector_names`, `monitors`, `f144_attribute_registry` could carry a
+  `wavelength_lut_defaults` dict. Keeps all per-instrument config in one
+  place.
+
+Whichever wins should also house the hardcoded chopper geometry until
+NeXus integration removes the question.
 
 ### Real chopper PVs (off the dev/log-producer path)
 
