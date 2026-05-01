@@ -17,6 +17,34 @@ def snake_to_camel(snake_str: str) -> str:
     return ''.join(word.capitalize() for word in components)
 
 
+def _enum_options(enum_type: type[Enum]) -> dict[str, Enum]:
+    """Build a Panel ``options`` dict mapping display label → enum member.
+
+    String enums use the value as the label (e.g. an enum with member values
+    that are user-readable strings); other enums use the member name —
+    ``.name`` is robust to ``__str__`` overrides on plain ``Enum``s and to
+    ``IntEnum``/``IntFlag`` inheriting their integer ``__str__``.
+    """
+    options: dict[str, Enum] = {}
+    for enum_val in enum_type:
+        if isinstance(enum_val.value, str):
+            options[enum_val.value] = enum_val
+        else:
+            options[enum_val.name] = enum_val
+    return options
+
+
+def _is_set_of_enum(field_type) -> bool:
+    """True for ``set[E]`` / ``frozenset[E]`` where ``E`` is an ``Enum``."""
+    if get_origin(field_type) not in (set, frozenset):
+        return False
+    args = get_args(field_type)
+    if len(args) != 1:
+        return False
+    inner = args[0]
+    return isinstance(inner, type) and issubclass(inner, Enum)
+
+
 class ParamWidget:
     """Widget for creating and validating Pydantic model instances."""
 
@@ -45,9 +73,12 @@ class ParamWidget:
     ):
         """Create appropriate widget based on field type."""
         field_type = field_info.annotation
-        default_value = (
-            field_info.default if field_info.default is not PydanticUndefined else None
-        )
+        if field_info.default is not PydanticUndefined:
+            default_value = field_info.default
+        elif field_info.default_factory is not None:
+            default_value = field_info.default_factory()
+        else:
+            default_value = None
         description = field_info.description or field_name
         display_name = field_info.title or snake_to_camel(field_name)
 
@@ -111,22 +142,23 @@ class ParamWidget:
                 **shared_options,
             )
         elif isinstance(field_type, type) and issubclass(field_type, Enum):
-            options = {}
-            for enum_val in field_type:
-                if isinstance(enum_val.value, str):
-                    # Use the value for string enums
-                    display_key = enum_val.value
-                else:
-                    # Use string repr without enum class name for other enums
-                    display_key = str(enum_val).split('.')[-1]
-                options[display_key] = enum_val
-
+            options = _enum_options(field_type)
             # Set the actual enum instance as the default value
             default_widget_value = (
                 default_value if default_value else next(iter(options.values()))
             )
             return pn.widgets.Select(
                 options=options, value=default_widget_value, **shared_options
+            )
+        elif _is_set_of_enum(field_type):
+            (enum_type,) = get_args(field_type)
+            options = _enum_options(enum_type)
+            default_widget_value = list(default_value) if default_value else []
+            return pn.widgets.MultiSelect(
+                options=options,
+                value=default_widget_value,
+                size=min(len(options), 10),
+                **shared_options,
             )
         elif get_origin(field_type) is Literal:
             # Handle Literal types (e.g., Literal['a', 'b', 'c'])
@@ -156,6 +188,10 @@ class ParamWidget:
             # Convert Path strings back to Path objects
             if field_type == Path and isinstance(value, str):
                 value = Path(value) if value else None
+            elif _is_set_of_enum(field_type):
+                # MultiSelect emits a list of enum members; pydantic accepts
+                # any iterable for set/frozenset, so just pass the list through.
+                pass
             # Handle enum values - widget.value will be the enum instance for Select
             # widgets with enum options
             elif isinstance(field_type, type) and issubclass(field_type, Enum):
@@ -175,6 +211,9 @@ class ParamWidget:
                     # Checkbox widget is wrapped in a Row
                     self.widgets[field_name][0].value = value
                     continue
+                elif _is_set_of_enum(field_type):
+                    (enum_type,) = get_args(field_type)
+                    value = [enum_type(v) for v in value]
                 elif isinstance(field_type, type) and issubclass(field_type, Enum):
                     value = field_type(value)
                 self.widgets[field_name].value = value

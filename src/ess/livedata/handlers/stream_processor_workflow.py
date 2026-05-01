@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import graphviz
+if TYPE_CHECKING:
+    import graphviz
+
 import sciline
 import sciline.typing
 from ess.reduce import streaming
