@@ -47,17 +47,27 @@ FOMAction = str  # "commit" | "release" | "reset"
 
 @dataclass(frozen=True, slots=True)
 class FOMSlotState:
-    """In-memory state of a configured FOM slot."""
+    """In-memory state of a configured FOM slot.
+
+    ``job_number`` is ``None`` when the slot has been stopped but its
+    configuration is retained for restart or for prefilling the config wizard.
+    """
 
     workflow_id: WorkflowId
     source_name: str
     output_name: str
     params: dict
     aux_source_names: dict
-    job_number: JobNumber
+    job_number: JobNumber | None
 
     @property
-    def job_id(self) -> JobId:
+    def is_running(self) -> bool:
+        return self.job_number is not None
+
+    @property
+    def job_id(self) -> JobId | None:
+        if self.job_number is None:
+            return None
         return JobId(source_name=self.source_name, job_number=self.job_number)
 
 
@@ -213,7 +223,7 @@ class FOMOrchestrator:
         aux_dict = aux_source_names or {}
 
         commands: list[tuple[ConfigKey, object]] = []
-        if prev is not None:
+        if prev is not None and prev.is_running:
             commands.append(
                 (
                     ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
@@ -262,7 +272,7 @@ class FOMOrchestrator:
         # previous one to clean up its DataService entries.
         with self._active_job_registry.ingestion_guard():
             self._active_job_registry.activate(new_job_number)
-        if prev is not None:
+        if prev is not None and prev.job_number is not None:
             self._active_job_registry.deactivate(prev.job_number)
 
         self._slots[slot] = FOMSlotState(
@@ -286,13 +296,19 @@ class FOMOrchestrator:
         return new_job_id
 
     def release_slot(self, slot: FOMSlot) -> bool:
-        """Stop the bound job and clear the slot.
+        """Stop the bound job; retain the slot's configuration for restart.
 
-        Returns False if the slot was already empty (no commands sent).
+        Sends ``[Stop, Unbind]`` and locally clears ``job_number`` while keeping
+        the rest of the slot's binding (workflow, source, output, params) so
+        that the user can re-launch the same configuration via
+        :meth:`start_slot` or tweak it through the config wizard.
+
+        Returns ``False`` if the slot was already stopped or empty (no
+        commands sent).
         """
         self._require_slot(slot)
         prev = self._slots[slot]
-        if prev is None:
+        if prev is None or not prev.is_running:
             return False
 
         message_id = str(uuid.uuid4())
@@ -314,17 +330,60 @@ class FOMOrchestrator:
         self._command_service.send_batch(commands)
 
         self._active_job_registry.deactivate(prev.job_number)
-        self._slots[slot] = None
+        self._slots[slot] = FOMSlotState(
+            workflow_id=prev.workflow_id,
+            source_name=prev.source_name,
+            output_name=prev.output_name,
+            params=prev.params,
+            aux_source_names=prev.aux_source_names,
+            job_number=None,
+        )
         self._bump_version(slot)
 
         logger.info("fom_slot_released", slot=slot)
         return True
 
-    def reset_slot(self, slot: FOMSlot) -> bool:
-        """Send a reset to the bound job. Returns False if the slot is empty."""
+    def clear_slot(self, slot: FOMSlot) -> bool:
+        """Drop a stopped slot's retained configuration.
+
+        Only valid for slots that are stopped (``job_number`` is ``None``).
+        Returns ``False`` if the slot is empty or still running.
+        """
         self._require_slot(slot)
         prev = self._slots[slot]
-        if prev is None:
+        if prev is None or prev.is_running:
+            return False
+        self._slots[slot] = None
+        self._bump_version(slot)
+        logger.info("fom_slot_cleared", slot=slot)
+        return True
+
+    def start_slot(self, slot: FOMSlot) -> JobId | None:
+        """Re-launch a stopped slot using its retained configuration.
+
+        Returns ``None`` if the slot is empty or already running.
+        """
+        self._require_slot(slot)
+        prev = self._slots[slot]
+        if prev is None or prev.is_running:
+            return None
+        return self.commit_slot(
+            slot,
+            workflow_id=prev.workflow_id,
+            source_name=prev.source_name,
+            output_name=prev.output_name,
+            params=prev.params,
+            aux_source_names=prev.aux_source_names,
+        )
+
+    def reset_slot(self, slot: FOMSlot) -> bool:
+        """Send a reset to the bound job.
+
+        Returns ``False`` if the slot is empty or stopped (no running job).
+        """
+        self._require_slot(slot)
+        prev = self._slots[slot]
+        if prev is None or not prev.is_running:
             return False
 
         message_id = str(uuid.uuid4())
@@ -371,23 +430,33 @@ class FOMOrchestrator:
             )
 
     def on_job_status_updated(self, job_status: JobStatus) -> None:
-        """Clear a slot when the backend reports its job stopped."""
+        """Mark a slot as stopped when the backend reports its job stopped.
+
+        Retains the slot's configuration so the user can restart or tweak it.
+        """
         if job_status.state != JobState.stopped:
             return
         for slot, state in list(self._slots.items()):
-            if state is None:
+            if state is None or not state.is_running:
                 continue
             if (
                 job_status.job_id.source_name == state.source_name
                 and job_status.job_id.job_number == state.job_number
             ):
                 logger.info(
-                    "fom_slot_cleared_by_backend_stop",
+                    "fom_slot_stopped_by_backend",
                     slot=slot,
                     job_number=str(state.job_number),
                 )
                 self._active_job_registry.deactivate(state.job_number)
-                self._slots[slot] = None
+                self._slots[slot] = FOMSlotState(
+                    workflow_id=state.workflow_id,
+                    source_name=state.source_name,
+                    output_name=state.output_name,
+                    params=state.params,
+                    aux_source_names=state.aux_source_names,
+                    job_number=None,
+                )
                 self._bump_version(slot)
                 return
 

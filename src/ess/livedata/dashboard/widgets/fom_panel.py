@@ -261,8 +261,8 @@ class FOMConfigWizard:
             result.aux_source_names,
         )
 
-        bound = self._orchestrator.get_slot_state(self._slot) is not None
-        if bound:
+        existing = self._orchestrator.get_slot_state(self._slot)
+        if existing is not None and existing.is_running:
             self._pending_commit = commit_args
             self._show_replace_confirm()
         else:
@@ -416,7 +416,7 @@ class FOMSlotWidget:
             self._dots = pn.pane.HTML(make_status_dots_html(dots_sources))
             self._timing = pn.pane.HTML(make_timing_html(timing_text))
             self._readout = pn.pane.HTML(self._render_readout(state))
-            self._buttons = self._make_buttons(bound=state is not None)
+            self._buttons = self._make_buttons(state)
 
             description = pn.pane.HTML(
                 self._render_binding_summary(state),
@@ -500,6 +500,13 @@ class FOMSlotWidget:
                 '',
                 [],
             )
+        if not state.is_running:
+            return (
+                'STOPPED',
+                WorkflowWidgetStyles.STATUS_COLORS['stopped'],
+                '',
+                [],
+            )
         target_id = state.job_id
         job_status = self._job_service.job_statuses.get(target_id)
         if job_status is None or self._job_service.is_status_stale(target_id):
@@ -549,17 +556,20 @@ class FOMSlotWidget:
                 f'Slot is empty. Click <em>Configure</em> to bind a workflow output.'
                 f'</div>'
             )
-        result_key = ResultKey(
-            workflow_id=state.workflow_id,
-            job_id=state.job_id,
-            output_name=state.output_name,
-        )
-        try:
-            value = self._data_service[result_key]
-        except KeyError:
-            text = '— (no value yet)'
+        if not state.is_running:
+            text = '— (stopped)'
         else:
-            text = _format_value_text(value)
+            result_key = ResultKey(
+                workflow_id=state.workflow_id,
+                job_id=state.job_id,
+                output_name=state.output_name,
+            )
+            try:
+                value = self._data_service[result_key]
+            except KeyError:
+                text = '— (no value yet)'
+            else:
+                text = _format_value_text(value)
         return (
             f'<div style="font-family: monospace; font-size: 18px; '
             f'color: {Colors.TEXT_DARK};">{text}</div>'
@@ -587,7 +597,7 @@ class FOMSlotWidget:
             f'</table>'
         )
 
-    def _make_buttons(self, *, bound: bool) -> pn.Row:
+    def _make_buttons(self, state: FOMSlotState | None) -> pn.Row:
         configure_btn = create_tool_button(
             icon_name='settings',
             button_color=ButtonStyles.PRIMARY_BLUE,
@@ -595,20 +605,34 @@ class FOMSlotWidget:
             on_click_callback=self._on_configure_click,
         )
         buttons: list = [configure_btn]
-        if bound:
+        if state is not None and state.is_running:
             reset_btn = create_tool_button(
                 icon_name='backspace',
                 button_color=StatusColors.MUTED,
                 hover_color=HoverColors.MUTED,
                 on_click_callback=self._on_reset_click,
             )
-            release_btn = create_tool_button(
+            stop_btn = create_tool_button(
                 icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color=ButtonStyles.DANGER_HOVER,
-                on_click_callback=self._on_release_click,
+                on_click_callback=self._on_stop_click,
             )
-            buttons.extend([reset_btn, release_btn])
+            buttons.extend([reset_btn, stop_btn])
+        elif state is not None:
+            start_btn = create_tool_button(
+                icon_name='player-play',
+                button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
+                hover_color=HoverColors.SUCCESS,
+                on_click_callback=self._on_start_click,
+            )
+            clear_btn = create_tool_button(
+                icon_name='x',
+                button_color=ButtonStyles.DANGER_RED,
+                hover_color=ButtonStyles.DANGER_HOVER,
+                on_click_callback=self._on_clear_click,
+            )
+            buttons.extend([start_btn, clear_btn])
         return pn.Row(*buttons, margin=0)
 
     def _on_configure_click(self) -> None:
@@ -628,8 +652,14 @@ class FOMSlotWidget:
     def _on_reset_click(self) -> None:
         self._orchestrator.reset_slot(self._slot)
 
-    def _on_release_click(self) -> None:
+    def _on_stop_click(self) -> None:
         self._orchestrator.release_slot(self._slot)
+
+    def _on_start_click(self) -> None:
+        self._orchestrator.start_slot(self._slot)
+
+    def _on_clear_click(self) -> None:
+        self._orchestrator.clear_slot(self._slot)
 
 
 class FOMPanel:
