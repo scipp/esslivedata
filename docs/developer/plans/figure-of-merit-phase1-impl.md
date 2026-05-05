@@ -68,8 +68,13 @@ class AliasedResult(Generic[T]):
     alias: str
 ```
 
-`bind()` raises `ValueError` if the alias is already present (no-replace,
-D1). `unbind()` is a no-op for unknown aliases (the adapter checks
+A given alias may have multiple `(job_id, output_name)` bindings: one
+workflow running across N sources binds N pairs under the same alias and
+all matching outputs are mirrored on the FOM topic with the alias as
+Kafka key. Within one binding key, `bind()` is idempotent. `bind()` only
+raises `BindingConflictError` if the same `(job_id, output_name)` is
+already bound to a *different* alias. `unbind()` clears all bindings
+under the alias and is a no-op for unknown aliases (the adapter checks
 `has()` to decide whether to ACK).
 
 #### `src/ess/livedata/core/stream_alias_adapter.py`

@@ -15,13 +15,13 @@ Provides a collapsible card for each workflow showing:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import JobId, WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
 from ..format_utils import extract_error_summary
@@ -152,6 +152,90 @@ def format_active_timing(earliest_start) -> str:
         duration_str = f'{hours}h {mins}m'
 
     return f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
+
+
+def derive_aggregate_status(
+    *,
+    job_service: JobService,
+    job_ids: Sequence[JobId],
+    source_titles: Callable[[str], str] | None = None,
+) -> tuple[str, str, str, str | None, list[SourceStatus]]:
+    """Derive aggregate status, timing, error, and per-source dots from job_ids.
+
+    Used by widgets that surface a logical group of jobs sharing one
+    workflow run (workflow card) or one stable alias (FOM slot).
+
+    Returns a tuple of ``(status_text, status_color, timing_text,
+    error_html, per_source)``. When no job in ``job_ids`` has a fresh
+    status, returns ``PENDING`` with a placeholder :class:`SourceStatus`
+    per job (state ``scheduled``). Per-source ordering follows the
+    ``job_ids`` argument.
+    """
+    titles = source_titles if source_titles is not None else (lambda s: s)
+    has_fresh = False
+    worst_state = JobState.active
+    earliest_start = None
+    error_html: str | None = None
+    per_source: dict[str, SourceStatus] = {}
+
+    for job_id in job_ids:
+        status = job_service.job_statuses.get(job_id)
+        if status is None or job_service.is_status_stale(job_id):
+            continue
+        has_fresh = True
+        error_summary = (
+            extract_error_summary(status.error_message)
+            if status.error_message
+            else None
+        )
+        per_source[job_id.source_name] = SourceStatus(
+            source_name=job_id.source_name,
+            display_title=titles(job_id.source_name),
+            state=status.state,
+            error_summary=error_summary,
+        )
+        if status.state == JobState.error:
+            worst_state = JobState.error
+        elif status.state == JobState.warning and worst_state != JobState.error:
+            worst_state = JobState.warning
+        elif status.state == JobState.stopped and worst_state not in (
+            JobState.error,
+            JobState.warning,
+        ):
+            worst_state = JobState.stopped
+        start = status.start_time
+        if start is not None and (earliest_start is None or start < earliest_start):
+            earliest_start = start
+        if error_html is None and error_summary:
+            error_html = f'Error: {error_summary}'
+
+    if not has_fresh:
+        pending_sources = [
+            SourceStatus(
+                source_name=jid.source_name,
+                display_title=titles(jid.source_name),
+                state=JobState.scheduled,
+                error_summary=None,
+            )
+            for jid in job_ids
+        ]
+        return (
+            'PENDING',
+            WorkflowWidgetStyles.STATUS_COLORS['pending'],
+            'Waiting for backend...',
+            None,
+            pending_sources,
+        )
+
+    per_source_list = [
+        per_source[jid.source_name] for jid in job_ids if jid.source_name in per_source
+    ]
+    status_text = worst_state.value.upper()
+    status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
+        worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+    )
+    timing_text = format_active_timing(earliest_start)
+    return status_text, status_color, timing_text, error_html, per_source_list
 
 
 @dataclass(frozen=True)

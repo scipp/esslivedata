@@ -76,15 +76,6 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         return frozenset()
 
     @property
-    def single_source(self) -> bool:
-        """Whether the source selector should constrain to a single choice.
-
-        Defaults to False (multi-select). Adapters that bind exactly one
-        source per configuration (e.g., FOM slots) override to True.
-        """
-        return False
-
-    @property
     def aux_sources(self) -> AuxSources | None:
         """Auxiliary source specification, or None if the workflow has none."""
 

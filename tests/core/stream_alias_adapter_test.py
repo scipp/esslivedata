@@ -28,19 +28,20 @@ def manager(factory: FakeJobFactory) -> JobManager:
 
 
 @pytest.fixture
-def hosted_job_id(manager: JobManager) -> JobId:
+def workflow_id() -> WorkflowId:
+    return WorkflowId(instrument="test", name="test_workflow", version=1)
+
+
+def _schedule(manager: JobManager, workflow_id: WorkflowId, source_name: str) -> JobId:
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+    manager.schedule_job(WorkflowConfig(identifier=workflow_id, job_id=job_id))
+    return job_id
+
+
+@pytest.fixture
+def hosted_job_id(manager: JobManager, workflow_id: WorkflowId) -> JobId:
     """A job_id known to the manager (scheduled, not yet active)."""
-    job_id = JobId(source_name="source-x", job_number=uuid.uuid4())
-    workflow_config = WorkflowConfig(
-        identifier=WorkflowId(
-            instrument="test",
-            namespace="data_reduction",
-            name="test_workflow",
-            version=1,
-        ),
-        job_id=job_id,
-    )
-    return manager.schedule_job(workflow_config)
+    return _schedule(manager, workflow_id, "source-x")
 
 
 @pytest.fixture
@@ -89,18 +90,19 @@ class TestBind:
         assert ack is None
         assert not registry.has('fom-0')
 
-    def test_no_replace_acks_error(
+    def test_conflicting_alias_acks_error(
         self,
         adapter: StreamAliasAdapter,
         registry: StreamAliasRegistry,
         hosted_job_id: JobId,
     ) -> None:
+        # Pre-bind (job, 'result') under fom-0, then try fom-1 for the same pair.
         registry.bind('fom-0', hosted_job_id, 'result')
         ack = adapter.bind(
             BindStreamAlias(
-                alias='fom-0',
+                alias='fom-1',
                 job_id=hosted_job_id,
-                output_name='other',
+                output_name='result',
                 message_id='msg-2',
             )
         )
@@ -109,6 +111,39 @@ class TestBind:
         assert 'already bound' in (ack.message or '')
         # Original binding intact.
         assert registry.lookup(hosted_job_id, 'result') == 'fom-0'
+
+    def test_multi_bind_under_same_alias(
+        self,
+        adapter: StreamAliasAdapter,
+        registry: StreamAliasRegistry,
+        manager: JobManager,
+        workflow_id: WorkflowId,
+    ) -> None:
+        """Same alias can host multiple (job, output) bindings."""
+        first = _schedule(manager, workflow_id, 'det_1')
+        second = _schedule(manager, workflow_id, 'det_2')
+        ack1 = adapter.bind(
+            BindStreamAlias(
+                alias='fom-0',
+                job_id=first,
+                output_name='result',
+                message_id='msg-a',
+            )
+        )
+        ack2 = adapter.bind(
+            BindStreamAlias(
+                alias='fom-0',
+                job_id=second,
+                output_name='result',
+                message_id='msg-b',
+            )
+        )
+        assert ack1 is not None
+        assert ack1.response == AcknowledgementResponse.ACK
+        assert ack2 is not None
+        assert ack2.response == AcknowledgementResponse.ACK
+        assert registry.lookup(first, 'result') == 'fom-0'
+        assert registry.lookup(second, 'result') == 'fom-0'
 
     def test_actor_without_message_id_returns_none(
         self,

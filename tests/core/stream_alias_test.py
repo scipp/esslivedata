@@ -7,8 +7,8 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.stream_alias import (
-    AliasAlreadyBoundError,
     AliasedResult,
+    BindingConflictError,
     BindStreamAlias,
     StreamAliasRegistry,
     UnbindStreamAlias,
@@ -31,19 +31,41 @@ class TestStreamAliasRegistry:
         registry = StreamAliasRegistry()
         assert registry.lookup(_make_job_id(), 'output') is None
 
-    def test_bind_replace_rejected(self) -> None:
-        registry = StreamAliasRegistry()
-        registry.bind('fom-0', _make_job_id(), 'a')
-        with pytest.raises(AliasAlreadyBoundError):
-            registry.bind('fom-0', _make_job_id(), 'b')
-
-    def test_unbind_removes_binding(self) -> None:
+    def test_bind_idempotent_for_same_triple(self) -> None:
         registry = StreamAliasRegistry()
         job_id = _make_job_id()
         registry.bind('fom-0', job_id, 'counts_total')
+        registry.bind('fom-0', job_id, 'counts_total')  # No raise.
+        assert registry.lookup(job_id, 'counts_total') == 'fom-0'
+
+    def test_multi_source_under_same_alias(self) -> None:
+        """One workflow run on N sources binds N pairs under the alias."""
+        registry = StreamAliasRegistry()
+        job_a = _make_job_id('det_1')
+        job_b = _make_job_id('det_2')
+        registry.bind('fom-0', job_a, 'counts_total')
+        registry.bind('fom-0', job_b, 'counts_total')
+        assert registry.lookup(job_a, 'counts_total') == 'fom-0'
+        assert registry.lookup(job_b, 'counts_total') == 'fom-0'
+
+    def test_conflicting_alias_for_same_output_rejected(self) -> None:
+        """Binding the same (job, output) under a different alias raises."""
+        registry = StreamAliasRegistry()
+        job_id = _make_job_id()
+        registry.bind('fom-0', job_id, 'counts_total')
+        with pytest.raises(BindingConflictError):
+            registry.bind('fom-1', job_id, 'counts_total')
+
+    def test_unbind_removes_all_bindings_under_alias(self) -> None:
+        registry = StreamAliasRegistry()
+        job_a = _make_job_id('det_1')
+        job_b = _make_job_id('det_2')
+        registry.bind('fom-0', job_a, 'counts_total')
+        registry.bind('fom-0', job_b, 'counts_total')
         registry.unbind('fom-0')
         assert not registry.has('fom-0')
-        assert registry.lookup(job_id, 'counts_total') is None
+        assert registry.lookup(job_a, 'counts_total') is None
+        assert registry.lookup(job_b, 'counts_total') is None
 
     def test_unbind_unknown_is_noop(self) -> None:
         registry = StreamAliasRegistry()

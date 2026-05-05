@@ -16,7 +16,7 @@ from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.kafka.sink import UnrollingSinkAdapter
 
-WORKFLOW_ID = WorkflowId(instrument='test', namespace='reduction', name='wf', version=1)
+WORKFLOW_ID = WorkflowId(instrument='test', name='wf', version=1)
 
 
 def _make_job_id() -> JobId:
@@ -145,6 +145,38 @@ class TestUnrollingWithRegistry:
         ]
         aliases = {m.value.alias for m in fom_msgs}
         assert aliases == {'fom-0', 'fom-1'}
+
+    def test_multi_source_alias_emits_mirror_per_substream(
+        self, downstream: FakeMessageSink
+    ) -> None:
+        """Same alias bound to N (job_id, output_name) pairs.
+
+        Each substream (one per source-job) emits its own mirror message;
+        all mirrors carry the same alias for the consumer to aggregate.
+        """
+        registry = StreamAliasRegistry()
+        job_a = JobId(source_name='det_1', job_number=uuid.uuid4())
+        job_b = JobId(source_name='det_2', job_number=uuid.uuid4())
+        registry.bind('fom-0', job_a, 'counts')
+        registry.bind('fom-0', job_b, 'counts')
+        adapter = UnrollingSinkAdapter(downstream, alias_registry=registry)
+        adapter.publish_messages(
+            [
+                _make_result_message(job_id=job_a, outputs={'counts': _scalar(3.0)}),
+                _make_result_message(job_id=job_b, outputs={'counts': _scalar(4.0)}),
+            ]
+        )
+        fom_msgs = [
+            m for m in downstream.messages if m.stream.kind == StreamKind.LIVEDATA_FOM
+        ]
+        assert len(fom_msgs) == 2
+        assert {m.value.alias for m in fom_msgs} == {'fom-0'}
+        # Substream identity comes from the embedded ResultKey.
+        sources = {
+            ResultKey.model_validate_json(m.stream.name).job_id.source_name
+            for m in fom_msgs
+        }
+        assert sources == {'det_1', 'det_2'}
 
     def test_other_jobs_unaffected(self, downstream: FakeMessageSink) -> None:
         registry = StreamAliasRegistry()

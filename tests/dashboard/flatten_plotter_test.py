@@ -58,7 +58,7 @@ hv.extension('bokeh')
 @pytest.fixture
 def data_key() -> ResultKey:
     return ResultKey(
-        workflow_id=WorkflowId(instrument='inst', namespace='ns', name='wf', version=1),
+        workflow_id=WorkflowId(instrument='inst', name='wf', version=1),
         job_id=JobId(source_name='src', job_number=uuid.uuid4()),
         output_name='out',
     )
