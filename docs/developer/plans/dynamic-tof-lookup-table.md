@@ -383,13 +383,13 @@ productionising whether to revert to drop.
 ### NeXus chopper geometry (replaces the hardcoded provider)
 
 - Extend `scripts/make_geometry_nexus.py` to copy `NXdisk_chopper` groups
-  (~10 lines).
-- Regenerate per-instrument geometry artifacts, re-publish to pooch with
+  (~10 lines). -> PR #916 (merged)
   bumped consuming hashes.
+- Regenerate per-instrument geometry artifacts, re-publish to pooch with
 - New provider taking `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`
   plus per-chopper aux setpoints, calling `DiskChopper.from_nexus()` per
   chopper. Wire `Filename[SampleRun]` and replace placeholder
-  `SourcePosition`.
+  `SourcePosition`. But we need to research what we can actually use for loading NXdisk_chopper groups that have length-0 logs as placeholders for the stream. I think `DiskChopper.from_nexus()` and/or `RawChoppers[SampleRun]` from `GenericNeXusWorkflow` might not work with that.
 
 ### Per-instrument UI param defaults
 
