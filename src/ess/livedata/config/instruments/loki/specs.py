@@ -27,7 +27,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-    make_single_chopper_aux_sources,
     register_wavelength_lut_workflow_spec,
 )
 
@@ -230,6 +229,7 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
+    choppers=['chopper1'],
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
@@ -313,17 +313,12 @@ instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register the single-chopper wavelength lookup-table spec. Geometry is
-# hardcoded in the factory until the NeXus geometry artifact carries
-# NXdisk_chopper groups; rotation_speed and phase come from the cached aux
-# setpoint streams produced by ``ChopperSynthesizer``.
-wavelength_lut_handle = register_wavelength_lut_workflow_spec(
-    instrument,
-    aux_sources=make_single_chopper_aux_sources(
-        speed_setpoint_stream='chopper1_rotation_speed_setpoint',
-        phase_setpoint_stream='chopper1_phase_setpoint',
-    ),
-)
+# Register the wavelength lookup-table spec. Aux sources are derived from
+# ``instrument.choppers``. Geometry is hardcoded in the factory until the
+# NeXus geometry artifact carries NXdisk_chopper groups; rotation_speed and
+# phase come from cached aux setpoint streams produced by
+# ``ChopperSynthesizer``.
+wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(

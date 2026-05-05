@@ -17,15 +17,6 @@ from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
-# Per-instrument chopper config for the in-process ``ChopperSynthesizer``.
-# Empty list ⇒ chopperless mode (vacuous startup tick + passthrough). This is
-# scaffolding for an upstream-side gap: once the producer publishes a real
-# ``chopper_cascade_reached`` f144, the synthesizer drops out entirely and
-# this table goes away.
-_CHOPPERS_BY_INSTRUMENT: Mapping[str, list[str]] = {
-    'loki': ['chopper1'],
-}
-
 
 def make_timeseries_service_builder(
     *,
@@ -75,7 +66,7 @@ def make_timeseries_service_builder(
         # the wrapper and the workflow becomes a plain f144 consumer.
         outer_source_wrapper=partial(
             ChopperSynthesizer,
-            chopper_names=_CHOPPERS_BY_INSTRUMENT.get(instrument, []),
+            chopper_names=instrument_obj.choppers,
         ),
     )
 

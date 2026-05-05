@@ -22,10 +22,18 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
 
-#: Logical aux input names for chopper setpoint streams. Mapped to physical
-#: per-chopper stream names via :class:`AuxSources` per instrument.
-CHOPPER_SPEED_SETPOINT_INPUT = 'rotation_speed_setpoint'
-CHOPPER_PHASE_SETPOINT_INPUT = 'phase_setpoint'
+
+#: Naming convention for per-chopper aux input streams. The synthesizer
+#: emits these stream names; the spec routes them to the workflow as aux
+#: inputs; the workflow consumes them by the same name.
+def speed_setpoint_input(chopper: str) -> str:
+    """Logical aux-input name for a chopper's rotation-speed setpoint."""
+    return f'{chopper}_rotation_speed_setpoint'
+
+
+def phase_setpoint_input(chopper: str) -> str:
+    """Logical aux-input name for a chopper's phase setpoint."""
+    return f'{chopper}_phase_setpoint'
 
 
 class Pulse(pydantic.BaseModel):
@@ -147,30 +155,28 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
     )
 
 
-def make_single_chopper_aux_sources(
-    *,
-    speed_setpoint_stream: str,
-    phase_setpoint_stream: str,
-) -> AuxSources:
-    """Single-choice aux sources for a one-chopper prototype workflow.
+def _chopper_aux_sources(chopper_names: list[str]) -> AuxSources | None:
+    """Build aux-source mappings for a list of choppers.
 
-    Used by chopper-equipped instruments to bind the workflow's logical
-    aux inputs to the per-chopper stream names emitted by
-    :class:`ChopperSynthesizer`.
+    Each chopper contributes a ``rotation_speed_setpoint`` and a
+    ``phase_setpoint`` aux input; both bind to identically-named streams
+    emitted by :class:`ChopperSynthesizer`. Returns ``None`` for chopperless
+    instruments — the workflow has no aux inputs.
     """
-    return AuxSources(
-        {
-            CHOPPER_SPEED_SETPOINT_INPUT: speed_setpoint_stream,
-            CHOPPER_PHASE_SETPOINT_INPUT: phase_setpoint_stream,
-        }
-    )
+    if not chopper_names:
+        return None
+    inputs = {
+        stream: stream
+        for name in chopper_names
+        for stream in (speed_setpoint_input(name), phase_setpoint_input(name))
+    }
+    return AuxSources(inputs)
 
 
 def register_wavelength_lut_workflow_spec(
     instrument: Instrument,
     *,
     params: type[WavelengthLutParams] = WavelengthLutParams,
-    aux_sources: AuxSources | None = None,
 ) -> SpecHandle:
     """Register the wavelength lookup-table workflow spec for ``instrument``.
 
@@ -184,10 +190,9 @@ def register_wavelength_lut_workflow_spec(
     drops out and this is just another timeseries workflow.
 
     The workflow's only ``source_name`` is the synthetic ``chopper_cascade``
-    stream emitted by ``ChopperSynthesizer``. The factory must be attached
-    later via the returned handle. ``aux_sources`` is set by chopper-equipped
-    instruments via :func:`make_single_chopper_aux_sources`; chopperless
-    instruments leave it ``None``.
+    stream emitted by ``ChopperSynthesizer``. Aux sources are derived from
+    ``instrument.choppers``: empty ⇒ chopperless. The factory must be
+    attached later via the returned handle.
     """
     return instrument.register_spec(
         group=TIMESERIES,
@@ -199,7 +204,7 @@ def register_wavelength_lut_workflow_spec(
             'configuration. Refires when chopper setpoints change.'
         ),
         source_names=[CHOPPER_CASCADE_SOURCE],
-        aux_sources=aux_sources,
+        aux_sources=_chopper_aux_sources(instrument.choppers),
         params=params,
         outputs=WavelengthLutOutputs,
         reset_on_run_transition=False,

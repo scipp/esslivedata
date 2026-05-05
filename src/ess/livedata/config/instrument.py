@@ -88,6 +88,7 @@ class Instrument:
     name: str
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
+    choppers: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)

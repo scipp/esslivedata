@@ -258,75 +258,80 @@ End-to-end validation runs on the CODA staging environment.
 
 In tree:
 
-- `src/ess/livedata/handlers/wavelength_lut_workflow.py` — workflow
-  factory. Composes `LookupTableWorkflow()` with `_empty_choppers` and the
-  provenance provider.
+- `src/ess/livedata/handlers/wavelength_lut_workflow.py` — single
+  chopper-count-independent factory `create_wavelength_lut_workflow`. The
+  internal `_WavelengthLutWorkflow` (a thin `StreamProcessorWorkflow`
+  subclass) caches per-chopper aux setpoint scalars and assembles a
+  `DiskChoppers` `DataGroup` outside sciline; a closure provider exposes
+  it to the pipeline keyed off the trigger. Includes the
+  `HardcodedChopperGeometry` stand-in until NeXus geometry lands.
 - `src/ess/livedata/handlers/wavelength_lut_workflow_specs.py` — pydantic
   param models, `WavelengthLutParams`, `WavelengthLutOutputs`, and
-  `register_wavelength_lut_workflow_spec`.
+  `register_wavelength_lut_workflow_spec` (auto-derives `aux_sources` from
+  `Instrument.choppers`).
 - `src/ess/livedata/handlers/stream_processor_workflow.py` — generic
   adapter from `ess.reduce.streaming.StreamProcessor` to the livedata
   `Workflow` protocol.
 - `src/ess/livedata/handlers/timeseries_handler.py` —
   `_SYNTHETIC_LOG_ATTRS` table for the synthetic `chopper_cascade` source.
-- `src/ess/livedata/kafka/chopper_synthesizer.py` — synthesizer (currently
-  the chopperless stub: vacuous startup tick + passthrough).
+- `src/ess/livedata/kafka/chopper_synthesizer.py` — synthesizer with
+  rolling-window stability detector and per-chopper plateau locking.
 - `src/ess/livedata/services/timeseries.py` — wires the synthesizer via
-  `outer_source_wrapper`.
+  `outer_source_wrapper`, reading `Instrument.choppers` for chopper names.
 - `src/ess/livedata/service_factory.py` — generic `outer_source_wrapper`
   hook on `DataServiceBuilder`.
 - `src/ess/livedata/core/orchestrating_processor.py` — empty-batch path
   runs context enrichment + `process_jobs`, allowing cached-context job
   activation without ongoing data flow.
+- `src/ess/livedata/config/instrument.py` — `Instrument.choppers: list[str]`
+  field; single source of truth consumed by the spec, the service, and the
+  factory.
 - `src/ess/livedata/config/instruments/{loki,dummy}/specs.py` and
-  `factories.py` — register the spec and attach the chopperless factory.
+  `factories.py` — register the spec and attach the factory. LOKI's
+  `factories.py` carries the hardcoded chopper geometry stand-in.
 
-Chopper-equipped extension:
+Remaining (NeXus geometry):
 
-- `wavelength_lut_workflow.py` — replace `_empty_choppers` with a provider
-  taking per-chopper aux setpoints and `RawChoppers[SampleRun]` and
-  calling `DiskChopper.from_nexus()` per chopper. Wire `Filename[SampleRun]`
-  and `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`; replace the
-  placeholder `SourcePosition`.
-- `chopper_synthesizer.py` — plateau detection, per-chopper
-  `phase_setpoint` synthesis, conditional `chopper_cascade` emission once
-  all choppers locked.
+- `wavelength_lut_workflow.py` — replace the cached-scalar-driven
+  `DiskChopper(...)` assembly with `DiskChopper.from_nexus()` against
+  `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`. Wire
+  `Filename[SampleRun]` and replace the placeholder `SourcePosition`.
+  Drop `HardcodedChopperGeometry`.
 - `src/ess/livedata/scripts/make_geometry_nexus.py` — extend the
   per-`nx_class` filter to also copy `NXdisk_chopper` groups (~10 lines).
   Regenerate per-instrument geometry artifacts and re-publish to pooch
   with bumped consuming hashes.
-- `src/ess/livedata/config/route_derivation.py` — declare per-instrument
-  chopper-PV streams. Empty resolved set ⇒ chopperless mode (no PV
-  subscription, vacuous startup tick).
 - `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to
   cover the chopper topic if not already; no `stream.name` rewrite, no new
   flatbuffer.
 - `setup-kafka-topics.sh` — add the choppers topic for local dev.
-- `config/instruments/<instrument>/factories.py` for chopper-equipped
-  instruments — supply per-instrument `LtotalRange` defaults and declare
-  chopper PV streams.
+- `config/instruments/<instrument>/{specs,streams,factories}.py` for
+  chopper-equipped instruments — declare `Instrument.choppers`, chopper PV
+  stream aliases, and `LtotalRange` defaults via a `WavelengthLutParams`
+  subclass.
 
 ## Tests
 
 In tree:
 
-- `tests/handlers/wavelength_lut_workflow_test.py` — provider returns a
-  `sc.DataArray` whose dims are `(distance, event_time_offset)` and whose
-  values match `LookupTableWorkflow` output; the four input params appear
-  as 0-D coords with correct dtypes/units; chopperless input produces a
-  table without raising.
+- `tests/handlers/wavelength_lut_workflow_test.py` — output dims/units,
+  provenance coords; multi-chopper assembly with locked setpoints; partial
+  chopper data falls back to the empty cascade; missing geometry raises;
+  da00 round-trip preserves dims/coords.
 - `tests/handlers/stream_processor_workflow_test.py` — generic wrapper.
-- `tests/kafka/chopper_synthesizer_test.py` — vacuous startup tick,
-  passthrough thereafter.
+- `tests/kafka/chopper_synthesizer_test.py` — synthesizer unit tests
+  including plateau detection, change re-emit gating, and chopperless
+  mode.
 - `tests/services/wavelength_lut_test.py` — service-level integration on
   a chopperless instrument: a single fire via context replay; result
   matches the precomputed `loki-wavelength-lookup-table-no-choppers.h5`
   reference within numerical tolerance.
 
-Chopper-equipped extension:
+Remaining test work:
 
 - Round-trip: `scipp_to_da00(output)` followed by `da00_to_scipp`
-  preserves values, variances, dims, and the four scalar coords.
+  preserves values, variances, dims, and the four scalar coords. (Partial
+  coverage in tree; expand to variances.)
 - Integration (reference fixture): for one chopper-equipped instrument,
   commit a small precomputed reference table generated offline from a
   known minimal chopper config; the test feeds the same chopper config
@@ -338,35 +343,33 @@ Chopper-equipped extension:
   only after every chopper has a stable `phase_setpoint` and a
   `rotation_speed_setpoint` cached, and that the workflow re-runs
   accordingly.
-- Synthesizer unit: small phase fluctuations do *not* emit
-  `chopper_cascade`; a step change followed by a new plateau does.
-  `<chopper>_rotation_speed_setpoint` messages pass through unchanged.
-  Synthetic `<chopper>_phase_setpoint` messages carry the correct
-  `StreamId`, schema, and stable value. tdct messages on the topic are
-  ignored.
-- `DiskChoppers` provider unit: given a `RawChoppers[SampleRun]`
-  DataGroup (realistic NXdisk_chopper fields per chopper) plus
-  per-chopper scalar `rotation_speed_setpoint` and `phase_setpoint`
-  inputs, returns a `DiskChoppers` DataGroup keyed by chopper name with a
-  fully-formed `DiskChopper` per entry. Verifies the cached aux setpoints
-  thread through to the resulting `DiskChopper.frequency` / phase fields.
-- `resolve_stream_names` unit: per-instrument chopper-PV set resolves
-  correctly (empty for chopperless, populated for chopper-equipped);
-  existing detector/monitor logical-name expansion is unchanged.
+- `DiskChoppers` assembly unit (post-NeXus): given a
+  `RawChoppers[SampleRun]` DataGroup (realistic NXdisk_chopper fields per
+  chopper) plus per-chopper scalar setpoints, the workflow produces a
+  `DiskChopper` per entry with the cached aux values threaded into
+  `frequency`/`phase`.
 
 ## Status
 
-Shipped (chopperless + single-chopper prototype):
+Shipped:
 
 - `ChopperSynthesizer` with rolling-window stability detector (mean/std-based
   lock, exact-equality change detection on `_rotation_speed_setpoint`,
   noise-floor compare on locked phase mean). Chopperless mode preserved.
-- `create_single_chopper_wavelength_lut_workflow` consumes cached
-  `rotation_speed_setpoint` and `phase_setpoint` via `context_keys` keyed by
-  the spec's logical aux-input field names; provider builds one
-  `DiskChopper` with hardcoded geometry.
-- LOKI wired to the single-chopper variant. `_CHOPPERS_BY_INSTRUMENT` in
-  `services/timeseries.py` is a temporary hardcoded map.
+- Single chopper-count-independent factory `create_wavelength_lut_workflow`
+  parameterised by a chopper-name list. Empty list ⇒ chopperless. Per-chopper
+  aux setpoints are cached and assembled into `DiskChoppers` *outside*
+  sciline (in a thin `StreamProcessorWorkflow` subclass), exposed to the
+  pipeline via a closure provider keyed off the trigger. The sciline graph
+  shape does not depend on chopper count — no dynamic `NewType`s, no per-N
+  context-key proliferation.
+- `Instrument.choppers: list[str]` is the single source of truth: the spec
+  derives `aux_sources` from it, the timeseries service passes it to
+  `ChopperSynthesizer`, and the factory uses it to drive provider assembly.
+  `_CHOPPERS_BY_INSTRUMENT` is gone.
+- LOKI declares `choppers=['chopper1']`; its hardcoded geometry stand-in
+  (`HardcodedChopperGeometry`) lives in LOKI's `factories.py` — the call
+  site that disappears when NeXus chopper geometry lands.
 - `log_producer_widget` extended with optional `noise_stddev` /
   `publish_rate_hz` per slider, and publishes initial values on creation
   so a default-position slider still emits one message.
@@ -388,73 +391,37 @@ productionising whether to revert to drop.
   chopper. Wire `Filename[SampleRun]` and replace placeholder
   `SourcePosition`.
 
-### Chopper-count-independent factory and provider
+### Per-instrument UI param defaults
 
-Today there are two factories — `create_chopperless_wavelength_lut_workflow`
-and `create_single_chopper_wavelength_lut_workflow` — differing only in
-which provider is inserted and which `context_keys` are declared. Collapse
-them into a single factory parameterised by a list of chopper names
-(zero ⇒ empty cascade, N ⇒ N entries):
-
-- Provider iterates over the configured choppers, calling
-  `DiskChopper.from_nexus()` (or the hardcoded geometry stand-in) per
-  entry, returning a `DiskChoppers` `DataGroup` keyed by chopper name.
-- `context_keys` constructed from the chopper list — one field-name per
-  chopper per setpoint (`<chopper>_rotation_speed_setpoint`,
-  `<chopper>_phase_setpoint`).
-- `aux_sources` in the spec constructed from the same list so `Job.add`'s
-  stream→field remap stays in sync.
-
-Open design choice: per-chopper sciline keys (`Chopper1Speed`,
-`Chopper2Speed`, …) vs a single `DataGroup`-valued key holding all chopper
-speeds keyed by chopper name. The latter is more uniform and avoids a key
-explosion; it moves "which chopper is missing data" from a sciline graph
-error into a runtime check inside the provider.
-
-The synthesizer already takes a list — what's missing is a unit test
-exercising "all locked" gating across multiple choppers.
-
-### Per-instrument defaults and hardcoded values
-
-Several values are per-instrument-fixed but currently global Pydantic
-defaults: `LtotalRange` (5–30 m suits LOKI; DREAM/BIFROST will differ),
-`pulse.frequency`, plateau-detection thresholds, and the hardcoded chopper
-geometry until NeXus lands. Decide on one mechanism and apply it
-uniformly:
-
-- **Per-instrument param subclass.** `register_wavelength_lut_workflow_spec`
-  already accepts `params: type[WavelengthLutParams]`; instruments pass a
-  subclass with overridden field defaults. Simple, but proliferates
-  classes for what amounts to value overrides.
-- **`param_defaults` dict at registration.**
-  `register_wavelength_lut_workflow_spec(..., param_defaults=...)` merged
-  into the model's field defaults at spec build time. No class
-  proliferation; needs care with nested models.
-- **Carry on the `Instrument` object.** The same object that holds
-  `detector_names`, `monitors`, `f144_attribute_registry` could carry a
-  `wavelength_lut_defaults` dict. Keeps all per-instrument config in one
-  place.
-
-Whichever wins should also house the hardcoded chopper geometry until
-NeXus integration removes the question.
+Per-instrument-fixed defaults for user-facing params (`LtotalRange` —
+5–30 m suits LOKI; DREAM/BIFROST will differ — and possibly
+`pulse.frequency` for commissioning) need to surface as initial values in
+the UI form. Resolution: instrument passes a subclass of
+`WavelengthLutParams` with overridden field defaults to
+`register_wavelength_lut_workflow_spec` (which already accepts
+`params: type[WavelengthLutParams]`). The other previously-listed values
+turned out to belong elsewhere: chopper geometry is now a factory-time
+argument at the instrument's call site (gone when NeXus lands), and
+plateau-detection thresholds remain on the synthesizer.
 
 ### Real chopper PVs (off the dev/log-producer path)
 
 - Chopper topic (e.g. `${instrument}_choppers`) added in
   `setup-kafka-topics.sh` and the f144 routing in `message_adapter.py`.
-- Replace hardcoded `_CHOPPERS_BY_INSTRUMENT` with
-  `route_derivation.py::resolve_stream_names`. Empty resolved set ⇒
-  chopperless (no PV subscription, vacuous startup tick).
-- Per-instrument PV name declarations alongside `f144_log_streams`.
+- Per-instrument chopper-PV stream declarations alongside
+  `f144_log_streams`. The chopper-name list lives on `Instrument.choppers`
+  already; `streams.py` adds the PV→logical-name mapping per chopper.
 
 ### Per-instrument adoption
 
 LOKI is wired today. DREAM / BIFROST / ODIN / NMX each need:
 
+- `Instrument.choppers` populated with their chopper names,
 - chopper PV stream declarations,
-- `LtotalRange` defaults for the instrument's detector layout,
-- factory switched to the chopper-equipped variant once the geometry
-  artifact carries `NXdisk_chopper`.
+- `LtotalRange` defaults for the instrument's detector layout (via the
+  param-subclass mechanism above),
+- the hardcoded geometry stand-in at their factory call site, until the
+  NeXus geometry artifact carries `NXdisk_chopper` for that instrument.
 
 ### Tests
 
@@ -468,9 +435,8 @@ LOKI is wired today. DREAM / BIFROST / ODIN / NMX each need:
 ### Producer/consumer end meeting (synthesizer's exit)
 
 Once an upstream service publishes `chopper_cascade_reached` directly, drop
-`ChopperSynthesizer`, `_CHOPPERS_BY_INSTRUMENT`, the `outer_source_wrapper`
-plumbing, and `_SYNTHETIC_LOG_ATTRS`. The workflow becomes a plain f144
-consumer.
+`ChopperSynthesizer`, the `outer_source_wrapper` plumbing, and
+`_SYNTHETIC_LOG_ATTRS`. The workflow becomes a plain f144 consumer.
 
 Then deprecate the static `loki_lookup_table_no_choppers` path: LOKI's
 monitor / I(Q) workflows currently load via `LookupTableFilename`; switch
