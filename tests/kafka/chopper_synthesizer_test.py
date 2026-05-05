@@ -231,3 +231,20 @@ def test_single_chopper_speed_change_re_emits_cascade(single_chopper):
     third = list(src.get_messages())
 
     assert any(m.stream == CHOPPER_CASCADE_STREAM for m in third)
+
+
+def test_single_chopper_speed_setpoint_resend_no_cascade(single_chopper):
+    # Upstream f144 may resend the same (timestamp, value) pair every few seconds.
+    # Once locked, such resends must not produce a synthetic cascade tick.
+    phase_batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    speed = _speed_setpoint_msg('c1', 14.0, time_ns=10)
+    resend = _speed_setpoint_msg('c1', 14.0, time_ns=10)
+    src = ChopperSynthesizer(
+        FakeSource([phase_batch, [speed], [resend]]), **single_chopper
+    )
+
+    list(src.get_messages())  # phase lock
+    list(src.get_messages())  # first cascade
+    third = list(src.get_messages())
+
+    assert third == [resend]
