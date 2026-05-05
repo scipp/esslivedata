@@ -250,6 +250,54 @@ def nexus_with_populated_chopper_logs(tmp_path):
     return path
 
 
+def test_nested_nxtransformations_inside_nxlog_does_not_conflict(tmp_path):
+    """A real ESTIA structure: outer NXtransformations contains an NXlog
+    whose own children include another NXtransformations (motor stage with
+    chained transforms). The outer branch's recursive NXlog copy must not
+    conflict with the visitor's later descent into the inner group.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        outer = inst.create_group('stage/transformations')
+        outer.attrs['NX_class'] = 'NXtransformations'
+        rx = outer.create_group('rx')
+        rx.attrs['NX_class'] = 'NXlog'
+        rx.create_dataset('time', data=np.arange(100, dtype='int64'))
+        rx.create_dataset('value', data=np.zeros(100))
+        # Nested NXtransformations inside the NXlog.
+        inner = rx.create_group('transformations')
+        inner.attrs['NX_class'] = 'NXtransformations'
+        ds = inner.create_dataset('rotation', data=0.0)
+        ds.attrs['transformation_type'] = 'rotation'
+        ds.attrs['vector'] = [0.0, 0.0, 1.0]
+        ds.attrs['units'] = 'deg'
+        ds.attrs['depends_on'] = '.'
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        # Outer NXtransformations preserved.
+        assert f['entry/instrument/stage/transformations'].attrs['NX_class'] == (
+            'NXtransformations'
+        )
+        # NXlog trimmed.
+        rx = f['entry/instrument/stage/transformations/rx']
+        assert rx.attrs['NX_class'] == 'NXlog'
+        # Inner NXtransformations preserved with its dataset.
+        inner_path = (
+            'entry/instrument/stage/transformations/rx/transformations/rotation'
+        )
+        inner_ds = f[inner_path]
+        assert inner_ds[()] == pytest.approx(0.0)
+        assert inner_ds.attrs['transformation_type'] == 'rotation'
+
+
 def test_nxlog_inside_nxtransformations_is_trimmed(tmp_path):
     """An NXtransformations group may contain a streamed transformation
     (NXlog with rotation/translation values). Its samples must be trimmed

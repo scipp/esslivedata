@@ -195,14 +195,25 @@ def write_minimal_geometry(
                         obj.copy('depends_on', dst_group)
                     elif nx_class == 'NXtransformations':
                         ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
+                        # The group may already exist because a parent NXlog
+                        # placeholder copied a nested NXtransformations
+                        # recursively. Treat the branch as idempotent: copy
+                        # attributes and missing children only.
+                        if name in fout:
+                            dst_group: h5py.Group = fout[name]
+                        else:
+                            dst_group: h5py.Group = fout.create_group(name)
+                            _copy_attributes(obj, dst_group)
                         for key in obj:
-                            _copy_child(obj, key, dst_group)
+                            if key not in dst_group:
+                                _copy_child(obj, key, dst_group)
                     elif nx_class == 'NXdisk_chopper':
                         ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
+                        if name in fout:
+                            dst_group: h5py.Group = fout[name]
+                        else:
+                            dst_group: h5py.Group = fout.create_group(name)
+                            _copy_attributes(obj, dst_group)
                         # Static fields (slits, radius, delay, …) copy
                         # verbatim; NXlog children (rotation_speed, phase)
                         # become length-0 placeholders via ``_copy_child``.
@@ -214,7 +225,8 @@ def write_minimal_geometry(
                                 and _nx_class(child) == 'NXtransformations'
                             ):
                                 continue
-                            _copy_child(obj, key, dst_group)
+                            if key not in dst_group:
+                                _copy_child(obj, key, dst_group)
 
         # Copy root attributes
         _copy_attributes(fin, fout)
