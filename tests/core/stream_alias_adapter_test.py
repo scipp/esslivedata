@@ -32,7 +32,6 @@ def workflow_config() -> WorkflowConfig:
     return WorkflowConfig(
         identifier=WorkflowId(
             instrument="test",
-            namespace="data_reduction",
             name="test_workflow",
             version=1,
         )
@@ -102,19 +101,20 @@ class TestBind:
         assert ack is None
         assert not registry.has('fom-0')
 
-    def test_no_replace_acks_error(
+    def test_conflicting_alias_acks_error(
         self,
         adapter: StreamAliasAdapter,
         registry: StreamAliasRegistry,
         hosted_job_id: JobId,
     ) -> None:
+        # Pre-bind (job, 'result') under fom-0, then try fom-1 for the same pair.
         registry.bind('fom-0', hosted_job_id, 'result')
         ack = adapter.bind(
             'ignored',
             _bind_value(
-                alias='fom-0',
+                alias='fom-1',
                 job_id=hosted_job_id,
-                output_name='other',
+                output_name='result',
                 message_id='msg-2',
             ),
         )
@@ -123,6 +123,31 @@ class TestBind:
         assert 'already bound' in (ack.message or '')
         # Original binding intact.
         assert registry.lookup(hosted_job_id, 'result') == 'fom-0'
+
+    def test_multi_bind_under_same_alias(
+        self,
+        adapter: StreamAliasAdapter,
+        registry: StreamAliasRegistry,
+        manager: JobManager,
+        workflow_config: WorkflowConfig,
+    ) -> None:
+        """Same alias can host multiple (job, output) bindings."""
+        first = manager.schedule_job('det_1', workflow_config)
+        second = manager.schedule_job('det_2', workflow_config)
+        ack1 = adapter.bind(
+            'ignored',
+            _bind_value(alias='fom-0', job_id=first, message_id='msg-a'),
+        )
+        ack2 = adapter.bind(
+            'ignored',
+            _bind_value(alias='fom-0', job_id=second, message_id='msg-b'),
+        )
+        assert ack1 is not None
+        assert ack1.response == AcknowledgementResponse.ACK
+        assert ack2 is not None
+        assert ack2.response == AcknowledgementResponse.ACK
+        assert registry.lookup(first, 'result') == 'fom-0'
+        assert registry.lookup(second, 'result') == 'fom-0'
 
     def test_actor_without_message_id_returns_none(
         self,

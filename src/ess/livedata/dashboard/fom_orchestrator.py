@@ -4,18 +4,20 @@
 FOMOrchestrator - Manages stable-alias slot lifecycle for figure-of-merit jobs.
 
 Parallel to :class:`JobOrchestrator`, but slot-keyed instead of workflow-keyed.
-Each slot binds a stable alias (e.g. ``fom-0``) to a single ``(job, output)``
-pair. The orchestrator owns the FOM job's lifecycle: committing or releasing a
-slot composes the explicit Kafka batch (stop previous + unbind + new
-WorkflowConfig + bind) so the dashboard does not depend on backend
-auto-stop-on-rebind semantics.
+Each slot binds a stable alias (e.g. ``fom-0``) to a workflow output produced
+by jobs running on one or more sources. When the slot covers multiple sources
+the alias has multiple bindings on the wire and the consumer (NICOS) is
+expected to aggregate the substreams (typically by summing). The orchestrator
+owns the FOM jobs' lifecycle: committing or releasing a slot composes the
+explicit Kafka batch (stop previous + unbind + new WorkflowConfigs + binds)
+so the dashboard does not depend on backend auto-stop-on-rebind semantics.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NewType
 
@@ -47,20 +49,23 @@ FOMSlot = NewType('FOMSlot', str)
 FOMAction = str  # "commit" | "release" | "reset"
 
 # On-disk schema version for persisted slot state.
-# Bump and add migration when changing the persisted layout.
-_SLOT_SCHEMA_VERSION = 1
+# v1: single ``source_name``. v2: ``source_names`` list (multi-source slots).
+_SLOT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
 class FOMSlotState:
     """In-memory state of a configured FOM slot.
 
-    ``job_number`` is ``None`` when the slot has been stopped but its
-    configuration is retained for restart or for prefilling the config wizard.
+    A slot binds one workflow output across one or more source streams; all
+    source-jobs share a single ``job_number`` so they form one logical
+    figure-of-merit. ``job_number`` is ``None`` when the slot has been
+    stopped but its configuration is retained for restart or for prefilling
+    the config wizard.
     """
 
     workflow_id: WorkflowId
-    source_name: str
+    source_names: tuple[str, ...]
     output_name: str
     params: dict
     aux_source_names: dict
@@ -71,10 +76,13 @@ class FOMSlotState:
         return self.job_number is not None
 
     @property
-    def job_id(self) -> JobId | None:
+    def job_ids(self) -> tuple[JobId, ...]:
         if self.job_number is None:
-            return None
-        return JobId(source_name=self.source_name, job_number=self.job_number)
+            return ()
+        return tuple(
+            JobId(source_name=name, job_number=self.job_number)
+            for name in self.source_names
+        )
 
 
 @dataclass
@@ -220,36 +228,44 @@ class FOMOrchestrator:
         slot: FOMSlot,
         *,
         workflow_id: WorkflowId,
-        source_name: str,
+        source_names: Sequence[str],
         output_name: str,
         params: dict,
         aux_source_names: dict | None = None,
-    ) -> JobId:
-        """Bind ``slot`` to a fresh job, replacing any existing binding.
+    ) -> tuple[JobId, ...]:
+        """Bind ``slot`` to fresh jobs on each of ``source_names``.
 
-        Sends ``[Stop(prev), Unbind, WorkflowConfig(new), Bind]`` (or just
-        ``[WorkflowConfig(new), Bind]`` if the slot is empty) as a single
-        Kafka batch, then updates local state.
+        Sends ``[Stop(prev_1..N), Unbind, WorkflowConfig(new_1..M),
+        Bind(new_1..M)]`` (or ``[WorkflowConfig(new_1..M), Bind(new_1..M)]``
+        if the slot is empty) as a single Kafka batch, then updates local
+        state. All new jobs share one ``job_number`` so they form one logical
+        slot.
         """
         self._require_slot(slot)
+        if not source_names:
+            raise ValueError("source_names must not be empty")
+        sources = tuple(source_names)
 
         prev = self._slots[slot]
         new_job_number: JobNumber = uuid.uuid4()
-        new_job_id = JobId(source_name=source_name, job_number=new_job_number)
+        new_job_ids = tuple(
+            JobId(source_name=name, job_number=new_job_number) for name in sources
+        )
         message_id = str(uuid.uuid4())
         aux_dict = aux_source_names or {}
 
         commands: list[tuple[ConfigKey, object]] = []
         if prev is not None and prev.is_running:
-            commands.append(
+            commands.extend(
                 (
-                    ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
+                    ConfigKey(key=JobCommand.key, source_name=str(prev_id)),
                     JobCommand(
-                        job_id=prev.job_id,
+                        job_id=prev_id,
                         action=JobAction.stop,
                         message_id=message_id,
                     ),
                 )
+                for prev_id in prev.job_ids
             )
             commands.append(
                 (
@@ -257,9 +273,9 @@ class FOMOrchestrator:
                     UnbindStreamAlias(alias=slot, message_id=message_id),
                 )
             )
-        commands.append(
+        commands.extend(
             (
-                keys.WORKFLOW_CONFIG.create_key(source_name=source_name),
+                keys.WORKFLOW_CONFIG.create_key(source_name=name),
                 WorkflowConfig.from_params(
                     workflow_id=workflow_id,
                     params=params,
@@ -268,24 +284,26 @@ class FOMOrchestrator:
                     message_id=message_id,
                 ),
             )
+            for name in sources
         )
-        commands.append(
+        commands.extend(
             (
                 ConfigKey(key=BindStreamAlias.key, source_name=slot),
                 BindStreamAlias(
                     alias=slot,
-                    job_id=new_job_id,
+                    job_id=new_id,
                     output_name=output_name,
                     message_id=message_id,
                 ),
             )
+            for new_id in new_job_ids
         )
 
         self._pending.register(message_id, slot, "commit", len(commands))
         self._command_service.send_batch(commands)
 
-        # Activate the new job inside the ingestion guard so that data
-        # arriving for the new job_number is accepted; deactivate the
+        # Activate the new (shared) job_number inside the ingestion guard so
+        # that data arriving for any source-job is accepted; deactivate the
         # previous one to clean up its DataService entries.
         with self._active_job_registry.ingestion_guard():
             self._active_job_registry.activate(new_job_number)
@@ -294,7 +312,7 @@ class FOMOrchestrator:
 
         self._slots[slot] = FOMSlotState(
             workflow_id=workflow_id,
-            source_name=source_name,
+            source_names=sources,
             output_name=output_name,
             params=dict(params),
             aux_source_names=dict(aux_dict),
@@ -306,19 +324,19 @@ class FOMOrchestrator:
             "fom_slot_committed",
             slot=slot,
             workflow_id=str(workflow_id),
-            source=source_name,
+            sources=list(sources),
             output=output_name,
             job_number=str(new_job_number),
         )
-        return new_job_id
+        return new_job_ids
 
     def release_slot(self, slot: FOMSlot) -> bool:
-        """Stop the bound job; retain the slot's configuration for restart.
+        """Stop the bound jobs; retain the slot's configuration for restart.
 
-        Sends ``[Stop, Unbind]`` and locally clears ``job_number`` while keeping
-        the rest of the slot's binding (workflow, source, output, params) so
-        that the user can re-launch the same configuration via
-        :meth:`start_slot` or tweak it through the config wizard.
+        Sends ``[Stop(prev_1..N), Unbind]`` and locally clears ``job_number``
+        while keeping the rest of the slot's binding (workflow, sources,
+        output, params) so that the user can re-launch the same configuration
+        via :meth:`start_slot` or tweak it through the config wizard.
 
         Returns ``False`` if the slot was already stopped or empty (no
         commands sent).
@@ -331,25 +349,28 @@ class FOMOrchestrator:
         message_id = str(uuid.uuid4())
         commands: list[tuple[ConfigKey, object]] = [
             (
-                ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
+                ConfigKey(key=JobCommand.key, source_name=str(prev_id)),
                 JobCommand(
-                    job_id=prev.job_id,
+                    job_id=prev_id,
                     action=JobAction.stop,
                     message_id=message_id,
                 ),
-            ),
+            )
+            for prev_id in prev.job_ids
+        ]
+        commands.append(
             (
                 ConfigKey(key=UnbindStreamAlias.key, source_name=slot),
                 UnbindStreamAlias(alias=slot, message_id=message_id),
-            ),
-        ]
+            )
+        )
         self._pending.register(message_id, slot, "release", len(commands))
         self._command_service.send_batch(commands)
 
         self._active_job_registry.deactivate(prev.job_number)
         self._slots[slot] = FOMSlotState(
             workflow_id=prev.workflow_id,
-            source_name=prev.source_name,
+            source_names=prev.source_names,
             output_name=prev.output_name,
             params=prev.params,
             aux_source_names=prev.aux_source_names,
@@ -375,7 +396,7 @@ class FOMOrchestrator:
         logger.info("fom_slot_cleared", slot=slot)
         return True
 
-    def start_slot(self, slot: FOMSlot) -> JobId | None:
+    def start_slot(self, slot: FOMSlot) -> tuple[JobId, ...] | None:
         """Re-launch a stopped slot using its retained configuration.
 
         Returns ``None`` if the slot is empty or already running.
@@ -387,16 +408,21 @@ class FOMOrchestrator:
         return self.commit_slot(
             slot,
             workflow_id=prev.workflow_id,
-            source_name=prev.source_name,
+            source_names=prev.source_names,
             output_name=prev.output_name,
             params=prev.params,
             aux_source_names=prev.aux_source_names,
         )
 
     def reset_slot(self, slot: FOMSlot) -> bool:
-        """Send a reset to the bound job.
+        """Send a reset to each of the bound jobs.
 
-        Returns ``False`` if the slot is empty or stopped (no running job).
+        Resets are not atomic across sources: there is a brief window in
+        which some substreams have zeroed and others have not. NICOS-side
+        aggregation should treat this as "below threshold" until fresh
+        post-reset values from every substream have arrived.
+
+        Returns ``False`` if the slot is empty or stopped (no running jobs).
         """
         self._require_slot(slot)
         prev = self._slots[slot]
@@ -404,18 +430,21 @@ class FOMOrchestrator:
             return False
 
         message_id = str(uuid.uuid4())
-        cmd = (
-            ConfigKey(key=JobCommand.key, source_name=str(prev.job_id)),
-            JobCommand(
-                job_id=prev.job_id,
-                action=JobAction.reset,
-                message_id=message_id,
-            ),
-        )
-        self._pending.register(message_id, slot, "reset", 1)
-        self._command_service.send_batch([cmd])
+        commands: list[tuple[ConfigKey, object]] = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(prev_id)),
+                JobCommand(
+                    job_id=prev_id,
+                    action=JobAction.reset,
+                    message_id=message_id,
+                ),
+            )
+            for prev_id in prev.job_ids
+        ]
+        self._pending.register(message_id, slot, "reset", len(commands))
+        self._command_service.send_batch(commands)
 
-        logger.info("fom_slot_reset", slot=slot)
+        logger.info("fom_slot_reset", slot=slot, sources=list(prev.source_names))
         return True
 
     # ----- ack / status routing -----------------------------------------------
@@ -450,30 +479,31 @@ class FOMOrchestrator:
         """React to a backend-reported job status.
 
         Any fresh status for a probing slot's job confirms the backend still
-        hosts the job: the slot is taken out of ``_probe_pending`` so the
+        hosts the slot: the slot is taken out of ``_probe_pending`` so the
         timeout in :meth:`tick` does not later clear it. A ``stopped`` status
-        additionally transitions the slot to STOPPED while retaining its
-        configuration.
+        on any of the slot's source-jobs transitions the entire slot to
+        STOPPED while retaining its configuration; the alias is "all or
+        nothing", so a single substream stopping invalidates the aggregate.
         """
         for slot, state in list(self._slots.items()):
             if state is None or not state.is_running:
                 continue
-            if (
-                job_status.job_id.source_name != state.source_name
-                or job_status.job_id.job_number != state.job_number
-            ):
+            if job_status.job_id.job_number != state.job_number:
+                continue
+            if job_status.job_id.source_name not in state.source_names:
                 continue
             self._probe_pending.discard(slot)
             if job_status.state == JobState.stopped:
                 logger.info(
                     "fom_slot_stopped_by_backend",
                     slot=slot,
+                    source=job_status.job_id.source_name,
                     job_number=str(state.job_number),
                 )
                 self._active_job_registry.deactivate(state.job_number)
                 self._slots[slot] = FOMSlotState(
                     workflow_id=state.workflow_id,
-                    source_name=state.source_name,
+                    source_names=state.source_names,
                     output_name=state.output_name,
                     params=state.params,
                     aux_source_names=state.aux_source_names,
@@ -487,10 +517,11 @@ class FOMOrchestrator:
 
         Called periodically (e.g. from the dashboard's update loop). Until
         the probe deadline, restored slots stay tentatively running so the
-        widget shows PENDING. Once the deadline has passed, any slot that
-        has not had a fresh ``JobStatus`` arrive is treated as orphaned
-        (the backend was restarted while the dashboard was down) and is
-        transitioned to STOPPED — config retained, ``job_number`` cleared.
+        widget shows PENDING. Once the deadline has passed, any slot for
+        which not a single source-job has reported a fresh ``JobStatus`` is
+        treated as orphaned (the backend was restarted while the dashboard
+        was down) and is transitioned to STOPPED — config retained,
+        ``job_number`` cleared.
         """
         if not self._probe_pending:
             return
@@ -501,11 +532,10 @@ class FOMOrchestrator:
             if state is None or not state.is_running:
                 self._probe_pending.discard(slot)
                 continue
-            job_id = state.job_id
-            if (
-                job_id is not None
-                and self._job_service.job_statuses.get(job_id) is not None
+            if any(
+                self._job_service.job_statuses.get(job_id) is not None
                 and not self._job_service.is_status_stale(job_id)
+                for job_id in state.job_ids
             ):
                 # A fresh status arrived between the listener firing and
                 # tick(); treat as confirmed.
@@ -519,7 +549,7 @@ class FOMOrchestrator:
             self._active_job_registry.deactivate(state.job_number)
             self._slots[slot] = FOMSlotState(
                 workflow_id=state.workflow_id,
-                source_name=state.source_name,
+                source_names=state.source_names,
                 output_name=state.output_name,
                 params=state.params,
                 aux_source_names=state.aux_source_names,
@@ -561,7 +591,7 @@ class FOMOrchestrator:
         self._config_store[slot] = {
             'version': _SLOT_SCHEMA_VERSION,
             'workflow_id': str(state.workflow_id),
-            'source_name': state.source_name,
+            'source_names': list(state.source_names),
             'output_name': state.output_name,
             'params': dict(state.params),
             'aux_source_names': dict(state.aux_source_names),
@@ -620,11 +650,17 @@ class FOMOrchestrator:
                 workflow_id=str(workflow_id),
             )
             return None
-        source_name = data.get('source_name')
-        if source_name not in spec.source_names:
+        source_names_raw = data.get('source_names')
+        if not isinstance(source_names_raw, list) or not source_names_raw:
             logger.warning(
-                "fom_slot_load_unknown_source", slot=slot, source_name=source_name
+                "fom_slot_load_bad_source_names",
+                slot=slot,
+                raw=source_names_raw,
             )
+            return None
+        unknown = [s for s in source_names_raw if s not in spec.source_names]
+        if unknown:
+            logger.warning("fom_slot_load_unknown_source", slot=slot, sources=unknown)
             return None
         output_name = data.get('output_name')
         if spec.outputs is None or output_name not in spec.outputs.model_fields:
@@ -652,7 +688,7 @@ class FOMOrchestrator:
             job_number = None
         return FOMSlotState(
             workflow_id=workflow_id,
-            source_name=source_name,
+            source_names=tuple(source_names_raw),
             output_name=output_name,
             params=dict(params),
             aux_source_names=dict(aux),

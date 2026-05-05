@@ -24,7 +24,9 @@ Three reasons FOM cannot share this state:
    safely; the risk is wasted beam time mid-scan.
 3. **Keying mismatch.** FOM state's natural key is the slot
    (`fom-0`..`fom-N`), not the workflow. Two slots can legitimately use
-   the same workflow with different parameters.
+   the same workflow with different parameters. A slot may also bind the
+   same workflow output across N sources at once: the alias then carries
+   N substreams that the consumer (NICOS) aggregates trivially.
 
 ## Structure: `FOMOrchestrator` parallel to `JobOrchestrator`
 
@@ -53,11 +55,11 @@ class FOMOrchestrator:
         slot: FOMSlot,
         *,
         workflow_id: WorkflowId,
-        source_name: str,
+        source_names: Sequence[str],
         output_name: str,
         params: dict,
         aux_source_names: dict,
-    ) -> JobId: ...
+    ) -> tuple[JobId, ...]: ...
 
     def release_slot(self, slot: FOMSlot) -> None: ...
     def reset_slot(self, slot: FOMSlot) -> None: ...
@@ -69,8 +71,9 @@ class FOMOrchestrator:
     def on_job_status_updated(self, job_status: JobStatus) -> None: ...
 ```
 
-`FOMSlotState` carries `(workflow_id, source_name, output_name, params,
-aux_source_names, job_number)`.
+`FOMSlotState` carries `(workflow_id, source_names, output_name, params,
+aux_source_names, job_number)`. All source-jobs share one `job_number`
+so they form one logical slot.
 
 `n_slots` defaults to 2 (operational expectation: one or two parallel
 FOMs). The slot rows are fixed: `fom-0`..`fom-{n_slots-1}`.
@@ -81,19 +84,22 @@ load-bearing isolation property.
 
 ### Command composition
 
-The shipped backend has no-replace alias semantics and idempotent
+The shipped backend allows multiple bindings per alias and idempotent
 unbind (no auto-stop). The dashboard composes lifecycle explicitly,
-sending a single batched Kafka flush per operation.
+sending a single batched Kafka flush per operation. ``N`` denotes the
+number of source-jobs in the previous binding, ``M`` the number in the
+new binding.
 
 | Operation | Slot state before | Batch contents |
 |---|---|---|
-| `commit_slot` | unbound | `[WorkflowConfig(new), Bind]` |
-| `commit_slot` | bound | `[Stop(prev), Unbind, WorkflowConfig(new), Bind]` |
-| `release_slot` | bound | `[Stop(prev), Unbind]` |
-| `reset_slot` | bound | `[JobCommand(reset, prev)]` |
+| `commit_slot` | unbound | `[WorkflowConfig(new) × M, Bind(new) × M]` |
+| `commit_slot` | bound | `[Stop(prev) × N, Unbind, WorkflowConfig(new) × M, Bind(new) × M]` |
+| `release_slot` | bound | `[Stop(prev) × N, Unbind]` |
+| `reset_slot` | bound | `[JobCommand(reset, prev) × N]` |
 
-`commit_slot` always uses a fresh `JobNumber` so the new job is
-distinct from the one being stopped.
+`commit_slot` always uses a fresh `JobNumber` shared across all M new
+source-jobs so the new logical slot is distinct from the one being
+stopped. A single `Unbind` clears all old bindings under the alias.
 
 ### Acknowledgement routing
 
@@ -134,14 +140,18 @@ boundary makes that move cheap. Not in scope here.
 - Refresh-by-version pattern: `FOMOrchestrator.get_slot_state_version`
   parallels `JobOrchestrator.get_workflow_state_version`.
 
-A `FOMSlotWidget` shows the slot name, status badge, single-source
-status dot, timing, **live numeric readout**, and Configure / Reset /
-Release buttons.
+A `FOMSlotWidget` shows the slot name, status badge, one status dot
+per bound source, timing, **live per-source numeric readout** (one row
+per substream), and Configure / Reset / Release buttons. Per-source
+status, timing aggregation, and dot rendering go through the shared
+`derive_aggregate_status` helper in `workflow_status_widget.py`, which
+is also designed to be adoptable by `WorkflowStatusWidget` in a later
+clean-up.
 
 The live readout subscribes to
-`data_service[ResultKey(workflow_id, job_id, output_name)]` like a
-regular plot. The `LIVEDATA_FOM` mirror is for NICOS only — the
-dashboard never consumes it.
+`data_service[ResultKey(workflow_id, job_id, output_name)]` per
+substream, like a regular plot. The `LIVEDATA_FOM` mirror is for NICOS
+only — the dashboard never consumes it.
 
 ## Configuration UI: two-step wizard, slot from launch context
 
@@ -156,16 +166,17 @@ clicked; it is not a wizard step.
   Overlay" namespace is suppressed via a constructor flag.
 - **Step 2**: workflow parameter configuration — the existing
   parameter widget wrapped as a `WizardStep`. The source selector is
-  rendered as a single-choice `Select` (FOM binds one source per slot)
-  rather than the default `MultiChoice`. Final commit calls
-  `FOMOrchestrator.commit_slot(slot, ...)`.
+  the default `MultiChoice`; selecting multiple sources binds them all
+  under the same alias and the consumer aggregates the substreams.
+  Final commit calls `FOMOrchestrator.commit_slot(slot, ...)`.
 
 When the slot is unbound, Configure opens an empty wizard. When the
 slot is bound, the wizard prefills from the slot's current state
-(workflow, output, source, params); cancelling without committing
+(workflow, output, sources, params); cancelling without committing
 gives the operator a way to inspect the binding. A
 replace-confirmation modal fires before the final commit on a bound
-slot, naming the alias and the workflow being replaced.
+slot, naming the alias, the workflow, and the source list being
+replaced.
 
 ## State, persistence, multi-session
 
@@ -195,35 +206,36 @@ acceptable for local testing and early operational use.
 ## Implementation sketch
 
 1. **Dashboard**: lift status-and-timing aggregation and dots renderer
-   from `workflow_status_widget.py` to module scope. No behaviour
-   change to `WorkflowStatusWidget`.
+   from `workflow_status_widget.py` to module scope. Add
+   `derive_aggregate_status(job_service, job_ids)` so widgets that
+   surface a logical group of jobs (workflow card, FOM slot row) drive
+   per-source dots, timing, and error aggregation through one path.
+   No behaviour change to `WorkflowStatusWidget`.
 2. **Dashboard**: generalise `WorkflowAndOutputSelectionStep`'s prefill
    parameter to a `Protocol`; add a flag to suppress the
    "Static Overlay" namespace.
-3. **Dashboard**: add a single-source mode to `ConfigurationWidget` /
-   `ConfigurationAdapter` (`Select` instead of `MultiChoice`).
-4. **Dashboard**: `FOMOrchestrator` with in-memory `_slots`,
+3. **Dashboard**: `FOMOrchestrator` with in-memory `_slots`,
    `PendingCommandTracker`, slot-state version, `commit_slot` /
    `release_slot` / `reset_slot` composing the explicit batches above.
-5. **Dashboard**: convert `JobService.on_status_updated` to fan-out
+4. **Dashboard**: convert `JobService.on_status_updated` to fan-out
    and register `FOMOrchestrator.on_job_status_updated`.
-6. **Dashboard**: fan ACKs out to both orchestrators in
+5. **Dashboard**: fan ACKs out to both orchestrators in
    `Orchestrator._process_response`.
-7. **Dashboard**: wrap the parameter widget as a `WizardStep`. Wire
+6. **Dashboard**: wrap the parameter widget as a `WizardStep`. Wire
    together with the generalised step 1 into a two-step FOM wizard
    parameterised by the launching slot. Prefill on bound-slot opens;
    replace-confirmation modal before final commit on bound slot.
-8. **Dashboard**: `FOMSlotWidget` — slot row showing title, status,
-   timing, live numeric readout, and Configure / Reset / Release
-   buttons.
-9. **Dashboard**: FOM panel hosting `n_slots` `FOMSlotWidget`s
+7. **Dashboard**: `FOMSlotWidget` — slot row showing title, status,
+   one dot per bound source, timing, per-source numeric readout, and
+   Configure / Reset / Release buttons.
+8. **Dashboard**: FOM panel hosting `n_slots` `FOMSlotWidget`s
    side-by-side, mounted as a new top-level tab in `PlotGridTabs`
    between Workflows and System Status.
-10. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
-    reset, multi-slot, and ACK handling.
+9. **Dashboard**: tests for `FOMOrchestrator` covering commit, release,
+   reset, multi-slot, multi-source, and ACK handling.
 
-Steps 1–3 are independent refactors and can land first. Steps 4–6 are
-orchestrator wiring. Steps 7–9 are UI.
+Steps 1–2 are independent refactors and can land first. Steps 3–5 are
+orchestrator wiring. Steps 6–8 are UI.
 
 ## Known v1 limitations (accepted)
 

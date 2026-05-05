@@ -12,14 +12,15 @@ from dataclasses import dataclass
 
 import panel as pn
 import pydantic
+import scipp as sc
 import structlog
 
 from ess.livedata.config.workflow_spec import (
+    JobId,
     ResultKey,
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.core.job import JobState
 
 from ..configuration_adapter import ConfigurationState
 from ..data_service import DataService
@@ -36,9 +37,8 @@ from .plot_config_modal import (
 from .styles import Colors, HoverColors, ModalSizing, StatusColors, WarningBox
 from .wizard import Wizard, WizardStep
 from .workflow_status_widget import (
-    SourceStatus,
     WorkflowWidgetStyles,
-    format_active_timing,
+    derive_aggregate_status,
     make_status_badge_html,
     make_status_dots_html,
     make_timing_html,
@@ -131,17 +131,9 @@ class _FOMPrefill:
 class _ParamCommit:
     """Output of the parameter step."""
 
-    source_name: str
+    source_names: list[str]
     parameter_values: pydantic.BaseModel | None
     aux_source_names: dict[str, str]
-
-
-class _SingleSourceWorkflowAdapter(WorkflowConfigurationAdapter):
-    """WorkflowConfigurationAdapter that forces single-source selection."""
-
-    @property
-    def single_source(self) -> bool:
-        return True
 
 
 class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
@@ -152,15 +144,15 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
         *,
         workflow_registry: dict[WorkflowId, WorkflowSpec],
         prefill_state: ConfigurationState | None = None,
-        prefill_source: str | None = None,
+        prefill_sources: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._workflow_registry = workflow_registry
         self._prefill_state = prefill_state
-        self._prefill_source = prefill_source
+        self._prefill_sources = prefill_sources
         self._panel_container = pn.Column(sizing_mode='stretch_width')
         self._config_panel: ConfigurationPanel | None = None
-        self._adapter: _SingleSourceWorkflowAdapter | None = None
+        self._adapter: WorkflowConfigurationAdapter | None = None
         self._captured: _ParamCommit | None = None
         self._workflow_id: WorkflowId | None = None
         self._output_name: str | None = None
@@ -171,7 +163,11 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
 
     @property
     def description(self) -> str | None:
-        return "Pick the source and configure workflow parameters."
+        return (
+            "Pick one or more sources and configure workflow parameters. "
+            "Selecting multiple sources binds them all to this slot's alias; "
+            "the consumer (e.g. NICOS) aggregates the substreams."
+        )
 
     def is_valid(self) -> bool:
         return self._config_panel is not None
@@ -212,11 +208,12 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
             self._notify_ready_changed(False)
             return
 
-        initial_sources = (
-            [self._prefill_source]
-            if self._prefill_source and self._prefill_source in spec.source_names
-            else None
-        )
+        if self._prefill_sources:
+            initial_sources = [
+                s for s in self._prefill_sources if s in spec.source_names
+            ] or None
+        else:
+            initial_sources = None
 
         def _on_start(
             selected_sources: list[str],
@@ -226,12 +223,12 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
             if not selected_sources:
                 return
             self._captured = _ParamCommit(
-                source_name=selected_sources[0],
+                source_names=list(selected_sources),
                 parameter_values=parameter_values,
                 aux_source_names=dict(aux_source_names or {}),
             )
 
-        self._adapter = _SingleSourceWorkflowAdapter(
+        self._adapter = WorkflowConfigurationAdapter(
             spec=spec,
             config_state=self._prefill_state,
             start_callback=_on_start,
@@ -241,6 +238,15 @@ class _ParameterStep(WizardStep[OutputSelection, _ParamCommit]):
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
         self._notify_ready_changed(True)
+
+
+@dataclass(frozen=True)
+class _CommitArgs:
+    workflow_id: WorkflowId
+    source_names: list[str]
+    output_name: str
+    params: pydantic.BaseModel | None
+    aux_source_names: dict[str, str]
 
 
 class FOMConfigWizard:
@@ -259,10 +265,7 @@ class FOMConfigWizard:
         self._modal_container = modal_container
         self._on_close = on_close
         self._modal: pn.Modal | None = None
-        self._pending_commit: (
-            tuple[WorkflowId, str, str, pydantic.BaseModel | None, dict[str, str]]
-            | None
-        ) = None
+        self._pending_commit: _CommitArgs | None = None
         self._build()
 
     @property
@@ -281,7 +284,7 @@ class FOMConfigWizard:
 
         prefill: _FOMPrefill | None = None
         prefill_state: ConfigurationState | None = None
-        prefill_source: str | None = None
+        prefill_sources: list[str] | None = None
         if state is not None:
             prefill = _FOMPrefill(
                 workflow_id=state.workflow_id,
@@ -291,7 +294,7 @@ class FOMConfigWizard:
                 params=dict(state.params),
                 aux_source_names=dict(state.aux_source_names),
             )
-            prefill_source = state.source_name
+            prefill_sources = list(state.source_names)
 
         step1 = WorkflowAndOutputSelectionStep(
             registry, initial_config=prefill, include_static_overlay=False
@@ -299,7 +302,7 @@ class FOMConfigWizard:
         step2 = _ParameterStep(
             workflow_registry=registry,
             prefill_state=prefill_state,
-            prefill_source=prefill_source,
+            prefill_sources=prefill_sources,
         )
 
         self._wizard = Wizard(
@@ -326,12 +329,12 @@ class FOMConfigWizard:
         if out is None or result is None:
             return
 
-        commit_args = (
-            out.workflow_id,
-            result.source_name,
-            out.output_name,
-            result.parameter_values,
-            result.aux_source_names,
+        commit_args = _CommitArgs(
+            workflow_id=out.workflow_id,
+            source_names=list(result.source_names),
+            output_name=out.output_name,
+            params=result.parameter_values,
+            aux_source_names=result.aux_source_names,
         )
 
         existing = self._orchestrator.get_slot_state(self._slot)
@@ -355,6 +358,11 @@ class FOMConfigWizard:
         existing_label = (
             existing.workflow_id.name if existing is not None else self._slot
         )
+        existing_sources = (
+            ', '.join(existing.source_names)
+            if existing is not None and existing.source_names
+            else '—'
+        )
 
         def _do_replace() -> None:
             args = self._pending_commit
@@ -365,32 +373,29 @@ class FOMConfigWizard:
         _show_dangerous_confirm(
             modal_container=self._modal_container,
             title=(
-                f"Replace slot `{self._slot}` (currently bound to `{existing_label}`)?"
+                f"Replace slot `{self._slot}` (currently bound to "
+                f"`{existing_label}` on {existing_sources})?"
             ),
             warning=_NICOS_SCAN_WARNING,
-            notes="Replacing will stop the running job and start a new one.",
+            notes="Replacing will stop the running jobs and start new ones.",
             action_label="Replace",
             on_confirm=_do_replace,
         )
 
-    def _do_commit(
-        self,
-        args: tuple[WorkflowId, str, str, pydantic.BaseModel | None, dict[str, str]],
-    ) -> None:
-        workflow_id, source_name, output_name, params_model, aux = args
+    def _do_commit(self, args: _CommitArgs) -> None:
         params_dict = (
-            params_model.model_dump(mode='json')
-            if isinstance(params_model, pydantic.BaseModel)
-            else (params_model or {})
+            args.params.model_dump(mode='json')
+            if isinstance(args.params, pydantic.BaseModel)
+            else (args.params or {})
         )
         try:
             self._orchestrator.commit_slot(
                 self._slot,
-                workflow_id=workflow_id,
-                source_name=source_name,
-                output_name=output_name,
+                workflow_id=args.workflow_id,
+                source_names=args.source_names,
+                output_name=args.output_name,
                 params=params_dict,
-                aux_source_names=aux,
+                aux_source_names=args.aux_source_names,
             )
         except Exception:
             logger.exception("fom_commit_slot_failed", slot=self._slot)
@@ -402,8 +407,6 @@ class FOMConfigWizard:
 def _format_value_text(value) -> str:
     """Render a scipp DataArray scalar (or other) as a single-line readout."""
     try:
-        import scipp as sc
-
         if isinstance(value, sc.DataArray):
             data = value.data
             if data.ndim == 0:
@@ -466,9 +469,9 @@ class FOMSlotWidget:
                 styles={'display': 'flex', 'align-items': 'center'},
             )
 
-            status, color, timing_text, dots_sources = self._derive_status(state)
+            status, color, timing_text, dots_html = self._derive_status(state)
             self._status_badge = pn.pane.HTML(make_status_badge_html(status, color))
-            self._dots = pn.pane.HTML(make_status_dots_html(dots_sources))
+            self._dots = pn.pane.HTML(dots_html)
             self._timing = pn.pane.HTML(make_timing_html(timing_text))
             self._readout = pn.pane.HTML(self._render_readout(state))
             self._buttons = self._make_buttons(state)
@@ -526,16 +529,14 @@ class FOMSlotWidget:
 
     def _update_dynamic(self) -> None:
         state = self._orchestrator.get_slot_state(self._slot)
-        status, color, timing_text, dots_sources = self._derive_status(state)
+        status, color, timing_text, dots_html = self._derive_status(state)
         with pn.io.hold():
             if self._status_badge is not None:
                 new = make_status_badge_html(status, color)
                 if self._status_badge.object != new:
                     self._status_badge.object = new
-            if self._dots is not None:
-                new = make_status_dots_html(dots_sources)
-                if self._dots.object != new:
-                    self._dots.object = new
+            if self._dots is not None and self._dots.object != dots_html:
+                self._dots.object = dots_html
             if self._timing is not None:
                 new = make_timing_html(timing_text)
                 if self._timing.object != new:
@@ -545,64 +546,26 @@ class FOMSlotWidget:
                 if self._readout.object != new:
                     self._readout.object = new
 
-    def _derive_status(
-        self, state: FOMSlotState | None
-    ) -> tuple[str, str, str, list[SourceStatus]]:
+    def _derive_status(self, state: FOMSlotState | None) -> tuple[str, str, str, str]:
         if state is None:
             return (
                 'EMPTY',
                 WorkflowWidgetStyles.STATUS_COLORS['stopped'],
                 '',
-                [],
+                '',
             )
         if not state.is_running:
             return (
                 'STOPPED',
                 WorkflowWidgetStyles.STATUS_COLORS['stopped'],
                 '',
-                [],
+                '',
             )
-        target_id = state.job_id
-        job_status = self._job_service.job_statuses.get(target_id)
-        if job_status is None or self._job_service.is_status_stale(target_id):
-            return (
-                'PENDING',
-                WorkflowWidgetStyles.STATUS_COLORS['pending'],
-                'Waiting for backend...',
-                [
-                    SourceStatus(
-                        source_name=state.source_name,
-                        display_title=state.source_name,
-                        state=JobState.scheduled,
-                        error_summary=None,
-                    )
-                ],
-            )
-
-        from ..format_utils import extract_error_summary
-
-        error_summary = (
-            extract_error_summary(job_status.error_message)
-            if job_status.error_message
-            else None
+        status, color, timing_text, _, per_source = derive_aggregate_status(
+            job_service=self._job_service,
+            job_ids=state.job_ids,
         )
-        per_source = [
-            SourceStatus(
-                source_name=state.source_name,
-                display_title=state.source_name,
-                state=job_status.state,
-                error_summary=error_summary,
-            )
-        ]
-        status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
-            job_status.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
-        )
-        return (
-            job_status.state.value.upper(),
-            status_color,
-            format_active_timing(job_status.start_time),
-            per_source,
-        )
+        return status, color, timing_text, make_status_dots_html(per_source)
 
     def _render_readout(self, state: FOMSlotState | None) -> str:
         if state is None:
@@ -612,30 +575,42 @@ class FOMSlotWidget:
                 f'</div>'
             )
         if not state.is_running:
-            text = '— (stopped)'
-        else:
-            result_key = ResultKey(
-                workflow_id=state.workflow_id,
-                job_id=state.job_id,
-                output_name=state.output_name,
+            return (
+                f'<div style="font-family: monospace; font-size: 18px; '
+                f'color: {Colors.TEXT_DARK};">— (stopped)</div>'
             )
-            try:
-                value = self._data_service[result_key]
-            except KeyError:
-                text = '— (no value yet)'
-            else:
-                text = _format_value_text(value)
+        rendered = [
+            f'<tr><td style="padding: 1px 8px 1px 0; '
+            f'color: {Colors.TEXT_MUTED}; white-space: nowrap;">'
+            f'{job_id.source_name}</td>'
+            f'<td style="padding: 1px 0; font-family: monospace;">'
+            f'{self._render_value(job_id, state)}</td></tr>'
+            for job_id in state.job_ids
+        ]
         return (
-            f'<div style="font-family: monospace; font-size: 18px; '
-            f'color: {Colors.TEXT_DARK};">{text}</div>'
+            f'<table style="border-collapse: collapse; font-size: 14px; '
+            f'color: {Colors.TEXT_DARK};">' + ''.join(rendered) + '</table>'
         )
+
+    def _render_value(self, job_id: JobId, state: FOMSlotState) -> str:
+        result_key = ResultKey(
+            workflow_id=state.workflow_id,
+            job_id=job_id,
+            output_name=state.output_name,
+        )
+        try:
+            value = self._data_service[result_key]
+        except KeyError:
+            return '— (no value yet)'
+        return _format_value_text(value)
 
     def _render_binding_summary(self, state: FOMSlotState | None) -> str:
         if state is None:
             return ''
+        sources_text = ', '.join(state.source_names) or '—'
         rows = [
             ('WORKFLOW', state.workflow_id.name),
-            ('SOURCE', state.source_name),
+            ('SOURCES', sources_text),
             ('OUTPUT', state.output_name),
         ]
         row_html = ''.join(
@@ -717,7 +692,7 @@ class FOMSlotWidget:
     def _on_stop_click(self) -> None:
         _show_dangerous_confirm(
             modal_container=self._modal_container,
-            title=f"Stop the running job in slot `{self._slot}`?",
+            title=f"Stop the running jobs in slot `{self._slot}`?",
             warning=_NICOS_SCAN_WARNING,
             notes="Slot configuration is retained and can be restarted.",
             action_label="Stop",
@@ -764,7 +739,9 @@ class FOMPanel:
             '<h3 style="margin: 0 0 12px 0;">Figures of Merit</h3>'
             '<p style="margin: 0 0 12px 0; color: #666; font-size: 12px;">'
             'Each slot binds a stable alias (consumed by NICOS) to one '
-            'workflow output.</p>',
+            'workflow output. Selecting multiple sources binds them all '
+            'under the same alias; the consumer aggregates the substreams.'
+            '</p>',
             sizing_mode='stretch_width',
         )
 

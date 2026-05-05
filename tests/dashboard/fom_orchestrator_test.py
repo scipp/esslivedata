@@ -174,7 +174,7 @@ class TestSlotCount:
             orch.commit_slot(
                 FOMSlot('fom-99'),
                 workflow_id=workflow_a.get_id(),
-                source_name='det_1',
+                source_names=['det_1'],
                 output_name='result',
                 params={},
             )
@@ -193,7 +193,7 @@ class TestCommitEmptySlot:
         orch.commit_slot(
             FOMSlot('fom-0'),
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 5.0},
         )
@@ -213,20 +213,20 @@ class TestCommitEmptySlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 5.0},
         )
         state = orch.get_slot_state(slot)
         assert state is not None
         assert state.workflow_id == workflow_a.get_id()
-        assert state.source_name == 'det_1'
+        assert state.source_names == ('det_1',)
         assert state.output_name == 'result'
         assert state.params == {'threshold': 5.0}
-        assert state.job_id == job_id
+        assert state.job_ids == (job_id,)
 
     def test_bind_command_carries_alias_and_job(
         self, workflow_a, sink, active_job_registry, job_service
@@ -238,10 +238,10 @@ class TestCommitEmptySlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-1')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={},
         )
@@ -261,10 +261,10 @@ class TestCommitEmptySlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 7.0},
         )
@@ -285,7 +285,7 @@ class TestCommitEmptySlot:
         orch.commit_slot(
             FOMSlot('fom-0'),
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -302,10 +302,10 @@ class TestCommitEmptySlot:
             active_job_registry=active_job_registry,
             job_service=job_service,
         )
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             FOMSlot('fom-0'),
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -323,7 +323,7 @@ class TestCommitEmptySlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -344,14 +344,14 @@ class TestCommitBoundSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={'threshold': 9.0},
         )
@@ -372,17 +372,17 @@ class TestCommitBoundSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        first = orch.commit_slot(
+        (first,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={},
         )
@@ -407,14 +407,14 @@ class TestCommitBoundSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={},
         )
@@ -431,17 +431,17 @@ class TestCommitBoundSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        first = orch.commit_slot(
+        (first,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
-        second = orch.commit_slot(
+        (second,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={},
         )
@@ -462,21 +462,21 @@ class TestCommitBoundSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 1.0},
         )
         orch.commit_slot(
             slot,
             workflow_id=workflow_b.get_id(),
-            source_name='det_3',
+            source_names=['det_3'],
             output_name='result',
             params={'threshold': 2.0},
         )
         state = orch.get_slot_state(slot)
         assert state is not None
         assert state.workflow_id == workflow_b.get_id()
-        assert state.source_name == 'det_3'
+        assert state.source_names == ('det_3',)
         assert state.params == {'threshold': 2.0}
 
 
@@ -503,10 +503,10 @@ class TestReleaseSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -534,10 +534,10 @@ class TestReleaseSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 3.0},
         )
@@ -545,7 +545,7 @@ class TestReleaseSlot:
         state = orch.get_slot_state(slot)
         assert state is not None
         assert state.workflow_id == workflow_a.get_id()
-        assert state.source_name == 'det_1'
+        assert state.source_names == ('det_1',)
         assert state.output_name == 'result'
         assert state.params == {'threshold': 3.0}
         assert state.job_number is None
@@ -565,7 +565,7 @@ class TestReleaseSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -600,7 +600,7 @@ class TestStartSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -618,16 +618,17 @@ class TestStartSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        first = orch.commit_slot(
+        (first,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 5.0},
         )
         orch.release_slot(slot)
-        new_id = orch.start_slot(slot)
-        assert new_id is not None
+        new = orch.start_slot(slot)
+        assert new is not None
+        (new_id,) = new
         assert new_id.source_name == 'det_1'
         assert new_id != first
         state = orch.get_slot_state(slot)
@@ -668,7 +669,7 @@ class TestClearSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -688,7 +689,7 @@ class TestClearSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -713,7 +714,7 @@ class TestCommitStoppedSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -721,7 +722,7 @@ class TestCommitStoppedSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={},
         )
@@ -757,7 +758,7 @@ class TestResetSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -774,10 +775,10 @@ class TestResetSlot:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -800,12 +801,224 @@ class TestResetSlot:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
         orch.reset_slot(slot)
         assert orch.get_slot_state(slot) is not None
+
+
+class TestMultiSource:
+    def test_commit_empty_slot_with_two_sources_emits_2_workflow_configs_and_2_binds(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        job_ids = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={'threshold': 4.0},
+        )
+        assert len(job_ids) == 2
+        # All source-jobs share one job_number.
+        assert {jid.job_number for jid in job_ids} == {job_ids[0].job_number}
+        assert {jid.source_name for jid in job_ids} == {'det_1', 'det_2'}
+
+        batch = _last_batch(sink)
+        kinds = [v.__class__ for _, v in batch]
+        assert kinds.count(WorkflowConfig) == 2
+        assert kinds.count(BindStreamAlias) == 2
+        assert JobCommand not in kinds
+        assert UnbindStreamAlias not in kinds
+        # All four messages share one message_id.
+        assert len({v.message_id for _, v in batch}) == 1
+        # Binds carry the slot alias and per-source job_ids.
+        binds = [v for _, v in batch if isinstance(v, BindStreamAlias)]
+        assert {b.alias for b in binds} == {slot}
+        assert {b.job_id for b in binds} == set(job_ids)
+
+    def test_commit_replaces_with_n_stops_one_unbind_n_configs_n_binds(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        prev_ids = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={},
+        )
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_2'],
+            output_name='result',
+            params={'threshold': 9.0},
+        )
+        batch = _last_batch(sink)
+        kinds = [v.__class__ for _, v in batch]
+        assert kinds.count(JobCommand) == 2  # one Stop per prev source-job
+        assert kinds.count(UnbindStreamAlias) == 1  # single Unbind for the alias
+        assert kinds.count(WorkflowConfig) == 1
+        assert kinds.count(BindStreamAlias) == 1
+        stops = [
+            v
+            for _, v in batch
+            if isinstance(v, JobCommand) and v.action == JobAction.stop
+        ]
+        assert {s.job_id for s in stops} == set(prev_ids)
+
+    def test_release_multi_source_sends_n_stops_one_unbind(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        prev_ids = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={},
+        )
+        orch.release_slot(slot)
+        batch = _last_batch(sink)
+        stops = [
+            v
+            for _, v in batch
+            if isinstance(v, JobCommand) and v.action == JobAction.stop
+        ]
+        unbinds = [v for _, v in batch if isinstance(v, UnbindStreamAlias)]
+        assert {s.job_id for s in stops} == set(prev_ids)
+        assert len(unbinds) == 1
+
+    def test_reset_multi_source_sends_n_resets(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        prev_ids = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={},
+        )
+        assert orch.reset_slot(slot) is True
+        resets = [
+            v
+            for _, v in _last_batch(sink)
+            if isinstance(v, JobCommand) and v.action == JobAction.reset
+        ]
+        assert {r.job_id for r in resets} == set(prev_ids)
+
+    def test_one_source_job_stopped_transitions_slot_to_stopped(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        slot = FOMSlot('fom-0')
+        prev_ids = orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={},
+        )
+        orch.on_job_status_updated(
+            JobStatus(
+                job_id=prev_ids[0],
+                workflow_id=workflow_a.get_id(),
+                state=JobState.stopped,
+            )
+        )
+        state = orch.get_slot_state(slot)
+        assert state is not None
+        assert state.is_running is False
+        # Shared job_number deactivated.
+        assert not active_job_registry.is_active(prev_ids[0].job_number)
+
+    def test_empty_sources_rejected(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+        )
+        with pytest.raises(ValueError, match="source_names"):
+            orch.commit_slot(
+                FOMSlot('fom-0'),
+                workflow_id=workflow_a.get_id(),
+                source_names=[],
+                output_name='result',
+                params={},
+            )
+
+    def test_persisted_multi_source_round_trip(
+        self, workflow_a, sink, active_job_registry, job_service
+    ):
+        store = InMemoryConfigStore()
+        orch = _make_orchestrator(
+            workflow_a,
+            sink=sink,
+            active_job_registry=active_job_registry,
+            job_service=job_service,
+            config_store=store,
+        )
+        slot = FOMSlot('fom-0')
+        orch.commit_slot(
+            slot,
+            workflow_id=workflow_a.get_id(),
+            source_names=['det_1', 'det_2'],
+            output_name='result',
+            params={'threshold': 5.0},
+        )
+        entry = store[slot]
+        assert entry['source_names'] == ['det_1', 'det_2']
+
+        # New orchestrator restores both sources.
+        orch2 = _make_orchestrator(
+            workflow_a,
+            sink=FakeMessageSink(),
+            active_job_registry=ActiveJobRegistry(
+                data_service=DataService(),
+                job_service=JobService(),
+            ),
+            job_service=JobService(),
+            config_store=store,
+        )
+        restored = orch2.get_slot_state(slot)
+        assert restored is not None
+        assert restored.source_names == ('det_1', 'det_2')
 
 
 class TestMultipleSlots:
@@ -821,23 +1034,23 @@ class TestMultipleSlots:
         )
         s0 = FOMSlot('fom-0')
         s1 = FOMSlot('fom-1')
-        j0 = orch.commit_slot(
+        (j0,) = orch.commit_slot(
             s0,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
-        j1 = orch.commit_slot(
+        (j1,) = orch.commit_slot(
             s1,
             workflow_id=workflow_b.get_id(),
-            source_name='det_3',
+            source_names=['det_3'],
             output_name='result',
             params={},
         )
         assert j0 != j1
-        assert orch.get_slot_state(s0).source_name == 'det_1'
-        assert orch.get_slot_state(s1).source_name == 'det_3'
+        assert orch.get_slot_state(s0).source_names == ('det_1',)
+        assert orch.get_slot_state(s1).source_names == ('det_3',)
         assert active_job_registry.is_active(j0.job_number)
         assert active_job_registry.is_active(j1.job_number)
 
@@ -856,14 +1069,14 @@ class TestMultipleSlots:
         orch.commit_slot(
             s0,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
         orch.commit_slot(
             s1,
             workflow_id=workflow_b.get_id(),
-            source_name='det_3',
+            source_names=['det_3'],
             output_name='result',
             params={},
         )
@@ -894,7 +1107,7 @@ class TestAcknowledgement:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -925,7 +1138,7 @@ class TestAcknowledgement:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -965,10 +1178,10 @@ class TestOnJobStatusUpdated:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 4.0},
         )
@@ -995,10 +1208,10 @@ class TestOnJobStatusUpdated:
             job_service=job_service,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -1024,7 +1237,7 @@ class TestOnJobStatusUpdated:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -1054,17 +1267,17 @@ class TestPersistence:
             config_store=store,
         )
         slot = FOMSlot('fom-0')
-        job_id = orch.commit_slot(
+        (job_id,) = orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 5.0},
         )
         entry = store[slot]
-        assert entry['version'] == 1
+        assert entry['version'] == 2
         assert entry['workflow_id'] == str(workflow_a.get_id())
-        assert entry['source_name'] == 'det_1'
+        assert entry['source_names'] == ['det_1']
         assert entry['output_name'] == 'result'
         assert entry['params'] == {'threshold': 5.0}
         assert entry['job_number'] == str(job_id.job_number)
@@ -1084,7 +1297,7 @@ class TestPersistence:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={'threshold': 5.0},
         )
@@ -1108,7 +1321,7 @@ class TestPersistence:
         orch.commit_slot(
             slot,
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -1125,9 +1338,9 @@ class TestPersistence:
         slot = FOMSlot('fom-0')
         job_number = _uuid.uuid4()
         store[slot] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'result',
             'params': {'threshold': 7.0},
             'aux_source_names': {},
@@ -1154,9 +1367,9 @@ class TestPersistence:
         store = InMemoryConfigStore()
         slot = FOMSlot('fom-0')
         store[slot] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'result',
             'params': {'threshold': 7.0},
             'aux_source_names': {},
@@ -1179,9 +1392,9 @@ class TestPersistence:
     ):
         store = InMemoryConfigStore()
         store[FOMSlot('fom-0')] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': 'other/ns/missing/1',
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'result',
             'params': {},
             'aux_source_names': {},
@@ -1201,9 +1414,9 @@ class TestPersistence:
     ):
         store = InMemoryConfigStore()
         store[FOMSlot('fom-0')] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_does_not_exist',
+            'source_names': ['det_does_not_exist'],
             'output_name': 'result',
             'params': {},
             'aux_source_names': {},
@@ -1223,9 +1436,9 @@ class TestPersistence:
     ):
         store = InMemoryConfigStore()
         store[FOMSlot('fom-0')] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'no_such_output',
             'params': {},
             'aux_source_names': {},
@@ -1245,9 +1458,9 @@ class TestPersistence:
     ):
         store = InMemoryConfigStore()
         store[FOMSlot('fom-0')] = {
-            'version': 1,
+            'version': 2,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'result',
             'params': {'threshold': 'not-a-float'},
             'aux_source_names': {},
@@ -1269,7 +1482,7 @@ class TestPersistence:
         store[FOMSlot('fom-0')] = {
             'version': 999,
             'workflow_id': str(workflow_a.get_id()),
-            'source_name': 'det_1',
+            'source_names': ['det_1'],
             'output_name': 'result',
             'params': {},
             'aux_source_names': {},
@@ -1295,7 +1508,7 @@ class TestPersistence:
         orch.commit_slot(
             FOMSlot('fom-0'),
             workflow_id=workflow_a.get_id(),
-            source_name='det_1',
+            source_names=['det_1'],
             output_name='result',
             params={},
         )
@@ -1305,9 +1518,9 @@ class TestPersistence:
 
 def _persisted_running(workflow_a: WorkflowSpec, job_number) -> dict:
     return {
-        'version': 1,
+        'version': 2,
         'workflow_id': str(workflow_a.get_id()),
-        'source_name': 'det_1',
+        'source_names': ['det_1'],
         'output_name': 'result',
         'params': {'threshold': 1.0},
         'aux_source_names': {},
@@ -1432,10 +1645,10 @@ class TestProbe:
         orch = _orch_with_probe(
             workflow_a, sink, active_job_registry, job_service, store
         )
-        new_job = orch.commit_slot(
+        new_jobs = orch.commit_slot(
             FOMSlot('fom-0'),
             workflow_id=workflow_a.get_id(),
-            source_name='det_2',
+            source_names=['det_2'],
             output_name='result',
             params={'threshold': 9.0},
         )
@@ -1444,8 +1657,8 @@ class TestProbe:
         state = orch.get_slot_state(FOMSlot('fom-0'))
         assert state is not None
         assert state.is_running is True
-        assert state.job_number == new_job.job_number
-        assert active_job_registry.is_active(new_job.job_number)
+        assert state.job_number == new_jobs[0].job_number
+        assert active_job_registry.is_active(new_jobs[0].job_number)
         assert not active_job_registry.is_active(old_job_number)
 
     def test_no_probe_for_stopped_persisted_slot(

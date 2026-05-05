@@ -17,7 +17,7 @@ import structlog
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from .job_manager import JobManager
 from .stream_alias import (
-    AliasAlreadyBoundError,
+    BindingConflictError,
     BindStreamAlias,
     StreamAliasRegistry,
     UnbindStreamAlias,
@@ -51,7 +51,7 @@ class StreamAliasAdapter:
 
         try:
             self._registry.bind(command.alias, command.job_id, command.output_name)
-        except AliasAlreadyBoundError as e:
+        except BindingConflictError as e:
             logger.warning(
                 "bind_stream_alias_rejected",
                 alias=command.alias,

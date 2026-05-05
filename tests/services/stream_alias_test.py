@@ -44,7 +44,7 @@ ALIAS_TARGET_OUTPUT = 'counts_total'
 def _get_workflow_id() -> WorkflowId:
     instrument_config = instrument_registry[INSTRUMENT]
     for wid, spec in instrument_config.workflow_factory.items():
-        if spec.namespace == SERVICE_NAME:
+        if spec.group.name == SERVICE_NAME:
             return wid
     raise ValueError("No data_reduction workflow registered for dummy.")
 
