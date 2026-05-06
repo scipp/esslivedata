@@ -1,22 +1,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import pydantic
 import pytest
 
-from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.core.job_manager import JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
-from ess.livedata.handlers.config_handler import ConfigUpdate
 
 
 class WorkflowControllerFixture(NamedTuple):
@@ -34,14 +33,15 @@ class SomeWorkflowParams(pydantic.BaseModel):
     mode: str = "fast"
 
 
-def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
-    """Extract all sent commands from the sink."""
-    result = []
+def get_sent_commands(sink: FakeMessageSink) -> list[WorkflowConfig | JobCommand]:
+    """Extract all commands sent to the COMMANDS stream."""
+    result: list[WorkflowConfig | JobCommand] = []
     for messages in sink.published_messages:
         result.extend(
-            (msg.value.config_key, msg.value.value)
+            msg.value
             for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+            if msg.stream == COMMANDS_STREAM_ID
+            and isinstance(msg.value, WorkflowConfig | JobCommand)
         )
     return result
 
@@ -53,11 +53,10 @@ def get_sent_workflow_configs(
     result = []
     for messages in sink.published_messages:
         result.extend(
-            (msg.value.config_key.source_name, msg.value.value)
+            (msg.value.job_id.source_name, msg.value)
             for msg in messages
             if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, ConfigUpdate)
-            and isinstance(msg.value.value, WorkflowConfig)
+            and isinstance(msg.value, WorkflowConfig)
         )
     return result
 
@@ -489,9 +488,9 @@ class TestWorkflowController:
 
         # Should have stop commands for old jobs + start commands for new jobs
         stop_commands = [
-            (key, value)
-            for key, value in sent_commands
-            if isinstance(value, JobCommand) and value.action == JobAction.stop
+            cmd
+            for cmd in sent_commands
+            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
         ]
         start_commands = get_sent_workflow_configs(
             workflow_controller.fake_message_sink
@@ -502,9 +501,7 @@ class TestWorkflowController:
 
         # Verify the stop commands target the right sources
         stopped_job_sources = {
-            cmd[1].job_id.source_name
-            for cmd in stop_commands
-            if isinstance(cmd[1], JobCommand) and cmd[1].job_id is not None
+            cmd.job_id.source_name for cmd in stop_commands if cmd.job_id is not None
         }
         assert stopped_job_sources == set(source_names)
 

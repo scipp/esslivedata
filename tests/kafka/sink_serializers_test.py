@@ -19,21 +19,20 @@ import uuid
 import numpy as np
 import pytest
 import scipp as sc
-from pydantic import BaseModel
 from streaming_data_types import dataarray_da00
 
 from ess.livedata.config.acknowledgement import (
     AcknowledgementResponse,
     CommandAcknowledgement,
 )
-from ess.livedata.config.models import ConfigKey
-from ess.livedata.config.workflow_spec import JobId, WorkflowId
+from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
 from ess.livedata.core.job import (
     JobState,
     JobStatus,
     ServiceState,
     ServiceStatus,
 )
+from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
@@ -43,7 +42,6 @@ from ess.livedata.core.message import (
     StreamKind,
 )
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka.message_adapter import (
     ChainedAdapter,
     CommandsAdapter,
@@ -318,42 +316,52 @@ class TestJobStatusToX5f2Serializer:
         assert decoded_status.job_id == status.job_id
 
 
-class _CommandPayload(BaseModel):
-    hello: str
-    n: int
-
-
 class TestCommandSerializer:
-    def test_round_trip_via_source_adapter(self) -> None:
-        config_key = ConfigKey(
-            source_name='detector_1', service_name='data_reduction', key='workflow'
+    def test_round_trip_workflow_config(self) -> None:
+        config = WorkflowConfig(
+            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
+            job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
+            message_id='msg-1',
         )
-        payload = _CommandPayload(hello='world', n=7)
-        update = ConfigUpdate(config_key=config_key, value=payload)
         msg = Message(
             timestamp=Timestamp.from_ns(0),
             stream=COMMANDS_STREAM_ID,
-            value=update,
+            value=config,
         )
 
         result = CommandSerializer(instrument=INSTRUMENT).serialize(msg)
 
         assert result.topic == f'{INSTRUMENT}_livedata_commands'
-        assert result.key is not None
-        assert result.key == str(config_key).encode('utf-8')
-        assert json.loads(result.value.decode('utf-8')) == {'hello': 'world', 'n': 7}
+        assert result.key is None
+        assert json.loads(result.value.decode('utf-8'))['kind'] == 'workflow_config'
 
         decoded = CommandsAdapter().adapt(
             FakeKafkaMessage(key=result.key, value=result.value, topic=result.topic)
         )
         assert decoded.stream == COMMANDS_STREAM_ID
-        assert decoded.value.key == result.key
-        assert decoded.value.value == result.value
-        assert ConfigKey.from_string(decoded.value.key.decode('utf-8')) == config_key
-        assert json.loads(decoded.value.value.decode('utf-8')) == {
-            'hello': 'world',
-            'n': 7,
-        }
+        assert decoded.value == config
+
+    def test_round_trip_job_command(self) -> None:
+        command = JobCommand(
+            action=JobAction.stop,
+            job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
+            message_id='msg-2',
+        )
+        msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=COMMANDS_STREAM_ID,
+            value=command,
+        )
+
+        result = CommandSerializer(instrument=INSTRUMENT).serialize(msg)
+
+        assert result.key is None
+        assert json.loads(result.value.decode('utf-8'))['kind'] == 'job_command'
+
+        decoded = CommandsAdapter().adapt(
+            FakeKafkaMessage(key=result.key, value=result.value, topic=result.topic)
+        )
+        assert decoded.value == command
 
 
 class TestResponseSerializer:

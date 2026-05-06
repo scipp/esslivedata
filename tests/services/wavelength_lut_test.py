@@ -5,19 +5,24 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 import numpy as np
 import pytest
 import scipp as sc
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
 )
 from ess.livedata.services.timeseries import make_timeseries_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
@@ -35,16 +40,13 @@ def app(caplog: pytest.LogCaptureFixture) -> LivedataApp:
     return LivedataApp.from_service_builder(builder)
 
 
-def _config_message() -> tuple[ConfigKey, dict]:
+def _config_message() -> workflow_spec.WorkflowConfig:
     workflow_id = _get_workflow_id('dummy', WAVELENGTH_LUT_OUTPUT)
-    config_key = ConfigKey(
-        source_name=CHOPPER_CASCADE_SOURCE,
-        service_name='timeseries',
-        key='workflow_config',
-    )
     params = {'simulation': {'num_simulated_neutrons': 50_000}}
-    config = workflow_spec.WorkflowConfig(identifier=workflow_id, params=params)
-    return config_key, config.model_dump()
+    config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, params=params, job_id=_job_id(CHOPPER_CASCADE_SOURCE)
+    )
+    return config
 
 
 def test_chopperless_workflow_publishes_wavelength_lut_after_job_start(
@@ -66,8 +68,8 @@ def test_chopperless_workflow_publishes_wavelength_lut_after_job_start(
 
     # Second step: operator schedules the job. data_messages is empty, so
     # the activation must come from the empty-batch context-replay path.
-    key, value = _config_message()
-    app.publish_config_message(key=key, value=value)
+    config = _config_message()
+    app.publish_config_message(config)
     app.service.step()
 
     # Wavelength-lut message should now be on the sink.
@@ -91,8 +93,8 @@ def test_subsequent_steps_do_not_republish(app: LivedataApp) -> None:
     primary input must not trigger a re-publish.
     """
     app.service.step()  # Synthesizer's tick gets cached.
-    key, value = _config_message()
-    app.publish_config_message(key=key, value=value)
+    config = _config_message()
+    app.publish_config_message(config)
     app.service.step()  # Job activates and fires.
     initial_count = sum(
         1 for m in app.sink.messages if isinstance(m.value, sc.DataArray)

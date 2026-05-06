@@ -11,8 +11,8 @@ import structlog
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
+from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message import StreamKind
-from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -67,7 +67,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
 
             # Create command sink
             command_sink = self._exit_stack.enter_context(
-                KafkaSink[ConfigUpdate](
+                KafkaSink[Command](
                     kafka_config=kafka_config,
                     serializer=CommandSerializer(instrument=self._instrument),
                 )

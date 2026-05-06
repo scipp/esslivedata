@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
 
 import numpy as np
+import pydantic
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
@@ -23,6 +24,7 @@ from ess.livedata.core.job import JobStatus, ServiceStatus
 from ess.livedata.core.timestamp import Timestamp
 
 from ..config.acknowledgement import CommandAcknowledgement
+from ..core.job_manager import Command
 from ..core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
@@ -408,21 +410,16 @@ class Ad00ToScippAdapter(
         )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class RawConfigItem:
-    key: bytes
-    value: bytes
+_COMMAND_ADAPTER = pydantic.TypeAdapter(Command)
 
 
-class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
+class CommandsAdapter(MessageAdapter[KafkaMessage, Message[Command]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
-    def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
+    def adapt(self, message: KafkaMessage) -> Message[Command]:
         timestamp = Timestamp.from_ms(message.timestamp()[1])
-        # The Kafka message key is the encoded string representation of a
-        # :py:class:`ConfigKey` object; the value carries the payload JSON.
-        item = RawConfigItem(key=message.key(), value=message.value())
-        return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=item)
+        command = _COMMAND_ADAPTER.validate_json(message.value())
+        return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=command)
 
 
 class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgement]]):

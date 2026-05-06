@@ -13,15 +13,20 @@ failure injection for the :class:`SerializationError` handling tests.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 import pytest
 import scipp as sc
 from confluent_kafka import KafkaError, KafkaException
-from pydantic import BaseModel
 from streaming_data_types import dataarray_da00
 
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    WorkflowConfig,
+    WorkflowId,
+)
+from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
     Message,
@@ -29,7 +34,6 @@ from ess.livedata.core.message import (
     StreamKind,
 )
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka.sink import (
     KafkaSink,
     MessageSerializer,
@@ -128,21 +132,13 @@ def _data_message(name: str = 'detector') -> Message[sc.DataArray]:
     )
 
 
-class _Payload(BaseModel):
-    foo: str
-
-
-def _command_message() -> Message[ConfigUpdate]:
+def _command_message() -> Message[Command]:
     return Message(
         timestamp=Timestamp.from_ns(0),
         stream=COMMANDS_STREAM_ID,
-        value=ConfigUpdate(
-            config_key=ConfigKey(
-                source_name='detector_1',
-                service_name='data_reduction',
-                key='workflow',
-            ),
-            value=_Payload(foo='bar'),
+        value=WorkflowConfig(
+            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
+            job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
         ),
     )
 
@@ -166,7 +162,7 @@ class TestPublish:
         assert decoded.timestamp_ns == 1_234_567_890
         assert call['callback'] is not None
 
-    def test_command_serializer_emits_key(
+    def test_command_serializer_emits_no_key(
         self, sink_factory, producer: _FakeProducer
     ) -> None:
         serializer = CommandSerializer(instrument=INSTRUMENT)
@@ -176,8 +172,9 @@ class TestPublish:
 
         call = producer.produced[0]
         assert call['topic'] == f'{INSTRUMENT}_livedata_commands'
-        assert call['key'] == str(msg.value.config_key).encode('utf-8')
-        assert json.loads(call['value'].decode('utf-8')) == {'foo': 'bar'}
+        assert call['key'] is None
+        decoded = json.loads(call['value'].decode('utf-8'))
+        assert decoded['kind'] == 'workflow_config'
 
     def test_publishes_each_message_once(
         self, sink_factory, producer: _FakeProducer

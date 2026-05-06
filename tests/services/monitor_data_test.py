@@ -9,14 +9,19 @@ duplicated here.
 """
 
 import logging
+import uuid
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_from_registry(
@@ -57,12 +62,11 @@ def test_can_configure_and_stop_monitor_workflow(
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_monitor_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="monitor_data", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No ack when message_id not set
     assert len(sink.messages) == 0
@@ -96,9 +100,7 @@ def test_can_configure_and_stop_monitor_workflow(
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
-    config_key = ConfigKey(key=command.key)
-    stop = command.model_dump()
-    app.publish_config_message(key=config_key, value=stop)
+    app.publish_config_message(command)
     app.publish_monitor_events(size=1000, time=10)
     service.step()
     app.publish_monitor_events(size=1000, time=20)
