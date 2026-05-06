@@ -73,7 +73,7 @@ def setup_factories(instrument: Instrument) -> None:
         wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
         wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
         wf[QBins] = params.q_edges.get_edges().to(unit='1/angstrom')
-        wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges().to(unit='rad')
+        wf[ThetaBins[SampleRun]] = params.theta_edges.get_edges()
 
         wf[YIndexLimits] = params.y_index_limits.get_limits()
         wf[ZIndexLimits] = params.z_index_limits.get_limits()
@@ -100,11 +100,13 @@ def setup_factories(instrument: Instrument) -> None:
             wavelength_bins: WavelengthBins,
             theta_bins: ThetaBins[SampleRun],
         ) -> IntensityThetaWavelength:
-            return IntensityThetaWavelength(
-                events.hist(
-                    theta=theta_bins, wavelength=wavelength_bins, dim=events.dims
-                ).transpose(['theta', 'wavelength'])
-            )
+            da = events.hist(
+                theta=theta_bins.to(unit='rad'),
+                wavelength=wavelength_bins,
+                dim=events.dims,
+            ).transpose(['theta', 'wavelength'])
+            da = da.assign_coords(theta=da.coords['theta'].to(unit='deg'))
+            return IntensityThetaWavelength(da)
 
         def _intensity_over_q(
             intensity: IntensityThetaWavelength,
@@ -114,7 +116,7 @@ def setup_factories(instrument: Instrument) -> None:
             return IntensityQ(
                 intensity.assign_coords(
                     wavelength=sc.midpoints(intensity.coords['wavelength']),
-                    theta=sc.midpoints(intensity.coords['theta']),
+                    theta=sc.midpoints(intensity.coords['theta'].to(unit='rad')),
                 )
                 .transform_coords('Q', graph=graph)
                 .hist(Q=q_bins)
