@@ -70,10 +70,12 @@ def _make_config(
     *,
     name: str = "test_workflow",
     schedule: JobSchedule | None = None,
+    aux_source_names: dict[str, str] | None = None,
 ) -> WorkflowConfig:
     return WorkflowConfig(
         identifier=WorkflowId(instrument="test", name=name, version=1),
         schedule=schedule or JobSchedule(),
+        aux_source_names=aux_source_names or {},
         job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
     )
 
@@ -177,23 +179,15 @@ class TestJobManager:
     def test_push_data_activates_jobs_based_on_schedule(self, fake_job_factory):
         """Test that jobs are activated based on their scheduled start time."""
         manager = JobManager(fake_job_factory)
-        config1 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="early_workflow",
-                version=1,
-            ),
+        config1 = _make_config(
+            "source1",
+            name="early_workflow",
             schedule=JobSchedule(start_time=Timestamp.from_ns(50)),
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
-        config2 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="late_workflow",
-                version=1,
-            ),
+        config2 = _make_config(
+            "source2",
+            name="late_workflow",
             schedule=JobSchedule(start_time=Timestamp.from_ns(150)),
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config1)
@@ -388,16 +382,12 @@ class TestJobManager:
     def test_job_lifecycle_with_schedule_based_activation(self, fake_job_factory):
         """Test complete job lifecycle with schedule-based activation."""
         manager = JobManager(fake_job_factory)
-        config2 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow2",
-                version=1,
-            ),
+        config2 = _make_config(
+            "source2",
+            name="workflow2",
             schedule=JobSchedule(
                 start_time=Timestamp.from_ns(150), end_time=Timestamp.from_ns(350)
             ),
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
 
         # Schedule two jobs with different start times
@@ -491,14 +481,9 @@ class TestJobManager:
     def test_jobs_finish_based_on_schedule_end_time(self, fake_job_factory):
         """Test that jobs are marked for finishing based on schedule end_time."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -528,32 +513,20 @@ class TestJobManager:
     def test_multiple_jobs_different_schedule_end_times(self, fake_job_factory):
         """Test handling multiple jobs with different scheduled end times."""
         manager = JobManager(fake_job_factory)
-        config1 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow1",
-                version=1,
-            ),
+        config1 = _make_config(
+            "source1",
+            name="workflow1",
             schedule=JobSchedule(end_time=Timestamp.from_ns(150)),
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
-        config2 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow2",
-                version=1,
-            ),
+        config2 = _make_config(
+            "source2",
+            name="workflow2",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
-        config3 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow3",
-                version=1,
-            ),
+        config3 = _make_config(
+            "source3",
+            name="workflow3",
             schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
-            job_id=JobId(source_name="source3", job_number=uuid.uuid4()),
         )
 
         # Schedule three jobs with different end times
@@ -606,14 +579,9 @@ class TestJobManager:
     def test_job_finishing_edge_case_exact_schedule_end_time(self, fake_job_factory):
         """Test job finishing when data start_time is exactly scheduled end_time."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -643,14 +611,9 @@ class TestJobManager:
     def test_no_premature_job_finishing(self, fake_job_factory):
         """Test jobs don't finish prematurely when data is before scheduled end_time."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -683,33 +646,21 @@ class TestJobManager:
         and continuation.
         """
         manager = JobManager(fake_job_factory)
-        config1 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow1",
-                version=1,
-            ),
+        config1 = _make_config(
+            "source1",
+            name="workflow1",
             schedule=JobSchedule(end_time=Timestamp.from_ns(160)),
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
-        config2 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow2",
-                version=1,
-            ),
+        config2 = _make_config(
+            "source2",
+            name="workflow2",
             schedule=JobSchedule(end_time=Timestamp.from_ns(250)),
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
-        config3 = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="workflow3",
-                version=1,
-            ),
+        config3 = _make_config(
+            "source3",
+            name="workflow3",
             schedule=JobSchedule(end_time=None),
-            job_id=JobId(source_name="source3", job_number=uuid.uuid4()),
-        )  # No end time
+        )
 
         # Schedule three jobs
         _ = manager.schedule_job(config1)
@@ -756,14 +707,9 @@ class TestJobManager:
     def test_jobs_without_end_time_never_finish_automatically(self, fake_job_factory):
         """Test that jobs without scheduled end_time never finish automatically."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=None),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -787,16 +733,16 @@ class TestJobManager:
         manager = JobManager(fake_job_factory)
 
         # Test future start
-        config_future = WorkflowConfig(
-            identifier=WorkflowId(instrument="test", name="future", version=1),
+        config_future = _make_config(
+            "source2",
+            name="future",
             schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
         # Test past start (should activate immediately when data arrives)
-        config_past = WorkflowConfig(
-            identifier=WorkflowId(instrument="test", name="past", version=1),
+        config_past = _make_config(
+            "source3",
+            name="past",
             schedule=JobSchedule(start_time=Timestamp.from_ns(50)),
-            job_id=JobId(source_name="source3", job_number=uuid.uuid4()),
         )
 
         config1 = _make_config("source1")
@@ -837,14 +783,10 @@ class TestJobManager:
         manager = JobManager(fake_job_factory)
 
         # This should be allowed: immediate start with specific end time
-        config_valid = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="valid_workflow",
-                version=1,
-            ),
+        config_valid = _make_config(
+            "test_source",
+            name="valid_workflow",
             schedule=JobSchedule(end_time=Timestamp.from_ns(100)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
         job_id = manager.schedule_job(config_valid)
         assert job_id.source_name == "test_source"
@@ -852,14 +794,9 @@ class TestJobManager:
     def test_job_with_zero_duration_after_immediate_start(self, fake_job_factory):
         """Test behavior of job with immediate start and very early end time."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(50)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -883,16 +820,11 @@ class TestJobManager:
         Test job activation when data start_time exactly matches scheduled start_time.
         """
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(
                 start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
             ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -911,14 +843,9 @@ class TestJobManager:
     def test_job_schedule_edge_case_end_equals_data_time(self, fake_job_factory):
         """Test job finishing when data end_time exactly matches scheduled end_time."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
 
         _ = manager.schedule_job(config)
@@ -958,37 +885,14 @@ class TestJobManager:
     def test_multiple_jobs_same_schedule_times(self, fake_job_factory):
         """Test multiple jobs with identical start and end times."""
         manager = JobManager(fake_job_factory)
-        identifier = WorkflowId(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-        )
         schedule = JobSchedule(
             start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
         )
 
         # Schedule multiple jobs with same timing
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=identifier,
-                schedule=schedule,
-                job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-            )
-        )
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=identifier,
-                schedule=schedule,
-                job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-            )
-        )
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=identifier,
-                schedule=schedule,
-                job_id=JobId(source_name="source3", job_number=uuid.uuid4()),
-            )
-        )
+        _ = manager.schedule_job(_make_config("source1", schedule=schedule))
+        _ = manager.schedule_job(_make_config("source2", schedule=schedule))
+        _ = manager.schedule_job(_make_config("source3", schedule=schedule))
 
         # All should activate together
         data = WorkflowData(
@@ -1020,16 +924,11 @@ class TestJobManager:
         manager = JobManager(fake_job_factory)
 
         # Negative start times other than -1 should be treated as regular timestamps
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
+        config = _make_config(
+            "test_source",
             schedule=JobSchedule(
                 start_time=Timestamp.from_ns(-100), end_time=Timestamp.from_ns(200)
             ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         )
         _ = manager.schedule_job(config)
 
@@ -1045,14 +944,7 @@ class TestJobManager:
     def test_accumulate_failure_handled_gracefully(self, fake_job_factory):
         """Test that an accumulate failure in the processor is handled gracefully."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
         # Activate the job
@@ -1089,14 +981,7 @@ class TestJobManager:
     def test_finalize_failure_handled_gracefully(self, fake_job_factory):
         """Test that a finalize failure in the processor is handled gracefully."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
         # Activate the job
@@ -1134,14 +1019,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
 
@@ -1170,14 +1048,7 @@ class TestJobManager:
     def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
         """Test that warnings from None values in results are tracked in job status."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
 
@@ -1241,14 +1112,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
 
@@ -1275,19 +1139,8 @@ class TestJobManager:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        identifier = WorkflowId(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-        )
-        config1 = WorkflowConfig(
-            identifier=identifier,
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-        )
-        config2 = WorkflowConfig(
-            identifier=identifier,
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-        )
+        config1 = _make_config("source1")
+        config2 = _make_config("source2")
         job_id1 = manager.schedule_job(config1)
         job_id2 = manager.schedule_job(config2)
 
@@ -1325,14 +1178,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="test_workflow",
-                version=1,
-            ),
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
         # Activate job with initial primary data
@@ -1796,14 +1642,7 @@ class ThreadTrackingJobFactory(FakeJobFactory):
 
 
 def _make_workflow_config(source_name: str) -> WorkflowConfig:
-    return WorkflowConfig(
-        identifier=WorkflowId(
-            instrument="test",
-            name=f"workflow_{source_name}",
-            version=1,
-        ),
-        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
-    )
+    return _make_config(source_name, name=f"workflow_{source_name}")
 
 
 class TestJobManagerThreading:
@@ -1952,15 +1791,11 @@ class TestPeekPendingStreams:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="wf",
-                version=1,
-            ),
+        config = _make_config(
+            "src",
+            name="wf",
             schedule=JobSchedule(start_time=100),
             aux_source_names={"temperature": "temp_stream", "speed": "speed_stream"},
-            job_id=JobId(source_name="src", job_number=uuid.uuid4()),
         )
         manager.schedule_job(config)
 
@@ -1974,15 +1809,11 @@ class TestPeekPendingStreams:
     def test_is_idempotent(self, fake_job_factory):
         """Calling peek multiple times returns the same result (no state mutation)."""
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="wf",
-                version=1,
-            ),
+        config = _make_config(
+            "src",
+            name="wf",
             schedule=JobSchedule(start_time=100),
             aux_source_names={"field": "stream_a"},
-            job_id=JobId(source_name="src", job_number=uuid.uuid4()),
         )
         manager.schedule_job(config)
 
@@ -1992,23 +1823,15 @@ class TestPeekPendingStreams:
 
     def test_returns_union_of_multiple_jobs(self, fake_job_factory):
         manager = JobManager(fake_job_factory)
-        config_a = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="wf_a",
-                version=1,
-            ),
+        config_a = _make_config(
+            "src_a",
+            name="wf_a",
             aux_source_names={"temp": "temperature", "speed": "chopper_speed"},
-            job_id=JobId(source_name="src_a", job_number=uuid.uuid4()),
         )
-        config_b = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="wf_b",
-                version=1,
-            ),
+        config_b = _make_config(
+            "src_b",
+            name="wf_b",
             aux_source_names={"temp": "temperature", "pressure": "pressure"},
-            job_id=JobId(source_name="src_b", job_number=uuid.uuid4()),
         )
         manager.schedule_job(config_a)
         manager.schedule_job(config_b)
@@ -2026,14 +1849,7 @@ class TestPeekPendingStreams:
         self, fake_job_factory
     ):
         manager = JobManager(fake_job_factory)
-        config = WorkflowConfig(
-            identifier=WorkflowId(
-                instrument="test",
-                name="wf",
-                version=1,
-            ),
-            job_id=JobId(source_name="src", job_number=uuid.uuid4()),
-        )
+        config = _make_config("src", name="wf")
         manager.schedule_job(config)
 
         assert manager.peek_pending_streams(start_time=100) == {"src"}
