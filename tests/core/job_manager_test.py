@@ -65,46 +65,16 @@ def fake_job_factory():
     return FakeJobFactory()
 
 
-@pytest.fixture
-def base_workflow_config():
-    """Base workflow config with immediate start and no end time."""
+def _make_config(
+    source_name: str = "test_source",
+    *,
+    name: str = "test_workflow",
+    schedule: JobSchedule | None = None,
+) -> WorkflowConfig:
     return WorkflowConfig(
-        identifier=WorkflowId(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-        ),
-        job_id=JobId(source_name="placeholder", job_number=uuid.uuid4()),
-    )
-
-
-@pytest.fixture
-def scheduled_workflow_config():
-    """Workflow config with scheduled start and end times."""
-    return WorkflowConfig(
-        identifier=WorkflowId(
-            instrument="test",
-            name="scheduled_workflow",
-            version=1,
-        ),
-        schedule=JobSchedule(
-            start_time=Timestamp.from_ns(50), end_time=Timestamp.from_ns(250)
-        ),
-        job_id=JobId(source_name="placeholder", job_number=uuid.uuid4()),
-    )
-
-
-@pytest.fixture
-def delayed_start_config():
-    """Workflow config with delayed start time."""
-    return WorkflowConfig(
-        identifier=WorkflowId(
-            instrument="test",
-            name="delayed_workflow",
-            version=1,
-        ),
-        schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
-        job_id=JobId(source_name="placeholder", job_number=uuid.uuid4()),
+        identifier=WorkflowId(instrument="test", name=name, version=1),
+        schedule=schedule or JobSchedule(),
+        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
     )
 
 
@@ -116,15 +86,11 @@ class TestJobManager:
         assert manager.service_name == 'data_reduction'
         assert len(manager.active_jobs) == 0
 
-    def test_schedule_job_creates_job(self, fake_job_factory, base_workflow_config):
+    def test_schedule_job_creates_job(self, fake_job_factory):
         """Test that scheduling a job creates it using the factory."""
         manager = JobManager(fake_job_factory)
 
-        config = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
+        config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
         assert job_id.job_number is not None
@@ -132,22 +98,12 @@ class TestJobManager:
         assert len(fake_job_factory.created_jobs) == 1
         assert fake_job_factory.created_jobs[0] == (job_id, config)
 
-    def test_schedule_multiple_jobs_gives_unique_ids(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_schedule_multiple_jobs_gives_unique_ids(self, fake_job_factory):
         """Test that scheduling multiple jobs increments job IDs."""
         manager = JobManager(fake_job_factory)
 
-        config1 = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-        )
-        config2 = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-        )
+        config1 = _make_config("source1")
+        config2 = _make_config("source2")
         job_id1 = manager.schedule_job(config1)
         job_id2 = manager.schedule_job(config2)
 
@@ -156,17 +112,12 @@ class TestJobManager:
         assert job_id2.source_name == "source2"
 
     def test_push_data_activates_scheduled_jobs_with_immediate_start(
-        self, fake_job_factory, base_workflow_config
+        self, fake_job_factory
     ):
         """Test that pushing data activates jobs scheduled to start immediately."""
         manager = JobManager(fake_job_factory)
 
-        config = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-        )
-        _ = manager.schedule_job(config)
+        _ = manager.schedule_job(_make_config("test_source"))
         assert len(manager.active_jobs) == 0
 
         # Push data that should activate the job (since start_time=-1)
@@ -181,24 +132,12 @@ class TestJobManager:
         assert len(statuses) == 1
         assert not statuses[0].has_error
 
-    def test_push_data_returns_job_statuses(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_push_data_returns_job_statuses(self, fake_job_factory):
         """Test that push_data returns status for each active job."""
         manager = JobManager(fake_job_factory)
 
-        config1 = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-        )
-        config2 = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-        )
-        _ = manager.schedule_job(config1)
-        _ = manager.schedule_job(config2)
+        _ = manager.schedule_job(_make_config("source1"))
+        _ = manager.schedule_job(_make_config("source2"))
 
         data = WorkflowData(
             start_time=Timestamp.from_ns(100),
@@ -214,17 +153,11 @@ class TestJobManager:
         assert all(isinstance(status, JobReply) for status in statuses)
         assert all(not status.has_error for status in statuses)
 
-    def test_push_data_handles_job_errors(self, fake_job_factory, base_workflow_config):
+    def test_push_data_handles_job_errors(self, fake_job_factory):
         """Test that push_data handles and reports job errors."""
         manager = JobManager(fake_job_factory)
 
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         # Make the processor fail
         fake_job_factory.processors[job_id].should_fail_accumulate = True
@@ -287,24 +220,12 @@ class TestJobManager:
         assert len(manager.active_jobs) == 2
         assert len(statuses) == 1  # Only job2 gets data this time
 
-    def test_push_data_feeds_active_jobs(self, fake_job_factory, base_workflow_config):
+    def test_push_data_feeds_active_jobs(self, fake_job_factory):
         """Test that pushing data feeds all active jobs."""
         manager = JobManager(fake_job_factory)
 
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-            )
-        )
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-            )
-        )
+        _ = manager.schedule_job(_make_config("source1"))
+        _ = manager.schedule_job(_make_config("source1"))
 
         data = WorkflowData(
             start_time=Timestamp.from_ns(100),
@@ -320,17 +241,15 @@ class TestJobManager:
             assert job.start_time == Timestamp.from_ns(100)  # Data start time
             assert job.end_time == Timestamp.from_ns(200)  # Data end time
 
-    def test_stop_job_scheduled_removes_from_system(
-        self, fake_job_factory, delayed_start_config
-    ):
+    def test_stop_job_scheduled_removes_from_system(self, fake_job_factory):
         """Test stopping a scheduled job removes it from the system."""
         manager = JobManager(fake_job_factory)
 
         job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=delayed_start_config.identifier,
-                schedule=delayed_start_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
+            _make_config(
+                "test_source",
+                name="delayed_workflow",
+                schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
             )
         )
         assert len(manager.all_jobs) == 1
@@ -347,19 +266,11 @@ class TestJobManager:
         manager.push_data(data)
         assert len(manager.active_jobs) == 0
 
-    def test_stop_job_removes_active_immediately(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_stop_job_removes_active_immediately(self, fake_job_factory):
         """Test stopping an active job removes it from the system."""
         manager = JobManager(fake_job_factory)
 
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         # Activate the job
         data = WorkflowData(
@@ -381,17 +292,11 @@ class TestJobManager:
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.stop_job(999)
 
-    def test_reset_job_active(self, fake_job_factory, base_workflow_config):
+    def test_reset_job_active(self, fake_job_factory):
         """Test resetting an active job calls its reset method."""
         manager = JobManager(fake_job_factory)
 
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         # Activate and feed data to the job
         data = WorkflowData(
@@ -412,15 +317,15 @@ class TestJobManager:
         assert manager.active_jobs[0].end_time is None
         assert fake_job_factory.processors[job_id].clear_calls == 1
 
-    def test_reset_job_scheduled(self, fake_job_factory, delayed_start_config):
+    def test_reset_job_scheduled(self, fake_job_factory):
         """Test resetting a scheduled job calls its reset method."""
         manager = JobManager(fake_job_factory)
 
         job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=delayed_start_config.identifier,
-                schedule=delayed_start_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
+            _make_config(
+                "test_source",
+                name="delayed_workflow",
+                schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
             )
         )
 
@@ -434,26 +339,12 @@ class TestJobManager:
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
 
-    def test_compute_results_returns_job_results(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_compute_results_returns_job_results(self, fake_job_factory):
         """Test that compute_results returns results from all active jobs."""
         manager = JobManager(fake_job_factory)
 
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-            )
-        )
-        _ = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-            )
-        )
+        _ = manager.schedule_job(_make_config("source1"))
+        _ = manager.schedule_job(_make_config("source2"))
 
         # Activate jobs
         data = WorkflowData(
@@ -471,19 +362,11 @@ class TestJobManager:
         assert len(results) == 2
         assert all(isinstance(result, JobResult) for result in results)
 
-    def test_compute_results_ignores_stopped_jobs(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_compute_results_ignores_stopped_jobs(self, fake_job_factory):
         """Test that compute_results does not return results for stopped jobs."""
         manager = JobManager(fake_job_factory)
 
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         # Activate job
         data = WorkflowData(
@@ -502,9 +385,7 @@ class TestJobManager:
         results = manager.compute_results()
         assert len(results) == 0
 
-    def test_job_lifecycle_with_schedule_based_activation(
-        self, fake_job_factory, scheduled_workflow_config
-    ):
+    def test_job_lifecycle_with_schedule_based_activation(self, fake_job_factory):
         """Test complete job lifecycle with schedule-based activation."""
         manager = JobManager(fake_job_factory)
         config2 = WorkflowConfig(
@@ -520,10 +401,12 @@ class TestJobManager:
         )
 
         # Schedule two jobs with different start times
-        config1 = WorkflowConfig(
-            identifier=scheduled_workflow_config.identifier,
-            schedule=scheduled_workflow_config.schedule,
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
+        config1 = _make_config(
+            "source1",
+            name="scheduled_workflow",
+            schedule=JobSchedule(
+                start_time=Timestamp.from_ns(50), end_time=Timestamp.from_ns(250)
+            ),
         )
         _ = manager.schedule_job(config1)
         _ = manager.schedule_job(config2)
@@ -568,17 +451,11 @@ class TestJobManager:
         assert len(results) == 2  # Both jobs return results
         assert len(manager.active_jobs) == 1  # Only job2 remains
 
-    def test_multiple_data_accumulation(self, fake_job_factory, base_workflow_config):
+    def test_multiple_data_accumulation(self, fake_job_factory):
         """Test that multiple data pushes accumulate correctly in jobs."""
         manager = JobManager(fake_job_factory)
 
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         # Push multiple data batches
         data1 = WorkflowData(
@@ -905,9 +782,7 @@ class TestJobManager:
         assert len(results) == 1
         assert len(manager.active_jobs) == 1  # Job should still be active
 
-    def test_schedule_start_time_edge_cases(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_schedule_start_time_edge_cases(self, fake_job_factory):
         """Test edge cases for schedule start times."""
         manager = JobManager(fake_job_factory)
 
@@ -924,11 +799,7 @@ class TestJobManager:
             job_id=JobId(source_name="source3", job_number=uuid.uuid4()),
         )
 
-        config1 = WorkflowConfig(
-            identifier=base_workflow_config.identifier,
-            schedule=base_workflow_config.schedule,
-            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-        )
+        config1 = _make_config("source1")
         _ = manager.schedule_job(config1)
         _ = manager.schedule_job(config_future)
         _ = manager.schedule_job(config_past)
@@ -1494,18 +1365,10 @@ class TestJobManager:
 class TestPushFailureCascade:
     """Regression tests: a push failure must not cascade into a finalize error."""
 
-    def test_failed_push_does_not_trigger_finalize(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_failed_push_does_not_trigger_finalize(self, fake_job_factory):
         """When push fails on empty accumulators, compute_results must not finalize."""
         manager = JobManager(fake_job_factory)
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
         processor.fail_finalize_when_empty = True
@@ -1534,16 +1397,10 @@ class TestPushFailureCascade:
         assert "Accumulate failure" in status.warning_message
         assert status.error_message is None
 
-    def test_recovery_after_push_failure(self, fake_job_factory, base_workflow_config):
+    def test_recovery_after_push_failure(self, fake_job_factory):
         """Job recovers to active state when push succeeds after a failure."""
         manager = JobManager(fake_job_factory)
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
         processor.fail_finalize_when_empty = True
@@ -1576,18 +1433,10 @@ class TestPushFailureCascade:
         assert len(results) == 1
         assert results[0].error_message is None
 
-    def test_finalize_failure_retries_without_new_push(
-        self, fake_job_factory, base_workflow_config
-    ):
+    def test_finalize_failure_retries_without_new_push(self, fake_job_factory):
         """Successful push followed by finalize failure retries on next cycle."""
         manager = JobManager(fake_job_factory)
-        job_id = manager.schedule_job(
-            WorkflowConfig(
-                identifier=base_workflow_config.identifier,
-                schedule=base_workflow_config.schedule,
-                job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
-            )
-        )
+        job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
 
