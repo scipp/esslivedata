@@ -18,6 +18,21 @@ class TestHelperFunctions:
         assert dim.label == 'x'
         assert dim.unit == unit
 
+    def test_coord_to_dimension_uses_dim_label_callback(self):
+        coord = sc.array(dims=['detector_number'], values=[1, 2, 3], unit=None)
+        dim = scipp_to_holoviews.coord_to_dimension(
+            coord, dim_label={'detector_number': 'Pixel ID'}.get
+        )
+
+        assert dim.name == 'detector_number'
+        assert dim.label == 'Pixel ID'
+
+    def test_coord_to_dimension_dim_label_none_keeps_dim_name(self):
+        coord = sc.array(dims=['x'], values=[1, 2, 3], unit='m')
+        dim = scipp_to_holoviews.coord_to_dimension(coord, dim_label=None)
+
+        assert dim.label == 'x'
+
     @pytest.mark.parametrize("unit", ['m', 'dimensionless', None])
     def test_value_dimension_with_name_and_unit(self, unit: str | None):
         data = sc.DataArray(
@@ -832,3 +847,70 @@ class TestAllCoordsEvenlySpaced:
             coords={'z': sc.arange('z', 0, unit='ms')},
         )
         assert scipp_to_holoviews._all_coords_evenly_spaced(data) is True
+
+
+class TestDimLabelPlumbing:
+    """End-to-end check that dim_label flows through HvConverter1d and to_holoviews."""
+
+    @staticmethod
+    def _titles(dim: str) -> str:
+        return {'detector_number': 'Pixel ID', 'wavelength': 'Wavelength'}.get(dim, dim)
+
+    def test_hv_converter_1d_uses_dim_label(self):
+        data = sc.DataArray(
+            data=sc.array(dims=['detector_number'], values=[1, 2, 3], unit='counts'),
+            coords={
+                'detector_number': sc.array(
+                    dims=['detector_number'], values=[4, 5, 6], unit=None
+                )
+            },
+        )
+        curve = scipp_to_holoviews.HvConverter1d(data, dim_label=self._titles).curve()
+
+        assert curve.kdims[0].name == 'detector_number'
+        assert curve.kdims[0].label == 'Pixel ID'
+
+    def test_to_holoviews_2d_image_uses_dim_label(self):
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['detector_number', 'wavelength'],
+                values=[[1, 2], [3, 4]],
+                unit='counts',
+            ),
+            coords={
+                'detector_number': sc.array(
+                    dims=['detector_number'], values=[0.0, 1.0]
+                ),
+                'wavelength': sc.array(
+                    dims=['wavelength'], values=[1.0, 2.0], unit='angstrom'
+                ),
+            },
+        )
+        image = scipp_to_holoviews.to_holoviews(data, dim_label=self._titles)
+
+        # kdims are reversed: x then y -> [wavelength, detector_number]
+        labels = {kdim.name: kdim.label for kdim in image.kdims}
+        assert labels['detector_number'] == 'Pixel ID'
+        assert labels['wavelength'] == 'Wavelength'
+
+    def test_to_holoviews_quadmesh_uses_dim_label(self):
+        # Non-evenly spaced -> QuadMesh path.
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['detector_number', 'x'],
+                values=[[1, 2, 3], [4, 5, 6]],
+                unit='counts',
+            ),
+            coords={
+                'detector_number': sc.array(
+                    dims=['detector_number'], values=[0.0, 1.0]
+                ),
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 5.0]),  # non-uniform
+            },
+        )
+        result = scipp_to_holoviews.to_holoviews(data, dim_label=self._titles)
+
+        labels = {kdim.name: kdim.label for kdim in result.kdims}
+        assert labels['detector_number'] == 'Pixel ID'
+        # x is not in the title map -> falls back to dim name
+        assert labels['x'] == 'x'

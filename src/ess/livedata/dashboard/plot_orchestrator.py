@@ -367,6 +367,16 @@ class PlotOrchestrator:
             return self._instrument_config.get_source_title(source_name)
         return source_name
 
+    def get_dim_title(self, dim: str) -> str:
+        """Get display title for a coord/dim name (axis label).
+
+        Falls back to the dim name itself if no instrument config is available
+        or no title is defined for the dim.
+        """
+        if self._instrument_config is not None:
+            return self._instrument_config.get_dim_title(dim)
+        return dim
+
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
         Add a new plot grid.
@@ -846,6 +856,7 @@ class PlotOrchestrator:
         return TitleResolver(
             source=self.get_source_title,
             output=spec.get_output_title if spec is not None else _identity,
+            dim=self.get_dim_title,
             include_output_in_label=len(output_names) != 1,
         )
 

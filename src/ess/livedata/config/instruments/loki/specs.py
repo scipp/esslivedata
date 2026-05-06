@@ -241,6 +241,7 @@ instrument = Instrument(
             'after the sample.',
         ),
     },
+    dim_titles={'detector_number': 'Pixel ID'},
 )
 
 # Register instrument

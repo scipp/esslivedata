@@ -18,6 +18,19 @@ from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
+DEFAULT_DIM_TITLES: dict[str, str] = {
+    'wavelength': 'λ',
+    'time_of_arrival': 'Time of arrival',
+    'time_of_flight': 'Time of flight',
+    'tof': 'Time of flight',
+    'Q': 'Q',
+    'dspacing': 'd-spacing',
+    'two_theta': '2θ',
+}
+"""Default display titles for canonical coord/dim names, shared across instruments.
+
+Per-instrument :attr:`Instrument.dim_titles` entries take precedence."""
+
 
 class SourceMetadata(pydantic.BaseModel):
     """Metadata for a data source (detector, monitor, or timeseries).
@@ -91,6 +104,7 @@ class Instrument:
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
+    dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
@@ -231,6 +245,15 @@ class Instrument:
         if metadata := self.source_metadata.get(source_name):
             return metadata.title
         return source_name
+
+    def get_dim_title(self, dim: str) -> str:
+        """Get display title for a coord/dim name.
+
+        Per-instrument ``dim_titles`` take precedence over
+        :data:`DEFAULT_DIM_TITLES`. Falls back to the raw ``dim`` if no
+        mapping is defined.
+        """
+        return self.dim_titles.get(dim, DEFAULT_DIM_TITLES.get(dim, dim))
 
     def get_source_description(self, source_name: str) -> str:
         """Get description for a source.

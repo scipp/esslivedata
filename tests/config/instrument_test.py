@@ -5,6 +5,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.instrument import (
+    DEFAULT_DIM_TITLES,
     Instrument,
     InstrumentRegistry,
     SourceMetadata,
@@ -521,3 +522,42 @@ class TestSourceMetadata:
         assert instrument.get_source_description('det1') == 'Desc 1'
         assert instrument.get_source_description('det2') == ''
         assert instrument.get_source_description('monitor1') == ''
+
+
+class TestDimTitles:
+    """Tests for coord/dim display title lookup on Instrument."""
+
+    def test_default_dim_title_known_name(self):
+        instrument = Instrument(name='test')
+
+        assert instrument.get_dim_title('wavelength') == 'λ'
+        assert instrument.get_dim_title('two_theta') == '2θ'
+        assert instrument.get_dim_title('time_of_arrival') == 'Time of arrival'
+
+    def test_default_dim_title_unknown_falls_back_to_name(self):
+        instrument = Instrument(name='test')
+
+        assert instrument.get_dim_title('detector_number') == 'detector_number'
+        assert instrument.get_dim_title('foo_bar') == 'foo_bar'
+
+    def test_per_instrument_override(self):
+        instrument = Instrument(
+            name='test',
+            dim_titles={'detector_number': 'Pixel ID'},
+        )
+
+        assert instrument.get_dim_title('detector_number') == 'Pixel ID'
+
+    def test_per_instrument_override_takes_precedence_over_default(self):
+        # Default maps 'wavelength' -> 'Wavelength'; override wins.
+        instrument = Instrument(name='test', dim_titles={'wavelength': 'λ'})
+
+        assert instrument.get_dim_title('wavelength') == 'λ'
+
+    def test_default_dim_titles_unaffected_by_overrides(self):
+        # Sanity check: setting an override does not mutate the global default
+        # (which would leak across instruments).
+        before = dict(DEFAULT_DIM_TITLES)
+        Instrument(name='test', dim_titles={'wavelength': 'λ'})
+
+        assert DEFAULT_DIM_TITLES == before
