@@ -2,9 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the monitor view workflow using StreamProcessor."""
 
+import uuid
+
 import pytest
 import scipp as sc
 
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
 from ess.livedata.handlers.monitor_workflow import (
@@ -614,7 +617,10 @@ class TestRegisterMonitorWorkflowSpecs:
             )
 
         # Verify factory works by creating a workflow
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name='monitor_1', job_number=uuid.uuid4()),
+        )
         workflow = factory.create(source_name='monitor_1', config=config)
         assert workflow is not None
         assert hasattr(workflow, 'accumulate')

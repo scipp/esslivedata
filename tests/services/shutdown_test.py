@@ -5,11 +5,17 @@
 Verifies that finalize() sends correct job and service status heartbeats.
 """
 
+import uuid
+
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job import JobState, JobStatus, ServiceState, ServiceStatus
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _make_detector_app() -> LivedataApp:
@@ -28,11 +34,10 @@ def _get_workflow_id() -> workflow_spec.WorkflowId:
 def _start_job(app: LivedataApp) -> None:
     """Configure a workflow job and process some data so the job becomes active."""
     workflow_id = _get_workflow_id()
-    config_key = ConfigKey(
-        source_name='panel_0', service_name='detector_data', key='workflow_config'
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     app.step()
     app.publish_events(size=1000, time=2)
     app.step()

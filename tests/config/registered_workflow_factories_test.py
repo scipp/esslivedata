@@ -16,8 +16,8 @@ import pytest
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
-from ess.livedata.core.job_manager import JobFactory, JobId
+from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
+from ess.livedata.core.job_manager import JobFactory
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
 )
@@ -134,20 +134,21 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
 
     # Step 3: Create WorkflowConfig using the helper method
     # This simulates what WorkflowController.start_workflow does
+    # Pick the first available source, or use empty string if none specified
+    source_name = spec.source_names[0] if spec.source_names else "test_source"
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
+        job_id=job_id,
         params=params_model.model_dump() if params_model is not None else None,
         aux_source_names=aux_dict,
     )
 
     # Step 4: Instantiate workflow via backend path (JobFactory → WorkflowFactory)
-    # Pick the first available source, or use empty string if none specified
-    source_name = spec.source_names[0] if spec.source_names else "test_source"
-
     # Use the workflow's registered service name (in production set by the service)
     service_name = instrument.workflow_factory.get_service(workflow_id)
     job_factory = JobFactory(instrument, service_name=service_name)
-    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
 
     # This should not raise - it validates params and aux_sources internally
     job = job_factory.create(job_id=job_id, config=workflow_config)

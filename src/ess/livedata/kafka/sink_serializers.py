@@ -25,8 +25,8 @@ from streaming_data_types import dataarray_da00, logdata_f144
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.streams import stream_kind_to_topic
 from ..core.job import JobStatus, ServiceStatus
+from ..core.job_manager import Command
 from ..core.message import Message, StreamKind
-from ..handlers.config_handler import ConfigUpdate
 from .scipp_da00_compat import scipp_to_da00
 from .sink import MessageSerializer, SerializationError, SerializedMessage
 from .sink_routing import RouteByStatusTypeSerializer, RouteByStreamKindSerializer
@@ -157,19 +157,14 @@ class JobStatusToX5f2Serializer(_TopicResolvingSerializer[JobStatus]):
         return None, value
 
 
-class CommandSerializer(_TopicResolvingSerializer[ConfigUpdate]):
+class CommandSerializer(_TopicResolvingSerializer[Command]):
     """
-    Serializes :class:`ConfigUpdate` messages for the commands topic.
-
-    The Kafka message key is the encoded string representation of the
-    :class:`ConfigKey`; the value carries the payload JSON. Consumers reconstruct
-    the ``ConfigKey`` from the message key (see :class:`CommandsAdapter`).
+    Serializes :class:`Command` messages (discriminated union of
+    :class:`WorkflowConfig` and :class:`JobCommand`) for the commands topic.
     """
 
-    def _encode(self, message: Message[ConfigUpdate]) -> tuple[bytes, bytes]:
-        key = str(message.value.config_key).encode('utf-8')
-        value = message.value.value.model_dump_json().encode('utf-8')
-        return key, value
+    def _encode(self, message: Message[Command]) -> tuple[None, bytes]:
+        return None, message.value.model_dump_json().encode('utf-8')
 
 
 class ResponseSerializer(_TopicResolvingSerializer[CommandAcknowledgement]):
