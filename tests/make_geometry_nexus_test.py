@@ -218,10 +218,10 @@ def test_copies_disk_chopper_transformations(nexus_with_disk_chopper, tmp_path):
 
 
 def test_nested_nxtransformations_inside_nxlog_does_not_conflict(tmp_path):
-    """A real ESTIA structure: outer NXtransformations contains an NXlog
-    whose own children include another NXtransformations (motor stage with
-    chained transforms). The outer branch's recursive NXlog copy must not
-    conflict with the visitor's later descent into the inner group.
+    """Case where an outer NXtransformations contains an NXlog whose own
+    children include another NXtransformations (motor stage with chained
+    transforms). The outer branch's recursive NXlog copy must not conflict
+    with the visitor's later descent into the inner group.
     """
     src = tmp_path / 'input.nxs'
     with h5py.File(src, 'w') as f:

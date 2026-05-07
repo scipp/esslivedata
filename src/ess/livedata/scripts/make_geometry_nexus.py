@@ -173,6 +173,16 @@ def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
             _copy_child(fin[parent_path or '/'], leaf, fout[parent_path or '/'])
 
 
+_HANDLED_NX_CLASSES = (
+    'NXdetector',
+    'NXmonitor',
+    'NXsource',
+    'NXsample',
+    'NXtransformations',
+    'NXdisk_chopper',
+)
+
+
 def write_minimal_geometry(
     input_filename: Path, output_filename: Path, use_pixel_shape: bool = True
 ) -> None:
@@ -183,17 +193,16 @@ def write_minimal_geometry(
             if not isinstance(obj, h5py.Group) or 'NX_class' not in obj.attrs:
                 return
             nx_class = _nx_class(obj)
+            if nx_class not in _HANDLED_NX_CLASSES:
+                return
+            dst = _get_or_create_dst(fin, fout, name, obj)
             if nx_class == 'NXdetector':
-                dst = _get_or_create_dst(fin, fout, name, obj)
                 _copy_detector_fields(obj, dst, use_pixel_shape=use_pixel_shape)
             elif nx_class == 'NXmonitor':
-                dst = _get_or_create_dst(fin, fout, name, obj)
                 _copy_monitor_fields(obj, dst)
             elif nx_class in ('NXsource', 'NXsample'):
-                dst = _get_or_create_dst(fin, fout, name, obj)
                 obj.copy('depends_on', dst)
-            elif nx_class in ('NXtransformations', 'NXdisk_chopper'):
-                dst = _get_or_create_dst(fin, fout, name, obj)
+            else:  # NXtransformations or NXdisk_chopper
                 for key in obj:
                     _copy_child(obj, key, dst)
 
