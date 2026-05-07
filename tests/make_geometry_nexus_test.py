@@ -159,11 +159,11 @@ def nexus_with_disk_chopper(tmp_path):
         ).attrs['units'] = 'deg'
         chop.create_dataset('slit_height', data=0.1).attrs['units'] = 'm'
         chop.create_dataset('radius', data=0.35).attrs['units'] = 'm'
-        chop.create_dataset('delay', data=0.0).attrs['units'] = 's'
         slits.attrs['units'] = ''
 
-        # Length-0 NXlog placeholders for streamed values
-        for log_name in ('rotation_speed', 'phase'):
+        # Length-0 NXlog placeholders for streamed values. ``delay`` is
+        # dynamic — operators retune it during a run.
+        for log_name in ('rotation_speed', 'phase', 'delay'):
             log = chop.create_group(log_name)
             log.attrs['NX_class'] = 'NXlog'
             log.create_dataset('time', data=np.array([], dtype='uint64'))
@@ -190,7 +190,6 @@ def test_copies_disk_chopper_static_fields(nexus_with_disk_chopper, tmp_path):
         assert chop['slits'][()] == 2
         np.testing.assert_array_equal(chop['slit_edges'][:], [0.0, 90.0, 180.0, 270.0])
         assert chop['radius'][()] == pytest.approx(0.35)
-        assert chop['delay'][()] == pytest.approx(0.0)
 
 
 def test_copies_disk_chopper_nxlog_placeholders(nexus_with_disk_chopper, tmp_path):
@@ -198,7 +197,9 @@ def test_copies_disk_chopper_nxlog_placeholders(nexus_with_disk_chopper, tmp_pat
     write_minimal_geometry(nexus_with_disk_chopper, output)
 
     with h5py.File(output, 'r') as f:
-        for log_name in ('rotation_speed', 'phase'):
+        # ``delay`` is dynamic in production (operators tune it live), hence
+        # an NXlog rather than a static dataset.
+        for log_name in ('rotation_speed', 'phase', 'delay'):
             log = f[f'entry/instrument/chopper1/{log_name}']
             assert isinstance(log, h5py.Group)
             assert log.attrs['NX_class'] == 'NXlog'
@@ -214,40 +215,6 @@ def test_copies_disk_chopper_transformations(nexus_with_disk_chopper, tmp_path):
         tr = f['entry/instrument/chopper1/transformations/location']
         assert tr[()] == pytest.approx(15.0)
         assert tr.attrs['transformation_type'] == 'translation'
-
-
-@pytest.fixture
-def nexus_with_populated_chopper_logs(tmp_path):
-    """NXdisk_chopper whose NXlog children carry real samples (as a
-    production file would) — the geometry artifact must trim these to
-    length-0 placeholders while preserving dtype, units, and attributes.
-    """
-    path = tmp_path / 'input.nxs'
-    with h5py.File(path, 'w') as f:
-        entry = f.create_group('entry')
-        entry.attrs['NX_class'] = 'NXentry'
-        inst = entry.create_group('instrument')
-        inst.attrs['NX_class'] = 'NXinstrument'
-
-        chop = inst.create_group('chopper1')
-        chop.attrs['NX_class'] = 'NXdisk_chopper'
-        chop.create_dataset('radius', data=0.35).attrs['units'] = 'm'
-
-        # Populated log: 1000 samples of phase readback.
-        phase = chop.create_group('phase')
-        phase.attrs['NX_class'] = 'NXlog'
-        phase.create_dataset(
-            'time',
-            data=np.arange(1000, dtype='int64'),
-        ).attrs['units'] = 'ns'
-        phase.create_dataset(
-            'value',
-            data=np.linspace(0.0, 359.0, 1000, dtype='float32'),
-        ).attrs['units'] = 'deg'
-        # A scalar child that should survive verbatim.
-        phase.create_dataset('average_value', data=180.0).attrs['units'] = 'deg'
-
-    return path
 
 
 def test_nested_nxtransformations_inside_nxlog_does_not_conflict(tmp_path):
@@ -268,7 +235,9 @@ def test_nested_nxtransformations_inside_nxlog_does_not_conflict(tmp_path):
         rx = outer.create_group('rx')
         rx.attrs['NX_class'] = 'NXlog'
         rx.create_dataset('time', data=np.arange(100, dtype='int64'))
-        rx.create_dataset('value', data=np.zeros(100))
+        rx.create_dataset(
+            'value', data=np.linspace(0.0, 1.0, 100, dtype='float64')
+        ).attrs['units'] = 'deg'
         # Nested NXtransformations inside the NXlog.
         inner = rx.create_group('transformations')
         inner.attrs['NX_class'] = 'NXtransformations'
@@ -286,9 +255,13 @@ def test_nested_nxtransformations_inside_nxlog_does_not_conflict(tmp_path):
         assert f['entry/instrument/stage/transformations'].attrs['NX_class'] == (
             'NXtransformations'
         )
-        # NXlog trimmed.
+        # NXlog samples trimmed; dtype/units/attributes preserved.
         rx = f['entry/instrument/stage/transformations/rx']
         assert rx.attrs['NX_class'] == 'NXlog'
+        assert rx['time'].shape == (0,)
+        assert rx['value'].shape == (0,)
+        assert rx['value'].dtype == np.float64
+        assert rx['value'].attrs['units'] == 'deg'
         # Inner NXtransformations preserved with its dataset.
         inner_path = (
             'entry/instrument/stage/transformations/rx/transformations/rotation'
@@ -342,15 +315,14 @@ def test_nxlog_inside_nxtransformations_is_trimmed(tmp_path):
         assert log['value'].attrs['units'] == 'deg'
 
 
-@pytest.fixture
-def nexus_with_populated_motor_log(tmp_path):
+def test_motor_log_reached_via_depends_on_is_trimmed(tmp_path):
     """NXpositioner whose value NXlog (reached via depends_on) carries real
     samples — production motor readback. The geometry artifact must trim
     these to length-0 while keeping the transformation attributes the
     depends_on chain needs.
     """
-    path = tmp_path / 'input.nxs'
-    with h5py.File(path, 'w') as f:
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
         entry = f.create_group('entry')
         entry.attrs['NX_class'] = 'NXentry'
         inst = entry.create_group('instrument')
@@ -377,14 +349,9 @@ def nexus_with_populated_motor_log(tmp_path):
         det.create_dataset('detector_number', data=np.arange(5))
         det.create_dataset('x_pixel_offset', data=np.zeros(5))
         det.create_dataset('y_pixel_offset', data=np.zeros(5))
-    return path
 
-
-def test_motor_log_reached_via_depends_on_is_trimmed(
-    nexus_with_populated_motor_log, tmp_path
-):
     output = tmp_path / 'output.nxs'
-    write_minimal_geometry(nexus_with_populated_motor_log, output)
+    write_minimal_geometry(src, output)
 
     with h5py.File(output, 'r') as f:
         log = f['entry/instrument/carriage/value']
@@ -400,20 +367,45 @@ def test_motor_log_reached_via_depends_on_is_trimmed(
         assert log['value'].attrs['units'] == 'mm'
 
 
-def test_disk_chopper_log_data_is_trimmed(nexus_with_populated_chopper_logs, tmp_path):
+def test_disk_chopper_log_data_is_trimmed(tmp_path):
+    """NXdisk_chopper whose NXlog children carry real samples (as a
+    production file would) — the geometry artifact must trim these to
+    length-0 placeholders while preserving dtype, units, and attributes.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        chop = inst.create_group('chopper1')
+        chop.attrs['NX_class'] = 'NXdisk_chopper'
+        chop.create_dataset('radius', data=0.35).attrs['units'] = 'm'
+
+        # Populated log: 1000 samples of phase readback.
+        phase = chop.create_group('phase')
+        phase.attrs['NX_class'] = 'NXlog'
+        phase.create_dataset('time', data=np.arange(1000, dtype='int64')).attrs[
+            'units'
+        ] = 'ns'
+        phase.create_dataset(
+            'value', data=np.linspace(0.0, 359.0, 1000, dtype='float32')
+        ).attrs['units'] = 'deg'
+        # A scalar child that should survive verbatim.
+        phase.create_dataset('average_value', data=180.0).attrs['units'] = 'deg'
+
     output = tmp_path / 'output.nxs'
-    write_minimal_geometry(nexus_with_populated_chopper_logs, output)
+    write_minimal_geometry(src, output)
 
     with h5py.File(output, 'r') as f:
         phase = f['entry/instrument/chopper1/phase']
         assert phase.attrs['NX_class'] == 'NXlog'
-        # Samples dropped, schema preserved.
         assert phase['time'].shape == (0,)
         assert phase['time'].dtype == np.int64
         assert phase['time'].attrs['units'] == 'ns'
         assert phase['value'].shape == (0,)
         assert phase['value'].dtype == np.float32
         assert phase['value'].attrs['units'] == 'deg'
-        # Scalar child survives verbatim.
         assert phase['average_value'][()] == pytest.approx(180.0)
         assert phase['average_value'].attrs['units'] == 'deg'
