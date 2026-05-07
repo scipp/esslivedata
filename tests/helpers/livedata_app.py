@@ -6,18 +6,16 @@ Helper class for testing ESSlivedata services.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 from streaming_data_types import eventdata_ev44, logdata_f144
 
 from ess.livedata import Service, StreamKind
-from ess.livedata.config import models
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import stream_kind_to_topic
+from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.kafka.message_adapter import FakeKafkaMessage, KafkaMessage
@@ -94,10 +92,10 @@ class LivedataApp:
         """Run one step of the service."""
         self.service.step()
 
-    def publish_config_message(self, key: models.ConfigKey, value: Any) -> None:
+    def publish_config_message(self, command: Command) -> None:
         message = FakeKafkaMessage(
-            key=str(key).encode('utf-8'),
-            value=json.dumps(value).encode('utf-8'),
+            key=None,
+            value=command.model_dump_json().encode('utf-8'),
             topic=stream_kind_to_topic(
                 instrument=self.instrument, kind=StreamKind.LIVEDATA_COMMANDS
             ),

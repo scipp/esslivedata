@@ -14,7 +14,7 @@ class FakeJobManager:
     """Fake JobManager for testing JobManagerAdapter."""
 
     def __init__(self):
-        self.job_command_calls = []
+        self.job_command_calls: list[JobCommand] = []
         self.should_raise_key_error = False
         self.should_raise_exception = False
 
@@ -24,6 +24,10 @@ class FakeJobManager:
             raise KeyError(f"Job {command.job_id} not found")
         if self.should_raise_exception:
             raise RuntimeError("Test exception")
+
+
+def _job_id() -> JobId:
+    return JobId(source_name="test_source", job_number=uuid.uuid4())
 
 
 class TestJobManagerAdapter:
@@ -37,33 +41,23 @@ class TestJobManagerAdapter:
 
     def test_job_command_success_with_message_id(self, adapter, fake_job_manager):
         """Test successful job command returns ACK when message_id is provided."""
-        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
-        result = adapter.job_command(
-            source_name="ignored",
-            value={
-                "action": JobAction.reset.value,
-                "job_id": {
-                    "source_name": job_id.source_name,
-                    "job_number": str(job_id.job_number),
-                },
-                "message_id": "test-msg-id",
-            },
+        command = JobCommand(
+            action=JobAction.reset, job_id=_job_id(), message_id="test-msg-id"
         )
+        result = adapter.job_command(command)
 
         assert result is not None
         assert result.message_id == "test-msg-id"
         assert result.response == AcknowledgementResponse.ACK
-        assert len(fake_job_manager.job_command_calls) == 1
+        assert fake_job_manager.job_command_calls == [command]
 
     def test_job_command_success_without_message_id(self, adapter, fake_job_manager):
         """Test successful job command returns None when no message_id."""
-        result = adapter.job_command(
-            source_name="ignored",
-            value={"action": JobAction.reset.value},
-        )
+        command = JobCommand(action=JobAction.reset)
+        result = adapter.job_command(command)
 
         assert result is None
-        assert len(fake_job_manager.job_command_calls) == 1
+        assert fake_job_manager.job_command_calls == [command]
 
     def test_job_command_key_error_silently_ignored(self, adapter, fake_job_manager):
         """Test that KeyError (job not found) is silently ignored.
@@ -74,18 +68,10 @@ class TestJobManagerAdapter:
         """
         fake_job_manager.should_raise_key_error = True
 
-        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
-        result = adapter.job_command(
-            source_name="ignored",
-            value={
-                "action": JobAction.stop.value,
-                "job_id": {
-                    "source_name": job_id.source_name,
-                    "job_number": str(job_id.job_number),
-                },
-                "message_id": "test-msg-id",
-            },
+        command = JobCommand(
+            action=JobAction.stop, job_id=_job_id(), message_id="test-msg-id"
         )
+        result = adapter.job_command(command)
 
         # Should return None (no response) instead of ERR
         assert result is None
@@ -94,18 +80,10 @@ class TestJobManagerAdapter:
         """Test that non-KeyError exceptions return ERR acknowledgement."""
         fake_job_manager.should_raise_exception = True
 
-        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
-        result = adapter.job_command(
-            source_name="ignored",
-            value={
-                "action": JobAction.stop.value,
-                "job_id": {
-                    "source_name": job_id.source_name,
-                    "job_number": str(job_id.job_number),
-                },
-                "message_id": "test-msg-id",
-            },
+        command = JobCommand(
+            action=JobAction.stop, job_id=_job_id(), message_id="test-msg-id"
         )
+        result = adapter.job_command(command)
 
         assert result is not None
         assert result.message_id == "test-msg-id"
@@ -118,10 +96,8 @@ class TestJobManagerAdapter:
         """Test that exceptions without message_id return None."""
         fake_job_manager.should_raise_exception = True
 
-        result = adapter.job_command(
-            source_name="ignored",
-            value={"action": JobAction.stop.value},
-        )
+        command = JobCommand(action=JobAction.stop)
+        result = adapter.job_command(command)
 
         # No message_id means no response even on error
         assert result is None

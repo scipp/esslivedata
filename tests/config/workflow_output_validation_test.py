@@ -11,12 +11,15 @@ These tests are slow because they:
 2. Actually run workflows with fake data
 """
 
+import uuid
+
 import pytest
 import scipp as sc
 
-from ess.livedata.config import models, workflow_spec
+from ess.livedata.config import workflow_spec
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.services.data_reduction import make_reduction_service_builder
 from ess.livedata.services.detector_data import make_detector_service_builder
 from ess.livedata.services.monitor_data import make_monitor_service_builder
@@ -147,13 +150,11 @@ def test_workflow_outputs_match_declared_model(
 
     # Configure the workflow
     source_name = _get_source_name_for_workflow(instrument_name, spec)
-    config_key = models.ConfigKey(
-        source_name=source_name,
-        service_name=spec.group.name,
-        key="workflow_config",
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id,
+        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     app.service.step()
 
     # Publish fake events to trigger workflow execution

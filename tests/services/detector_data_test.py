@@ -2,15 +2,20 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 import logging
+import uuid
 
 import pytest
 from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_from_registry(
@@ -54,12 +59,11 @@ def test_can_configure_and_stop_detector_workflow(
     workflow_id, _ = _get_workflow_from_registry(instrument, name=name)
 
     source_name = detector_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="detector_data", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No ack when message_id not set
     assert len(sink.messages) == 0
@@ -100,9 +104,7 @@ def test_can_configure_and_stop_detector_workflow(
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
-    config_key = ConfigKey(key=command.key)
-    stop = command.model_dump()
-    app.publish_config_message(key=config_key, value=stop)
+    app.publish_config_message(command)
     app.publish_events(size=1000, time=10)
     service.step()
     app.publish_events(size=1000, time=20)
@@ -119,17 +121,15 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy')
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="detector_data", key="workflow_config"
-    )
     identifier = workflow_spec.WorkflowId(
         instrument='dummy', name='abcde12345', version=1
     )
     bad_workflow_id = workflow_spec.WorkflowConfig(
         identifier=identifier,  # Invalid workflow ID
+        job_id=_job_id('panel_0'),
     )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=bad_workflow_id.model_dump())
+    app.publish_config_message(bad_workflow_id)
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -140,9 +140,11 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     # No error ack sent when message_id not set (error is logged server-side)
     assert len(sink.messages) == 0
 
-    good_workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    good_workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
+    )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=good_workflow_config.model_dump())
+    app.publish_config_message(good_workflow_config)
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered; get data only (no ack without message_id)
@@ -160,15 +162,11 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     workflow_id, _ = _get_workflow_from_registry('dummy')
 
     # Start a valid workflow first
-    config_key = ConfigKey(
-        source_name=detector_source_name['dummy'],
-        service_name="detector_data",
-        key="workflow_config",
-    )
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id,
+        job_id=_job_id(detector_source_name['dummy']),
     )
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No ack without message_id
     assert len(sink.messages) == 0
@@ -186,9 +184,10 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     bad_workflow_id = workflow_spec.WorkflowConfig(
         identifier=workflow_spec.WorkflowId(
             instrument='dummy', name='abcde12345', version=1
-        )  # Invalid workflow ID
+        ),  # Invalid workflow ID
+        job_id=_job_id(detector_source_name['dummy']),
     )
-    app.publish_config_message(key=config_key, value=bad_workflow_id.model_dump())
+    app.publish_config_message(bad_workflow_id)
 
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
@@ -205,12 +204,11 @@ def configured_dummy_detector() -> LivedataApp:
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy')
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="detector_data", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     # Process config message before data arrives. Without calling step() the order of
     # processing of config vs data messages is not guaranteed.
     service.step()

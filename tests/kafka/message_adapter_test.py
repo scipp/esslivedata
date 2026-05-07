@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import json
-
 import numpy as np
 import pytest
 import scipp as sc
@@ -40,7 +38,6 @@ from ess.livedata.kafka.message_adapter import (
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
     KafkaToMonitorEventsAdapter,
-    RawConfigItem,
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
@@ -700,16 +697,47 @@ def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
 
 
 class TestCommandsAdapter:
-    def test_adapter(self) -> None:
-        key = b'my_source/my_service/my_key'
-        encoded = json.dumps('my_value').encode('utf-8')
+    def test_decodes_workflow_config(self) -> None:
+        import uuid
+
+        from ess.livedata.config.workflow_spec import (
+            JobId,
+            WorkflowConfig,
+            WorkflowId,
+        )
+
+        config = WorkflowConfig(
+            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
+            job_id=JobId(source_name='det1', job_number=uuid.uuid4()),
+        )
         message = FakeKafkaMessage(
-            key=key, value=encoded, topic="dummy_livedata_commands"
+            key=None,
+            value=config.model_dump_json().encode('utf-8'),
+            topic="dummy_livedata_commands",
         )
         adapter = CommandsAdapter()
         adapted_message = adapter.adapt(message)
         assert adapted_message.stream == COMMANDS_STREAM_ID
-        assert adapted_message.value == RawConfigItem(key=key, value=encoded)
+        assert adapted_message.value == config
+
+    def test_decodes_job_command(self) -> None:
+        import uuid
+
+        from ess.livedata.config.workflow_spec import JobId
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        command = JobCommand(
+            action=JobAction.stop,
+            job_id=JobId(source_name='det1', job_number=uuid.uuid4()),
+        )
+        message = FakeKafkaMessage(
+            key=None,
+            value=command.model_dump_json().encode('utf-8'),
+            topic="dummy_livedata_commands",
+        )
+        adapter = CommandsAdapter()
+        adapted_message = adapter.adapt(message)
+        assert adapted_message.value == command
 
 
 class TestResponsesAdapter:
