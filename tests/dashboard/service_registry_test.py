@@ -4,7 +4,12 @@
 
 import time
 
-from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.job import (
+    ServiceState,
+    ServiceStatus,
+    StreamStat,
+    StreamStats,
+)
 from ess.livedata.core.timestamp import Duration, Timestamp
 from ess.livedata.dashboard.service_registry import ServiceRegistry, make_worker_key
 
@@ -294,6 +299,79 @@ class TestServiceRegistry:
         )
         registry.status_updated(status)
         assert registry.get_inactive_worker_keys() == []
+
+    def test_status_updated_preserves_stream_stats_when_new_status_has_none(
+        self,
+    ) -> None:
+        """The publisher only attaches a fresh snapshot every ~30 s but
+        heartbeats every ~2 s, so most ``ServiceStatus`` updates carry
+        ``stream_stats=None``. The registry must keep the last known snapshot
+        so a session opening between drains can render stats immediately."""
+        registry = ServiceRegistry()
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t", source_name="s", stream="x", count=42),),
+        )
+        with_stats = ServiceStatus(
+            instrument="dream",
+            service_name="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=Timestamp.from_ns(1000),
+            active_job_count=2,
+            stream_stats=stats,
+        )
+        without_stats = ServiceStatus(
+            instrument="dream",
+            service_name="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=Timestamp.from_ns(1000),
+            active_job_count=3,
+            stream_stats=None,
+        )
+
+        registry.status_updated(with_stats)
+        registry.status_updated(without_stats)
+
+        stored = registry.worker_statuses[make_worker_key(without_stats)]
+        assert stored.active_job_count == 3
+        assert stored.stream_stats == stats
+
+    def test_status_updated_overwrites_stream_stats_with_fresh_snapshot(self) -> None:
+        registry = ServiceRegistry()
+        old = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t", source_name="s", stream="x", count=10),),
+        )
+        new = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t", source_name="s", stream="x", count=99),),
+        )
+        first = ServiceStatus(
+            instrument="dream",
+            service_name="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=Timestamp.from_ns(1000),
+            active_job_count=1,
+            stream_stats=old,
+        )
+        second = ServiceStatus(
+            instrument="dream",
+            service_name="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=Timestamp.from_ns(1000),
+            active_job_count=1,
+            stream_stats=new,
+        )
+
+        registry.status_updated(first)
+        registry.status_updated(second)
+
+        stored = registry.worker_statuses[make_worker_key(second)]
+        assert stored.stream_stats == new
 
     def test_remove_inactive_workers_removes_stopped_and_stale(self) -> None:
         registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)
