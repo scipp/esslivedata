@@ -53,19 +53,6 @@ def setup_factories(instrument: Instrument) -> None:
     # Area detector view for area_panel (ad00 images)
     specs.area_panel_view_handle.attach_factory()(AreaDetectorView.view_factory())
 
-    from ess.livedata.handlers.wavelength_lut_workflow import (
-        create_wavelength_lut_workflow,
-    )
-    from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-        WavelengthLutParams,
-    )
-
-    @specs.wavelength_lut_handle.attach_factory()
-    def _wavelength_lut_workflow_factory(params: WavelengthLutParams):
-        return create_wavelength_lut_workflow(
-            params=params, chopper_names=instrument.choppers
-        )
-
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams

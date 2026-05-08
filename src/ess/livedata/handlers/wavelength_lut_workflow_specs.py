@@ -10,6 +10,7 @@ import scipp as sc
 from ..config.instrument import Instrument
 from ..config.workflow_spec import TIMESERIES, AuxSources, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
+from ..kafka.stream_mapping import InputStreamKey, StreamLUT
 from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 
 #: Logical primary stream name for the synthesized chopper-cascade tick. The
@@ -41,6 +42,68 @@ def delay_setpoint_input(chopper: str) -> str:
     stable; production NeXus files carry no ``phase`` field.
     """
     return f'{chopper}_delay_setpoint'
+
+
+def chopper_topic(instrument: str) -> str:
+    """Kafka topic carrying chopper PV streams for ``instrument``."""
+    return f'{instrument}_choppers'
+
+
+#: ECDC PV-name suffix per chopper f144 stream. Convention is consistent
+#: across ESS chopper integrations; readback delay is in nanoseconds and
+#: speed setpoints in hertz.
+_CHOPPER_PV_SUFFIXES: dict[str, tuple[str, str]] = {
+    'delay': (':TotDly', 'ns'),
+    'rotation_speed_setpoint': (':Spd_S', 'Hz'),
+}
+
+
+def make_chopper_attribute_registry(
+    chopper_names: list[str],
+) -> dict[str, dict[str, str]]:
+    """Return f144 attribute-registry entries for chopper streams.
+
+    Includes the in-process synthesized ``<chopper>_delay_setpoint`` so the
+    log-data preprocessor accepts those messages.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for chopper in chopper_names:
+        for stream_kind, (_, units) in _CHOPPER_PV_SUFFIXES.items():
+            out[f'{chopper}_{stream_kind}'] = {'units': units}
+        out[f'{chopper}_delay_setpoint'] = {'units': 'ns'}
+    return out
+
+
+def make_chopper_stream_lut(instrument: str, pv_prefixes: dict[str, str]) -> StreamLUT:
+    """Return ``(topic, source_name) -> internal_name`` for chopper PV streams.
+
+    Synthesized ``_delay_setpoint`` is omitted: the synthesizer emits it
+    in-process and it never arrives from Kafka.
+    """
+    topic = chopper_topic(instrument)
+    return {
+        InputStreamKey(topic=topic, source_name=f'{prefix}{suffix}'): (
+            f'{chopper}_{stream_kind}'
+        )
+        for chopper, prefix in pv_prefixes.items()
+        for stream_kind, (suffix, _) in _CHOPPER_PV_SUFFIXES.items()
+    }
+
+
+def make_chopper_log_topic_for_stream(
+    instrument: str, chopper_names: list[str]
+) -> dict[str, str]:
+    """Per-stream topic override for outbound f144 publishing.
+
+    Used by the dev-mode log-producer widget so chopper sliders publish to
+    the same topic the timeseries service subscribes to in production.
+    """
+    topic = chopper_topic(instrument)
+    return {
+        f'{chopper}_{stream_kind}': topic
+        for chopper in chopper_names
+        for stream_kind in (*_CHOPPER_PV_SUFFIXES, 'delay_setpoint')
+    }
 
 
 class Pulse(pydantic.BaseModel):
@@ -201,7 +264,7 @@ def register_wavelength_lut_workflow_spec(
     ``instrument.choppers``: empty ⇒ chopperless. The factory must be
     attached later via the returned handle.
     """
-    return instrument.register_spec(
+    handle = instrument.register_spec(
         group=TIMESERIES,
         name=WAVELENGTH_LUT_OUTPUT,
         version=1,
@@ -216,3 +279,18 @@ def register_wavelength_lut_workflow_spec(
         outputs=WavelengthLutOutputs,
         reset_on_run_transition=False,
     )
+
+    @handle.attach_factory()
+    def _factory(params: WavelengthLutParams):
+        # Lazy import: keep heavy scipp/sciline/ess.reduce graph construction
+        # out of spec registration so module import stays cheap.
+        from .wavelength_lut_workflow import create_wavelength_lut_workflow
+
+        nexus_filename = instrument.nexus_file if instrument.choppers else None
+        return create_wavelength_lut_workflow(
+            params=params,
+            chopper_names=instrument.choppers,
+            nexus_filename=nexus_filename,
+        )
+
+    return handle
