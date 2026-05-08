@@ -180,6 +180,15 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     service.step()
     sink.messages.clear()  # Clear the workflow status message(s), one per source name.
 
+    # LOKI's i_of_q workflow walks the rear-bank carriage chain, which has a
+    # dynamic NXlog placeholder driven by the detector_carriage f144 stream.
+    # Publish a sample so the patched chain provider has a value to inject;
+    # without it, the workflow correctly raises "no samples yet" — see
+    # tests/handlers/dynamic_transforms_test.py.
+    if instrument == 'loki':
+        app.publish_log_message(source_name='detector_carriage', time=1, value=0.0)
+        service.step()
+
     app.publish_events(size=2000, time=2)
     service.step()
     # No monitor data yet, so the workflow was not able to produce a result yet

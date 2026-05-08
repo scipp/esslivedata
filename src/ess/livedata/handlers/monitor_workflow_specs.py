@@ -241,6 +241,9 @@ def register_monitor_workflow_specs(
         title="Beam monitor",
         description=description,
         source_names=source_names,
+        # Dynamic-transform aux sources are merged centrally by
+        # Instrument.register_spec; callers pass only their spec-specific
+        # auxes here.
         aux_sources=aux_sources,
         params=params,
         outputs=MonitorHistogramOutputs,

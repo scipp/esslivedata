@@ -47,11 +47,10 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
+    from ess.livedata.handlers.dynamic_transforms import apply_dynamic_transforms
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
-
-    from .specs import LOKI_DYNAMIC_TRANSFORMS
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
@@ -102,11 +101,11 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
-        # Drive the rear bank's NeXus 'detector_carriage' transformation
-        # from the live f144 carriage readback. The mapping is shared with
-        # loki/specs.py so the spec routes the stream only to the consuming
-        # source.
-        dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
+        # Apply the instrument's dynamic-transform registry so the rear
+        # bank's carriage NXlog placeholder is driven by the live f144
+        # readback. Other banks have no matching binding, so the helper is
+        # a no-op for them.
+        instrument=instrument,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
@@ -209,6 +208,13 @@ def setup_factories(instrument: Instrument) -> None:
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()
 
+        # Patch the workflow to drive any matching NXlog placeholder along
+        # the loaded components' depends_on chains from f144 streams.
+        # For LOKI today this covers the rear-bank carriage (issue #922).
+        context_keys = apply_dynamic_transforms(
+            wf, instrument=instrument, component_types=(NXdetector,)
+        )
+
         target_keys: dict[str, sciline.typing.Key] = {
             'i_of_q': IntensityQ[SampleRun],
         }
@@ -235,6 +241,7 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name),
+            context_keys=context_keys,
             target_keys=target_keys,
             accumulators=_accumulators,
         )

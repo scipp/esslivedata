@@ -17,10 +17,10 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     WorkflowOutputsBase,
 )
-from ess.livedata.handlers.detector_view.types import TransformValueStream
-from ess.livedata.handlers.detector_view_specs import (
-    DetectorROIAuxSources,
-    register_detector_view_spec,
+from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.dynamic_transforms import (
+    DynamicTransformBinding,
+    TransformLog,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
@@ -32,17 +32,29 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
 
 from .views import get_tube_view
 
-#: Per-source bindings of NeXus transformation entries to live f144 streams.
-#: Single source of truth shared between the spec (for routing via
-#: ``DetectorROIAuxSources``) and the factory (for graph wiring via
-#: ``DetectorViewFactory(dynamic_transforms=...)``). Only the rear bank has
-#: a live carriage readback; other banks have no dynamic geometry.
-LOKI_DYNAMIC_TRANSFORMS: dict[str, TransformValueStream] = {
-    'loki_detector_0': TransformValueStream(
-        transform_name='/entry/instrument/detector_carriage/value',
-        aux_stream='detector_carriage',
+
+#: Sciline key for the rear-detector carriage f144 NXlog. Subclassing
+#: TransformLog gives the binding its own grep-able Sciline node, distinct
+#: from any future bindings on the same component type.
+class DetectorCarriageLog(TransformLog):
+    """Carriage f144 NXlog (drives ``loki_detector_0`` chain)."""
+
+
+#: Dynamic-transform bindings for LOKI. Only the rear bank's carriage entry
+#: is dynamic; other banks have no live position readback. ``beam_monitor_m4``
+#: is also movable (on the carriage), but the artifact represents its
+#: position via a separate empty NXlog rather than ``detector_carriage/value``;
+#: wiring m4 needs either a ``make_geometry_nexus.py`` change so it shares the
+#: carriage chain (then add ``'beam_monitor_m4'`` to ``consumers`` here) or a
+#: separate f144 stream registration. Tracked as follow-up to issue #922.
+LOKI_DYNAMIC_TRANSFORMS = [
+    DynamicTransformBinding(
+        nxlog_path='/entry/instrument/detector_carriage/value',
+        stream_name='detector_carriage',
+        log_key=DetectorCarriageLog,
+        consumers=frozenset({'loki_detector_0'}),
     ),
-}
+]
 
 
 class TransmissionMode(StrEnum):
@@ -209,6 +221,7 @@ instrument = Instrument(
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
+    dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),
@@ -275,7 +288,6 @@ xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS),
 )
 
 # Register tube view for all detector banks

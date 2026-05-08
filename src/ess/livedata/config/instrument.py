@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
+    from ess.livedata.handlers.dynamic_transforms import DynamicTransformBinding
 
 import pydantic
 import scipp as sc
@@ -90,6 +91,7 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    dynamic_transforms: list[DynamicTransformBinding] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
@@ -410,6 +412,16 @@ class Instrument:
         -------
         Handle for attaching factory later.
         """
+        # Merge dynamic-transform aux sources scoped per spec source list,
+        # so factories using ``apply_dynamic_transforms`` automatically have
+        # the routing layer deliver matching f144 streams.
+        if self.dynamic_transforms and source_names:
+            from ess.livedata.handlers.detector_view_specs import (
+                _compose_aux_sources,
+            )
+
+            aux_sources = _compose_aux_sources(self, list(source_names), aux_sources)
+
         spec = WorkflowSpec(
             instrument=self.name,
             group=group,

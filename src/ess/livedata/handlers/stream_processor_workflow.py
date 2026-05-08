@@ -95,11 +95,24 @@ class StreamProcessorWorkflow(Workflow):
         # will fail. See aux_sources / render() in workflow_spec.py for how
         # the routing layer ensures only jobs that subscribed to a stream
         # receive its data.
-        context = {
-            sciline_key: data[key]
-            for key, sciline_key in self._context_keys.items()
-            if key in data
-        }
+        #
+        # Wrapping rule: if a Sciline key is a TransformLog subclass, the raw
+        # NXlog payload is wrapped via ``key(log=raw)`` before set_context, so
+        # the patched transformation-chain provider sees a typed value. The
+        # ``isinstance(sciline_key, type)`` guard is non-negotiable: NewType
+        # instances and parameterised generics are not classes and issubclass
+        # would raise TypeError on them.
+        from .dynamic_transforms import TransformLog
+
+        context = {}
+        for key, sciline_key in self._context_keys.items():
+            if key not in data:
+                continue
+            raw = data[key]
+            if isinstance(sciline_key, type) and issubclass(sciline_key, TransformLog):
+                context[sciline_key] = sciline_key(log=raw)
+            else:
+                context[sciline_key] = raw
         dynamic = {
             sciline_key: data[key]
             for key, sciline_key in self._dynamic_keys.items()

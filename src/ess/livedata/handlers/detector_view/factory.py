@@ -9,17 +9,23 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.unwrap import LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
 
+if TYPE_CHECKING:
+    from ess.livedata.config.instrument import Instrument as Instrument
+
 from ..accumulators import make_no_copy_accumulator_pair
 
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ..detector_view_specs import DetectorViewParams
+from ..dynamic_transforms import apply_dynamic_transforms
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
@@ -39,13 +45,10 @@ from .types import (
     ROISpectra,
     SpectrumView,
     SpectrumViewTransform,
-    TransformValueLog,
-    TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
 from .workflow import (
-    add_dynamic_transform,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -73,14 +76,12 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
-    dynamic_transforms:
-        Optional mapping ``source_name -> TransformValueStream`` binding a
-        NeXus transformation entry of the detector's chain to the f144
-        stream that supplies its live values. ``aux_stream`` is the
-        logical name of the auxiliary input delivering the NXlog
-        DataArray (must match the corresponding ``AuxSources`` entry).
-        ``transform_name`` is the entry of ``chain.transformations``
-        whose ``.value`` will be replaced with the latest sample.
+    instrument:
+        Optional instrument whose ``dynamic_transforms`` registry is consulted
+        when constructing the workflow. If provided and the instrument has any
+        dynamic-transform bindings whose ``consumers`` include the workflow's
+        ``source_name``, ``apply_dynamic_transforms`` patches the workflow at
+        :meth:`make_workflow` time.
     """
 
     def __init__(
@@ -88,11 +89,11 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        dynamic_transforms: dict[str, TransformValueStream] | None = None,
+        instrument: Instrument | None = None,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
-        self._dynamic_transforms = dynamic_transforms or {}
+        self._instrument = instrument
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -257,12 +258,18 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic detector geometry (f144 NXlog stream) if configured for
-        # this source.
-        value_stream = self._dynamic_transforms.get(source_name)
-        if value_stream is not None:
-            add_dynamic_transform(workflow, transform_name=value_stream.transform_name)
-            context_keys[value_stream.aux_stream] = TransformValueLog
+        # Wire dynamic NeXus transforms (f144 NXlog streams) if the instrument
+        # declares any whose ``consumers`` include this source. Walks the
+        # depends_on chain in the artifact to identify matches; raises if the
+        # chain encounters an empty NXlog placeholder not covered by a binding.
+        if self._instrument is not None and self._instrument.dynamic_transforms:
+            context_keys.update(
+                apply_dynamic_transforms(
+                    workflow,
+                    instrument=self._instrument,
+                    component_types=(NXdetector,),
+                )
+            )
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from .detector_view.types import TransformValueStream
+from typing import Literal
 
 import pydantic
 import scipp as sc
@@ -417,37 +414,22 @@ class DetectorROIAuxSources(AuxSources):
     The render() method prefixes ROI stream names with the job_id to create
     job-specific ROI configuration streams, since each job instance needs its
     own ROIs.
-
-    Optionally also advertises one or more global f144 streams that drive
-    runtime-dynamic NeXus transformation values for specific source_names.
-    These streams are physical properties of the instrument (not job-
-    specific), so they are rendered un-prefixed and only routed to the jobs
-    whose source_name actually consumes them.
     """
 
-    def __init__(
-        self,
-        dynamic_transforms: dict[str, TransformValueStream] | None = None,
-    ) -> None:
-        self._dynamic_transforms = dynamic_transforms or {}
-        inputs: dict[str, str | AuxInput] = {
-            'roi_rectangle': 'roi_rectangle',
-            'roi_polygon': 'roi_polygon',
-        }
-        # Advertise each unique global aux stream so the dashboard schema
-        # and spec validation know it exists. Routing is per-source via
-        # render().
-        for binding in self._dynamic_transforms.values():
-            inputs.setdefault(binding.aux_stream, binding.aux_stream)
-        super().__init__(inputs)
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                'roi_rectangle': 'roi_rectangle',
+                'roi_polygon': 'roi_polygon',
+            }
+        )
 
     def render(
         self,
         job_id: JobId,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render ROI stream names with job-specific prefix, plus any
-        source-specific global aux streams.
+        """Render ROI stream names with job-specific prefix.
 
         Parameters
         ----------
@@ -460,18 +442,88 @@ class DetectorROIAuxSources(AuxSources):
         -------
         :
             Mapping from ROI geometry keys to job-specific stream names
-            (e.g., ``'{source_name}/{job_number}/roi_rectangle'``), plus
-            any global aux streams bound to this source's NeXus transforms,
-            rendered un-prefixed.
+            (e.g., ``'{source_name}/{job_number}/roi_rectangle'``).
         """
-        rendered: dict[str, str] = {
+        return {
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
-        binding = self._dynamic_transforms.get(job_id.source_name)
-        if binding is not None:
-            rendered[binding.aux_stream] = binding.aux_stream
-        return rendered
+
+
+class _CombinedAuxSources(AuxSources):
+    """Composes multiple :class:`AuxSources` into one.
+
+    Inputs are merged (later components override earlier on key collisions);
+    ``render`` dispatches to each component and merges the results.
+
+    Used by :func:`register_detector_view_spec` and
+    :func:`register_monitor_workflow_specs` to compose a caller-supplied
+    ``aux_sources`` with the auto-derived dynamic-transform aux sources.
+    """
+
+    def __init__(self, components: list[AuxSources]) -> None:
+        self._components = components
+        merged: dict[str, str | AuxInput] = {}
+        for comp in components:
+            merged.update(comp.inputs)
+        super().__init__(merged)
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for comp in self._components:
+            result.update(comp.render(job_id, selections))
+        return result
+
+
+class _DynamicTransformAuxSources(AuxSources):
+    """Aux sources covering an instrument's dynamic-transform bindings.
+
+    Inputs include every binding whose ``consumers`` set intersects the
+    spec's ``source_names``. ``render`` returns only the streams whose
+    binding includes ``job_id.source_name`` in its consumers, rendered
+    un-prefixed (these are global f144 streams shared across jobs).
+    """
+
+    def __init__(self, instrument: Instrument, source_names: list[str]) -> None:
+        from .dynamic_transforms import dynamic_transform_aux_inputs
+
+        self._instrument = instrument
+        inputs = dynamic_transform_aux_inputs(instrument, source_names)
+        super().__init__(dict(inputs))
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        from .dynamic_transforms import dynamic_transform_routes
+
+        return dynamic_transform_routes(self._instrument, job_id.source_name)
+
+
+def _compose_aux_sources(
+    instrument: Instrument,
+    source_names: list[str],
+    caller_aux: AuxSources | None,
+) -> AuxSources | None:
+    """Merge caller-supplied aux sources with auto-derived dynamic-transform
+    aux sources for the given source set."""
+    components: list[AuxSources] = []
+    if caller_aux is not None:
+        components.append(caller_aux)
+    if instrument.dynamic_transforms:
+        dyn = _DynamicTransformAuxSources(instrument, source_names)
+        if dyn.inputs:
+            components.append(dyn)
+    if not components:
+        return None
+    if len(components) == 1:
+        return components[0]
+    return _CombinedAuxSources(components)
 
 
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
@@ -579,6 +631,9 @@ def register_detector_view_spec(
         title=title,
         description=description,
         source_names=source_names,
+        # Dynamic-transform aux sources are merged centrally by
+        # Instrument.register_spec; callers pass only their spec-specific
+        # auxes here.
         aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
         params=make_detector_view_params(spectrum_view=spectrum_view),
         outputs=make_detector_view_outputs(

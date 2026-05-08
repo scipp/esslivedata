@@ -8,6 +8,7 @@ import sciline
 import scipp as sc
 
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.handlers.dynamic_transforms import TransformLog
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
 Streamed = NewType('Streamed', int)
@@ -356,3 +357,57 @@ class TestWindowOutputs:
         )
         result3 = workflow.finalize()
         assert result3['current'].coords['start_time'].value == 9000
+
+
+class _CarriageContainer(TransformLog):
+    pass
+
+
+class TestTransformLogWrappingRule:
+    """SPW wraps raw NXlog payloads in a TransformLog subclass before
+    set_context iff the Sciline key is a TransformLog subclass."""
+
+    @pytest.fixture
+    def workflow_using_log(self) -> sciline.Pipeline:
+        def consume_log(container: _CarriageContainer) -> Output:
+            assert isinstance(container, _CarriageContainer)
+            assert isinstance(container.log, sc.DataArray)
+            return Output(int(container.log.values[0]))
+
+        return sciline.Pipeline((consume_log,))
+
+    def test_wraps_transformlog_subclass(self, workflow_using_log) -> None:
+        wf = StreamProcessorWorkflow(
+            workflow_using_log,
+            dynamic_keys={},
+            context_keys={'carriage': _CarriageContainer},
+            target_keys={'output': Output},
+            accumulators=(),
+        )
+        raw = sc.DataArray(sc.array(dims=['time'], values=[42.0], unit='mm'))
+        wf.accumulate(
+            {'carriage': raw},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+        )
+        result = wf.finalize()
+        assert result['output'] == 42
+
+    def test_passes_through_non_transformlog_keys(self) -> None:
+        # Plain integer context — must not be wrapped.
+        def consume(value: Context) -> Output:
+            return Output(value * 2)
+
+        wf = StreamProcessorWorkflow(
+            sciline.Pipeline((consume,)),
+            dynamic_keys={},
+            context_keys={'ctx': Context},
+            target_keys={'output': Output},
+            accumulators=(),
+        )
+        wf.accumulate(
+            {'ctx': Context(5)},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+        )
+        assert wf.finalize()['output'] == 10
