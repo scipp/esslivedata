@@ -448,18 +448,21 @@ productionising whether to revert to drop.
 
 ### Unblock LOKI in production (next concrete step)
 
-LOKI dev wiring is complete (commits `53f9d827`, `1dabb528`):
-geometry-loki-2026-05-08.nxs uploaded and registered, real PVs from
-`coda_loki_999999_00026352.hdf` declared on the dedicated
-`loki_choppers` topic, dev stream mapping subscribes to it,
-`F144Serializer` routes per-stream so the dashboard log-producer
-widget publishes chopper sliders to the same topic.
+LOKI is fully configured (commits `53f9d827`, `1dabb528`,
+`fce002e4`): `geometry-loki-2026-05-08.nxs` uploaded and registered,
+chopper PV names and topic taken verbatim from
+`coda_loki_999999_00026352.hdf`'s filewriter metadata (i.e. the actual
+production stream), prod stream mapping subscribes to `loki_choppers`
+with those source names, dev mode mirrors the same topic split via
+the `F144Serializer` per-stream routing path so the dashboard
+log-producer widget publishes chopper sliders to the same topic the
+production consumer subscribes to.
 
 Remaining for production:
 
-1. Switch from dev-mode fakes to real upstream control system; the PV
-   names already match the source file, but the actual ECDC topic name
-   should be confirmed with the chopper team.
+1. Confirm with the chopper team that the upstream EPICS → forwarder
+   chain is actually publishing the chopper PVs on staging when we
+   go to test end-to-end — purely operational, no livedata changes.
 2. Tune `Instrument.chopper_delay_atol` (default `1000.0` ns =
    ~0.005 deg at 14 Hz, ~0.075 deg at 210 Hz). Same knob does noise
    rejection (window std threshold) and change detection (drift > atol
