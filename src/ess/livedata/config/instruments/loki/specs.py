@@ -189,33 +189,45 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # (depends_on -> /entry/instrument/detector_carriage/value in the NeXus file).
 #
 # Chopper PVs feed the in-process ChopperSynthesizer (see
-# services/timeseries.py). For the prototype, real ``chopper1_phase`` /
-# ``chopper1_rotation_speed_setpoint`` arrive as dev-mode log messages from the
-# log_producer widget; ``chopper1_phase_setpoint`` is itself synthesized
-# (passed through the same f144 plumbing) and is registered here so the
-# preprocessor accepts it. Production source PV names are placeholders until
-# the upstream control system is hooked up.
+# services/timeseries.py). Per chopper:
+# - ``<chopper>_delay`` is the noisy upstream readback; the synthesizer
+#   plateau-detects on it and emits ``<chopper>_delay_setpoint``.
+# - ``<chopper>_rotation_speed_setpoint`` is the clean upstream f144.
+# - ``<chopper>_delay_setpoint`` is itself synthesized (passed through the
+#   same f144 plumbing) and registered here so the preprocessor accepts it.
+# Production source PV names are placeholders until the upstream control
+# system is hooked up.
+_LOKI_CHOPPERS = ['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2']
+
+
+def _chopper_log_streams() -> dict[str, dict[str, str]]:
+    streams: dict[str, dict[str, str]] = {}
+    for name in _LOKI_CHOPPERS:
+        streams[f'{name}_delay'] = {
+            'source': f'LOKI-{name}:Delay-RBV',
+            'topic': 'loki_motion',
+            'units': 'ns',
+        }
+        streams[f'{name}_rotation_speed_setpoint'] = {
+            'source': f'LOKI-{name}:Speed-SP',
+            'topic': 'loki_motion',
+            'units': 'Hz',
+        }
+        streams[f'{name}_delay_setpoint'] = {
+            'source': f'LOKI-{name}:Delay-Locked',
+            'topic': 'loki_motion',
+            'units': 'ns',
+        }
+    return streams
+
+
 f144_log_streams = {
     'detector_carriage': {
         'source': 'LOKI-DtCar1:MC-LinX-01:Mtr.RBV',
         'topic': 'loki_motion',
         'units': 'mm',
     },
-    'chopper1_phase': {
-        'source': 'LOKI-Chop1:Phase-RBV',
-        'topic': 'loki_motion',
-        'units': 'deg',
-    },
-    'chopper1_rotation_speed_setpoint': {
-        'source': 'LOKI-Chop1:Speed-SP',
-        'topic': 'loki_motion',
-        'units': 'Hz',
-    },
-    'chopper1_phase_setpoint': {
-        'source': 'LOKI-Chop1:Phase-Locked',
-        'topic': 'loki_motion',
-        'units': 'deg',
-    },
+    **_chopper_log_streams(),
 }
 
 # Create instrument
@@ -229,7 +241,7 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
-    choppers=['chopper1'],
+    choppers=_LOKI_CHOPPERS,
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },

@@ -31,9 +31,16 @@ def speed_setpoint_input(chopper: str) -> str:
     return f'{chopper}_rotation_speed_setpoint'
 
 
-def phase_setpoint_input(chopper: str) -> str:
-    """Logical aux-input name for a chopper's phase setpoint."""
-    return f'{chopper}_phase_setpoint'
+def delay_setpoint_input(chopper: str) -> str:
+    """Logical aux-input name for a chopper's delay setpoint.
+
+    ``DiskChopper.from_nexus`` derives the chopper's phase relative to the
+    source pulse from ``delay`` and ``rotation_speed_setpoint`` as
+    ``phase = 2*pi*frequency*delay``. The synthesizer plateau-detects on
+    the noisy ``<chopper>_delay`` readback and emits this stream when
+    stable; production NeXus files carry no ``phase`` field.
+    """
+    return f'{chopper}_delay_setpoint'
 
 
 class Pulse(pydantic.BaseModel):
@@ -168,7 +175,7 @@ def _chopper_aux_sources(chopper_names: list[str]) -> AuxSources | None:
     inputs = {
         stream: stream
         for name in chopper_names
-        for stream in (speed_setpoint_input(name), phase_setpoint_input(name))
+        for stream in (speed_setpoint_input(name), delay_setpoint_input(name))
     }
     return AuxSources(inputs)
 

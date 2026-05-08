@@ -11,13 +11,20 @@ shape does not depend on the chopper count.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any, NewType
 
 import sciline
 import scipp as sc
-from ess.reduce.nexus.types import AnyRun, DiskChoppers
+import scippnexus as snx
+from ess.reduce.nexus import GenericNeXusWorkflow
+from ess.reduce.nexus.types import (
+    AnyRun,
+    DiskChoppers,
+    Filename,
+    Position,
+    RawChoppers,
+    SampleRun,
+)
 from ess.reduce.unwrap.lut import (
     DistanceResolution,
     LookupTable,
@@ -37,13 +44,19 @@ from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
-    phase_setpoint_input,
+    delay_setpoint_input,
     speed_setpoint_input,
 )
 
 # Placeholder source position. Only used inside the per-chopper loop in the
 # upstream simulator, which is empty for chopperless instruments.
 _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
+
+# Anti-clockwise angular offset where the beam crosses the chopper disk. The
+# upstream essreduce convention (its tests, docs, and fakes) is to store
+# slit_edges already measured from the beam-crossing point, so this is zero.
+# See plan dynamic-tof-lookup-table.md for context.
+_BEAM_POSITION = sc.scalar(0.0, unit='deg')
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
 #: cumulative ``ToNXlog`` timeseries for the synthetic ``chopper_cascade``
@@ -55,19 +68,6 @@ WavelengthLut = NewType('WavelengthLut', sc.DataArray)
 
 #: Sciline key for the user-facing parameter bundle.
 ParamsKey = NewType('ParamsKey', WavelengthLutParams)
-
-
-@dataclass(frozen=True)
-class HardcodedChopperGeometry:
-    """Static geometry stand-in until the NeXus geometry artifact carries
-    ``NXdisk_chopper`` groups; replaced by ``DiskChopper.from_nexus``.
-    """
-
-    axle_position: sc.Variable
-    beam_position: sc.Variable
-    slit_begin: sc.Variable
-    slit_end: sc.Variable
-    radius: sc.Variable
 
 
 def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
@@ -85,7 +85,9 @@ def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
     return WavelengthLut(arr)
 
 
-def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
+def _build_pipeline(
+    params: WavelengthLutParams, *, source_position: sc.Variable
+) -> sciline.Pipeline:
     wf = LookupTableWorkflow()
     wf[PulsePeriod] = params.pulse.get_period()
     wf[PulseStride] = int(params.pulse.stride)
@@ -96,10 +98,28 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
         params.distance_range.get_stop(),
     )
     wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
-    wf[SourcePosition] = _PLACEHOLDER_SOURCE_POSITION
+    wf[SourcePosition] = source_position
     wf[ParamsKey] = params
     wf.insert(_attach_provenance)
     return wf
+
+
+def _load_static_geometry(
+    filename: str,
+) -> tuple[sc.DataGroup, sc.Variable]:
+    """Load static chopper geometry and source position from a NeXus file.
+
+    Uses ``GenericNeXusWorkflow`` so depends_on chains are resolved and
+    ``RawChoppers`` is produced in the layout :meth:`DiskChopper.from_nexus`
+    consumes. NXlog placeholders for streamed quantities (``rotation_speed``,
+    ``delay``, etc.) come through as length-0 ``DataArray``\\ s and are
+    overridden later with cached scalar setpoints.
+    """
+    wf = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
+    wf[Filename[SampleRun]] = filename
+    raw_choppers = wf.compute(RawChoppers[SampleRun])
+    source_position = wf.compute(Position[snx.NXsource, SampleRun])
+    return raw_choppers, source_position
 
 
 class _WavelengthLutWorkflow(StreamProcessorWorkflow):
@@ -107,11 +127,13 @@ class _WavelengthLutWorkflow(StreamProcessorWorkflow):
 
     Per-chopper aux setpoint NXlogs arrive via the spec's ``aux_sources``
     routing (logical names ``<chopper>_rotation_speed_setpoint`` /
-    ``<chopper>_phase_setpoint``). They are not registered as sciline
+    ``<chopper>_delay_setpoint``). They are not registered as sciline
     ``context_keys``; instead this class caches the latest scalar per
-    chopper, builds a ``DiskChoppers`` ``DataGroup``, and exposes it to
-    the pipeline via a closure provider keyed off the trigger. This keeps
-    the sciline graph chopper-count-agnostic.
+    chopper, builds a ``DiskChoppers`` ``DataGroup`` via
+    ``DiskChopper.from_nexus`` against the static
+    :class:`RawChoppers` loaded from the geometry artifact, and exposes it
+    to the pipeline via a closure provider keyed off the trigger. This
+    keeps the sciline graph chopper-count-agnostic.
     """
 
     def __init__(
@@ -119,23 +141,34 @@ class _WavelengthLutWorkflow(StreamProcessorWorkflow):
         *,
         params: WavelengthLutParams,
         chopper_names: list[str],
-        chopper_geometry: Mapping[str, HardcodedChopperGeometry] | None = None,
+        nexus_filename: str | None = None,
     ) -> None:
         self._chopper_names = list(chopper_names)
-        self._chopper_geometry = dict(chopper_geometry or {})
         self._cached_speed: dict[str, sc.Variable] = {}
-        self._cached_phase: dict[str, sc.Variable] = {}
+        self._cached_delay: dict[str, sc.Variable] = {}
         self._cached_choppers: sc.DataGroup = sc.DataGroup({})
-        missing = set(self._chopper_names) - self._chopper_geometry.keys()
-        if missing:
-            raise ValueError(
-                f"Missing hardcoded geometry for choppers: {sorted(missing)}"
-            )
+
+        if self._chopper_names:
+            if nexus_filename is None:
+                raise ValueError(
+                    "nexus_filename is required for chopper-equipped instruments"
+                )
+            raw_choppers, source_position = _load_static_geometry(nexus_filename)
+            missing = set(self._chopper_names) - set(raw_choppers)
+            if missing:
+                raise ValueError(
+                    f"Geometry artifact {nexus_filename!r} is missing "
+                    f"NXdisk_chopper groups for: {sorted(missing)}"
+                )
+            self._raw_choppers = raw_choppers
+        else:
+            source_position = _PLACEHOLDER_SOURCE_POSITION
+            self._raw_choppers = sc.DataGroup({})
 
         def _provide_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
             return DiskChoppers[AnyRun](self._cached_choppers)
 
-        pipeline = _build_pipeline(params)
+        pipeline = _build_pipeline(params, source_position=source_position)
         pipeline.insert(_provide_choppers)
         super().__init__(
             pipeline,
@@ -151,8 +184,8 @@ class _WavelengthLutWorkflow(StreamProcessorWorkflow):
         for name in self._chopper_names:
             if (key := speed_setpoint_input(name)) in data:
                 self._cached_speed[name] = data[key]['time', -1].data
-            if (key := phase_setpoint_input(name)) in data:
-                self._cached_phase[name] = data[key]['time', -1].data
+            if (key := delay_setpoint_input(name)) in data:
+                self._cached_delay[name] = data[key]['time', -1].data
 
         if self._all_choppers_ready():
             self._cached_choppers = sc.DataGroup(
@@ -162,26 +195,25 @@ class _WavelengthLutWorkflow(StreamProcessorWorkflow):
 
     def _all_choppers_ready(self) -> bool:
         n = len(self._chopper_names)
-        return len(self._cached_speed) == n and len(self._cached_phase) == n
+        return len(self._cached_speed) == n and len(self._cached_delay) == n
 
     def _build_chopper(self, name: str) -> DiskChopper:
-        geom = self._chopper_geometry[name]
-        return DiskChopper(
-            axle_position=geom.axle_position,
-            beam_position=geom.beam_position,
-            frequency=self._cached_speed[name],
-            phase=self._cached_phase[name],
-            slit_begin=geom.slit_begin,
-            slit_end=geom.slit_end,
-            radius=geom.radius,
-        )
+        # Override the empty NXlog placeholders with the cached aux scalars
+        # and inject ``beam_position`` (not present in real source files,
+        # zero by convention — see module-level comment). ``from_nexus``
+        # then derives ``phase`` from ``delay`` and ``rotation_speed_setpoint``.
+        merged = sc.DataGroup(dict(self._raw_choppers[name]))
+        merged['rotation_speed_setpoint'] = self._cached_speed[name]
+        merged['delay'] = self._cached_delay[name]
+        merged['beam_position'] = _BEAM_POSITION
+        return DiskChopper.from_nexus(merged)
 
 
 def create_wavelength_lut_workflow(
     *,
     params: WavelengthLutParams,
     chopper_names: list[str] | None = None,
-    chopper_geometry: Mapping[str, HardcodedChopperGeometry] | None = None,
+    nexus_filename: str | None = None,
 ) -> StreamProcessorWorkflow:
     """Create a wavelength lookup-table workflow.
 
@@ -191,12 +223,13 @@ def create_wavelength_lut_workflow(
     ``DiskChoppers`` assembly; the pipeline refires whenever a new trigger
     arrives with all choppers locked.
 
-    ``chopper_geometry`` supplies static (non-aux) per-chopper fields. It is
-    a stand-in until ``RawChoppers[SampleRun]`` from the NeXus geometry
-    artifact replaces it — see plan ``dynamic-tof-lookup-table.md``.
+    ``nexus_filename`` supplies the geometry artifact carrying static
+    ``NXdisk_chopper`` groups (slit edges, radius, axle position) and the
+    source position. Required when ``chopper_names`` is non-empty; ignored
+    for chopperless instruments.
     """
     return _WavelengthLutWorkflow(
         params=params,
         chopper_names=list(chopper_names or []),
-        chopper_geometry=chopper_geometry,
+        nexus_filename=nexus_filename,
     )

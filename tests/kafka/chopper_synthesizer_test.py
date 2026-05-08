@@ -27,9 +27,9 @@ class FakeSource(MessageSource[Message]):
         return self._batches.pop(0)
 
 
-def _phase_msg(chopper: str, value: float, time_ns: int = 0) -> Message:
+def _delay_msg(chopper: str, value: float, time_ns: int = 0) -> Message:
     return Message(
-        stream=StreamId(kind=StreamKind.LOG, name=f'{chopper}_phase'),
+        stream=StreamId(kind=StreamKind.LOG, name=f'{chopper}_delay'),
         value=LogData(time=time_ns, value=value),
     )
 
@@ -101,8 +101,8 @@ def single_chopper():
     """Synthesizer config: one chopper, small window, modest tolerance."""
     return {
         'chopper_names': ['c1'],
-        'phase_window_size': 5,
-        'phase_atol_deg': 0.5,
+        'delay_window_size': 5,
+        'delay_atol': 0.5,
     }
 
 
@@ -117,13 +117,13 @@ def test_single_chopper_speed_setpoint_passes_through_no_cascade(single_chopper)
 
     out = list(src.get_messages())
 
-    # Speed alone does not trigger cascade — phase still missing.
+    # Speed alone does not trigger cascade — delay still missing.
     assert out == [msg]
 
 
-def test_single_chopper_short_phase_burst_no_emit(single_chopper):
+def test_single_chopper_short_delay_burst_no_emit(single_chopper):
     # Window size 5; only 3 samples — not enough to lock.
-    batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(3)]
+    batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(3)]
     src = ChopperSynthesizer(FakeSource([batch]), **single_chopper)
 
     out = list(src.get_messages())
@@ -133,19 +133,19 @@ def test_single_chopper_short_phase_burst_no_emit(single_chopper):
 
 
 def test_single_chopper_locks_and_emits_cascade_after_speed(single_chopper):
-    # 5 stable phase samples → lock; followed by speed setpoint → cascade.
-    phase_batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    # 5 stable delay samples → lock; followed by speed setpoint → cascade.
+    delay_batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
     speed_batch = [_speed_setpoint_msg('c1', 14.0, time_ns=10)]
-    src = ChopperSynthesizer(FakeSource([phase_batch, speed_batch]), **single_chopper)
+    src = ChopperSynthesizer(FakeSource([delay_batch, speed_batch]), **single_chopper)
 
     first = list(src.get_messages())
     streams_first = _stream_names(first)
 
-    # Phase locked → synthetic phase_setpoint emitted; cascade not yet (no speed).
-    assert 'c1_phase_setpoint' in streams_first
+    # Delay locked → synthetic delay_setpoint emitted; cascade not yet (no speed).
+    assert 'c1_delay_setpoint' in streams_first
     assert 'chopper_cascade' not in streams_first
     # Originals still flow through.
-    assert all(m in first for m in phase_batch)
+    assert all(m in first for m in delay_batch)
 
     second = list(src.get_messages())
     streams_second = _stream_names(second)
@@ -155,35 +155,35 @@ def test_single_chopper_locks_and_emits_cascade_after_speed(single_chopper):
     assert all(m in second for m in speed_batch)
 
 
-def test_single_chopper_phase_setpoint_value_matches_window_mean(single_chopper):
+def test_single_chopper_delay_setpoint_value_matches_window_mean(single_chopper):
     samples = [89.9, 90.1, 90.0, 90.05, 89.95]
-    batch = [_phase_msg('c1', v, time_ns=i) for i, v in enumerate(samples)]
+    batch = [_delay_msg('c1', v, time_ns=i) for i, v in enumerate(samples)]
     src = ChopperSynthesizer(FakeSource([batch]), **single_chopper)
 
     out = list(src.get_messages())
 
-    [setpoint] = [m for m in out if m.stream.name == 'c1_phase_setpoint']
+    [setpoint] = [m for m in out if m.stream.name == 'c1_delay_setpoint']
     assert setpoint.value.value == pytest.approx(np.mean(samples))
 
 
 def test_single_chopper_noisy_window_no_lock(single_chopper):
     # Std exceeds atol (0.5 deg) — no lock.
     samples = [85.0, 95.0, 88.0, 92.0, 90.0]
-    batch = [_phase_msg('c1', v, time_ns=i) for i, v in enumerate(samples)]
+    batch = [_delay_msg('c1', v, time_ns=i) for i, v in enumerate(samples)]
     src = ChopperSynthesizer(FakeSource([batch]), **single_chopper)
 
     out = list(src.get_messages())
 
-    assert all(m.stream.name != 'c1_phase_setpoint' for m in out)
+    assert all(m.stream.name != 'c1_delay_setpoint' for m in out)
     assert all(m.stream.name != 'chopper_cascade' for m in out)
 
 
 def test_single_chopper_setpoint_change_re_emits(single_chopper):
     # Lock at 90, then operator nudges to 100 — second lock emits a new setpoint
     # and a new cascade tick.
-    first_window = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    first_window = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
     speed = [_speed_setpoint_msg('c1', 14.0, time_ns=10)]
-    second_window = [_phase_msg('c1', 100.0, time_ns=20 + i) for i in range(5)]
+    second_window = [_delay_msg('c1', 100.0, time_ns=20 + i) for i in range(5)]
     src = ChopperSynthesizer(
         FakeSource([first_window, speed, second_window]), **single_chopper
     )
@@ -192,7 +192,7 @@ def test_single_chopper_setpoint_change_re_emits(single_chopper):
     list(src.get_messages())  # speed → first cascade
     third = list(src.get_messages())
 
-    setpoints = [m for m in third if m.stream.name == 'c1_phase_setpoint']
+    setpoints = [m for m in third if m.stream.name == 'c1_delay_setpoint']
     cascades = [m for m in third if m.stream.name == 'chopper_cascade']
     assert len(setpoints) == 1
     assert setpoints[0].value.value == pytest.approx(100.0)
@@ -201,17 +201,17 @@ def test_single_chopper_setpoint_change_re_emits(single_chopper):
 
 def test_single_chopper_no_cascade_when_input_unchanged(single_chopper):
     # Once locked, a batch with an unrelated message must not re-emit cascade.
-    phase_batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    delay_batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
     speed_batch = [_speed_setpoint_msg('c1', 14.0, time_ns=10)]
     unrelated = Message(
         stream=StreamId(kind=StreamKind.LOG, name='other_pv'),
         value=LogData(time=20, value=1),
     )
     src = ChopperSynthesizer(
-        FakeSource([phase_batch, speed_batch, [unrelated]]), **single_chopper
+        FakeSource([delay_batch, speed_batch, [unrelated]]), **single_chopper
     )
 
-    list(src.get_messages())  # lock phase
+    list(src.get_messages())  # lock delay
     list(src.get_messages())  # speed → cascade
     third = list(src.get_messages())
 
@@ -219,14 +219,14 @@ def test_single_chopper_no_cascade_when_input_unchanged(single_chopper):
 
 
 def test_single_chopper_speed_change_re_emits_cascade(single_chopper):
-    phase_batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    delay_batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
     speed1 = [_speed_setpoint_msg('c1', 14.0, time_ns=10)]
     speed2 = [_speed_setpoint_msg('c1', 28.0, time_ns=20)]
     src = ChopperSynthesizer(
-        FakeSource([phase_batch, speed1, speed2]), **single_chopper
+        FakeSource([delay_batch, speed1, speed2]), **single_chopper
     )
 
-    list(src.get_messages())  # phase lock
+    list(src.get_messages())  # delay lock
     list(src.get_messages())  # first cascade
     third = list(src.get_messages())
 
@@ -236,14 +236,14 @@ def test_single_chopper_speed_change_re_emits_cascade(single_chopper):
 def test_single_chopper_speed_setpoint_resend_no_cascade(single_chopper):
     # Upstream f144 may resend the same (timestamp, value) pair every few seconds.
     # Once locked, such resends must not produce a synthetic cascade tick.
-    phase_batch = [_phase_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    delay_batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
     speed = _speed_setpoint_msg('c1', 14.0, time_ns=10)
     resend = _speed_setpoint_msg('c1', 14.0, time_ns=10)
     src = ChopperSynthesizer(
-        FakeSource([phase_batch, [speed], [resend]]), **single_chopper
+        FakeSource([delay_batch, [speed], [resend]]), **single_chopper
     )
 
-    list(src.get_messages())  # phase lock
+    list(src.get_messages())  # delay lock
     list(src.get_messages())  # first cascade
     third = list(src.get_messages())
 

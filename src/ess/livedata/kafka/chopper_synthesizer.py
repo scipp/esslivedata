@@ -7,18 +7,23 @@ already-adapted source (i.e. domain-level :class:`Message` objects) and:
 
 - Forwards every wrapped message verbatim.
 - Tracks per-chopper ``<chopper>_rotation_speed_setpoint`` (clean upstream
-  f144) and ``<chopper>_phase`` (noisy readback) values.
-- Runs a rolling-window stability detector on each chopper's phase samples;
+  f144) and ``<chopper>_delay`` (noisy readback) values.
+- Runs a rolling-window stability detector on each chopper's delay samples;
   when stable and the value differs from the cached locked value, emits a
-  synthetic ``<chopper>_phase_setpoint`` f144 message.
+  synthetic ``<chopper>_delay_setpoint`` f144 message.
 - When every configured chopper has both a cached
-  ``rotation_speed_setpoint`` and a stable ``phase_setpoint``, emits a
+  ``rotation_speed_setpoint`` and a stable ``delay_setpoint``, emits a
   synthetic primary tick on the ``chopper_cascade`` logical stream — but
   only on cycles where one of those inputs actually changed.
 
 For chopperless instruments (empty ``chopper_names``) it emits exactly one
 vacuous ``chopper_cascade`` tick on the first call to ``get_messages`` and
 is otherwise a passthrough.
+
+``DiskChopper.from_nexus`` derives the chopper's phase relative to the
+source pulse from ``delay`` and ``rotation_speed_setpoint``: production
+NeXus files carry no ``phase`` field, so the synthesizer locks on the
+delay readback that does exist.
 """
 
 from __future__ import annotations
@@ -40,16 +45,16 @@ logger = structlog.get_logger(__name__)
 CHOPPER_CASCADE_STREAM = StreamId(kind=StreamKind.LOG, name=CHOPPER_CASCADE_SOURCE)
 
 
-def _phase_stream_name(chopper: str) -> str:
-    return f'{chopper}_phase'
+def _delay_stream_name(chopper: str) -> str:
+    return f'{chopper}_delay'
 
 
 def _speed_setpoint_stream_name(chopper: str) -> str:
     return f'{chopper}_rotation_speed_setpoint'
 
 
-def _phase_setpoint_stream_name(chopper: str) -> str:
-    return f'{chopper}_phase_setpoint'
+def _delay_setpoint_stream_name(chopper: str) -> str:
+    return f'{chopper}_delay_setpoint'
 
 
 def _make_chopper_cascade_message() -> Message[LogData]:
@@ -62,13 +67,13 @@ def _make_chopper_cascade_message() -> Message[LogData]:
     )
 
 
-def _make_phase_setpoint_message(
+def _make_delay_setpoint_message(
     chopper: str, value: float, time_ns: int
 ) -> Message[LogData]:
     now = Timestamp.from_ns(time_ns)
     return Message(
         timestamp=now,
-        stream=StreamId(kind=StreamKind.LOG, name=_phase_setpoint_stream_name(chopper)),
+        stream=StreamId(kind=StreamKind.LOG, name=_delay_setpoint_stream_name(chopper)),
         value=LogData(time=time_ns, value=value),
     )
 
@@ -111,17 +116,17 @@ class _StabilityDetector:
 class _ChopperState:
     detector: _StabilityDetector
     speed_setpoint: float | None = None
-    phase_setpoint: float | None = None
+    delay_setpoint: float | None = None
 
     def is_locked(self) -> bool:
-        return self.speed_setpoint is not None and self.phase_setpoint is not None
+        return self.speed_setpoint is not None and self.delay_setpoint is not None
 
 
 @dataclass
 class _ChopperSynthesizerConfig:
     chopper_names: tuple[str, ...] = ()
-    phase_window_size: int = 10
-    phase_atol_deg: float = 1.0
+    delay_window_size: int = 10
+    delay_atol: float = 1.0
 
 
 class ChopperSynthesizer(MessageSource[Message]):
@@ -132,7 +137,7 @@ class ChopperSynthesizer(MessageSource[Message]):
     - ``chopper_names`` empty (chopperless instrument): emit one vacuous
       ``chopper_cascade`` tick on the first ``get_messages`` call, then
       passthrough.
-    - ``chopper_names`` non-empty: per-chopper plateau detection on phase,
+    - ``chopper_names`` non-empty: per-chopper plateau detection on delay,
       pass-through-with-cache for rotation_speed_setpoint, conditional
       ``chopper_cascade`` emission once all choppers locked.
     """
@@ -142,24 +147,24 @@ class ChopperSynthesizer(MessageSource[Message]):
         wrapped: MessageSource[Message],
         *,
         chopper_names: Sequence[str] = (),
-        phase_window_size: int = 2,
-        phase_atol_deg: float = 1.0,
+        delay_window_size: int = 2,
+        delay_atol: float = 1.0,
     ) -> None:
         self._wrapped = wrapped
         self._config = _ChopperSynthesizerConfig(
             chopper_names=tuple(chopper_names),
-            phase_window_size=phase_window_size,
-            phase_atol_deg=phase_atol_deg,
+            delay_window_size=delay_window_size,
+            delay_atol=delay_atol,
         )
         self._states: dict[str, _ChopperState] = {
             name: _ChopperState(
                 detector=_StabilityDetector(
-                    window_size=phase_window_size, atol=phase_atol_deg
+                    window_size=delay_window_size, atol=delay_atol
                 )
             )
             for name in chopper_names
         }
-        self._phase_streams = {_phase_stream_name(name): name for name in chopper_names}
+        self._delay_streams = {_delay_stream_name(name): name for name in chopper_names}
         self._speed_streams = {
             _speed_setpoint_stream_name(name): name for name in chopper_names
         }
@@ -169,8 +174,8 @@ class ChopperSynthesizer(MessageSource[Message]):
             logger.info(
                 'chopper_synthesizer_configured',
                 choppers=list(chopper_names),
-                phase_window_size=phase_window_size,
-                phase_atol_deg=phase_atol_deg,
+                delay_window_size=delay_window_size,
+                delay_atol=delay_atol,
             )
 
     def get_messages(self) -> Sequence[Message]:
@@ -206,15 +211,15 @@ class ChopperSynthesizer(MessageSource[Message]):
     def _handle_chopper_message(self, msg: Message, synthetic: list[Message]) -> bool:
         """Update chopper state from ``msg``. Return True if an input changed."""
         name = msg.stream.name
-        chopper = self._phase_streams.get(name)
+        chopper = self._delay_streams.get(name)
         if chopper is not None:
-            return self._handle_phase_sample(chopper, msg, synthetic)
+            return self._handle_delay_sample(chopper, msg, synthetic)
         chopper = self._speed_streams.get(name)
         if chopper is not None:
             return self._handle_speed_setpoint(chopper, msg)
         return False
 
-    def _handle_phase_sample(
+    def _handle_delay_sample(
         self, chopper: str, msg: Message, synthetic: list[Message]
     ) -> bool:
         sample = float(msg.value.value)
@@ -222,10 +227,10 @@ class ChopperSynthesizer(MessageSource[Message]):
         if new_setpoint is None:
             return False
         synthetic.append(
-            _make_phase_setpoint_message(chopper, new_setpoint, msg.value.time)
+            _make_delay_setpoint_message(chopper, new_setpoint, msg.value.time)
         )
-        self._states[chopper].phase_setpoint = new_setpoint
-        logger.info('chopper_phase_locked', chopper=chopper, setpoint=new_setpoint)
+        self._states[chopper].delay_setpoint = new_setpoint
+        logger.info('chopper_delay_locked', chopper=chopper, setpoint=new_setpoint)
         return True
 
     def _handle_speed_setpoint(self, chopper: str, msg: Message) -> bool:

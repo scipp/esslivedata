@@ -127,32 +127,18 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
     from ess.livedata.handlers.wavelength_lut_workflow import (
-        HardcodedChopperGeometry,
         create_wavelength_lut_workflow,
     )
     from ess.livedata.handlers.wavelength_lut_workflow_specs import (
         WavelengthLutParams,
     )
 
-    # Stand-in until the NeXus geometry artifact carries NXdisk_chopper
-    # groups; replaced by ``DiskChopper.from_nexus`` against
-    # ``RawChoppers[SampleRun]``.
-    _loki_chopper_geometry = {
-        'chopper1': HardcodedChopperGeometry(
-            axle_position=sc.vector([0.0, 0.0, 15.0], unit='m'),
-            beam_position=sc.scalar(0.0, unit='deg'),
-            slit_begin=sc.array(dims=['slit'], values=[0.0], unit='deg'),
-            slit_end=sc.array(dims=['slit'], values=[90.0], unit='deg'),
-            radius=sc.scalar(0.35, unit='m'),
-        ),
-    }
-
     @specs.wavelength_lut_handle.attach_factory()
     def _wavelength_lut_workflow_factory(params: WavelengthLutParams):
         return create_wavelength_lut_workflow(
             params=params,
             chopper_names=instrument.choppers,
-            chopper_geometry=_loki_chopper_geometry,
+            nexus_filename=_nexus_geometry_filename,
         )
 
     @specs.monitor_handle.attach_factory()

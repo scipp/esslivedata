@@ -44,19 +44,23 @@ The workflow is a `StreamProcessorWorkflow` (the generic adapter from
 `ess.reduce.streaming.StreamProcessor` to the livedata `Workflow` protocol)
 wrapping `ess.reduce.unwrap.lut.LookupTableWorkflow()`. Composition adds:
 
-1. **`DiskChoppers` provider.** For chopperless instruments,
-   `_empty_choppers` returns `DataGroup({})`. For chopper-equipped
-   instruments, the provider takes per-chopper aux setpoints
-   (`<chopper>_rotation_speed_setpoint`, synthetic
-   `<chopper>_phase_setpoint`) plus the static `RawChoppers[SampleRun]`
-   from `GenericNeXusWorkflow`, and calls
-   `scippneutron.chopper.DiskChopper.from_nexus()` per chopper.
-   `from_nexus` requires a scalar `rotation_speed_setpoint` which
-   `RawChoppers` does **not** contain (NeXus only has the time-dependent
-   NXlog) — supplied from the cached aux. The static `delay` (from NeXus)
-   and the synthetic `phase_setpoint` (from plateau detection) thread
-   through orthogonally: `delay` is a calibration constant,
-   `phase_setpoint` is the operator-set angle.
+1. **`DiskChoppers` provider.** For chopperless instruments, returns
+   `DataGroup({})`. For chopper-equipped instruments, takes per-chopper
+   aux setpoints (`<chopper>_rotation_speed_setpoint`, synthetic
+   `<chopper>_delay_setpoint`) plus the static `RawChoppers[SampleRun]`
+   loaded from the geometry artifact via `GenericNeXusWorkflow`, and
+   calls `scippneutron.chopper.DiskChopper.from_nexus()` per chopper.
+   The geometry artifact carries `rotation_speed_setpoint` and `delay`
+   as length-0 NXlog placeholders for the streamed quantities; the
+   provider overrides them with the cached scalar setpoints before
+   calling `from_nexus`. `from_nexus` (scippneutron 26.4) prefers
+   `rotation_speed_setpoint` over `rotation_speed` and derives `phase`
+   from `delay` and the rotation speed (`phase = 2π·f·delay`) when no
+   `phase` field is present — production NeXus files have none.
+   `beam_position` is also injected as a constant 0 deg, matching the
+   upstream essreduce convention (its tests, docs, and fakes all use 0):
+   slit_edges are stored as already measured from the beam-crossing
+   point, so the offset is zero.
 2. **Provenance provider.** Attaches the four scalar input parameters
    (`pulse_period`, `pulse_stride`, `distance_resolution`,
    `time_resolution`) as 0-D coords on the output array, pulling from the
@@ -178,7 +182,9 @@ sources:
    `${instrument}_choppers` (multiple chopper PVs distinguished by
    `source_name`; tdct edge timestamps may also appear and are ignored).
    No new flatbuffer schema is required — `rotation_speed_setpoint` and
-   `phase` NXlogs are f144, already supported.
+   `delay` NXlogs are f144, already supported. (Plateau detection runs
+   on `delay`, not `phase`: production NXdisk_chopper carries no `phase`
+   field; `from_nexus` derives phase from `delay` downstream.)
 
 ### Synthesizer
 
@@ -188,14 +194,13 @@ Per message type:
   unchanged. Each becomes a per-chopper aux source for the workflow,
   cached via the existing `is_context=True` accumulator mechanism and
   replayed on job start.
-- `<chopper>_phase` (noisy f144 readback) feeds a per-chopper plateau
-  detector built on `scippneutron.chopper.filtering.find_plateaus` +
-  `collapse_plateaus`. When stable, the synthesizer emits a synthetic
-  `<chopper>_phase_setpoint` f144 message — the per-chopper aux the
-  workflow needs (cached via the same mechanism). Raw phase samples are
-  not forwarded.
+- `<chopper>_delay` (noisy f144 readback) feeds a per-chopper rolling-
+  window stability detector. When stable, the synthesizer emits a
+  synthetic `<chopper>_delay_setpoint` f144 message — the per-chopper
+  aux the workflow needs (cached via the same mechanism). Raw delay
+  samples are forwarded as a tap (see deviation note below).
 - When every chopper has both `rotation_speed_setpoint` and a stable
-  `phase_setpoint` available, the synthesizer emits a synthetic primary
+  `delay_setpoint` available, the synthesizer emits a synthetic primary
   tick on `chopper_cascade`. During instability the synthesizer simply
   does not emit; the workflow does not refire and the most recent
   published table stays as the last known-good output.
@@ -215,8 +220,8 @@ is revisited only if reality forces it.
 is stateful and N-input→M-output. `MessagePreprocessor` / `Accumulator` is
 bound 1:1 input-`StreamId`→output-`StreamId` and cannot cleanly express
 cross-stream aggregation (`chopper_cascade` is global) or
-emit-other-`StreamId` (synthetic `phase_setpoint` differs from the raw
-`phase` input). Wrapping `MessageSource` preserves every existing
+emit-other-`StreamId` (synthetic `delay_setpoint` differs from the raw
+`delay` input). Wrapping `MessageSource` preserves every existing
 abstraction's semantics. Future migration to a producer-side service that
 publishes the synthetic streams to Kafka is a near-trivial relocation:
 drop the wrapper and use a plain source.
@@ -248,8 +253,8 @@ mapped to physical streams.
 
 **Observability.** The synthesizer logs structured lines at each state
 transition: `subscribed to N PVs`, `first message from <chopper>`,
-`<chopper> phase locked`, `all locked, emitting chopper_cascade`,
-`<chopper> phase lost`. The "operator clicked start, output topic empty"
+`<chopper> delay locked`, `all locked, emitting chopper_cascade`,
+`<chopper> delay lost`. The "operator clicked start, output topic empty"
 state is then diagnosable from `journalctl` alone.
 
 End-to-end validation runs on the CODA staging environment.
@@ -261,10 +266,13 @@ In tree:
 - `src/ess/livedata/handlers/wavelength_lut_workflow.py` — single
   chopper-count-independent factory `create_wavelength_lut_workflow`. The
   internal `_WavelengthLutWorkflow` (a thin `StreamProcessorWorkflow`
-  subclass) caches per-chopper aux setpoint scalars and assembles a
-  `DiskChoppers` `DataGroup` outside sciline; a closure provider exposes
-  it to the pipeline keyed off the trigger. Includes the
-  `HardcodedChopperGeometry` stand-in until NeXus geometry lands.
+  subclass) loads `RawChoppers[SampleRun]` and the NXsource position
+  once at construction via `GenericNeXusWorkflow`, caches per-chopper
+  aux setpoint scalars, and assembles a `DiskChoppers` `DataGroup`
+  outside sciline by overriding the empty NXlog placeholders with the
+  cached scalars and calling `DiskChopper.from_nexus()` per chopper. A
+  closure provider exposes the cached `DiskChoppers` to the pipeline
+  keyed off the trigger.
 - `src/ess/livedata/handlers/wavelength_lut_workflow_specs.py` — pydantic
   param models, `WavelengthLutParams`, `WavelengthLutOutputs`, and
   `register_wavelength_lut_workflow_spec` (auto-derives `aux_sources` from
@@ -288,19 +296,16 @@ In tree:
   factory.
 - `src/ess/livedata/config/instruments/{loki,dummy}/specs.py` and
   `factories.py` — register the spec and attach the factory. LOKI's
-  `factories.py` carries the hardcoded chopper geometry stand-in.
+  `factories.py` passes its geometry artifact path to the factory;
+  the factory loads `RawChoppers[SampleRun]` and the NXsource position
+  via `GenericNeXusWorkflow`.
 
-Remaining (NeXus geometry):
+Remaining (real chopper PVs / pooch):
 
-- `wavelength_lut_workflow.py` — replace the cached-scalar-driven
-  `DiskChopper(...)` assembly with `DiskChopper.from_nexus()` against
-  `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`. Wire
-  `Filename[SampleRun]` and replace the placeholder `SourcePosition`.
-  Drop `HardcodedChopperGeometry`.
-- `src/ess/livedata/scripts/make_geometry_nexus.py` — extend the
-  per-`nx_class` filter to also copy `NXdisk_chopper` groups (~10 lines).
-  Regenerate per-instrument geometry artifacts and re-publish to pooch
-  with bumped consuming hashes.
+- Geometry artifacts: regenerate from a recent `coda_loki_*.hdf` /
+  `coda_<instrument>_*.hdf` source via `make_geometry_nexus.py` and
+  re-publish to pooch with bumped consuming hashes for each chopper-
+  equipped instrument.
 - `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to
   cover the chopper topic if not already; no `stream.name` rewrite, no new
   flatbuffer.
@@ -340,56 +345,73 @@ Remaining test work:
   upstream `LookupTableWorkflow` integration before staging.
 - Integration (gating behavior): feed raw chopper f144 messages into the
   wrapped `MessageSource`; verify the synthesizer emits `chopper_cascade`
-  only after every chopper has a stable `phase_setpoint` and a
+  only after every chopper has a stable `delay_setpoint` and a
   `rotation_speed_setpoint` cached, and that the workflow re-runs
   accordingly.
-- `DiskChoppers` assembly unit (post-NeXus): given a
-  `RawChoppers[SampleRun]` DataGroup (realistic NXdisk_chopper fields per
-  chopper) plus per-chopper scalar setpoints, the workflow produces a
-  `DiskChopper` per entry with the cached aux values threaded into
-  `frequency`/`phase`.
+- `DiskChoppers` assembly unit: given a `RawChoppers[SampleRun]`
+  DataGroup (realistic NXdisk_chopper fields per chopper) plus
+  per-chopper scalar setpoints, the workflow produces a `DiskChopper`
+  per entry with the cached aux values threaded into
+  `rotation_speed_setpoint`/`delay`. (Covered in tree by
+  `tests/handlers/wavelength_lut_workflow_test.py::TestMultiChopperWorkflow`.)
 
 ## Status
 
 Shipped:
 
-- `ChopperSynthesizer` with rolling-window stability detector (mean/std-based
-  lock, exact-equality change detection on `_rotation_speed_setpoint`,
-  noise-floor compare on locked phase mean). Chopperless mode preserved.
+- `ChopperSynthesizer` with rolling-window stability detector
+  (mean/std-based lock, exact-equality change detection on
+  `_rotation_speed_setpoint`, noise-floor compare on locked delay mean).
+  Plateau-detects on `<chopper>_delay`, emits
+  `<chopper>_delay_setpoint` (production NXdisk_chopper carries no
+  `phase` field; `from_nexus` derives phase from delay downstream).
+  Chopperless mode preserved.
 - Single chopper-count-independent factory `create_wavelength_lut_workflow`
-  parameterised by a chopper-name list. Empty list ⇒ chopperless. Per-chopper
-  aux setpoints are cached and assembled into `DiskChoppers` *outside*
-  sciline (in a thin `StreamProcessorWorkflow` subclass), exposed to the
-  pipeline via a closure provider keyed off the trigger. The sciline graph
-  shape does not depend on chopper count — no dynamic `NewType`s, no per-N
-  context-key proliferation.
-- `Instrument.choppers: list[str]` is the single source of truth: the spec
-  derives `aux_sources` from it, the timeseries service passes it to
-  `ChopperSynthesizer`, and the factory uses it to drive provider assembly.
-  `_CHOPPERS_BY_INSTRUMENT` is gone.
-- LOKI declares `choppers=['chopper1']`; its hardcoded geometry stand-in
-  (`HardcodedChopperGeometry`) lives in LOKI's `factories.py` — the call
-  site that disappears when NeXus chopper geometry lands.
+  parameterised by a chopper-name list and a NeXus geometry filename.
+  Empty list ⇒ chopperless (no NeXus needed). Per-chopper aux setpoints
+  are cached, merged with the static `RawChoppers[SampleRun]` from
+  `GenericNeXusWorkflow` (`rotation_speed_setpoint` and `delay` empty
+  NXlogs overridden, `beam_position` injected as 0 deg per upstream
+  convention), and assembled into `DiskChoppers` via
+  `DiskChopper.from_nexus()` *outside* sciline. A closure provider
+  exposes the cached `DiskChoppers` to the pipeline keyed off the
+  trigger. The sciline graph shape does not depend on chopper count.
+- `Instrument.choppers: list[str]` is the single source of truth: the
+  spec derives `aux_sources` from it, the timeseries service passes it
+  to `ChopperSynthesizer`, and the factory uses it to drive provider
+  assembly.
+- LOKI declares `choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1',
+  'fo_chopper2']` (matching the four NXdisk_chopper groups in production
+  NeXus files); the factory loads the published geometry artifact via
+  `GenericNeXusWorkflow`. `HardcodedChopperGeometry` is gone.
+- `make_geometry_nexus.py` correctly handles NXdisk_chopper groups
+  (PR #916): copies static fields verbatim and trims NXlogs to length-0
+  placeholders. A regenerated LOKI artifact (from a recent `coda_loki_*.hdf`
+  source) carries `slit_edges`, `radius`, `slits`, and transformations
+  per chopper; needs to be published to pooch with a bumped consuming
+  hash before the new factory works in production.
 - `log_producer_widget` extended with optional `noise_stddev` /
   `publish_rate_hz` per slider, and publishes initial values on creation
   so a default-position slider still emits one message.
 
-Deviation from this plan: raw `<chopper>_phase` is forwarded (tap, not
+Deviation from this plan: raw `<chopper>_delay` is forwarded (tap, not
 filter) so the noisy readback is plottable in dev mode. Decide before
 productionising whether to revert to drop.
 
 ## Remaining work
 
-### NeXus chopper geometry (replaces the hardcoded provider)
+### NeXus chopper geometry — pooch publish
 
-- Extend `scripts/make_geometry_nexus.py` to copy `NXdisk_chopper` groups
-  (~10 lines). -> PR #916 (merged)
-  bumped consuming hashes.
-- Regenerate per-instrument geometry artifacts, re-publish to pooch with
+- `scripts/make_geometry_nexus.py` extended to copy `NXdisk_chopper`
+  groups, trimming NXlogs to length-0 placeholders. -> PR #916 (merged).
 - New provider taking `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`
   plus per-chopper aux setpoints, calling `DiskChopper.from_nexus()` per
-  chopper. Wire `Filename[SampleRun]` and replace placeholder
-  `SourcePosition`. But we need to research what we can actually use for loading NXdisk_chopper groups that have length-0 logs as placeholders for the stream. I think `DiskChopper.from_nexus()` and/or `RawChoppers[SampleRun]` from `GenericNeXusWorkflow` might not work with that.
+  chopper. Source position from NeXus, `beam_position=0` injected. -> Done.
+- Regenerate per-instrument geometry artifacts (e.g. from a recent
+  `coda_<instrument>_*.hdf` source), publish to pooch, bump consuming
+  hashes. **Outstanding** — LOKI artifact `geometry-loki-2026-05-08.nxs`
+  generated locally from `coda_loki_999999_00026352.hdf`; not yet
+  uploaded.
 
 ### Per-instrument UI param defaults
 
@@ -420,8 +442,9 @@ LOKI is wired today. DREAM / BIFROST / ODIN / NMX each need:
 - chopper PV stream declarations,
 - `LtotalRange` defaults for the instrument's detector layout (via the
   param-subclass mechanism above),
-- the hardcoded geometry stand-in at their factory call site, until the
-  NeXus geometry artifact carries `NXdisk_chopper` for that instrument.
+- a regenerated geometry artifact carrying `NXdisk_chopper` groups
+  published to pooch (same recipe as LOKI: run
+  `make_geometry_nexus.py` on a recent `coda_<instrument>_*.hdf`).
 
 ### Tests
 
@@ -448,7 +471,7 @@ The synthesizer can in principle emit cascades faster than a Monte-Carlo
 recompute can finish (~seconds at 1M neutrons). The current design has
 two implicit dampers and one open verification gap:
 
-1. **Plateau detector debounce.** A window of stable phase samples is
+1. **Plateau detector debounce.** A window of stable delay samples is
    required before a new lock; rapid operator nudges produce no
    intermediate cascades. Once locked, only a *new* mean (drift > `atol`)
    re-fires.
@@ -476,6 +499,6 @@ two implicit dampers and one open verification gap:
   scope unless a concrete need surfaces.
 - Per-instrument `LtotalRange` defaults and plateau-detection thresholds
   are answerable at impl time without changing this plan's overall shape.
-- Should the synthesizer drop or forward raw `<chopper>_phase`? Plan
+- Should the synthesizer drop or forward raw `<chopper>_delay`? Plan
   originally said drop; prototype forwards. Decision driven by whether
   operators want the noisy readback plotted.
