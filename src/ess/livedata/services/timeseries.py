@@ -67,6 +67,7 @@ def make_timeseries_service_builder(
         outer_source_wrapper=partial(
             ChopperSynthesizer,
             chopper_names=instrument_obj.choppers,
+            delay_atol=instrument_obj.chopper_delay_atol,
         ),
     )
 

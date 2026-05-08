@@ -448,23 +448,23 @@ productionising whether to revert to drop.
 
 ### Unblock LOKI in production (next concrete step)
 
-1. Upload `geometry-loki-2026-05-08.nxs` (generated locally from
-   `coda_loki_999999_00026352.hdf` by
-   `python -m ess.livedata.scripts.make_geometry_nexus <coda> <out> --force`)
-   to the pooch server. Bump the consuming hash in
-   `handlers/detector_data_handler.py::get_nexus_geometry_filename`.
-2. Add the chopper Kafka topic. In `setup-kafka-topics.sh`, add a
-   `${instrument}_choppers` topic for local dev. Extend f144 routing in
-   `kafka/message_adapter.py` if it does not already cover this topic.
-3. Replace the placeholder PV names in
-   `config/instruments/loki/specs.py::f144_log_streams` (`LOKI-<chop>:Delay-RBV`,
-   `:Speed-SP`, `:Delay-Locked`) with real PVs once the upstream
-   control system is hooked up. Topic name should also become real.
-4. Tune `delay_atol` (currently default `1.0`, dimensionless from the
-   synthesizer's POV; the f144 stream metadata says `ns`). Real chopper
-   delay readback noise level is unknown — verify on the CODA staging
-   environment. Same knob is used for both noise rejection (window std
-   threshold) and change detection (drift > atol since last lock).
+LOKI dev wiring is complete (commits `53f9d827`, `1dabb528`):
+geometry-loki-2026-05-08.nxs uploaded and registered, real PVs from
+`coda_loki_999999_00026352.hdf` declared on the dedicated
+`loki_choppers` topic, dev stream mapping subscribes to it,
+`F144Serializer` routes per-stream so the dashboard log-producer
+widget publishes chopper sliders to the same topic.
+
+Remaining for production:
+
+1. Switch from dev-mode fakes to real upstream control system; the PV
+   names already match the source file, but the actual ECDC topic name
+   should be confirmed with the chopper team.
+2. Tune `Instrument.chopper_delay_atol` (default `1000.0` ns =
+   ~0.005 deg at 14 Hz, ~0.075 deg at 210 Hz). Same knob does noise
+   rejection (window std threshold) and change detection (drift > atol
+   since last lock). Real readback noise on CODA staging will set the
+   floor; tighten or loosen per instrument.
 
 ### Per-instrument adoption
 

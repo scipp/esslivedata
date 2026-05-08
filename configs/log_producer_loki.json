@@ -52,7 +52,7 @@
             "max": 71428000.0,
             "step": 100000.0,
             "initial": 10000000.0,
-            "noise_stddev": 0.3,
+            "noise_stddev": 100.0,
             "publish_rate_hz": 5.0
         },
         {
@@ -63,7 +63,7 @@
             "max": 71428000.0,
             "step": 100000.0,
             "initial": 12000000.0,
-            "noise_stddev": 0.3,
+            "noise_stddev": 100.0,
             "publish_rate_hz": 5.0
         },
         {
@@ -74,7 +74,7 @@
             "max": 71428000.0,
             "step": 100000.0,
             "initial": 14000000.0,
-            "noise_stddev": 0.3,
+            "noise_stddev": 100.0,
             "publish_rate_hz": 5.0
         },
         {
@@ -85,7 +85,7 @@
             "max": 71428000.0,
             "step": 100000.0,
             "initial": 16000000.0,
-            "noise_stddev": 0.3,
+            "noise_stddev": 100.0,
             "publish_rate_hz": 5.0
         }
     ]

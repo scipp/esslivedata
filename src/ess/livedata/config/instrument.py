@@ -89,6 +89,13 @@ class Instrument:
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
     choppers: list[str] = field(default_factory=list)
+    #: Plateau-detection tolerance for chopper delay readbacks, in ns. Used
+    #: by ``ChopperSynthesizer`` for both noise rejection (window std must be
+    #: below this) and change detection (drift since last lock). 1 us is a
+    #: tight default suitable for sub-degree phase tracking on typical ESS
+    #: choppers (~0.075 deg at 210 Hz, ~0.005 deg at 14 Hz). Loosen
+    #: per-instrument once real readback noise is measured.
+    chopper_delay_atol: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)

@@ -125,8 +125,8 @@ class _ChopperState:
 @dataclass
 class _ChopperSynthesizerConfig:
     chopper_names: tuple[str, ...] = ()
-    delay_window_size: int = 10
-    delay_atol: float = 1.0
+    delay_window_size: int = 5
+    delay_atol: float = 1000.0
 
 
 class ChopperSynthesizer(MessageSource[Message]):
@@ -147,8 +147,8 @@ class ChopperSynthesizer(MessageSource[Message]):
         wrapped: MessageSource[Message],
         *,
         chopper_names: Sequence[str] = (),
-        delay_window_size: int = 2,
-        delay_atol: float = 1.0,
+        delay_window_size: int = 5,
+        delay_atol: float = 1000.0,
     ) -> None:
         self._wrapped = wrapped
         self._config = _ChopperSynthesizerConfig(
