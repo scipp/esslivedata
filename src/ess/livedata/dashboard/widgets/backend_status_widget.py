@@ -202,8 +202,6 @@ class WorkerStatusRow:
             margin=0,
         )
 
-        self._last_stream_stats: StreamStats | None = None
-
         # Set initial content
         self.update(status, is_stale, last_seen_seconds_ago)
 
@@ -268,22 +266,17 @@ class WorkerStatusRow:
             time_text = f"Up: {_format_duration(uptime)}"
         self._uptime_pane.object = f"<span>{time_text}</span>"
 
-        # Cache stream stats when a new snapshot arrives
-        if status.stream_stats is not None:
-            self._last_stream_stats = status.stream_stats
-
-        # Stats
+        # Stats. ServiceRegistry preserves the last non-None stream_stats, so
+        # status.stream_stats is the most recent known snapshot.
         jobs_text = f"Jobs: {status.active_job_count}"
         batch_text = f"Batch: {status.batch_interval_s:.0f}s"
-        msgs_text = _format_stream_stats_summary(self._last_stream_stats)
+        msgs_text = _format_stream_stats_summary(status.stream_stats)
         self._stats_pane.object = (
             f"<span>{jobs_text} | {msgs_text} | {batch_text}</span>"
         )
 
         # Full-width expandable stream details
-        self._details_pane.object = _format_stream_stats_details(
-            self._last_stream_stats
-        )
+        self._details_pane.object = _format_stream_stats_details(status.stream_stats)
 
     def _calculate_uptime(self, started_at: Timestamp) -> float:
         """Calculate uptime in seconds from started_at timestamp."""

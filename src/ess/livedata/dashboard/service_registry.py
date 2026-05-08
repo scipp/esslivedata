@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 import structlog
 
@@ -45,9 +46,22 @@ class ServiceRegistry:
         return self._worker_statuses
 
     def status_updated(self, status: ServiceStatus) -> None:
-        """Update the stored worker status and record timestamp."""
+        """Update the stored worker status and record timestamp.
+
+        ``stream_stats`` is sticky: if the new status has ``stream_stats=None``
+        and we already have a status with stream_stats for this worker, we
+        preserve the previous value. The publisher only attaches a fresh
+        snapshot every ``_metrics_interval`` (~30 s) but heartbeats every ~2 s,
+        so without this the latest stored status would have no stream_stats
+        most of the time, and new sessions would have to wait for the next
+        snapshot to display anything.
+        """
         worker_key = make_worker_key(status)
         logger.debug("Worker status updated: %s -> %s", worker_key, status.state)
+        if status.stream_stats is None:
+            previous = self._worker_statuses.get(worker_key)
+            if previous is not None and previous.stream_stats is not None:
+                status = replace(status, stream_stats=previous.stream_stats)
         self._worker_statuses[worker_key] = status
         self._worker_timestamps[worker_key] = time.time_ns()
 
