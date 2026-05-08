@@ -69,6 +69,9 @@ stream_mapping = {
         detector_names=list(detector_fakes),
         monitor_names=monitor_names,
         log_names=list(f144_log_streams.keys()),
+        log_topic_for_stream={
+            name: info['topic'] for name, info in f144_log_streams.items()
+        },
     ),
     StreamingEnv.PROD: StreamMapping(**_common_prod, logs=_make_loki_logs()),
 }

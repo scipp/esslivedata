@@ -190,6 +190,8 @@ ignore-words-list = [
     # But we use the word in our code of conduct which is the contributor covenant.
     # Let's not modify it if we don't have to.
     "socio-economic",
+    # FO = Frame Overlap chopper abbreviation at LOKI
+    "fo",
 ]
 
 [tool.pylint.main]

@@ -195,27 +195,38 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # - ``<chopper>_rotation_speed_setpoint`` is the clean upstream f144.
 # - ``<chopper>_delay_setpoint`` is itself synthesized (passed through the
 #   same f144 plumbing) and registered here so the preprocessor accepts it.
-# Production source PV names are placeholders until the upstream control
-# system is hooked up.
+#   It is not subscribed from Kafka, so its source name is a self-reference.
+# Source PV names taken from ``coda_loki_999999_00026352.hdf``.
 _LOKI_CHOPPERS = ['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2']
+
+#: PV prefix per chopper as observed in production NeXus files.
+_LOKI_CHOPPER_PV_PREFIX: dict[str, str] = {
+    'bw_chopper1': 'LOKI-ChpSy1:Chop-BWC-101',
+    'bw_chopper2': 'LOKI-ChpSy1:Chop-BWC-102',
+    'fo_chopper1': 'LOKI-ChpSy3:Chop-SFOC-101',
+    'fo_chopper2': 'LOKI-ChpSy3:Chop-SFOC-102',
+}
+
+_LOKI_CHOPPER_TOPIC = 'loki_choppers'
 
 
 def _chopper_log_streams() -> dict[str, dict[str, str]]:
     streams: dict[str, dict[str, str]] = {}
     for name in _LOKI_CHOPPERS:
+        prefix = _LOKI_CHOPPER_PV_PREFIX[name]
         streams[f'{name}_delay'] = {
-            'source': f'LOKI-{name}:Delay-RBV',
-            'topic': 'loki_motion',
+            'source': f'{prefix}:TotDly',
+            'topic': _LOKI_CHOPPER_TOPIC,
             'units': 'ns',
         }
         streams[f'{name}_rotation_speed_setpoint'] = {
-            'source': f'LOKI-{name}:Speed-SP',
-            'topic': 'loki_motion',
+            'source': f'{prefix}:Spd_S',
+            'topic': _LOKI_CHOPPER_TOPIC,
             'units': 'Hz',
         }
         streams[f'{name}_delay_setpoint'] = {
-            'source': f'LOKI-{name}:Delay-Locked',
-            'topic': 'loki_motion',
+            'source': f'{name}_delay_setpoint',
+            'topic': _LOKI_CHOPPER_TOPIC,
             'units': 'ns',
         }
     return streams
