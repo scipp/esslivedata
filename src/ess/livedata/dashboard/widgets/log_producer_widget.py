@@ -25,10 +25,20 @@ class LogProducerWidget:
     def __init__(self, instrument: str, exit_stack: ExitStack):
         self._instrument = instrument
 
+        sliders_config = self._load_config()
+        topic_for_stream = {
+            entry['stream_name']: entry['topic']
+            for entry in sliders_config
+            if 'topic' in entry
+        }
+
         self._sink = exit_stack.enter_context(
             KafkaSink(
                 kafka_config=load_config(namespace=config_names.kafka),
-                serializer=F144Serializer(instrument=instrument),
+                serializer=F144Serializer(
+                    instrument=instrument,
+                    topic_for_stream=topic_for_stream,
+                ),
             )
         )
 
@@ -38,27 +48,23 @@ class LogProducerWidget:
         pn.config.throttled = True
         self._throttled_checkbox.param.watch(self._on_throttled_change, 'value')
 
-        self._sliders = []
-        self._load_and_create_sliders()
+        self._sliders = [self._create_slider(cfg) for cfg in sliders_config]
 
-    def _load_and_create_sliders(self):
-        """Load slider configuration from JSON file and create widgets."""
+    def _load_config(self) -> list[dict]:
+        """Load slider configuration from JSON file."""
         config_path = self._get_config_path()
 
         if not config_path.exists():
             logger.warning("Log producer config file not found: %s", config_path)
-            return
+            return []
 
         try:
             with open(config_path) as f:
                 config = json.load(f)
-
-            for slider_config in config.get('sliders', []):
-                slider = self._create_slider(slider_config)
-                self._sliders.append(slider)
-
+            return config.get('sliders', [])
         except Exception as e:
             logger.error("Failed to load log producer config: %s", e)
+            return []
 
     def _get_config_path(self) -> Path:
         """Get the path to the configuration file for the current instrument."""

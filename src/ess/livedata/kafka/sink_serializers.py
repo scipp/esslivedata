@@ -93,7 +93,32 @@ class Da00Serializer(_TopicResolvingSerializer[sc.DataArray]):
 
 
 class F144Serializer(_TopicResolvingSerializer[sc.DataArray]):
-    """Serializes scipp log-data DataArrays to the ``f144`` flatbuffer schema."""
+    """Serializes scipp log-data DataArrays to the ``f144`` flatbuffer schema.
+
+    ``topic_for_stream`` overrides the default ``stream_kind_to_topic`` route
+    on a per-stream basis, mirroring production split-topic conventions
+    (e.g. chopper PVs on ``<instrument>_choppers``).
+    """
+
+    def __init__(
+        self,
+        *,
+        instrument: str,
+        topic_for_stream: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(instrument=instrument)
+        self._topic_for_stream = topic_for_stream or {}
+
+    def serialize(self, message: Message[sc.DataArray]) -> SerializedMessage:
+        topic = self._topic_for_stream.get(
+            message.stream.name,
+            stream_kind_to_topic(self._instrument, message.stream.kind),
+        )
+        try:
+            key, value = self._encode(message)
+        except (AttributeError, KeyError, ValueError, TypeError) as e:
+            raise SerializationError(f"Failed to serialize message: {e}") from None
+        return SerializedMessage(topic=topic, key=key, value=value)
 
     def _encode(self, message: Message[sc.DataArray]) -> tuple[None, bytes]:
         da = message.value

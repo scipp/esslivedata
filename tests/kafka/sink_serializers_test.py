@@ -213,6 +213,30 @@ class TestF144Serializer:
         with pytest.raises(SerializationError):
             F144Serializer(instrument=INSTRUMENT).serialize(msg)
 
+    def test_topic_for_stream_overrides_default_topic(self) -> None:
+        """Per-stream topic override mirrors prod's split-topic conventions."""
+        data = sc.DataArray(
+            data=sc.array(dims=[], values=1.0, unit='Hz'),
+            coords={'time': sc.scalar(1_000_000, unit='ns')},
+        )
+        chopper_msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LOG, name='bw_chopper1_delay'),
+            value=data,
+        )
+        motion_msg = Message(
+            timestamp=Timestamp.from_ns(0),
+            stream=StreamId(kind=StreamKind.LOG, name='detector_carriage'),
+            value=data,
+        )
+        serializer = F144Serializer(
+            instrument=INSTRUMENT,
+            topic_for_stream={'bw_chopper1_delay': f'{INSTRUMENT}_choppers'},
+        )
+
+        assert serializer.serialize(chopper_msg).topic == f'{INSTRUMENT}_choppers'
+        assert serializer.serialize(motion_msg).topic == f'{INSTRUMENT}_motion'
+
 
 def _make_service_status(**overrides) -> ServiceStatus:
     defaults: dict = {

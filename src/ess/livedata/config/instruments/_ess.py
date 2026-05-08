@@ -59,10 +59,24 @@ def _make_dev_area_detectors(
     }
 
 
-def _make_dev_logs(*, instrument: str, log_names: list[str]) -> StreamLUT:
-    """Create log stream mapping for dev mode where source_name equals internal name."""
-    topic = f'{instrument}_motion'
-    return {InputStreamKey(topic=topic, source_name=name): name for name in log_names}
+def _make_dev_logs(
+    *,
+    instrument: str,
+    log_names: list[str],
+    topic_for_stream: dict[str, str] | None = None,
+) -> StreamLUT:
+    """Create log stream mapping for dev mode where source_name equals internal name.
+
+    ``topic_for_stream`` lets callers override the default ``<instrument>_motion``
+    topic per stream, mirroring the production split (e.g. chopper PVs on a
+    dedicated ``<instrument>_choppers`` topic).
+    """
+    default_topic = f'{instrument}_motion'
+    overrides = topic_for_stream or {}
+    return {
+        InputStreamKey(topic=overrides.get(name, default_topic), source_name=name): name
+        for name in log_names
+    }
 
 
 def _make_dev_beam_monitors(
@@ -106,6 +120,7 @@ def make_dev_stream_mapping(
     area_detector_names: list[str] | None = None,
     monitor_names: list[str] | None = None,
     log_names: list[str] | None = None,
+    log_topic_for_stream: dict[str, str] | None = None,
 ) -> StreamMapping:
     area_detectors = (
         _make_dev_area_detectors(
@@ -115,7 +130,11 @@ def make_dev_stream_mapping(
         else {}
     )
     logs = (
-        _make_dev_logs(instrument=instrument, log_names=log_names)
+        _make_dev_logs(
+            instrument=instrument,
+            log_names=log_names,
+            topic_for_stream=log_topic_for_stream,
+        )
         if log_names
         else None
     )
