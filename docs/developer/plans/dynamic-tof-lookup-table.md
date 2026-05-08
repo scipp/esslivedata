@@ -169,13 +169,14 @@ Chopper data feeds the `DiskChoppers` provider above, assembled from two
 sources:
 
 1. **Static chopper geometry from the NeXus geometry artifact.** Slit
-   positions/edges, axle position, radius, and `delay` per chopper. Loaded
-   via `GenericNeXusWorkflow`'s `RawChoppers[SampleRun]` provider — the
-   same path detector workflows use to load static geometry. The pooch
-   geometry artifact must be regenerated to include `NXdisk_chopper`
-   groups; `make_geometry_nexus.py`'s per-`nx_class` filter does not copy
-   them today (~10 lines to add). Per-instrument artifacts must then be
-   re-published with bumped consuming hashes.
+   edges, axle position, radius per chopper. Loaded via
+   `GenericNeXusWorkflow`'s `RawChoppers[SampleRun]` provider — the
+   same path detector workflows use to load static geometry.
+   `make_geometry_nexus.py` (PR #916) copies `NXdisk_chopper` groups
+   verbatim and trims the streamed quantities (`rotation_speed`,
+   `delay`, etc.) to length-0 NXlog placeholders; per-instrument
+   artifacts must then be re-published to pooch with bumped consuming
+   hashes (see "Remaining work" below).
 2. **Synthetic per-chopper setpoint streams**, produced in-process by
    `ChopperSynthesizer` — a stateful `MessageSource` decorator wrapping the
    timeseries service's source. Consumes raw chopper f144 messages from
@@ -185,6 +186,44 @@ sources:
    `delay` NXlogs are f144, already supported. (Plateau detection runs
    on `delay`, not `phase`: production NXdisk_chopper carries no `phase`
    field; `from_nexus` derives phase from `delay` downstream.)
+
+### Field reference (do not re-derive)
+
+`scippneutron.chopper.DiskChopper.from_nexus` (≥ 26.4.1, ESS-aware) reads
+exactly these keys from the per-chopper data group:
+
+- `position` (axle position, vector3)
+- `rotation_speed_setpoint` *preferred*, falls back to `rotation_speed`
+  if absent (scalar Hz)
+- `phase` if present, else derived from `delay` and the chosen rotation
+  speed via `phase = 2π·f·delay` (scalar)
+- `beam_position` (scalar deg)
+- `slit_height`, `radius` (optional, scalar)
+- `slit_edges` *or* explicit `slit_begin` / `slit_end` (1-D)
+
+It **ignores** every other NXlog the source file may carry —
+`pulse_delay`, `experiment_delay`, `mechanical_delay`, `park_angle`,
+`top_dead_center`, etc. Don't add scaffolding around them on the
+chopper-loading side.
+
+Coda source files (`/workspace/esslivedata/coda_<instrument>_*.hdf`,
+inspected for LOKI and ODIN) carry NXdisk_chopper groups with:
+
+- Static datasets: `slit_edges`, `radius`, `slits`, depends_on chain
+  (NXtransformations). LOKI also has length-0 NXlog placeholders when
+  re-read after `make_geometry_nexus.py`; ODIN files additionally carry
+  `slit_height`, `mechanical_delay`, `park_angle`.
+- NXlogs: `rotation_speed`, `rotation_speed_setpoint`, `delay`,
+  `pulse_delay`, `experiment_delay`, `top_dead_center`.
+- **Missing** (in *both* instruments' source files): `phase`,
+  `beam_position`. The provider injects `beam_position = 0 deg`
+  (upstream essreduce convention; not a placeholder hack — every
+  essreduce test/doc/fake uses 0). `phase` is derived from `delay`.
+
+The provider workflow is therefore: take the loaded `RawChoppers` group,
+override the empty `rotation_speed_setpoint` and `delay` NXlogs with
+the cached scalar setpoints from the synthesizer, inject
+`beam_position = 0 deg`, then call `DiskChopper.from_nexus` per chopper.
 
 ### Synthesizer
 
@@ -357,42 +396,49 @@ Remaining test work:
 
 ## Status
 
-Shipped:
+Shipped (commit `414577d5` and earlier on `chopper-workflow`):
 
-- `ChopperSynthesizer` with rolling-window stability detector
-  (mean/std-based lock, exact-equality change detection on
-  `_rotation_speed_setpoint`, noise-floor compare on locked delay mean).
-  Plateau-detects on `<chopper>_delay`, emits
-  `<chopper>_delay_setpoint` (production NXdisk_chopper carries no
-  `phase` field; `from_nexus` derives phase from delay downstream).
-  Chopperless mode preserved.
-- Single chopper-count-independent factory `create_wavelength_lut_workflow`
-  parameterised by a chopper-name list and a NeXus geometry filename.
-  Empty list ⇒ chopperless (no NeXus needed). Per-chopper aux setpoints
-  are cached, merged with the static `RawChoppers[SampleRun]` from
-  `GenericNeXusWorkflow` (`rotation_speed_setpoint` and `delay` empty
-  NXlogs overridden, `beam_position` injected as 0 deg per upstream
-  convention), and assembled into `DiskChoppers` via
-  `DiskChopper.from_nexus()` *outside* sciline. A closure provider
-  exposes the cached `DiskChoppers` to the pipeline keyed off the
-  trigger. The sciline graph shape does not depend on chopper count.
-- `Instrument.choppers: list[str]` is the single source of truth: the
-  spec derives `aux_sources` from it, the timeseries service passes it
-  to `ChopperSynthesizer`, and the factory uses it to drive provider
-  assembly.
-- LOKI declares `choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1',
-  'fo_chopper2']` (matching the four NXdisk_chopper groups in production
-  NeXus files); the factory loads the published geometry artifact via
-  `GenericNeXusWorkflow`. `HardcodedChopperGeometry` is gone.
-- `make_geometry_nexus.py` correctly handles NXdisk_chopper groups
-  (PR #916): copies static fields verbatim and trims NXlogs to length-0
-  placeholders. A regenerated LOKI artifact (from a recent `coda_loki_*.hdf`
-  source) carries `slit_edges`, `radius`, `slits`, and transformations
-  per chopper; needs to be published to pooch with a bumped consuming
-  hash before the new factory works in production.
+- **Workflow** (`wavelength_lut_workflow.py`): chopper-count-independent
+  factory `create_wavelength_lut_workflow(params, chopper_names,
+  nexus_filename)`. Empty `chopper_names` ⇒ chopperless (no NeXus
+  needed). Otherwise: `_load_static_geometry` calls
+  `GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])` once
+  at construction to compute `RawChoppers[SampleRun]` and
+  `Position[NXsource, SampleRun]`. Per-chopper accumulate caches the
+  scalar `rotation_speed_setpoint` and `delay` setpoints from the aux
+  streams; when all are present, builds a `DiskChoppers` `DataGroup`
+  outside sciline by overriding the empty NXlogs with the cached
+  scalars, injecting `beam_position = 0 deg`, and calling
+  `DiskChopper.from_nexus` per chopper. A closure provider keyed off
+  the trigger exposes the cached `DiskChoppers` to the pipeline.
+- **Synthesizer** (`chopper_synthesizer.py`): rolling-window stability
+  detector (mean/std-based lock with shared `delay_atol` for noise
+  rejection and change detection; exact-equality change detection on
+  `_rotation_speed_setpoint`). Plateau-detects on `<chopper>_delay`,
+  emits `<chopper>_delay_setpoint` once stable. Forwards raw delay
+  samples as a tap (deviation, see below). Chopperless mode emits one
+  vacuous startup tick.
+- **Config**: `Instrument.choppers: list[str]` is the single source of
+  truth — the spec derives `aux_sources` from it, the timeseries
+  service passes it to `ChopperSynthesizer`, and the factory uses it
+  to drive provider assembly. LOKI declares `['bw_chopper1',
+  'bw_chopper2', 'fo_chopper1', 'fo_chopper2']` (the four
+  NXdisk_chopper groups in production NeXus files); LOKI's f144 stream
+  registry has 12 entries (3 per chopper: `_delay`,
+  `_rotation_speed_setpoint`, `_delay_setpoint`).
+- **Geometry script** (`make_geometry_nexus.py`, PR #916): copies
+  NXdisk_chopper static fields verbatim and trims NXlogs to length-0
+  placeholders. Verified on `coda_loki_999999_00026352.hdf`: produces
+  a 1.5 MB artifact with all four LOKI choppers' static fields intact.
+- **Tests**: in-tree multi-chopper test builds a synthetic NeXus file
+  with `_write_chopper_nexus` (mirrors what `make_geometry_nexus.py`
+  produces) so coverage exists without depending on the pooch artifact.
+  Service-level integration on the chopperless path passes (LOKI
+  precomputed-table reference within tolerance). All synthesizer unit
+  tests cover the renamed delay path.
 - `log_producer_widget` extended with optional `noise_stddev` /
-  `publish_rate_hz` per slider, and publishes initial values on creation
-  so a default-position slider still emits one message.
+  `publish_rate_hz` per slider, and publishes initial values on
+  creation so a default-position slider still emits one message.
 
 Deviation from this plan: raw `<chopper>_delay` is forwarded (tap, not
 filter) so the noisy readback is plottable in dev mode. Decide before
@@ -400,65 +446,59 @@ productionising whether to revert to drop.
 
 ## Remaining work
 
-### NeXus chopper geometry — pooch publish
+### Unblock LOKI in production (next concrete step)
 
-- `scripts/make_geometry_nexus.py` extended to copy `NXdisk_chopper`
-  groups, trimming NXlogs to length-0 placeholders. -> PR #916 (merged).
-- New provider taking `RawChoppers[SampleRun]` from `GenericNeXusWorkflow`
-  plus per-chopper aux setpoints, calling `DiskChopper.from_nexus()` per
-  chopper. Source position from NeXus, `beam_position=0` injected. -> Done.
-- Regenerate per-instrument geometry artifacts (e.g. from a recent
-  `coda_<instrument>_*.hdf` source), publish to pooch, bump consuming
-  hashes. **Outstanding** — LOKI artifact `geometry-loki-2026-05-08.nxs`
-  generated locally from `coda_loki_999999_00026352.hdf`; not yet
-  uploaded.
-
-### Per-instrument UI param defaults
-
-Per-instrument-fixed defaults for user-facing params (`LtotalRange` —
-5–30 m suits LOKI; DREAM/BIFROST will differ — and possibly
-`pulse.frequency` for commissioning) need to surface as initial values in
-the UI form. Resolution: instrument passes a subclass of
-`WavelengthLutParams` with overridden field defaults to
-`register_wavelength_lut_workflow_spec` (which already accepts
-`params: type[WavelengthLutParams]`). The other previously-listed values
-turned out to belong elsewhere: chopper geometry is now a factory-time
-argument at the instrument's call site (gone when NeXus lands), and
-plateau-detection thresholds remain on the synthesizer.
-
-### Real chopper PVs (off the dev/log-producer path)
-
-- Chopper topic (e.g. `${instrument}_choppers`) added in
-  `setup-kafka-topics.sh` and the f144 routing in `message_adapter.py`.
-- Per-instrument chopper-PV stream declarations alongside
-  `f144_log_streams`. The chopper-name list lives on `Instrument.choppers`
-  already; `streams.py` adds the PV→logical-name mapping per chopper.
+1. Upload `geometry-loki-2026-05-08.nxs` (generated locally from
+   `coda_loki_999999_00026352.hdf` by
+   `python -m ess.livedata.scripts.make_geometry_nexus <coda> <out> --force`)
+   to the pooch server. Bump the consuming hash in
+   `handlers/detector_data_handler.py::get_nexus_geometry_filename`.
+2. Add the chopper Kafka topic. In `setup-kafka-topics.sh`, add a
+   `${instrument}_choppers` topic for local dev. Extend f144 routing in
+   `kafka/message_adapter.py` if it does not already cover this topic.
+3. Replace the placeholder PV names in
+   `config/instruments/loki/specs.py::f144_log_streams` (`LOKI-<chop>:Delay-RBV`,
+   `:Speed-SP`, `:Delay-Locked`) with real PVs once the upstream
+   control system is hooked up. Topic name should also become real.
+4. Tune `delay_atol` (currently default `1.0`, dimensionless from the
+   synthesizer's POV; the f144 stream metadata says `ns`). Real chopper
+   delay readback noise level is unknown — verify on the CODA staging
+   environment. Same knob is used for both noise rejection (window std
+   threshold) and change detection (drift > atol since last lock).
 
 ### Per-instrument adoption
 
-LOKI is wired today. DREAM / BIFROST / ODIN / NMX each need:
+LOKI is wired. DREAM / BIFROST / ODIN / NMX each need:
 
-- `Instrument.choppers` populated with their chopper names,
-- chopper PV stream declarations,
-- `LtotalRange` defaults for the instrument's detector layout (via the
-  param-subclass mechanism above),
-- a regenerated geometry artifact carrying `NXdisk_chopper` groups
-  published to pooch (same recipe as LOKI: run
-  `make_geometry_nexus.py` on a recent `coda_<instrument>_*.hdf`).
+- `Instrument.choppers` populated with their chopper names. ODIN file
+  inspection confirms 10 NXdisk_chopper groups
+  (`bpc{1,2}`, `foc{1..5}`, `t0`, `wfm{1,2}`); other instruments TBD.
+- Chopper PV stream declarations in their `specs.py::f144_log_streams`
+  (3 entries per chopper: `_delay`, `_rotation_speed_setpoint`,
+  `_delay_setpoint`).
+- Regenerated geometry artifact carrying `NXdisk_chopper` groups
+  published to pooch — recipe identical to LOKI.
+- `LtotalRange` defaults for the instrument's detector layout via a
+  subclass of `WavelengthLutParams` with overridden field defaults,
+  passed to `register_wavelength_lut_workflow_spec(instrument, params=…)`.
 
 ### Tests
 
-- Reference fixture: precomputed table for one chopper-equipped instrument,
-  integration test that feeds chopper f144s and asserts agreement.
-- Round-trip `scipp_to_da00` ↔ `da00_to_scipp` preserves values + the four
-  scalar coords.
-- Service-level integration: gating behaviour (no cascade until both
-  setpoints), refire on plateau change.
+- Reference fixture: precomputed table for one chopper-equipped
+  instrument, integration test that feeds chopper f144s and asserts
+  agreement (catches synthesizer regressions, `DiskChoppers` assembly
+  regressions, and upstream `LookupTableWorkflow` changes before staging).
+- Round-trip `scipp_to_da00` ↔ `da00_to_scipp`: expand existing partial
+  coverage to include variances.
+- Service-level integration: synthesizer gating behaviour (no cascade
+  until *both* `delay_setpoint` and `rotation_speed_setpoint` are
+  cached for every chopper); refire on plateau change.
+- Backpressure stress test (open verification gap, see below).
 
 ### Producer/consumer end meeting (synthesizer's exit)
 
-Once an upstream service publishes `chopper_cascade_reached` directly, drop
-`ChopperSynthesizer`, the `outer_source_wrapper` plumbing, and
+Once an upstream service publishes `chopper_cascade_reached` directly,
+drop `ChopperSynthesizer`, the `outer_source_wrapper` plumbing, and
 `_SYNTHETIC_LOG_ATTRS`. The workflow becomes a plain f144 consumer.
 
 Then deprecate the static `loki_lookup_table_no_choppers` path: LOKI's
