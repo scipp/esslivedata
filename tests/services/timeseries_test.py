@@ -41,6 +41,31 @@ def make_timeseries_app(instrument: str) -> LivedataApp:
     return LivedataApp.from_service_builder(builder, use_naive_message_batcher=False)
 
 
+def test_instrument_chopper_delay_atol_threaded_to_synthesizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-instrument knob flows from `Instrument` to `ChopperSynthesizer`."""
+    # Ensure the instrument is registered before patching.
+    make_timeseries_service_builder(instrument='dummy')
+    monkeypatch.setattr(
+        instrument_registry['dummy'], 'chopper_delay_atol', 4321.0, raising=True
+    )
+    builder = make_timeseries_service_builder(instrument='dummy')
+    # `outer_source_wrapper` is wired as a `partial` whose bound kwargs
+    # are the actual init args used when the service constructs the synth.
+    wrapper = builder._outer_source_wrapper
+    assert wrapper.keywords['delay_atol'] == 4321.0
+
+
+def test_default_chopper_delay_atol_threaded_to_synthesizer() -> None:
+    """Without override, the synthesizer sees the instrument's default atol."""
+    builder = make_timeseries_service_builder(instrument='dummy')
+    wrapper = builder._outer_source_wrapper
+    assert wrapper.keywords['delay_atol'] == (
+        instrument_registry['dummy'].chopper_delay_atol
+    )
+
+
 first_motion_source_name = {'dummy': 'motion1'}
 second_motion_source_name = {'dummy': 'motion2'}
 

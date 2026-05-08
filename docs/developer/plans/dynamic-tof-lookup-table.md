@@ -314,8 +314,12 @@ In tree:
   keyed off the trigger.
 - `src/ess/livedata/handlers/wavelength_lut_workflow_specs.py` — pydantic
   param models, `WavelengthLutParams`, `WavelengthLutOutputs`, and
-  `register_wavelength_lut_workflow_spec` (auto-derives `aux_sources` from
-  `Instrument.choppers`).
+  `register_wavelength_lut_workflow_spec` (auto-derives `aux_sources`
+  from `Instrument.choppers` and auto-attaches the factory closure).
+  Chopper-stream helpers shared across instruments live here too:
+  `chopper_topic`, `make_chopper_attribute_registry`,
+  `make_chopper_stream_lut`, `make_chopper_log_topic_for_stream`,
+  driven by the ECDC PV-suffix convention (`:TotDly`, `:Spd_S`).
 - `src/ess/livedata/handlers/stream_processor_workflow.py` — generic
   adapter from `ess.reduce.streaming.StreamProcessor` to the livedata
   `Workflow` protocol.
@@ -331,28 +335,36 @@ In tree:
   runs context enrichment + `process_jobs`, allowing cached-context job
   activation without ongoing data flow.
 - `src/ess/livedata/config/instrument.py` — `Instrument.choppers: list[str]`
-  field; single source of truth consumed by the spec, the service, and the
-  factory.
-- `src/ess/livedata/config/instruments/{loki,dummy}/specs.py` and
-  `factories.py` — register the spec and attach the factory. LOKI's
-  `factories.py` passes its geometry artifact path to the factory;
-  the factory loads `RawChoppers[SampleRun]` and the NXsource position
-  via `GenericNeXusWorkflow`.
+  (chopper names, single source of truth) and
+  `Instrument.chopper_delay_atol: float` (per-instrument plateau-detect
+  tolerance in ns, default 1000.0; passed by the timeseries service to
+  `ChopperSynthesizer`).
+- `src/ess/livedata/config/instruments/{loki,dummy}/specs.py` —
+  declare chopper names and chopper f144 attribute-registry entries
+  (units only) via `make_chopper_attribute_registry`. The factory
+  is auto-attached by `register_wavelength_lut_workflow_spec` and
+  reads `instrument.choppers` plus `instrument.nexus_file` lazily; no
+  per-instrument factories.py block needed.
+- `src/ess/livedata/config/instruments/loki/streams.py` — declares the
+  per-chopper PV-prefix dict and uses `make_chopper_stream_lut` /
+  `make_chopper_log_topic_for_stream` to build prod and dev
+  routings. Kafka-source naming is invisible to specs.py.
 
-Remaining (real chopper PVs / pooch):
+Remaining (per-instrument adoption):
 
-- Geometry artifacts: regenerate from a recent `coda_loki_*.hdf` /
+- Geometry artifacts: regenerate from a recent
   `coda_<instrument>_*.hdf` source via `make_geometry_nexus.py` and
   re-publish to pooch with bumped consuming hashes for each chopper-
   equipped instrument.
-- `src/ess/livedata/kafka/message_adapter.py` — extend f144 routing to
-  cover the chopper topic if not already; no `stream.name` rewrite, no new
-  flatbuffer.
-- `setup-kafka-topics.sh` — add the choppers topic for local dev.
-- `config/instruments/<instrument>/{specs,streams,factories}.py` for
-  chopper-equipped instruments — declare `Instrument.choppers`, chopper PV
-  stream aliases, and `LtotalRange` defaults via a `WavelengthLutParams`
-  subclass.
+- `config/instruments/<instrument>/specs.py` — populate
+  `Instrument.choppers`, splice
+  `make_chopper_attribute_registry(choppers)` into
+  `f144_attribute_registry`, optionally subclass `WavelengthLutParams`
+  to override `LtotalRange` defaults.
+- `config/instruments/<instrument>/streams.py` — declare the per-chopper
+  PV-prefix dict, splice `make_chopper_stream_lut(...)` into the prod
+  log LUT, splice `make_chopper_log_topic_for_stream(...)` into the dev
+  mapping. Kafka topics are templated (`<instrument>_choppers`).
 
 ## Tests
 
