@@ -31,6 +31,12 @@ from ess.reduce.nexus.types import (
 )
 from ess.reduce.nexus.workflow import get_transformation_chain
 
+from ess.livedata.config.workflow_spec import (
+    AuxSources,
+    CombinedAuxSources,
+    JobId,
+)
+
 if TYPE_CHECKING:
     from ess.livedata.config.instrument import Instrument
 
@@ -195,34 +201,53 @@ def apply_dynamic_transforms(
     return context_keys
 
 
-def dynamic_transform_aux_inputs(
-    instrument: Instrument, source_names: Iterable[str]
-) -> dict[str, str]:
-    """Aux-source ``inputs`` mapping covering bindings whose consumers
-    intersect ``source_names``.
+class _DynamicTransformAuxSources(AuxSources):
+    """Aux sources covering an instrument's dynamic-transform bindings.
 
-    Returned shape matches the dict accepted by
-    :class:`AuxSources.__init__`. Used by the spec-side merge in
-    ``register_detector_view_spec`` / ``register_monitor_workflow_specs``.
+    Inputs include every binding whose ``consumers`` set intersects the
+    spec's ``source_names``. ``render`` returns only the streams whose
+    binding includes ``job_id.source_name`` in its consumers, rendered
+    un-prefixed (these are global f144 streams shared across jobs).
     """
-    selected = set(source_names)
-    return {
-        b.stream_name: b.stream_name
-        for b in instrument.dynamic_transforms
-        if b.consumers & selected
-    }
+
+    def __init__(self, instrument: Instrument, source_names: list[str]) -> None:
+        self._instrument = instrument
+        selected = set(source_names)
+        inputs: dict[str, str] = {
+            b.stream_name: b.stream_name
+            for b in instrument.dynamic_transforms
+            if b.consumers & selected
+        }
+        super().__init__(dict(inputs))
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        return {
+            b.stream_name: b.stream_name
+            for b in self._instrument.dynamic_transforms
+            if job_id.source_name in b.consumers
+        }
 
 
-def dynamic_transform_routes(
-    instrument: Instrument, source_name: str
-) -> dict[str, str]:
-    """Stream names to route to a job, scoped by ``source_name``.
-
-    Returns the bindings whose ``consumers`` set includes ``source_name``,
-    rendered un-prefixed (these are global f144 streams, not job-specific).
-    """
-    return {
-        b.stream_name: b.stream_name
-        for b in instrument.dynamic_transforms
-        if source_name in b.consumers
-    }
+def compose_aux_sources(
+    instrument: Instrument,
+    source_names: list[str],
+    caller_aux: AuxSources | None,
+) -> AuxSources | None:
+    """Merge caller-supplied aux sources with auto-derived dynamic-transform
+    aux sources for the given source set."""
+    components: list[AuxSources] = []
+    if caller_aux is not None:
+        components.append(caller_aux)
+    if instrument.dynamic_transforms:
+        dyn = _DynamicTransformAuxSources(instrument, source_names)
+        if dyn.inputs:
+            components.append(dyn)
+    if not components:
+        return None
+    if len(components) == 1:
+        return components[0]
+    return CombinedAuxSources(components)

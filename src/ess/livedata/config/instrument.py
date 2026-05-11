@@ -416,11 +416,9 @@ class Instrument:
         # so factories using ``apply_dynamic_transforms`` automatically have
         # the routing layer deliver matching f144 streams.
         if self.dynamic_transforms and source_names:
-            from ess.livedata.handlers.detector_view_specs import (
-                _compose_aux_sources,
-            )
+            from ess.livedata.handlers.dynamic_transforms import compose_aux_sources
 
-            aux_sources = _compose_aux_sources(self, list(source_names), aux_sources)
+            aux_sources = compose_aux_sources(self, list(source_names), aux_sources)
 
         spec = WorkflowSpec(
             instrument=self.name,

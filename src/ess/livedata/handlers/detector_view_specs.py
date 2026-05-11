@@ -25,7 +25,6 @@ from ..config import models
 from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     DETECTORS,
-    AuxInput,
     AuxSources,
     JobId,
     WorkflowOutputsBase,
@@ -448,82 +447,6 @@ class DetectorROIAuxSources(AuxSources):
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
-
-
-class _CombinedAuxSources(AuxSources):
-    """Composes multiple :class:`AuxSources` into one.
-
-    Inputs are merged (later components override earlier on key collisions);
-    ``render`` dispatches to each component and merges the results.
-
-    Used by :func:`register_detector_view_spec` and
-    :func:`register_monitor_workflow_specs` to compose a caller-supplied
-    ``aux_sources`` with the auto-derived dynamic-transform aux sources.
-    """
-
-    def __init__(self, components: list[AuxSources]) -> None:
-        self._components = components
-        merged: dict[str, str | AuxInput] = {}
-        for comp in components:
-            merged.update(comp.inputs)
-        super().__init__(merged)
-
-    def render(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        result: dict[str, str] = {}
-        for comp in self._components:
-            result.update(comp.render(job_id, selections))
-        return result
-
-
-class _DynamicTransformAuxSources(AuxSources):
-    """Aux sources covering an instrument's dynamic-transform bindings.
-
-    Inputs include every binding whose ``consumers`` set intersects the
-    spec's ``source_names``. ``render`` returns only the streams whose
-    binding includes ``job_id.source_name`` in its consumers, rendered
-    un-prefixed (these are global f144 streams shared across jobs).
-    """
-
-    def __init__(self, instrument: Instrument, source_names: list[str]) -> None:
-        from .dynamic_transforms import dynamic_transform_aux_inputs
-
-        self._instrument = instrument
-        inputs = dynamic_transform_aux_inputs(instrument, source_names)
-        super().__init__(dict(inputs))
-
-    def render(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        from .dynamic_transforms import dynamic_transform_routes
-
-        return dynamic_transform_routes(self._instrument, job_id.source_name)
-
-
-def _compose_aux_sources(
-    instrument: Instrument,
-    source_names: list[str],
-    caller_aux: AuxSources | None,
-) -> AuxSources | None:
-    """Merge caller-supplied aux sources with auto-derived dynamic-transform
-    aux sources for the given source set."""
-    components: list[AuxSources] = []
-    if caller_aux is not None:
-        components.append(caller_aux)
-    if instrument.dynamic_transforms:
-        dyn = _DynamicTransformAuxSources(instrument, source_names)
-        if dyn.inputs:
-            components.append(dyn)
-    if not components:
-        return None
-    if len(components) == 1:
-        return components[0]
-    return _CombinedAuxSources(components)
 
 
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]

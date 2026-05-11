@@ -18,12 +18,12 @@ from ess.reduce.nexus.types import (
 from scippnexus import NXdetector
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.handlers.dynamic_transforms import (
     DynamicTransformBinding,
     TransformLog,
     apply_dynamic_transforms,
-    dynamic_transform_aux_inputs,
-    dynamic_transform_routes,
+    compose_aux_sources,
 )
 
 # --- Test fixtures: minimal artifact builders ---
@@ -268,10 +268,16 @@ def test_apply_uses_latest_sample(tmp_path) -> None:
     assert sc.identical(patched_value, sc.scalar(7.5, unit='mm'))
 
 
-# --- aux source helpers ---
+# --- aux source composition ---
 
 
-def test_aux_inputs_filtered_by_consumers() -> None:
+def _job_id(source_name: str) -> JobId:
+    import uuid
+
+    return JobId(source_name=source_name, job_number=uuid.uuid4())
+
+
+def test_compose_aux_inputs_filtered_by_consumers() -> None:
     inst = _make_instrument(
         [
             DynamicTransformBinding(
@@ -288,15 +294,18 @@ def test_aux_inputs_filtered_by_consumers() -> None:
             ),
         ]
     )
-    assert dynamic_transform_aux_inputs(inst, ['src_a']) == {'stream_a': 'stream_a'}
-    assert dynamic_transform_aux_inputs(inst, ['src_a', 'src_b']) == {
-        'stream_a': 'stream_a',
-        'stream_b': 'stream_b',
-    }
-    assert dynamic_transform_aux_inputs(inst, ['src_unknown']) == {}
+    aux_a = compose_aux_sources(inst, ['src_a'], None)
+    assert aux_a is not None
+    assert set(aux_a.inputs) == {'stream_a'}
+
+    aux_ab = compose_aux_sources(inst, ['src_a', 'src_b'], None)
+    assert aux_ab is not None
+    assert set(aux_ab.inputs) == {'stream_a', 'stream_b'}
+
+    assert compose_aux_sources(inst, ['src_unknown'], None) is None
 
 
-def test_routes_filtered_by_source_name() -> None:
+def test_compose_render_filtered_by_source_name() -> None:
     inst = _make_instrument(
         [
             DynamicTransformBinding(
@@ -313,7 +322,9 @@ def test_routes_filtered_by_source_name() -> None:
             ),
         ]
     )
-    assert dynamic_transform_routes(inst, 'src_a') == {'stream_a': 'stream_a'}
-    assert dynamic_transform_routes(inst, 'src_shared') == {'stream_a': 'stream_a'}
-    assert dynamic_transform_routes(inst, 'src_b') == {'stream_b': 'stream_b'}
-    assert dynamic_transform_routes(inst, 'src_other') == {}
+    aux = compose_aux_sources(inst, ['src_a', 'src_shared', 'src_b'], None)
+    assert aux is not None
+    assert aux.render(_job_id('src_a')) == {'stream_a': 'stream_a'}
+    assert aux.render(_job_id('src_shared')) == {'stream_a': 'stream_a'}
+    assert aux.render(_job_id('src_b')) == {'stream_b': 'stream_b'}
+    assert aux.render(_job_id('src_other')) == {}

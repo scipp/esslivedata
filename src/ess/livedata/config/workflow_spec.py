@@ -194,6 +194,31 @@ class AuxSources:
         return result
 
 
+class CombinedAuxSources(AuxSources):
+    """Composes multiple :class:`AuxSources` into one.
+
+    Inputs are merged (later components override earlier on key collisions);
+    ``render`` dispatches to each component and merges the results.
+    """
+
+    def __init__(self, components: list[AuxSources]) -> None:
+        self._components = components
+        merged: dict[str, str | AuxInput] = {}
+        for comp in components:
+            merged.update(comp.inputs)
+        super().__init__(merged)
+
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for comp in self._components:
+            result.update(comp.render(job_id, selections))
+        return result
+
+
 class ResultKey(BaseModel, frozen=True):
     # Workflows produce one or more named outputs. Each output is serialized as a
     # separate da00 message. The output_name identifies which output this key refers to.
