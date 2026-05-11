@@ -16,16 +16,18 @@ factory time.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import typing
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import sciline
+import sciline.typing
 import scipp as sc
 from ess.reduce.nexus.types import (
     NeXusComponent,
-    NeXusName,
+    NeXusData,
     NeXusTransformationChain,
     SampleRun,
 )
@@ -144,21 +146,38 @@ def _build_patched_chain_provider(
     return fn
 
 
+def _nexus_data_component(key: sciline.typing.Key) -> type | None:
+    """If ``key`` is ``NeXusData[T, R]`` return ``T``, else ``None``.
+
+    Discriminator for entries in a ``dynamic_keys`` mapping that
+    correspond to essreduce-loaded NeXus components (and therefore have
+    a depends_on chain that might need patching). Other key shapes —
+    ``Events``, ``ChopperCascadeTrigger``, etc. — return ``None`` and
+    are skipped.
+    """
+    if typing.get_origin(key) is not NeXusData:
+        return None
+    args = typing.get_args(key)
+    return args[0] if args else None
+
+
 def apply_dynamic_transforms(
     workflow: sciline.Pipeline,
     *,
     instrument: Instrument,
-    component_types: Iterable[type],
+    dynamic_keys: Mapping[str, sciline.typing.Key],
+    aux_source_names: Mapping[str, str] = {},
 ) -> dict[str, type[TransformLog]]:
     """Patch a workflow to drive matching NXlog placeholders from f144 streams.
 
-    For each requested component type, reads ``NeXusName[T]`` set on the
-    workflow and selects every binding in ``instrument.dynamic_transforms``
-    whose ``consumers`` set includes that source name. For each component
-    type with at least one match, replaces the
-    ``NeXusTransformationChain[T, SampleRun]`` provider with a closure
-    that consumes the matched bindings' ``log_key`` parameters and writes
-    the latest sample into the chain.
+    For each ``NeXusData[T, R]`` entry in ``dynamic_keys``, resolves the
+    component's source name (the entry's key, or its ``aux_source_names``
+    lookup if the key is an alias) and selects every binding in
+    ``instrument.dynamic_transforms`` whose ``consumers`` set includes
+    that source name. For each component type with at least one match,
+    replaces the ``NeXusTransformationChain[T, SampleRun]`` provider with
+    a closure that consumes the matched bindings' ``log_key`` parameters
+    and writes the latest sample into the chain.
 
     Consistency between the registry and the geometry artifact (no
     typo'd ``nxlog_path``, no orphan empty NXlog) is enforced at CI
@@ -167,14 +186,21 @@ def apply_dynamic_transforms(
     Parameters
     ----------
     workflow:
-        The Sciline pipeline to patch in place. For each component type
-        T, must have ``NeXusName[T]`` set to the component's source name.
+        The Sciline pipeline to patch in place.
     instrument:
         The instrument whose ``dynamic_transforms`` registry is
         consulted.
-    component_types:
-        Component types loaded by the workflow (e.g. ``(NXdetector,)``,
-        ``(NXdetector, NXmonitor)``).
+    dynamic_keys:
+        The same mapping passed to :class:`StreamProcessorWorkflow`:
+        stream name (or alias) → Sciline key. Component types are
+        extracted from ``NeXusData[T, R]`` values; other key shapes
+        are ignored.
+    aux_source_names:
+        Mapping ``alias → actual source name`` for aliased streams in
+        ``dynamic_keys``. Keys not in this mapping are treated as
+        direct source names. Parametric components such as
+        ``NeXusData[Incident, SampleRun]`` / ``NeXusData[Transmission,
+        SampleRun]`` resolve to per-channel monitor names this way.
 
     Returns
     -------
@@ -185,11 +211,11 @@ def apply_dynamic_transforms(
         delivers each f144 NXlog to the right Sciline parameter.
     """
     context_keys: dict[str, type[TransformLog]] = {}
-    for component_type in component_types:
-        try:
-            source_name = workflow.compute(NeXusName[component_type])
-        except sciline.UnsatisfiedRequirement:
+    for alias, key in dynamic_keys.items():
+        component_type = _nexus_data_component(key)
+        if component_type is None:
             continue
+        source_name = aux_source_names.get(alias, alias)
         matched = [
             b for b in instrument.dynamic_transforms if source_name in b.consumers
         ]

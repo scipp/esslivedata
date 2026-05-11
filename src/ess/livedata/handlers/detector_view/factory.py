@@ -258,6 +258,7 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
+        dynamic_keys = {source_name: NeXusData[NXdetector, SampleRun]}
         # Wire dynamic NeXus transforms (f144 NXlog streams) if the instrument
         # declares any whose ``consumers`` include this source. Walks the
         # depends_on chain in the artifact to identify matches; raises if the
@@ -267,14 +268,14 @@ class DetectorViewFactory:
                 apply_dynamic_transforms(
                     workflow,
                     instrument=self._instrument,
-                    component_types=(NXdetector,),
+                    dynamic_keys=dynamic_keys,
                 )
             )
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
             workflow,
-            dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            dynamic_keys=dynamic_keys,
             context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=window_outputs,

@@ -11,6 +11,7 @@ import sciline
 import scipp as sc
 from ess.reduce.nexus.types import (
     Filename,
+    NeXusData,
     NeXusName,
     NeXusTransformationChain,
     SampleRun,
@@ -191,9 +192,12 @@ def test_apply_no_op_when_chain_has_no_dynamic_nxlog(tmp_path) -> None:
             ),
         ]
     )
-    wf = _make_workflow_loading(fn, 'loki_detector_static')
+    source_name = 'loki_detector_static'
+    wf = _make_workflow_loading(fn, source_name)
     context_keys = apply_dynamic_transforms(
-        wf, instrument=inst, component_types=(NXdetector,)
+        wf,
+        instrument=inst,
+        dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
     )
     assert context_keys == {}
 
@@ -210,9 +214,12 @@ def test_apply_patches_chain_for_matching_component(tmp_path) -> None:
             ),
         ]
     )
-    wf = _make_workflow_loading(fn, 'loki_detector_0')
+    source_name = 'loki_detector_0'
+    wf = _make_workflow_loading(fn, source_name)
     context_keys = apply_dynamic_transforms(
-        wf, instrument=inst, component_types=(NXdetector,)
+        wf,
+        instrument=inst,
+        dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
     )
     assert context_keys == {'detector_carriage': _CarriageLog}
 
@@ -231,8 +238,13 @@ def test_apply_no_samples_yet_raises_at_compute(tmp_path) -> None:
             ),
         ]
     )
-    wf = _make_workflow_loading(fn, 'loki_detector_0')
-    apply_dynamic_transforms(wf, instrument=inst, component_types=(NXdetector,))
+    source_name = 'loki_detector_0'
+    wf = _make_workflow_loading(fn, source_name)
+    apply_dynamic_transforms(
+        wf,
+        instrument=inst,
+        dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+    )
     wf[_CarriageLog] = _CarriageLog(log=None)
     with pytest.raises(ValueError, match='No samples yet'):
         wf.compute(NeXusTransformationChain[NXdetector, SampleRun])
@@ -250,8 +262,13 @@ def test_apply_uses_latest_sample(tmp_path) -> None:
             ),
         ]
     )
-    wf = _make_workflow_loading(fn, 'loki_detector_0')
-    apply_dynamic_transforms(wf, instrument=inst, component_types=(NXdetector,))
+    source_name = 'loki_detector_0'
+    wf = _make_workflow_loading(fn, source_name)
+    apply_dynamic_transforms(
+        wf,
+        instrument=inst,
+        dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+    )
     log = sc.DataArray(
         sc.array(dims=['time'], values=[1.0, 2.0, 7.5], unit='mm'),
         coords={
