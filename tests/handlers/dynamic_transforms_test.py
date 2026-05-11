@@ -131,23 +131,6 @@ def _make_artifact(
             data='/entry/instrument/loki_detector_static/transformations/fixed',
         )
         static_det.create_dataset('detector_number', data=np.array([10, 11]))
-
-        # Detector with an empty NXlog placeholder NOT covered by a binding
-        # — used to test the helper's loud-failure path.
-        unmanaged = inst.create_group('loki_detector_unmanaged')
-        unmanaged.attrs['NX_class'] = 'NXdetector'
-        _write_nxlog(
-            f,
-            'entry/instrument/loki_detector_unmanaged',
-            'rogue_log',
-            depends_on='.',
-            samples=0,
-        )
-        unmanaged.create_dataset(
-            'depends_on',
-            data=('/entry/instrument/loki_detector_unmanaged/rogue_log'),
-        )
-        unmanaged.create_dataset('detector_number', data=np.array([20, 21]))
     return fn
 
 
@@ -213,23 +196,6 @@ def test_apply_no_op_when_chain_has_no_dynamic_nxlog(tmp_path) -> None:
         wf, instrument=inst, component_types=(NXdetector,)
     )
     assert context_keys == {}
-
-
-def test_apply_raises_on_unmanaged_empty_nxlog(tmp_path) -> None:
-    fn = _make_artifact(tmp_path)
-    inst = _make_instrument(
-        [
-            DynamicTransformBinding(
-                nxlog_path='/entry/instrument/detector_carriage/value',
-                stream_name='detector_carriage',
-                log_key=_CarriageLog,
-                consumers=frozenset({'loki_detector_0'}),
-            ),
-        ]
-    )
-    wf = _make_workflow_loading(fn, 'loki_detector_unmanaged')
-    with pytest.raises(ValueError, match='not declared in '):
-        apply_dynamic_transforms(wf, instrument=inst, component_types=(NXdetector,))
 
 
 def test_apply_patches_chain_for_matching_component(tmp_path) -> None:

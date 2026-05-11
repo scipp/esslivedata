@@ -23,17 +23,13 @@ from typing import TYPE_CHECKING, Any
 
 import sciline
 import scipp as sc
-import scippnexus as snx
 from ess.reduce.nexus.types import (
-    Filename,
     NeXusComponent,
     NeXusName,
     NeXusTransformationChain,
     SampleRun,
 )
 from ess.reduce.nexus.workflow import get_transformation_chain
-from scippnexus.field import DependsOn
-from scippnexus.nxtransformations import TransformationChain, parse_depends_on_chain
 
 if TYPE_CHECKING:
     from ess.livedata.config.instrument import Instrument
@@ -80,41 +76,6 @@ class DynamicTransformBinding:
     stream_name: str
     log_key: type[TransformLog]
     consumers: frozenset[str]
-
-
-def load_depends_on_chain(
-    filename: str, source_name: str
-) -> TransformationChain | None:
-    """Load a source's depends_on chain from a geometry artifact via scippnexus.
-
-    Returns ``None`` if the source has no ``depends_on`` field (a static
-    component implicitly at the origin).
-
-    Walks only ``depends_on`` (no NXdetector / NXmonitor signal load), so
-    this is fast and tolerant of partial artifacts.
-    """
-    parent_path = f'/entry/instrument/{source_name}'
-    with snx.File(filename, 'r') as f:
-        comp = f[parent_path]
-        try:
-            depends_on = comp['depends_on'][()]
-        except KeyError:
-            return None
-        if not isinstance(depends_on, DependsOn):
-            depends_on = DependsOn(parent=parent_path, value=depends_on)
-        return parse_depends_on_chain(comp, depends_on)
-
-
-def _is_empty_nxlog(transform: Any) -> bool:
-    """True iff a chain entry is an empty NXlog placeholder.
-
-    scippnexus loads an NXlog placeholder with no samples as a transform
-    whose ``value`` is a time-dimensioned DataArray of length zero;
-    static transformations have a scalar ``value`` with no ``time``
-    dimension.
-    """
-    sizes = getattr(transform.value, 'sizes', None)
-    return sizes is not None and sizes.get('time', None) == 0
 
 
 def _build_patched_chain_provider(
@@ -175,28 +136,23 @@ def apply_dynamic_transforms(
 ) -> dict[str, type[TransformLog]]:
     """Patch a workflow to drive matching NXlog placeholders from f144 streams.
 
-    For each requested component type, reads the corresponding
-    ``NeXusName[T]`` set on the workflow, walks the depends_on chain in
-    the geometry artifact (resolved via ``Filename[SampleRun]``,
-    traversed by scippnexus's ``parse_depends_on_chain``), and intersects
-    the chain's transformation paths with ``instrument.dynamic_transforms``.
-    For each component type with at least one match, replaces the
+    For each requested component type, reads ``NeXusName[T]`` set on the
+    workflow and selects every binding in ``instrument.dynamic_transforms``
+    whose ``consumers`` set includes that source name. For each component
+    type with at least one match, replaces the
     ``NeXusTransformationChain[T, SampleRun]`` provider with a closure
-    that consumes the matched bindings' ``log_key`` parameters and
-    writes the latest sample into the chain.
+    that consumes the matched bindings' ``log_key`` parameters and writes
+    the latest sample into the chain.
 
-    Raises ``ValueError`` if the loaded chain contains an empty NXlog
-    that is not matched by any registry binding — this catches the
-    failure mode described in issue #922 where a workflow walks an
-    unmanaged placeholder and would otherwise hit
-    ``reject_time_dependent_transform`` with no actionable hint.
+    Consistency between the registry and the geometry artifact (no
+    typo'd ``nxlog_path``, no orphan empty NXlog) is enforced at CI
+    time by ``tests/config/dynamic_transforms_registry_test.py``.
 
     Parameters
     ----------
     workflow:
-        The Sciline pipeline to patch in place. Must have
-        ``Filename[SampleRun]`` set; for each component type T, must
-        have ``NeXusName[T]`` set to the component's source name.
+        The Sciline pipeline to patch in place. For each component type
+        T, must have ``NeXusName[T]`` set to the component's source name.
     instrument:
         The instrument whose ``dynamic_transforms`` registry is
         consulted.
@@ -212,35 +168,16 @@ def apply_dynamic_transforms(
         to :class:`StreamProcessorWorkflow` so SPW's wrapping rule
         delivers each f144 NXlog to the right Sciline parameter.
     """
-    filename = str(workflow.compute(Filename[SampleRun]))
     context_keys: dict[str, type[TransformLog]] = {}
     for component_type in component_types:
         try:
             source_name = workflow.compute(NeXusName[component_type])
         except sciline.UnsatisfiedRequirement:
             continue
-        chain = load_depends_on_chain(filename, source_name)
-        if chain is None:
-            continue
-        present = set(chain.transformations)
-        matched = [b for b in instrument.dynamic_transforms if b.nxlog_path in present]
+        matched = [
+            b for b in instrument.dynamic_transforms if source_name in b.consumers
+        ]
         if not matched:
-            unmanaged = next(
-                (
-                    path
-                    for path, t in chain.transformations.items()
-                    if _is_empty_nxlog(t)
-                ),
-                None,
-            )
-            if unmanaged is not None:
-                raise ValueError(
-                    f"Component {source_name!r} (type {component_type.__name__}) "
-                    f"depends on an empty NXlog placeholder at {unmanaged!r} that "
-                    f"is not declared in instrument.dynamic_transforms. Add a "
-                    f"DynamicTransformBinding for it, or fix the geometry "
-                    f"artifact."
-                )
             continue
         workflow.insert(_build_patched_chain_provider(component_type, matched))
         for binding in matched:

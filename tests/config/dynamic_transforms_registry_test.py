@@ -15,21 +15,39 @@ of the same key, silently merging two bindings.
 from __future__ import annotations
 
 import pytest
+import scippnexus as snx
+from scippnexus.field import DependsOn
+from scippnexus.nxtransformations import TransformationChain, parse_depends_on_chain
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-from ess.livedata.handlers.dynamic_transforms import load_depends_on_chain
+
+
+def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
+    """Walk a source's depends_on chain via scippnexus, without loading the
+    full component group. Returns ``None`` for static components with no
+    ``depends_on`` field."""
+    parent_path = f'/entry/instrument/{source_name}'
+    with snx.File(artifact, 'r') as f:
+        comp = f[parent_path]
+        try:
+            depends_on = comp['depends_on'][()]
+        except KeyError:
+            return None
+        if not isinstance(depends_on, DependsOn):
+            depends_on = DependsOn(parent=parent_path, value=depends_on)
+        return parse_depends_on_chain(comp, depends_on)
 
 
 def _chain_paths(artifact: str, source_name: str) -> list[str]:
-    chain = load_depends_on_chain(artifact, source_name)
+    chain = _load_chain(artifact, source_name)
     return list(chain.transformations) if chain is not None else []
 
 
 def _empty_nxlog(artifact: str, source_name: str) -> str | None:
     """First path along the chain whose value is a length-0 NXlog, or None."""
-    chain = load_depends_on_chain(artifact, source_name)
+    chain = _load_chain(artifact, source_name)
     if chain is None:
         return None
     for path, t in chain.transformations.items():
@@ -96,8 +114,8 @@ _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
 def test_no_orphan_empty_nxlogs(instrument) -> None:
     """Every empty NXlog reachable from any source on a registered spec
     must be covered by a binding (or in the known-orphan ledger).
-    Otherwise, workflows loading that source will trip
-    ``apply_dynamic_transforms`` at construction time."""
+    Otherwise, workflows loading that source will trip essreduce's
+    ``reject_time_dependent_transform`` at compute time."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
     covered = {b.nxlog_path for b in instrument.dynamic_transforms}
     sources = list(instrument.detector_names) + list(instrument.monitors)
