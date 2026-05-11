@@ -81,7 +81,17 @@ class DynamicTransformBinding:
 def _build_patched_chain_provider(
     component_type: type, matched: list[DynamicTransformBinding]
 ) -> Any:
-    """Build the per-component-type closure that patches the chain.
+    """Build a replacement for essreduce's ``get_transformation_chain``.
+
+    The returned closure has the same signature as ``get_transformation_chain``
+    specialised to one ``component_type``: it consumes
+    ``NeXusComponent[component_type, SampleRun]`` (and the matched bindings'
+    ``log_key`` parameters) and produces
+    ``NeXusTransformationChain[component_type, SampleRun]``. It reproduces
+    the upstream provider's body (``get_transformation_chain(component)``)
+    and patches each matched ``nxlog_path`` with the latest f144 sample.
+    It cannot instead consume the chain as input — that would self-cycle on
+    its own return type.
 
     Sciline resolves dependencies by annotation name, so the closure must
     use explicit positional parameters (not ``*logs``) and have its
