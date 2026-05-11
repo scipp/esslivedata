@@ -25,7 +25,6 @@ from ..accumulators import make_no_copy_accumulator_pair
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ..detector_view_specs import DetectorViewParams
-from ..dynamic_transforms import apply_dynamic_transforms
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
@@ -258,24 +257,21 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        dynamic_keys = {source_name: NeXusData[NXdetector, SampleRun]}
         # Wire dynamic NeXus transforms (f144 NXlog streams) if the instrument
         # declares any whose ``consumers`` include this source. Walks the
         # depends_on chain in the artifact to identify matches; raises if the
         # chain encounters an empty NXlog placeholder not covered by a binding.
-        if self._instrument is not None and self._instrument.dynamic_transforms:
+        if self._instrument is not None:
             context_keys.update(
-                apply_dynamic_transforms(
-                    workflow,
-                    instrument=self._instrument,
-                    dynamic_keys=dynamic_keys,
+                self._instrument.apply_dynamic_transforms(
+                    workflow, {source_name: NXdetector}
                 )
             )
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
             workflow,
-            dynamic_keys=dynamic_keys,
+            dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
             context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=window_outputs,

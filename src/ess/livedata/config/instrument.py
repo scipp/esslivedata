@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import sciline
+
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
-    from ess.livedata.handlers.dynamic_transforms import DynamicTransformBinding
+    from ess.livedata.handlers.dynamic_transforms import (
+        DynamicTransformBinding,
+        TransformLog,
+    )
 
 import pydantic
 import scipp as sc
@@ -351,6 +356,55 @@ class Instrument:
             )
         )
         return handle
+
+    def apply_dynamic_transforms(
+        self,
+        workflow: sciline.Pipeline,
+        components: Mapping[str, type],
+    ) -> dict[str, type[TransformLog]]:
+        """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
+
+        For each ``(source_name, component_type)`` entry, selects every
+        binding in :attr:`dynamic_transforms` whose ``consumers`` set
+        includes that source name. For each component type with at
+        least one match, replaces the ``NeXusTransformationChain[T,
+        SampleRun]`` provider with a closure that consumes the matched
+        bindings' ``log_key`` parameters and writes the latest sample
+        into the chain.
+
+        Parameters
+        ----------
+        workflow:
+            The Sciline pipeline to patch in place.
+        components:
+            Mapping ``source_name -> component_type`` for the
+            essreduce-loaded NeXus components whose ``depends_on`` chain
+            might need patching (e.g. ``{'loki_detector_0': NXdetector,
+            aux_source_names['incident_monitor']: Incident, ...}``).
+            Callers own the alias resolution: source names are the
+            actual on-disk names, not aliases.
+
+        Returns
+        -------
+        :
+            Mapping ``stream_name -> log_key`` for every binding that
+            actually matched; pass to :class:`StreamProcessorWorkflow`
+            as ``context_keys`` so SPW's wrapping rule delivers each
+            f144 NXlog to the right Sciline parameter.
+        """
+        from ess.livedata.handlers.dynamic_transforms import (
+            _build_patched_chain_provider,
+        )
+
+        context_keys: dict[str, type[TransformLog]] = {}
+        for source_name, component_type in components.items():
+            matched = [b for b in self.dynamic_transforms if source_name in b.consumers]
+            if not matched:
+                continue
+            workflow.insert(_build_patched_chain_provider(component_type, matched))
+            for binding in matched:
+                context_keys[binding.stream_name] = binding.log_key
+        return context_keys
 
     def register_spec(
         self,

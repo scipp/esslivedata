@@ -47,7 +47,6 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.handlers.dynamic_transforms import apply_dynamic_transforms
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -211,12 +210,13 @@ def setup_factories(instrument: Instrument) -> None:
         # Patch the workflow to drive any matching NXlog placeholder along
         # the loaded components' depends_on chains from f144 streams.
         # For LOKI today this covers the rear-bank carriage (issue #922).
-        dynamic_keys = _dynamic_keys(source_name)
-        context_keys = apply_dynamic_transforms(
+        context_keys = instrument.apply_dynamic_transforms(
             wf,
-            instrument=instrument,
-            dynamic_keys=dynamic_keys,
-            aux_source_names=aux_source_names,
+            {
+                source_name: NXdetector,
+                aux_source_names['incident_monitor']: Incident,
+                aux_source_names['transmission_monitor']: Transmission,
+            },
         )
 
         target_keys: dict[str, sciline.typing.Key] = {
@@ -244,7 +244,7 @@ def setup_factories(instrument: Instrument) -> None:
 
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys=dynamic_keys,
+            dynamic_keys=_dynamic_keys(source_name),
             context_keys=context_keys,
             target_keys=target_keys,
             accumulators=_accumulators,
