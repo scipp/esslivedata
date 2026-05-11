@@ -5,9 +5,12 @@
 
 import argparse
 import sys
+import uuid
 from pathlib import Path
 
 import structlog
+
+from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
 
 logger = structlog.get_logger(__name__)
 
@@ -52,8 +55,6 @@ def main() -> None:
             print(wid)
         return
 
-    from ess.livedata.config.workflow_spec import WorkflowId
-
     if args.workflow is not None:
         target = WorkflowId.from_string(args.workflow)
         if target not in factory:
@@ -70,11 +71,17 @@ def main() -> None:
     rendered = 0
     for wid, spec in items:
         source_name = spec.source_names[0] if spec.source_names else ""
-        from ess.livedata.config.workflow_spec import WorkflowConfig
-
-        config = WorkflowConfig(identifier=wid, params={})
+        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=wid, job_id=job_id, params={})
+        aux_source_names = (
+            spec.aux_sources.render(job_id=job_id) if spec.aux_sources else None
+        )
         try:
-            workflow = factory.create(source_name=source_name, config=config)
+            workflow = factory.create(
+                source_name=source_name,
+                config=config,
+                aux_source_names=aux_source_names,
+            )
         except Exception as e:
             logger.warning(
                 "Failed to create workflow", workflow_id=str(wid), error=str(e)
@@ -83,7 +90,7 @@ def main() -> None:
         if not hasattr(workflow, 'visualize'):
             continue
         try:
-            graph = workflow.visualize()
+            graph = workflow.visualize(graph_attr={'rankdir': 'LR'})
         except Exception as e:
             logger.warning(
                 "Failed to visualize workflow", workflow_id=str(wid), error=str(e)
