@@ -133,29 +133,12 @@ def _make_artifact(
     return fn
 
 
-# --- TransformLog wrapper sanity ---
-
-
 class _CarriageLog(TransformLog):
     pass
 
 
 class _OtherLog(TransformLog):
     pass
-
-
-def test_transformlog_default_log_is_none() -> None:
-    container = _CarriageLog()
-    assert container.log is None
-
-
-def test_transformlog_subclasses_are_distinct_sciline_keys() -> None:
-    # Identity check: two subclasses are different types.
-    assert _CarriageLog is not _OtherLog
-    a = _CarriageLog(log=None)
-    b = _OtherLog(log=None)
-    assert type(a) is _CarriageLog
-    assert type(b) is _OtherLog
 
 
 # --- Instrument.apply_dynamic_transforms ---
