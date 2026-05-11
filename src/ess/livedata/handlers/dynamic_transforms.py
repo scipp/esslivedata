@@ -12,8 +12,6 @@ construction time.
 Per-instrument bindings are declared on :class:`Instrument`; the helper
 :func:`apply_dynamic_transforms` patches the relevant providers at
 factory time.
-
-See ``docs/developer/plans/dynamic-nexus-transforms.md`` for the design.
 """
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import h5py
 import sciline
 import scipp as sc
 import scippnexus as snx
@@ -35,6 +32,8 @@ from ess.reduce.nexus.types import (
     SampleRun,
 )
 from ess.reduce.nexus.workflow import get_transformation_chain
+from scippnexus.field import DependsOn
+from scippnexus.nxtransformations import TransformationChain, parse_depends_on_chain
 
 if TYPE_CHECKING:
     from ess.livedata.config.instrument import Instrument
@@ -83,88 +82,39 @@ class DynamicTransformBinding:
     consumers: frozenset[str]
 
 
-def _decode(value: Any) -> str | None:
-    if value is None:
-        return None
-    if hasattr(value, 'decode'):
-        value = value.decode()
-    if isinstance(value, bytes):
-        value = value.decode()
-    return value if isinstance(value, str) else None
+def load_depends_on_chain(
+    filename: str, source_name: str
+) -> TransformationChain | None:
+    """Load a source's depends_on chain from a geometry artifact via scippnexus.
 
+    Returns ``None`` if the source has no ``depends_on`` field (a static
+    component implicitly at the origin).
 
-def _walk_depends_on(f: h5py.File, start_path: str) -> list[str]:
-    """Walk a depends_on chain starting from a transformation path.
-
-    Each node in the chain is identified by its absolute NeXus path. The
-    next link is found in the node's ``depends_on`` *attribute* — applies
-    uniformly to NXlog groups (placeholders) and to plain transformation
-    Datasets. The terminal value is the literal string ``.``.
+    Walks only ``depends_on`` (no NXdetector / NXmonitor signal load), so
+    this is fast and tolerant of partial artifacts.
     """
-    chain: list[str] = []
-    current = start_path
-    while current and current != '.':
-        path = current.lstrip('/')
-        if path not in f:
-            break
-        obj = f[path]
-        chain.append(current)
-        next_target = _decode(obj.attrs.get('depends_on'))
-        if next_target is None:
-            break
-        current = next_target
-    return chain
+    parent_path = f'/entry/instrument/{source_name}'
+    with snx.File(filename, 'r') as f:
+        comp = f[parent_path]
+        try:
+            depends_on = comp['depends_on'][()]
+        except KeyError:
+            return None
+        if not isinstance(depends_on, DependsOn):
+            depends_on = DependsOn(parent=parent_path, value=depends_on)
+        return parse_depends_on_chain(comp, depends_on)
 
 
-def _component_chain_paths(geometry_filename: str, component_path: str) -> list[str]:
-    """Resolve all NeXus paths along a component's depends_on chain.
+def _is_empty_nxlog(transform: Any) -> bool:
+    """True iff a chain entry is an empty NXlog placeholder.
 
-    Returns paths starting from the component's ``depends_on`` target.
-    The component's ``depends_on`` is a Dataset (string) at
-    ``<component>/depends_on`` — only the entry point uses Dataset
-    storage; subsequent links are attributes (handled by
-    ``_walk_depends_on``).
+    scippnexus loads an NXlog placeholder with no samples as a transform
+    whose ``value`` is a time-dimensioned DataArray of length zero;
+    static transformations have a scalar ``value`` with no ``time``
+    dimension.
     """
-    with h5py.File(geometry_filename, 'r') as f:
-        depends_on_path = f'{component_path}/depends_on'.lstrip('/')
-        if depends_on_path not in f:
-            return []
-        target = _decode(f[depends_on_path][()])
-        if target is None:
-            return []
-        return _walk_depends_on(f, target)
-
-
-_NX_CLASS_BY_TYPE: dict[type, str] = {
-    snx.NXdetector: 'detector',
-    snx.NXmonitor: 'monitor',
-}
-
-
-def _component_group_path(component_type: type, source_name: str) -> str:
-    """NeXus group path for a component of given type.
-
-    Components are at ``/entry/instrument/<source_name>``; this helper
-    centralises the convention.
-    """
-    return f'/entry/instrument/{source_name}'
-
-
-def _scan_for_empty_nxlog(geometry_filename: str, component_path: str) -> str | None:
-    """Walk depends_on from a component and return the first empty NXlog
-    path encountered, or None if none."""
-    paths = _component_chain_paths(geometry_filename, component_path)
-    with h5py.File(geometry_filename, 'r') as f:
-        for path in paths:
-            obj = f[path.lstrip('/')]
-            if isinstance(obj, h5py.Group) and obj.attrs.get('NX_class') in (
-                b'NXlog',
-                'NXlog',
-            ):
-                value = obj.get('value')
-                if value is None or value.shape == (0,):
-                    return path
-    return None
+    sizes = getattr(transform.value, 'sizes', None)
+    return sizes is not None and sizes.get('time', None) == 0
 
 
 def _build_patched_chain_provider(
@@ -226,18 +176,19 @@ def apply_dynamic_transforms(
     """Patch a workflow to drive matching NXlog placeholders from f144 streams.
 
     For each requested component type, reads the corresponding
-    ``NeXusName[T]`` value set on ``workflow``, walks the depends_on
-    chain in the geometry artifact (resolved via ``Filename[SampleRun]``
-    set on the workflow), and intersects the walked paths with
-    ``instrument.dynamic_transforms``. For each component type with at
-    least one match, replaces the ``NeXusTransformationChain[T, SampleRun]``
-    provider with a closure that consumes the matched bindings'
-    ``log_key`` parameters and writes the latest sample into the chain.
+    ``NeXusName[T]`` set on the workflow, walks the depends_on chain in
+    the geometry artifact (resolved via ``Filename[SampleRun]``,
+    traversed by scippnexus's ``parse_depends_on_chain``), and intersects
+    the chain's transformation paths with ``instrument.dynamic_transforms``.
+    For each component type with at least one match, replaces the
+    ``NeXusTransformationChain[T, SampleRun]`` provider with a closure
+    that consumes the matched bindings' ``log_key`` parameters and
+    writes the latest sample into the chain.
 
-    Raises ``ValueError`` if a chain walk encounters an empty NXlog that
-    is not matched by any registry binding — this catches the failure
-    mode described in issue #922 where a workflow walks an unmanaged
-    placeholder and would otherwise hit
+    Raises ``ValueError`` if the loaded chain contains an empty NXlog
+    that is not matched by any registry binding — this catches the
+    failure mode described in issue #922 where a workflow walks an
+    unmanaged placeholder and would otherwise hit
     ``reject_time_dependent_transform`` with no actionable hint.
 
     Parameters
@@ -261,32 +212,37 @@ def apply_dynamic_transforms(
         to :class:`StreamProcessorWorkflow` so SPW's wrapping rule
         delivers each f144 NXlog to the right Sciline parameter.
     """
-    filename = workflow.compute(Filename[SampleRun])
+    filename = str(workflow.compute(Filename[SampleRun]))
     context_keys: dict[str, type[TransformLog]] = {}
     for component_type in component_types:
         try:
             source_name = workflow.compute(NeXusName[component_type])
-        except Exception:  # noqa: S112 Component type declared but not loaded
+        except sciline.UnsatisfiedRequirement:
             continue
-        component_path = _component_group_path(component_type, source_name)
-        chain_paths = _component_chain_paths(str(filename), component_path)
-        chain_set = set(chain_paths)
-        matched = [
-            b for b in instrument.dynamic_transforms if b.nxlog_path in chain_set
-        ]
+        chain = load_depends_on_chain(filename, source_name)
+        if chain is None:
+            continue
+        present = set(chain.transformations)
+        matched = [b for b in instrument.dynamic_transforms if b.nxlog_path in present]
         if not matched:
-            empty = _scan_for_empty_nxlog(str(filename), component_path)
-            if empty is not None:
+            unmanaged = next(
+                (
+                    path
+                    for path, t in chain.transformations.items()
+                    if _is_empty_nxlog(t)
+                ),
+                None,
+            )
+            if unmanaged is not None:
                 raise ValueError(
                     f"Component {source_name!r} (type {component_type.__name__}) "
-                    f"depends on an empty NXlog placeholder at {empty!r} that "
-                    f"is not declared in instrument.dynamic_transforms. "
-                    f"Add a DynamicTransformBinding for it, or fix the "
-                    f"geometry artifact."
+                    f"depends on an empty NXlog placeholder at {unmanaged!r} that "
+                    f"is not declared in instrument.dynamic_transforms. Add a "
+                    f"DynamicTransformBinding for it, or fix the geometry "
+                    f"artifact."
                 )
             continue
-        provider = _build_patched_chain_provider(component_type, matched)
-        workflow.insert(provider)
+        workflow.insert(_build_patched_chain_provider(component_type, matched))
         for binding in matched:
             context_keys[binding.stream_name] = binding.log_key
     return context_keys

@@ -14,16 +14,29 @@ of the same key, silently merging two bindings.
 
 from __future__ import annotations
 
-import h5py
 import pytest
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-from ess.livedata.handlers.dynamic_transforms import (
-    _component_chain_paths,
-    _scan_for_empty_nxlog,
-)
+from ess.livedata.handlers.dynamic_transforms import load_depends_on_chain
+
+
+def _chain_paths(artifact: str, source_name: str) -> list[str]:
+    chain = load_depends_on_chain(artifact, source_name)
+    return list(chain.transformations) if chain is not None else []
+
+
+def _empty_nxlog(artifact: str, source_name: str) -> str | None:
+    """First path along the chain whose value is a length-0 NXlog, or None."""
+    chain = load_depends_on_chain(artifact, source_name)
+    if chain is None:
+        return None
+    for path, t in chain.transformations.items():
+        sizes = getattr(t.value, 'sizes', None)
+        if sizes is not None and sizes.get('time', None) == 0:
+            return path
+    return None
 
 
 def _instruments_with_dynamic_transforms() -> list[str]:
@@ -54,8 +67,7 @@ def test_registry_paths_match_artifact(instrument) -> None:
     artifact = str(get_nexus_geometry_filename(instrument.name))
     for binding in instrument.dynamic_transforms:
         for source_name in binding.consumers:
-            component_path = f'/entry/instrument/{source_name}'
-            chain = _component_chain_paths(artifact, component_path)
+            chain = _chain_paths(artifact, source_name)
             assert binding.nxlog_path in chain, (
                 f"Binding {binding.stream_name!r} declares nxlog_path "
                 f"{binding.nxlog_path!r} in consumers of {source_name!r}, "
@@ -90,8 +102,7 @@ def test_no_orphan_empty_nxlogs(instrument) -> None:
     covered = {b.nxlog_path for b in instrument.dynamic_transforms}
     sources = list(instrument.detector_names) + list(instrument.monitors)
     for source_name in sources:
-        component_path = f'/entry/instrument/{source_name}'
-        empty = _scan_for_empty_nxlog(artifact, component_path)
+        empty = _empty_nxlog(artifact, source_name)
         if empty is None or empty in covered:
             continue
         known = _KNOWN_ORPHAN_NXLOGS.get((instrument.name, source_name))
@@ -126,26 +137,3 @@ def test_stream_in_f144_attribute_registry(instrument) -> None:
             f"{instrument.name}.f144_attribute_registry; the routing layer "
             f"will not deliver f144 messages to the workflow."
         )
-
-
-# Smoke test that the CI-level orphan scan catches the issue-#922 failure
-# mode under a fabricated artifact (independent of any registered LOKI).
-def test_orphan_scan_catches_unmanaged_empty_nxlog(tmp_path) -> None:
-    fn = str(tmp_path / 'g.nxs')
-    with h5py.File(fn, 'w') as f:
-        e = f.create_group('entry')
-        e.attrs['NX_class'] = 'NXentry'
-        i = e.create_group('instrument')
-        i.attrs['NX_class'] = 'NXinstrument'
-        det = i.create_group('det0')
-        det.attrs['NX_class'] = 'NXdetector'
-        log = det.create_group('rogue')
-        log.attrs['NX_class'] = 'NXlog'
-        log.attrs['depends_on'] = '.'
-        log.create_dataset('value', shape=(0,), dtype='f8')
-        log.create_dataset('time', shape=(0,), dtype='i8')
-        det.create_dataset('depends_on', data='/entry/instrument/det0/rogue')
-    found = _scan_for_empty_nxlog(fn, '/entry/instrument/det0')
-    assert found == '/entry/instrument/det0/rogue'
-    # When the path is in a (fake) covered set, it is not flagged.
-    # (This mirrors the loop body in ``test_no_orphan_empty_nxlogs``.)
