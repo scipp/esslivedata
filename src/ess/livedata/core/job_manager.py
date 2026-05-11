@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import bisect
-import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Annotated, Any, Literal
 
 import pydantic
 import scipp as sc
@@ -65,7 +64,7 @@ class JobAction(StrEnum):
 
 
 class JobCommand(pydantic.BaseModel):
-    key: ClassVar[str] = "job_command"
+    kind: Literal['job_command'] = 'job_command'
     message_id: str | None = pydantic.Field(
         default=None,
         description=(
@@ -80,6 +79,16 @@ class JobCommand(pydantic.BaseModel):
         default=None, description="Workflow ID to cancel jobs for."
     )
     action: JobAction = pydantic.Field(description="Action to perform on the job.")
+
+
+Command = Annotated[WorkflowConfig | JobCommand, pydantic.Field(discriminator='kind')]
+"""
+Wire type for the ``livedata_commands`` topic.
+
+Discriminated union of all command payloads sent from the dashboard to backend
+services. The ``kind`` literal field selects the variant. Use
+:class:`pydantic.TypeAdapter(Command)` for JSON validation/serialization.
+"""
 
 
 class JobFactory:
@@ -235,13 +244,11 @@ class JobManager:
         # Do not remove from active jobs yet, we need to compute results.
         self._finishing_jobs.extend(to_finish)
 
-    def schedule_job(self, source_name: str, config: WorkflowConfig) -> JobId:
+    def schedule_job(self, config: WorkflowConfig) -> JobId:
         """
         Schedule a new job based on the provided configuration.
         """
-        job_id = JobId(
-            job_number=config.job_number or uuid.uuid4(), source_name=source_name
-        )
+        job_id = config.job_id
         job = self._job_factory.create(job_id=job_id, config=config)
         self._job_schedules[job_id] = config.schedule
         self._job_states[job_id] = JobState.scheduled
@@ -250,7 +257,6 @@ class JobManager:
             "job_scheduled",
             job_id=str(job_id),
             workflow_id=str(config.identifier),
-            source=source_name,
             schedule=str(config.schedule),
         )
         return job_id

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import uuid
+
 import pytest
 import scipp as sc
 from pydantic import Field
@@ -36,6 +38,7 @@ def sample_workflow_id() -> WorkflowId:
 def sample_workflow_config(sample_workflow_id: WorkflowId) -> WorkflowConfig:
     return WorkflowConfig(
         identifier=sample_workflow_id,
+        job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
         params={"param1": 10, "param2": "value"},
     )
 
@@ -334,7 +337,10 @@ class TestWorkflowConfigAuxSourceNames:
         self, sample_workflow_id: WorkflowId
     ) -> None:
         """Test that WorkflowConfig has empty aux_source_names by default."""
-        config = WorkflowConfig(identifier=sample_workflow_id)
+        config = WorkflowConfig(
+            identifier=sample_workflow_id,
+            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
+        )
         assert config.aux_source_names == {}
 
     def test_workflow_config_with_aux_source_names(
@@ -343,6 +349,7 @@ class TestWorkflowConfigAuxSourceNames:
         """Test that WorkflowConfig can store aux_source_names as dict."""
         config = WorkflowConfig(
             identifier=sample_workflow_id,
+            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
             aux_source_names={"monitor": "monitor1", "rotation": "rotation_a"},
         )
         assert config.aux_source_names == {
@@ -354,8 +361,10 @@ class TestWorkflowConfigAuxSourceNames:
         self, sample_workflow_id: WorkflowId
     ) -> None:
         """Test that WorkflowConfig with aux_source_names serializes correctly."""
+        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
         config = WorkflowConfig(
             identifier=sample_workflow_id,
+            job_id=job_id,
             aux_source_names={"monitor": "monitor2"},
             params={"param1": 10},
         )
@@ -376,9 +385,11 @@ class TestWorkflowConfigFromParams:
         """Test from_params with params and aux_source_names."""
         params = {"param1": 20, "param2": "custom"}
         aux_sources = {"monitor": "monitor1"}
+        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
+            job_id=job_id,
             params=params,
             aux_source_names=aux_sources,
         )
@@ -386,12 +397,14 @@ class TestWorkflowConfigFromParams:
         assert config.identifier == sample_workflow_id
         assert config.params == {"param1": 20, "param2": "custom"}
         assert config.aux_source_names == {"monitor": "monitor1"}
-        assert config.job_number is not None  # Should be auto-generated
+        assert config.job_id == job_id
 
     def test_from_params_with_none_params(self, sample_workflow_id: WorkflowId) -> None:
         """Test from_params with no params (None)."""
+        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
+            job_id=job_id,
             params=None,
             aux_source_names=None,
         )
@@ -399,32 +412,32 @@ class TestWorkflowConfigFromParams:
         assert config.identifier == sample_workflow_id
         assert config.params == {}
         assert config.aux_source_names == {}
-        assert config.job_number is not None
+        assert config.job_id == job_id
 
-    def test_from_params_with_custom_job_number(
+    def test_from_params_with_custom_job_id(
         self, sample_workflow_id: WorkflowId
     ) -> None:
-        """Test from_params with explicit job_number."""
-        import uuid
-
-        custom_job_number = uuid.uuid4()
+        """Test from_params with explicit job_id."""
+        custom_job_id = JobId(source_name="custom_source", job_number=uuid.uuid4())
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
+            job_id=custom_job_id,
             params=None,
-            job_number=custom_job_number,
         )
 
-        assert config.job_number == custom_job_number
+        assert config.job_id == custom_job_id
 
     def test_from_params_with_complex_params(
         self, sample_workflow_id: WorkflowId
     ) -> None:
         """Test from_params with complex nested dict params."""
         params = {"nested_value": 10, "string_list": ["x", "y", "z"]}
+        job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
+            job_id=job_id,
             params=params,
         )
 

@@ -45,6 +45,57 @@ def _copy_monitor_fields(src_group: h5py.Group, dst_group: h5py.Group) -> None:
     src_group.copy('depends_on', dst_group)
 
 
+def _nx_class(obj: h5py.Group | h5py.Dataset) -> str:
+    nx_class = obj.attrs.get('NX_class', b'')
+    if isinstance(nx_class, bytes):
+        nx_class = nx_class.decode()
+    return nx_class
+
+
+def _copy_nxlog_placeholder(src: h5py.Group, dst: h5py.Group) -> None:
+    """Copy an NXlog group, trimming length-N datasets to length 0.
+
+    Production NeXus files may contain logs with thousands of samples; the
+    geometry artifact wants only the schema (dtype, units, attributes) so
+    downstream consumers see the field shape without historical data.
+    Scalar datasets are kept verbatim; nested groups (including any further
+    NXlogs) are dispatched through :func:`_copy_child`.
+    """
+    _copy_attributes(src, dst)
+    for child_name, child in src.items():
+        if isinstance(child, h5py.Dataset) and child.ndim >= 1:
+            ds = dst.create_dataset(
+                child_name,
+                shape=(0, *child.shape[1:]),
+                dtype=child.dtype,
+            )
+            _copy_attributes(child, ds)
+        else:
+            _copy_child(src, child_name, dst)
+
+
+def _copy_child(src: h5py.Group, key: str, dst: h5py.Group) -> None:
+    """Copy ``src[key]`` into ``dst``, trimming any NXlog descendants.
+
+    Datasets are copied verbatim. NXlog groups become length-0 placeholders.
+    Other groups are recreated and recursed into so that NXlogs anywhere
+    below get trimmed. No-op if ``key`` already exists in ``dst``.
+    """
+    if key in dst:
+        return
+    child = src[key]
+    if isinstance(child, h5py.Dataset):
+        src.copy(key, dst)
+        return
+    if _nx_class(child) == 'NXlog':
+        _copy_nxlog_placeholder(child, dst.create_group(key))
+        return
+    sub_dst = dst.create_group(key)
+    _copy_attributes(child, sub_dst)
+    for sub_key in child:
+        _copy_child(child, sub_key, sub_dst)
+
+
 def _read_depends_on(value: bytes | str) -> str | None:
     if isinstance(value, bytes):
         value = value.decode()
@@ -84,13 +135,27 @@ def _ensure_parent_groups(fin: h5py.File, fout: h5py.File, path: str) -> None:
             _copy_attributes(fin[current], fout[current])
 
 
+def _get_or_create_dst(
+    fin: h5py.File, fout: h5py.File, name: str, src: h5py.Group
+) -> h5py.Group:
+    """Return ``fout[name]``, creating it (and parents) from ``src`` if absent."""
+    _ensure_parent_groups(fin, fout, name)
+    if name in fout:
+        return fout[name]
+    dst = fout.create_group(name)
+    _copy_attributes(src, dst)
+    return dst
+
+
 def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
     """Copy any ``depends_on`` targets that are missing from the output file.
 
     After copying geometry components, ``depends_on`` chains may reference
     nodes that were not copied — for example an NXlog group inside an
-    NXpositioner that acts as a transformation node.  This function follows
-    all chains and copies missing nodes (groups and datasets) as-is.
+    NXpositioner that acts as a transformation node. NXlog groups are
+    copied as length-0 placeholders so historical motor samples in the
+    source do not bloat the geometry artifact; everything else is copied
+    as-is.
     """
     resolved: set[str] = set()
     while True:
@@ -104,7 +169,18 @@ def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
                 continue
             _ensure_parent_groups(fin, fout, path)
             parent_path = path.rsplit('/', 1)[0] if '/' in path else ''
-            fin.copy(path, fout[parent_path or '/'])
+            leaf = path.rsplit('/', 1)[-1]
+            _copy_child(fin[parent_path or '/'], leaf, fout[parent_path or '/'])
+
+
+_HANDLED_NX_CLASSES = (
+    'NXdetector',
+    'NXmonitor',
+    'NXsource',
+    'NXsample',
+    'NXtransformations',
+    'NXdisk_chopper',
+)
 
 
 def write_minimal_geometry(
@@ -113,51 +189,23 @@ def write_minimal_geometry(
     """Create minimal geometry file with only detector positions and transformations."""
     with h5py.File(input_filename, 'r') as fin, h5py.File(output_filename, 'w') as fout:
 
-        def ensure_parent_groups(name: str) -> None:
-            parts: list[str] = name.split('/')
-            current_path: str = ''
-            for part in parts[:-1]:  # Skip the last part (current group name)
-                if not part:
-                    continue
-                current_path = f"{current_path}/{part}"
-                if current_path not in fout:
-                    src_group: h5py.Group = fin[current_path]
-                    dst_group: h5py.Group = fout.create_group(current_path)
-                    _copy_attributes(src_group, dst_group)
-
         def visit_and_copy(name: str, obj: h5py.Group | h5py.Dataset) -> None:
-            if isinstance(obj, h5py.Group):
-                if 'NX_class' in obj.attrs:
-                    nx_class: str | bytes = obj.attrs['NX_class']
-                    if isinstance(nx_class, bytes):
-                        nx_class = nx_class.decode()
+            if not isinstance(obj, h5py.Group) or 'NX_class' not in obj.attrs:
+                return
+            nx_class = _nx_class(obj)
+            if nx_class not in _HANDLED_NX_CLASSES:
+                return
+            dst = _get_or_create_dst(fin, fout, name, obj)
+            if nx_class == 'NXdetector':
+                _copy_detector_fields(obj, dst, use_pixel_shape=use_pixel_shape)
+            elif nx_class == 'NXmonitor':
+                _copy_monitor_fields(obj, dst)
+            elif nx_class in ('NXsource', 'NXsample'):
+                obj.copy('depends_on', dst)
+            else:  # NXtransformations or NXdisk_chopper
+                for key in obj:
+                    _copy_child(obj, key, dst)
 
-                    if nx_class == 'NXdetector':
-                        ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
-                        _copy_detector_fields(
-                            obj, dst_group, use_pixel_shape=use_pixel_shape
-                        )
-                    elif nx_class == 'NXmonitor':
-                        ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
-                        _copy_monitor_fields(obj, dst_group)
-                    elif nx_class in ('NXsource', 'NXsample'):
-                        ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
-                        obj.copy('depends_on', dst_group)
-                    elif nx_class == 'NXtransformations':
-                        ensure_parent_groups(name)
-                        dst_group: h5py.Group = fout.create_group(name)
-                        _copy_attributes(obj, dst_group)
-                        # Copy all contents of the transformations group
-                        for key in obj:
-                            obj.copy(key, dst_group)
-
-        # Copy root attributes
         _copy_attributes(fin, fout)
         fin.visititems(visit_and_copy)
         _resolve_depends_on_chains(fin, fout)

@@ -9,13 +9,18 @@ duplicated here.
 """
 
 import logging
+import uuid
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.services.timeseries import make_timeseries_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_from_registry(
@@ -56,12 +61,11 @@ def test_updates_are_published_immediately(
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_motion_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="timeseries", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No ack when message_id not set
     assert len(sink.messages) == 0
@@ -98,11 +102,10 @@ def test_duplicate_f144_messages_do_not_trigger_workflow() -> None:
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_motion_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="timeseries", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
 
     # First message — accepted, workflow produces a result
@@ -147,30 +150,19 @@ class TestDataBeforeConfig:
     """
 
     @staticmethod
-    def _make_config_key(
-        source_name: str,
-    ) -> ConfigKey:
-        return ConfigKey(
-            source_name=source_name,
-            service_name="timeseries",
-            key="workflow_config",
-        )
-
-    @staticmethod
     def _setup() -> tuple:
         instrument = 'dummy'
         app = make_timeseries_app(instrument)
         workflow_id, _ = _get_workflow_from_registry(instrument)
         source_a = first_motion_source_name[instrument]
         source_b = second_motion_source_name[instrument]
-        workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
-        return app, source_a, source_b, workflow_config
+        return app, source_a, source_b, workflow_id
 
     def test_data_in_accumulator_without_resend(self) -> None:
         """Data for stream A arrives before config. After config, only stream B
         gets new data. Stream A's job should receive historical data via context
         seeding when stream B's data triggers job activation."""
-        app, source_a, source_b, workflow_config = self._setup()
+        app, source_a, source_b, workflow_id = self._setup()
 
         # Data arrives first for both streams — accumulators store it, no jobs
         app.publish_log_message(source_name=source_a, time=1, value=42.0)
@@ -179,14 +171,14 @@ class TestDataBeforeConfig:
         assert len(app.sink.messages) == 0
 
         # Config arrives for both sources — jobs scheduled
-        app.publish_config_message(
-            key=self._make_config_key(source_a),
-            value=workflow_config.model_dump(),
+        config_a = workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_a)
         )
-        app.publish_config_message(
-            key=self._make_config_key(source_b),
-            value=workflow_config.model_dump(),
+        config_b = workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_b)
         )
+        app.publish_config_message(config_a)
+        app.publish_config_message(config_b)
         app.service.step()
 
         # Only stream B gets new data — this triggers activation of ALL
@@ -206,7 +198,7 @@ class TestDataBeforeConfig:
         (same timestamp) arrives for A plus new data for B. The resend is
         rejected by ToNXlog's duplicate guard, but A's job should still
         receive historical data via context seeding."""
-        app, source_a, source_b, workflow_config = self._setup()
+        app, source_a, source_b, workflow_id = self._setup()
 
         # Data for stream A arrives first
         app.publish_log_message(source_name=source_a, time=1, value=42.0)
@@ -214,14 +206,14 @@ class TestDataBeforeConfig:
         assert len(app.sink.messages) == 0
 
         # Config for both sources
-        app.publish_config_message(
-            key=self._make_config_key(source_a),
-            value=workflow_config.model_dump(),
+        config_a = workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_a)
         )
-        app.publish_config_message(
-            key=self._make_config_key(source_b),
-            value=workflow_config.model_dump(),
+        config_b = workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_b)
         )
+        app.publish_config_message(config_a)
+        app.publish_config_message(config_b)
         app.service.step()
 
         # Stream A: resend (same timestamp, rejected by accumulator)
@@ -240,13 +232,13 @@ class TestDataBeforeConfig:
     def test_data_not_in_accumulator_with_resend(self) -> None:
         """Data was never consumed by accumulator. Resend with old timestamp
         arrives after job is created — accumulator accepts it normally."""
-        app, source_a, _, workflow_config = self._setup()
+        app, source_a, _, workflow_id = self._setup()
 
         # Config arrives first — job is created, no data yet
-        app.publish_config_message(
-            key=self._make_config_key(source_a),
-            value=workflow_config.model_dump(),
+        config_a = workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_a)
         )
+        app.publish_config_message(config_a)
         app.service.step()
         assert len(app.sink.messages) == 0
 

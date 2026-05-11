@@ -3,14 +3,12 @@
 """Tests for JobOrchestrator initialization and config management."""
 
 from enum import StrEnum
-from typing import Any
 
 import pydantic
 import pytest
 import scipp as sc
 import yaml
 
-from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     AuxSources,
@@ -28,7 +26,6 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.fakes import FakeMessageSink
-from ess.livedata.handlers.config_handler import ConfigUpdate
 
 
 class WorkflowParams(pydantic.BaseModel):
@@ -164,14 +161,15 @@ def workflow_with_enum_params() -> WorkflowSpec:
     )
 
 
-def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
-    """Extract all sent commands from the sink."""
-    result = []
+def get_sent_commands(sink: FakeMessageSink) -> list[WorkflowConfig | JobCommand]:
+    """Extract all commands sent to the COMMANDS stream."""
+    result: list[WorkflowConfig | JobCommand] = []
     for messages in sink.published_messages:
         result.extend(
-            (msg.value.config_key, msg.value.value)
+            msg.value
             for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+            if msg.stream == COMMANDS_STREAM_ID
+            and isinstance(msg.value, WorkflowConfig | JobCommand)
         )
     return result
 
@@ -183,11 +181,10 @@ def get_sent_workflow_configs(
     result = []
     for messages in sink.published_messages:
         result.extend(
-            (msg.value.config_key.source_name, msg.value.value)
+            (msg.value.job_id.source_name, msg.value)
             for msg in messages
             if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, ConfigUpdate)
-            and isinstance(msg.value.value, WorkflowConfig)
+            and isinstance(msg.value, WorkflowConfig)
         )
     return result
 
@@ -728,7 +725,7 @@ class TestJobOrchestratorCommit:
             matching_job = next(
                 job for job in job_ids if job.source_name == source_name
             )
-            assert config.job_number == matching_job.job_number
+            assert config.job_id == matching_job
 
     def test_commit_workflow_stops_previous_jobs_on_second_commit(
         self,
@@ -775,13 +772,13 @@ class TestJobOrchestratorCommit:
         # Assert: stop commands sent for first workflow's jobs
         sent_commands = get_sent_commands(fake_sink)
         stop_commands = [
-            (key, value)
-            for key, value in sent_commands
-            if isinstance(value, JobCommand) and value.action == JobAction.stop
+            cmd
+            for cmd in sent_commands
+            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
         ]
 
         assert len(stop_commands) == 2
-        stopped_job_ids = {cmd[1].job_id for cmd in stop_commands}
+        stopped_job_ids = {cmd.job_id for cmd in stop_commands}
         assert stopped_job_ids == set(first_job_ids)
 
         # Verify new workflow configs were sent
@@ -789,7 +786,7 @@ class TestJobOrchestratorCommit:
         assert len(sent_configs) == 2
 
         # Verify the new configs have different job_number than old ones
-        new_job_number = sent_configs[0][1].job_number
+        new_job_number = sent_configs[0][1].job_id.job_number
         assert new_job_number != first_job_ids[0].job_number
         assert new_job_number == second_job_ids[0].job_number
 
@@ -927,13 +924,13 @@ class TestJobOrchestratorStop:
         assert result is True
         sent_commands = get_sent_commands(fake_sink)
         stop_commands = [
-            (key, value)
-            for key, value in sent_commands
-            if isinstance(value, JobCommand) and value.action == JobAction.stop
+            cmd
+            for cmd in sent_commands
+            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
         ]
 
         assert len(stop_commands) == 2
-        stopped_job_ids = {cmd[1].job_id for cmd in stop_commands}
+        stopped_job_ids = {cmd.job_id for cmd in stop_commands}
         assert stopped_job_ids == set(job_ids)
 
     def test_stop_workflow_clears_active_job_state(

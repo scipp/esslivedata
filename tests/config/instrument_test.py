@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import uuid
+
 import pydantic
 import pytest
 import scipp as sc
@@ -9,7 +11,12 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.workflow_spec import MONITORS, REDUCTION, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import (
+    MONITORS,
+    REDUCTION,
+    JobId,
+    WorkflowOutputsBase,
+)
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
     WorkflowFactory,
@@ -420,7 +427,11 @@ class TestInstrumentRegisterSpec:
         # Verify factory was attached
         from ess.livedata.config.workflow_spec import WorkflowConfig
 
-        config = WorkflowConfig(identifier=handle.workflow_id, params={"value": 42})
+        config = WorkflowConfig(
+            identifier=handle.workflow_id,
+            job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
+            params={"value": 42},
+        )
         processor = instrument.workflow_factory.create(
             source_name="any-source", config=config
         )

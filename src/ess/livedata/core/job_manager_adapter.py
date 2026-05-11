@@ -26,12 +26,7 @@ class JobManagerAdapter:
     def __init__(self, *, job_manager: JobManager) -> None:
         self._job_manager = job_manager
 
-    def job_command(
-        self, source_name: str, value: dict
-    ) -> CommandAcknowledgement | None:
-        _ = source_name  # Legacy, not used.
-        command = JobCommand.model_validate(value)
-
+    def job_command(self, command: JobCommand) -> CommandAcknowledgement | None:
         try:
             self._job_manager.job_command(command)
         except KeyError:
@@ -64,12 +59,10 @@ class JobManagerAdapter:
             return None
 
     def set_workflow_with_config(
-        self, source_name: str, value: dict | None
+        self, config: WorkflowConfig
     ) -> CommandAcknowledgement | None:
-        config = WorkflowConfig.model_validate(value)
-
         try:
-            _ = self._job_manager.schedule_job(source_name=source_name, config=config)
+            _ = self._job_manager.schedule_job(config=config)
         except DifferentInstrument:
             # We have multiple backend services that handle jobs, e.g., data_reduction
             # and monitor_data. The frontend simply sends a WorkflowConfig message and
@@ -91,7 +84,7 @@ class JobManagerAdapter:
             if config.message_id is not None:
                 return CommandAcknowledgement(
                     message_id=config.message_id,
-                    device=source_name,
+                    device=config.job_id.source_name,
                     response=AcknowledgementResponse.ERR,
                     message=str(e),
                 )
@@ -100,7 +93,7 @@ class JobManagerAdapter:
             if config.message_id is not None:
                 return CommandAcknowledgement(
                     message_id=config.message_id,
-                    device=source_name,
+                    device=config.job_id.source_name,
                     response=AcknowledgementResponse.ACK,
                 )
             return None

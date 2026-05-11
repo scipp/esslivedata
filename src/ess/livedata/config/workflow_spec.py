@@ -442,8 +442,8 @@ class WorkflowConfig(BaseModel):
     WorkflowConfig (config-only) and WorkflowStart messages. In that design:
 
     - WorkflowConfig would have message_id (for ACK, and as a "config handle") but no
-      job_number (not starting a job yet).
-    - WorkflowStart would have its own message_id (for ACK), job_number (new
+      job_id (not starting a job yet).
+    - WorkflowStart would have its own message_id (for ACK), job_id (new
       job identity), and a config_ref pointing to a previously ACK'd
       config's message_id.
 
@@ -451,6 +451,7 @@ class WorkflowConfig(BaseModel):
     the same configuration while having distinct job lifecycles.
     """
 
+    kind: Literal['workflow_config'] = 'workflow_config'
     identifier: WorkflowId = Field(
         description="Hash of the workflow, used to identify the workflow."
     )
@@ -459,15 +460,14 @@ class WorkflowConfig(BaseModel):
         description=(
             "Transient identifier for command/response correlation. Frontend generates "
             "this UUID and backend echoes it in CommandAcknowledgement responses. "
-            "Distinct from job_number which identifies the job itself."
+            "Distinct from job_id which identifies the job itself."
         ),
     )
-    job_number: JobNumber | None = Field(
-        default=None,
+    job_id: JobId = Field(
         description=(
-            "Persistent job identity used for result routing and job control commands. "
-            "Forms part of JobId (source_name + job_number). Distinct from message_id "
-            "which is only for command acknowledgement correlation."
+            "Identity of the job this config starts. Carries both source_name and "
+            "job_number; used for result routing and job control commands. Distinct "
+            "from message_id which is only for command acknowledgement correlation."
         ),
     )
     schedule: JobSchedule = Field(
@@ -489,9 +489,9 @@ class WorkflowConfig(BaseModel):
     def from_params(
         cls,
         workflow_id: WorkflowId,
+        job_id: JobId,
         params: dict | None = None,
         aux_source_names: dict | None = None,
-        job_number: JobNumber | None = None,
         message_id: str | None = None,
     ) -> WorkflowConfig:
         """
@@ -501,12 +501,12 @@ class WorkflowConfig(BaseModel):
         ----------
         workflow_id:
             Identifier for the workflow
+        job_id:
+            Identity of the job this config starts.
         params:
             Workflow parameters as dict, or None if no params
         aux_source_names:
             Auxiliary source selections as dict, or None if no aux sources
-        job_number:
-            Optional job number (generated if not provided)
         message_id:
             Optional message ID for command acknowledgement tracking
 
@@ -518,7 +518,7 @@ class WorkflowConfig(BaseModel):
         return cls(
             identifier=workflow_id,
             message_id=message_id,
-            job_number=job_number if job_number is not None else uuid.uuid4(),
+            job_id=job_id,
             aux_source_names=aux_source_names or {},
             params=params or {},
         )

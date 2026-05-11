@@ -7,11 +7,12 @@ import uuid
 import pytest
 
 from ess.livedata.config.workflow_spec import (
+    JobId,
     JobSchedule,
     WorkflowConfig,
     WorkflowId,
 )
-from ess.livedata.core.job import Job, JobId, JobState
+from ess.livedata.core.job import Job, JobState
 from ess.livedata.core.job_manager import JobManager, WorkflowData
 from ess.livedata.core.message import RunStart, RunStop
 
@@ -23,8 +24,11 @@ def _workflow_id(name: str = 'test') -> WorkflowId:
     return WorkflowId(instrument="test", name=name, version=1)
 
 
-def _make_config(name: str = 'test') -> WorkflowConfig:
-    return WorkflowConfig(identifier=_workflow_id(name))
+def _make_config(name: str = 'test', source_name: str = 'det1') -> WorkflowConfig:
+    return WorkflowConfig(
+        identifier=_workflow_id(name),
+        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
+    )
 
 
 def _activate_jobs(manager: JobManager) -> None:
@@ -40,7 +44,7 @@ def _push_data_to(manager: JobManager, end_time: int) -> None:
 class TestDeferredRunTransitionReset:
     def test_reset_does_not_fire_before_scheduled_time(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -51,7 +55,7 @@ class TestDeferredRunTransitionReset:
 
     def test_reset_fires_when_data_reaches_scheduled_time(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -61,7 +65,7 @@ class TestDeferredRunTransitionReset:
 
     def test_reset_fires_on_run_stop(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -71,7 +75,7 @@ class TestDeferredRunTransitionReset:
 
     def test_past_reset_time_fires_on_next_data(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -83,7 +87,7 @@ class TestDeferredRunTransitionReset:
         """If data has advanced to T=5000 and a RunStart arrives with T=3000,
         the reset fires on the next data push regardless of its end_time."""
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -97,7 +101,7 @@ class TestDeferredRunTransitionReset:
 
     def test_run_start_with_stop_time_schedules_two_resets(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -112,7 +116,7 @@ class TestDeferredRunTransitionReset:
 
     def test_multiple_pending_resets_collapse_within_batch(self, fake_job_factory):
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -190,7 +194,7 @@ class TestDeferredRunTransitionReset:
     def test_pending_resets_persist_without_data(self, fake_job_factory):
         """Pending resets accumulate and fire when data finally arrives."""
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
@@ -207,7 +211,7 @@ class TestDeferredRunTransitionReset:
     def test_no_pending_resets_is_noop(self, fake_job_factory):
         """Pushing data without any scheduled resets does nothing."""
         manager = JobManager(job_factory=fake_job_factory)
-        job_id = manager.schedule_job('det1', _make_config())
+        job_id = manager.schedule_job(_make_config('test', 'det1'))
         _activate_jobs(manager)
         processor = fake_job_factory.processors[job_id]
 
