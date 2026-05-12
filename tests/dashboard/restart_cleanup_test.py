@@ -85,27 +85,49 @@ class TestRestartCleanup:
     and late-arriving old data is rejected by the ingest filter.
     """
 
-    def test_old_data_is_removed_after_recommit(self, workflow_spec):
-        """Data from the previous job is not present after recommit."""
+    def test_old_data_is_retained_after_recommit(self, workflow_spec):
+        """Data from the previous job is retained after a single recommit
+        so that newly created plots can bind to it."""
         orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
-        # First commit
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         old_number = job_ids[0].job_number
 
-        # Simulate data arriving for old job via Orchestrator.forward()
         for source_name in workflow_spec.source_names:
             key = _make_result_key(workflow_id, source_name, old_number)
             orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
 
         assert len(data_service) == len(workflow_spec.source_names)
 
-        # Recommit
         job_orchestrator.commit_workflow(workflow_id)
 
-        # Old data should be gone
-        assert len(data_service) == 0
+        assert all(k.job_id.job_number == old_number for k in data_service)
+        assert len(data_service) == len(workflow_spec.source_names)
+
+    def test_old_data_evicted_when_state_previous_is_replaced(self, workflow_spec):
+        """A second recommit evicts the original job, which has been pushed
+        out of state.previous."""
+        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        oldest_number = job_ids[0].job_number
+        for sn in workflow_spec.source_names:
+            key = _make_result_key(workflow_id, sn, oldest_number)
+            orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
+
+        mid_ids = job_orchestrator.commit_workflow(workflow_id)
+        mid_number = mid_ids[0].job_number
+        for sn in workflow_spec.source_names:
+            key = _make_result_key(workflow_id, sn, mid_number)
+            orchestrator.forward(_data_stream_id(key), sc.scalar(2.0))
+
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # The oldest job has been pushed out; mid is now state.previous.
+        assert all(k.job_id.job_number != oldest_number for k in data_service)
+        assert any(k.job_id.job_number == mid_number for k in data_service)
 
     def test_late_data_for_old_job_is_rejected(self, workflow_spec):
         """Data arriving for the old job after recommit does not enter DataService."""
@@ -131,25 +153,20 @@ class TestRestartCleanup:
         orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
-        # First commit + data
         job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
         old_number = job_ids_1[0].job_number
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, old_number)
             orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
 
-        # Recommit
         job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
         new_number = job_ids_2[0].job_number
 
-        # New data arrives
         data = sc.scalar(99.0)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, new_number)
             orchestrator.forward(_data_stream_id(key), data)
 
-        assert len(data_service) == len(workflow_spec.source_names)
-        # Verify it's the new data
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, new_number)
             assert key in data_service
@@ -186,11 +203,9 @@ class TestRestartCleanup:
         wf_id_1 = workflow_spec.get_id()
         wf_id_2 = workflow_spec_2.get_id()
 
-        # Commit both workflows
         jobs_1 = job_orchestrator.commit_workflow(wf_id_1)
         jobs_2 = job_orchestrator.commit_workflow(wf_id_2)
 
-        # Data for both workflows
         key_1 = _make_result_key(
             wf_id_1, workflow_spec.source_names[0], jobs_1[0].job_number
         )
@@ -200,31 +215,31 @@ class TestRestartCleanup:
         orchestrator.forward(_data_stream_id(key_1), sc.scalar(1.0))
         orchestrator.forward(_data_stream_id(key_2), sc.scalar(2.0))
 
-        assert len(data_service) == 2
-
-        # Recommit only workflow 1
+        # Two further recommits of wf1 push its first job out of state.previous.
+        job_orchestrator.commit_workflow(wf_id_1)
         job_orchestrator.commit_workflow(wf_id_1)
 
-        # Workflow 2's data survives
         assert key_2 in data_service
         assert key_1 not in data_service
 
-    def test_multiple_restarts_do_not_leak(self, workflow_spec):
-        """Repeated restarts do not leave orphaned data in DataService."""
+    def test_multiple_restarts_retain_at_most_two_jobs(self, workflow_spec):
+        """Repeated restarts retain only the active job and the most recent
+        previous job; older jobs are evicted."""
         orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
+        job_numbers: list = []
         for _ in range(5):
             job_ids = job_orchestrator.commit_workflow(workflow_id)
             job_number = job_ids[0].job_number
-
-            # Simulate data arriving
+            job_numbers.append(job_number)
             for sn in workflow_spec.source_names:
                 key = _make_result_key(workflow_id, sn, job_number)
                 orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
 
-        # After 5 restarts, only the last job's data should remain
-        assert len(data_service) == len(workflow_spec.source_names)
+        retained = {k.job_id.job_number for k in data_service}
+        # State.current = last; state.previous = second-to-last
+        assert retained == {job_numbers[-1], job_numbers[-2]}
 
 
 class TestConcurrentForwardAndCommit:

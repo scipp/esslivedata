@@ -28,6 +28,34 @@ def _make_registry():
 
 
 class TestDeactivate:
+    def test_removes_job_number_from_active_set(self):
+        registry, _ds, _js = _make_registry()
+        job_number = uuid.uuid4()
+
+        registry.restore(job_number)
+        assert registry.is_active(job_number)
+
+        registry.deactivate(job_number)
+        assert not registry.is_active(job_number)
+
+    def test_retains_buffered_data(self):
+        registry, ds, _ = _make_registry()
+        job_number = uuid.uuid4()
+
+        key = _make_result_key(job_number)
+        ds[key] = sc.scalar(1.0)
+
+        registry.restore(job_number)
+        registry.deactivate(job_number)
+
+        assert key in ds
+
+    def test_unknown_job_number_is_noop(self):
+        registry, _ds, _js = _make_registry()
+        registry.deactivate(uuid.uuid4())  # no exception
+
+
+class TestCleanup:
     def test_removes_matching_data_service_entries(self):
         registry, ds, _ = _make_registry()
         job_number = uuid.uuid4()
@@ -37,8 +65,7 @@ class TestDeactivate:
         ds[key_a] = sc.scalar(1.0)
         ds[key_b] = sc.scalar(2.0)
 
-        registry.restore(job_number)
-        registry.deactivate(job_number)
+        registry.cleanup(job_number)
 
         assert len(ds) == 0
 
@@ -52,8 +79,7 @@ class TestDeactivate:
         )
         assert len(js.job_statuses) == 1
 
-        registry.restore(job_number)
-        registry.deactivate(job_number)
+        registry.cleanup(job_number)
 
         assert len(js.job_statuses) == 0
 
@@ -62,13 +88,11 @@ class TestDeactivate:
         keep_number = uuid.uuid4()
         remove_number = uuid.uuid4()
 
-        # Data for both jobs
         keep_key = _make_result_key(keep_number)
         remove_key = _make_result_key(remove_number)
         ds[keep_key] = sc.scalar(1.0)
         ds[remove_key] = sc.scalar(2.0)
 
-        # Status for both jobs
         for jn in (keep_number, remove_number):
             job_id = JobId(source_name="det1", job_number=jn)
             js.status_updated(
@@ -77,15 +101,11 @@ class TestDeactivate:
                 )
             )
 
-        registry.restore(keep_number)
-        registry.restore(remove_number)
-        registry.deactivate(remove_number)
+        registry.cleanup(remove_number)
 
         assert keep_key in ds
         assert remove_key not in ds
         assert len(js.job_statuses) == 1
-        assert registry.is_active(keep_number)
-        assert not registry.is_active(remove_number)
 
     def test_unknown_job_number_is_noop(self):
         registry, ds, _js = _make_registry()
@@ -94,8 +114,7 @@ class TestDeactivate:
         key = _make_result_key(existing)
         ds[key] = sc.scalar(1.0)
 
-        # Deactivate a job number that was never activated
-        registry.deactivate(uuid.uuid4())
+        registry.cleanup(uuid.uuid4())
 
         assert key in ds
         assert len(ds) == 1

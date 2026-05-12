@@ -59,15 +59,14 @@ class ActiveJobRegistry:
             self._active.add(job_number)
 
     def deactivate(self, job_number: JobNumber) -> None:
-        """Remove a job number from the active set and clean up its data.
+        """Remove a job number from the active set.
 
-        Removes DataService entries and JobService status entries keyed
-        by the given job number. Serialized against ``ingestion_guard``
-        to prevent dict-iteration crashes or orphaned buffers.
+        Does not delete buffered data — call :py:meth:`cleanup` separately
+        when the job's data is no longer needed. Serialized against
+        ``ingestion_guard`` so the ingest filter sees a consistent view.
         """
         with self._lock:
             self._active.discard(job_number)
-            self._cleanup(job_number)
 
     def restore(self, job_number: JobNumber) -> None:
         """Add a job number without acquiring the lock.
@@ -76,18 +75,24 @@ class ActiveJobRegistry:
         """
         self._active.add(job_number)
 
-    def _cleanup(self, job_number: JobNumber) -> None:
-        """Remove buffered data and status tracking for a job number."""
-        keys_to_remove = [
-            key
-            for key in self._data_service
-            if isinstance(key, ResultKey) and key.job_id.job_number == job_number
-        ]
-        for key in keys_to_remove:
-            del self._data_service[key]
-        self._job_service.remove_jobs_by_number(job_number)
-        logger.info(
-            "Cleaned up job data",
-            job_number=str(job_number),
-            data_keys_removed=len(keys_to_remove),
-        )
+    def cleanup(self, job_number: JobNumber) -> None:
+        """Remove buffered data and status tracking for a job number.
+
+        Independent of active-set membership: callers may retain buffered
+        data after deactivation so that newly created plots can bind to a
+        recently stopped job's results.
+        """
+        with self._lock:
+            keys_to_remove = [
+                key
+                for key in self._data_service
+                if isinstance(key, ResultKey) and key.job_id.job_number == job_number
+            ]
+            for key in keys_to_remove:
+                del self._data_service[key]
+            self._job_service.remove_jobs_by_number(job_number)
+            logger.info(
+                "Cleaned up job data",
+                job_number=str(job_number),
+                data_keys_removed=len(keys_to_remove),
+            )

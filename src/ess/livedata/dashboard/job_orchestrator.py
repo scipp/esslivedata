@@ -395,12 +395,14 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            # Remove outgoing job from the active set and clean up its buffered
-            # data. Any final results the backend publishes before processing
-            # the stop command will be discarded by the ingest filter in
-            # Orchestrator.forward(). This is acceptable: the user has requested
-            # new parameters, so results from the old configuration are stale.
+            # The outgoing job becomes the new state.previous. Buffered data
+            # for it is retained so layers created while the workflow is
+            # stopped can still display the last known state. The job that was
+            # previously kept as state.previous is dropped here, so its
+            # buffered data is no longer reachable and is cleaned up.
             self._deactivate_previous_job(state)
+            if state.previous is not None:
+                self._active_job_registry.cleanup(state.previous.job_number)
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -465,10 +467,12 @@ class JobOrchestrator:
         return self._active_job_registry
 
     def _deactivate_previous_job(self, state: WorkflowState) -> None:
-        """Deactivate the previous job, removing it from the active set and cleaning up.
+        """Deactivate the current job (which is becoming state.previous).
 
-        Delegates to ActiveJobRegistry which handles locking, active-set removal,
-        DataService cleanup, and JobService cleanup atomically.
+        Removes the job from the active set so that late results published
+        before the backend processes the stop command are discarded. Buffered
+        data is retained so the just-stopped job can still feed plots; it is
+        cleaned up by the caller once state.previous is overwritten.
         """
         if state.current is None:
             return
@@ -778,17 +782,24 @@ class JobOrchestrator:
     def _deactivate_workflow(
         self, workflow_id: WorkflowId, reason: StoppedReason
     ) -> None:
-        """Clear active job state, clean up data, persist, and notify subscribers."""
+        """Clear active job state, persist, and notify subscribers.
+
+        The just-stopped job becomes state.previous and its buffered data is
+        retained so that plots created while the workflow is stopped can
+        still display its last results. The prior state.previous (if any) is
+        dropped here and its buffered data is cleaned up.
+        """
         state = self._workflows[workflow_id]
         job_number = state.current.job_number if state.current else None
 
         if state.current is not None:
             for job_id in state.current.job_ids():
                 self._job_states.pop(job_id, None)
-        if job_number is not None:
-            self._active_job_registry.deactivate(job_number)
-        state.previous = state.current
-        state.current = None
+            self._active_job_registry.deactivate(state.current.job_number)
+            if state.previous is not None:
+                self._active_job_registry.cleanup(state.previous.job_number)
+            state.previous = state.current
+            state.current = None
         state.stopped_reason = reason
 
         self._persist_state_to_store(workflow_id)

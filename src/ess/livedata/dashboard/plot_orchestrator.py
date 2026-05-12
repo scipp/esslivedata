@@ -95,6 +95,10 @@ class JobOrchestratorProtocol(Protocol):
         """Get the workflow registry containing all managed workflows."""
         ...
 
+    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """Get the job_number of the most recently stopped job, if any."""
+        ...
+
 
 @dataclass(frozen=True)
 class CellGeometry:

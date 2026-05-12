@@ -95,7 +95,10 @@ class LayerSubscription:
         Subscribe to all workflows.
 
         Call after construction. May fire on_ready synchronously if all
-        workflows are already running.
+        workflows are already running. If no workflow is currently running
+        but every role has a previously stopped job, synthesises start+stop
+        notifications so the layer binds to the retained buffered data and
+        ends up in the STOPPED state with a plot.
         """
         from .job_orchestrator import WorkflowCallbacks
 
@@ -108,6 +111,23 @@ class LayerSubscription:
                 ),
             )
             self._subscription_ids.append(sub_id)
+
+        if self._job_numbers:
+            # At least one role started immediately. Any remaining roles will
+            # come up via the normal subscription when their workflows start.
+            return
+
+        previous_jobs: list[tuple[str, JobNumber]] = []
+        for role, ds in self._data_sources.items():
+            job_number = self._job_orchestrator.get_previous_job_number(ds.workflow_id)
+            if job_number is None:
+                return
+            previous_jobs.append((role, job_number))
+
+        for role, job_number in previous_jobs:
+            self._on_workflow_started(role, job_number)
+        for role, job_number in previous_jobs:
+            self._handle_workflow_stopped(role, job_number)
 
     def _on_workflow_started(self, role: str, job_number: JobNumber) -> None:
         """Handle workflow start for a specific role."""
