@@ -16,7 +16,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
-from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
 from .views import get_multiblade_view
 
 detector_names = ['multiblade_detector']
@@ -199,7 +198,7 @@ f144_log_streams = {
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
-    monitors=list(GENERIC_CBM_MONITORS),
+    monitors=['cbm'],
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
@@ -217,7 +216,6 @@ monitor_handle = register_monitor_workflow_specs(
     instrument,
     instrument.monitors,
     params=TOAOnlyMonitorDataParams,
-    extra_description=GENERIC_CBM_DESCRIPTION_NOTE,
 )
 
 
