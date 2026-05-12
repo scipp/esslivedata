@@ -2,10 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """ESTIA instrument stream mapping configuration."""
 
+from ess.livedata import StreamKind
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .._ess import _make_livedata_topics, make_dev_stream_mapping
 from .specs import f144_log_streams, instrument
 
 # Fake detector configuration: detector_name -> (first_id, last_id)
@@ -38,12 +40,17 @@ stream_mapping = {
         log_names=list(instrument.f144_attribute_registry.keys()),
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(
-            instrument='estia',
-            monitor_names=instrument.monitors,
-            cbm_start=0,
-        ),
+        monitors={
+            InputStreamKey(
+                topic=stream_kind_to_topic(
+                    instrument='estia', kind=StreamKind.MONITOR_EVENTS
+                ),
+                source_name='cbm',
+            ): 'cbm'
+        },
+        instrument='estia',
         detectors=_make_estia_detectors(),
         logs=_make_estia_logs(),
+        **_make_livedata_topics('estia'),
     ),
 }
