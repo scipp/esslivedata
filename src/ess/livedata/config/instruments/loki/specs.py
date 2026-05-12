@@ -42,12 +42,8 @@ class DetectorCarriageLog(TransformValueLog):
 
 #: Dynamic-transform bindings for LOKI. Only the rear bank's carriage entry
 #: is dynamic; other banks have no live position readback. ``beam_monitor_m4``
-#: is also movable (on the carriage), but the artifact represents its
-#: position via a separate empty NXlog rather than ``detector_carriage/value``;
-#: wiring m4 needs either a ``make_geometry_nexus.py`` change so it shares the
-#: carriage chain (then add ``'beam_monitor_m4'`` to ``dependent_sources``
-#: here) or a separate f144 stream registration. Tracked as follow-up to
-#: issue #922.
+#: is also movable (on the carriage, probably), but we currently have no file
+#: with a correct depends_on chain.
 LOKI_DYNAMIC_TRANSFORMS = [
     DynamicTransformBinding(
         nxlog_path='/entry/instrument/detector_carriage/value',
