@@ -16,7 +16,6 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports
     from ess.livedata.handlers.detector_view import (
         DetectorViewFactory,
-        InstrumentDetectorSource,
         LogicalViewConfig,
     )
 
@@ -37,7 +36,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Create detector view using Sciline-based factory (identity transform)
     _nmx_panels_view = DetectorViewFactory(
-        data_source=InstrumentDetectorSource(instrument),
         view_config=LogicalViewConfig(),  # Identity transform
         instrument=instrument,
     )

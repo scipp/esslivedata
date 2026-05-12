@@ -516,10 +516,7 @@ class Instrument:
             )
 
         if self._logical_views:
-            from ess.livedata.handlers.detector_view import (
-                DetectorViewFactory,
-                InstrumentDetectorSource,
-            )
+            from ess.livedata.handlers.detector_view import DetectorViewFactory
             from ess.livedata.handlers.detector_view import (
                 LogicalViewConfig as ScilineLogicalViewConfig,
             )
@@ -533,7 +530,6 @@ class Instrument:
                     spectrum_view=config.spectrum_view,
                 )
                 factory = DetectorViewFactory(
-                    data_source=InstrumentDetectorSource(self),
                     view_config=view_config,
                     instrument=self,
                 )

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import scipp as sc
-from ess.reduce.nexus.types import NeXusData, SampleRun
+from ess.reduce.nexus.types import EmptyDetector, NeXusData, SampleRun
 from ess.reduce.unwrap import LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
@@ -26,7 +26,7 @@ from ..accumulators import make_no_copy_accumulator_pair
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ..detector_view_specs import DetectorViewParams
 from ..stream_processor_workflow import StreamProcessorWorkflow
-from .data_source import DetectorDataSource, DetectorNumberSource
+from .data_source import DetectorDataSource, NeXusDetectorSource, create_empty_detector
 from .providers import spectrum_view
 from .types import (
     AccumulatedHistogram,
@@ -68,10 +68,6 @@ class DetectorViewFactory:
 
     Parameters
     ----------
-    data_source:
-        Detector data source configuration. Use NeXusDetectorSource for
-        loading geometry from a file, or DetectorNumberSource for fast
-        file-less startup with logical views.
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
@@ -81,15 +77,22 @@ class DetectorViewFactory:
         includes the workflow's ``source_name``,
         ``apply_dynamic_transforms`` patches the workflow at
         :meth:`make_workflow` time. With no matching binding this is a
-        no-op.
+        no-op. Also supplies the per-source ``detector_number`` when
+        ``data_source`` is not given.
+    data_source:
+        Optional detector data source. Use ``NeXusDetectorSource`` to load
+        full geometry from a file (required for wavelength mode). When
+        omitted, an EmptyDetector is built from
+        ``instrument.get_detector_number(source_name)``; useful for
+        logical views that only need the pixel structure.
     """
 
     def __init__(
         self,
         *,
-        data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
         instrument: Instrument,
+        data_source: DetectorDataSource | None = None,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
@@ -132,10 +135,10 @@ class DetectorViewFactory:
         if mode == 'wavelength':
             if lookup_table_filename is None:
                 raise ValueError(f"{mode} mode requires lookup_table_filename")
-            if isinstance(self._data_source, DetectorNumberSource):
+            if not isinstance(self._data_source, NeXusDetectorSource):
                 raise ValueError(
                     f"{mode} mode requires geometry for Ltotal computation; "
-                    "use NeXusDetectorSource instead of DetectorNumberSource"
+                    "pass data_source=NeXusDetectorSource(...)"
                 )
 
         # Get mode-specific event coordinate
@@ -164,8 +167,15 @@ class DetectorViewFactory:
             workflow[LookupTableFilename] = lookup_table_filename
             workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
-        # Configure detector data source (EmptyDetector)
-        self._data_source.configure_workflow(workflow, source_name)
+        # Configure detector data source (EmptyDetector). Without an explicit
+        # data_source, build EmptyDetector from the instrument's per-source
+        # detector_number — file-less, sufficient for logical views.
+        if self._data_source is None:
+            workflow[EmptyDetector[SampleRun]] = create_empty_detector(
+                self._instrument.get_detector_number(source_name)
+            )
+        else:
+            self._data_source.configure_workflow(workflow, source_name)
 
         # Set pixel weighting configuration
         workflow[UsePixelWeighting] = use_pixel_weighting

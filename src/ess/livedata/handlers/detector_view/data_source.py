@@ -11,15 +11,12 @@ data or synthetic detector structures.
 from __future__ import annotations
 
 import pathlib
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 import sciline
 import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, Filename, NeXusName, SampleRun
 from scippnexus import NXdetector
-
-if TYPE_CHECKING:
-    from ess.livedata.config.instrument import Instrument
 
 
 def create_empty_detector(detector_number: sc.Variable) -> sc.DataArray:
@@ -116,25 +113,3 @@ class DetectorNumberSource:
         workflow[EmptyDetector[SampleRun]] = create_empty_detector(
             self._detector_number
         )
-
-
-class InstrumentDetectorSource:
-    """
-    Create EmptyDetector from an Instrument's configured detector_number.
-
-    Use this for logical views where the detector_number is configured in the
-    Instrument and may differ for each source_name. This enables fast startup
-    without file I/O while supporting multiple detector sources.
-
-    Parameters
-    ----------
-    instrument:
-        The instrument configuration containing detector_number arrays.
-    """
-
-    def __init__(self, instrument: Instrument) -> None:
-        self._instrument = instrument
-
-    def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
-        detector_number = self._instrument.get_detector_number(source_name)
-        workflow[EmptyDetector[SampleRun]] = create_empty_detector(detector_number)
