@@ -45,8 +45,8 @@ stream_mapping = {
                 topic=stream_kind_to_topic(
                     instrument='estia', kind=StreamKind.MONITOR_EVENTS
                 ),
-                source_name='cbm',
-            ): 'cbm'
+                source_name='cbm1',
+            ): 'cbm1'
         },
         instrument='estia',
         detectors=_make_estia_detectors(),

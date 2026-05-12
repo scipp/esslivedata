@@ -198,7 +198,7 @@ f144_log_streams = {
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
-    monitors=['cbm'],
+    monitors=['cbm1'],
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
