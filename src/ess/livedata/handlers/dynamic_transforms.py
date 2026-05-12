@@ -16,6 +16,7 @@ factory time.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -81,36 +82,55 @@ class DynamicTransformBinding:
     consumers: frozenset[str]
 
 
+def _synthesise_provider(
+    name: str,
+    impl: Callable[..., Any],
+    annotations: dict[str, Any],
+) -> Any:
+    """Synthesise a Sciline provider with explicit named positional parameters.
+
+    Returns a function ``name(p1, p2, ...)`` whose ``__annotations__`` come
+    from ``annotations`` (with ``'return'`` consumed as the return type) and
+    whose body delegates to ``impl(p1, p2, ...)``.
+
+    Why code synthesis is unavoidable: Sciline introspects providers via
+    ``inspect.getfullargspec()``, which reads the underlying ``__code__``
+    object and ignores ``__signature__``. ``__annotations__`` only attaches
+    types to parameters that already exist in the code object — it cannot
+    invent them. Producing N named typed positional parameters therefore
+    requires building a real function via ``exec``/``compile``. This is the
+    same technique ``dataclasses``, ``attrs``, ``pydantic``, and
+    ``collections.namedtuple`` use to generate ``__init__`` /
+    ``__new__``. The template inputs here are closed: every interpolated
+    name is a key of ``annotations``, constructed in-module from
+    ``f'log_{i}'``; no external string reaches the template.
+    """
+    params = [n for n in annotations if n != 'return']
+    arg_list = ', '.join(params)
+    src = f"def {name}({arg_list}):\n    return _impl({arg_list})\n"
+    ns: dict[str, Any] = {'_impl': impl}
+    exec(src, ns)  # noqa: S102
+    fn = ns[name]
+    fn.__annotations__ = dict(annotations)
+    return fn
+
+
 def _build_patched_chain_provider(
     component_type: type, matched: list[DynamicTransformBinding]
 ) -> Any:
-    """Build a replacement for essreduce's ``get_transformation_chain``.
+    """Build a per-component-type provider that patches NXlog placeholders.
 
-    The returned closure has the same signature as ``get_transformation_chain``
-    specialised to one ``component_type``: it consumes
-    ``NeXusComponent[component_type, SampleRun]`` (and the matched bindings'
-    ``log_key`` parameters) and produces
-    ``NeXusTransformationChain[component_type, SampleRun]``. It reproduces
-    the upstream provider's body (``get_transformation_chain(component)``)
-    and patches each matched ``nxlog_path`` with the latest f144 sample.
-    It cannot instead consume the chain as input — that would self-cycle on
-    its own return type.
-
-    Sciline resolves dependencies by annotation name, so the closure must
-    use explicit positional parameters (not ``*logs``) and have its
-    ``__annotations__`` set with the per-binding ``log_key`` types.
+    The returned provider replaces essreduce's ``get_transformation_chain``
+    specialised to ``component_type``: it consumes
+    ``NeXusComponent[component_type, SampleRun]`` plus one parameter per
+    matched binding (annotated with that binding's ``log_key``), and produces
+    ``NeXusTransformationChain[component_type, SampleRun]``. It cannot
+    instead consume the chain as input — that would self-cycle on its own
+    return type.
     """
-    n = len(matched)
-    arg_names = [f'log_{i}' for i in range(n)]
-    arg_list = ', '.join(arg_names)
     bindings_local = list(matched)
-    src = (
-        f"def _patched_chain(component, {arg_list}):\n"
-        f"    return _impl(component, ({arg_list}{',' if n == 1 else ''}))\n"
-    )
-    namespace: dict[str, Any] = {}
 
-    def _impl(component: Any, containers: tuple[TransformLog | None, ...]) -> Any:
+    def _impl(component: Any, *containers: TransformLog | None) -> Any:
         chain = get_transformation_chain(component)
         patched = deepcopy(chain)
         for binding, container in zip(bindings_local, containers, strict=True):
@@ -129,16 +149,16 @@ def _build_patched_chain_provider(
             patched.transformations[binding.nxlog_path].value = log['time', -1].data
         return patched
 
-    namespace['_impl'] = _impl
-    exec(src, namespace)  # noqa: S102
-    fn = namespace['_patched_chain']
-    fn.__annotations__ = {
+    annotations: dict[str, Any] = {
         'component': NeXusComponent[component_type, SampleRun],
-        **{name: b.log_key for name, b in zip(arg_names, matched, strict=True)},
+        **{f'log_{i}': b.log_key for i, b in enumerate(matched)},
         'return': NeXusTransformationChain[component_type, SampleRun],
     }
-    fn.__name__ = f'_patched_chain__{component_type.__name__}'
-    return fn
+    return _synthesise_provider(
+        name=f'_patched_chain__{component_type.__name__}',
+        impl=_impl,
+        annotations=annotations,
+    )
 
 
 class _DynamicTransformAuxSources(AuxSources):
