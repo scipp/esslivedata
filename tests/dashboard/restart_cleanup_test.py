@@ -340,9 +340,10 @@ class TestConcurrentForwardAndCommit:
 
         assert not errors, f"Forward loop crashed: {errors[0]}"
 
-        # Only the last job's data should be present
+        # Only state.current and state.previous may have retained data —
+        # everything older must be evicted.
         last_number = current_job_ids[0][0].job_number
+        previous_number = job_orchestrator.get_previous_job_number(workflow_id)
+        allowed = {last_number, previous_number}
         for key in data_service:
-            assert key.job_id.job_number == last_number, (
-                f"Orphaned key from old job: {key}"
-            )
+            assert key.job_id.job_number in allowed, f"Orphaned key from old job: {key}"
