@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Validate each instrument's ``dynamic_transforms`` registry against the
+"""Validate each instrument's dynamic-transform bindings against the
 currently-registered geometry artifact.
 
-For every binding declared on an instrument, walks the depends_on chain
-of every declared consumer in the artifact and confirms the binding's
-``nxlog_path`` appears on every chain. Catches typos and orphaned
-bindings before runtime.
+For every :class:`DynamicTransformBinding` declared on an instrument,
+walks the depends_on chain of every declared consumer in the artifact and
+confirms the binding's ``nxlog_path`` appears on every chain. Catches
+typos and orphaned bindings before runtime.
 
 Also rejects duplicate ``log_key``s — Sciline collapses two parameters
 of the same key, silently merging two bindings.
@@ -22,6 +22,15 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+from ess.livedata.handlers.dynamic_transforms import DynamicTransformBinding
+
+
+def _transform_bindings(instrument) -> list[DynamicTransformBinding]:
+    return [
+        b
+        for b in instrument.log_context_bindings
+        if isinstance(b, DynamicTransformBinding)
+    ]
 
 
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
@@ -62,7 +71,7 @@ def _instruments_with_dynamic_transforms() -> list[str]:
     for name in available_instruments():
         get_config(name)
         inst = instrument_registry[name]
-        if inst.dynamic_transforms:
+        if _transform_bindings(inst):
             cases.append(name)
     return cases
 
@@ -75,15 +84,15 @@ def instrument(request):
 
 
 def test_registry_log_keys_are_unique(instrument) -> None:
-    keys = [b.log_key for b in instrument.dynamic_transforms]
+    keys = [b.log_key for b in _transform_bindings(instrument)]
     assert len(keys) == len(set(keys)), (
-        f"Duplicate log_key in {instrument.name}.dynamic_transforms: {keys}"
+        f"Duplicate log_key in {instrument.name}.log_context_bindings: {keys}"
     )
 
 
 def test_registry_paths_match_artifact(instrument) -> None:
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    for binding in instrument.dynamic_transforms:
+    for binding in _transform_bindings(instrument):
         for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
             assert binding.nxlog_path in chain, (
@@ -117,7 +126,7 @@ def test_no_orphan_empty_nxlogs(instrument) -> None:
     Otherwise, workflows loading that source will trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    covered = {b.nxlog_path for b in instrument.dynamic_transforms}
+    covered = {b.nxlog_path for b in _transform_bindings(instrument)}
     sources = list(instrument.detector_names) + list(instrument.monitors)
     for source_name in sources:
         empty = _empty_nxlog(artifact, source_name)
@@ -129,16 +138,17 @@ def test_no_orphan_empty_nxlogs(instrument) -> None:
         pytest.fail(
             f"Source {source_name!r} has an empty NXlog placeholder at "
             f"{empty!r} not covered by any binding. Add a "
-            f"DynamicTransformBinding to {instrument.name}.dynamic_transforms "
-            f"or fix the geometry artifact (or list it in "
-            f"_KNOWN_ORPHAN_NXLOGS with a follow-up reference)."
+            f"DynamicTransformBinding to "
+            f"{instrument.name}.log_context_bindings or fix the geometry "
+            f"artifact (or list it in _KNOWN_ORPHAN_NXLOGS with a follow-up "
+            f"reference)."
         )
 
 
 def test_consumers_subset_of_registered_sources(instrument) -> None:
     """Each consumer must be a registered source on the instrument."""
     valid = set(instrument.detector_names) | set(instrument.monitors)
-    for binding in instrument.dynamic_transforms:
+    for binding in _transform_bindings(instrument):
         unknown = binding.dependent_sources - valid
         assert not unknown, (
             f"Binding {binding.stream_name!r} declares unknown consumers "
@@ -149,7 +159,7 @@ def test_consumers_subset_of_registered_sources(instrument) -> None:
 def test_stream_in_f144_attribute_registry(instrument) -> None:
     """The binding's ``stream_name`` must be a registered f144 stream so
     the routing layer subscribes to it."""
-    for binding in instrument.dynamic_transforms:
+    for binding in _transform_bindings(instrument):
         assert binding.stream_name in instrument.f144_attribute_registry, (
             f"Binding {binding.stream_name!r} is not declared in "
             f"{instrument.name}.f144_attribute_registry; the routing layer "

@@ -18,14 +18,12 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
-from ess.livedata.handlers.dynamic_transforms import (
-    DynamicTransformBinding,
-    TransformValueLog,
-)
+from ess.livedata.handlers.dynamic_transforms import DynamicTransformBinding
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.handlers.stream_processor_workflow import ValueLog
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     register_wavelength_lut_workflow_spec,
 )
@@ -34,9 +32,9 @@ from .views import get_tube_view
 
 
 #: Sciline key for the rear-detector carriage f144 NXlog. Subclassing
-#: TransformValueLog gives the binding its own grep-able Sciline node, distinct
+#: ValueLog gives the binding its own grep-able Sciline node, distinct
 #: from any future bindings on the same component type.
-class DetectorCarriageLog(TransformValueLog):
+class DetectorCarriageLog(ValueLog):
     """Carriage f144 NXlog (drives ``loki_detector_0`` chain)."""
 
 
@@ -50,6 +48,7 @@ LOKI_DYNAMIC_TRANSFORMS = [
         stream_name='detector_carriage',
         log_key=DetectorCarriageLog,
         dependent_sources=frozenset({'loki_detector_0'}),
+        units='mm',
     ),
 ]
 
@@ -218,7 +217,7 @@ instrument = Instrument(
     f144_attribute_registry={
         name: {'units': info['units']} for name, info in f144_log_streams.items()
     },
-    dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
+    log_context_bindings=LOKI_DYNAMIC_TRANSFORMS,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Top'),

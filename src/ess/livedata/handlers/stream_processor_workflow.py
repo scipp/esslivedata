@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,11 +13,66 @@ if TYPE_CHECKING:
 
 import sciline
 import sciline.typing
+import scipp as sc
 from ess.reduce import streaming
 
 from ess.livedata.core.timestamp import Timestamp
 
 from .workflow_factory import Workflow
+
+
+@dataclass(frozen=True, slots=True)
+class ValueLog:
+    """Typed Sciline-key wrapper around a cumulative ``ToNXlog`` payload.
+
+    Subclass to create a distinct Sciline parameter per stream. The class
+    is the typed wrapper for an NXlog's ``value``-over-``time`` payload:
+    ``values`` carries the cumulative timeseries (a ``DataArray`` with a
+    ``time`` coord).
+
+    ``values`` is ``None`` before the first ``set_context`` call —
+    ``ess.reduce.streaming.StreamProcessor`` pre-sets every context key to
+    ``None`` — otherwise it is the NXlog produced by ``ToNXlog``, possibly
+    still empty if no f144 message has arrived yet.
+
+    :class:`StreamProcessorWorkflow` detects subclasses of this type among
+    its ``context_keys`` values and wraps the raw NXlog as
+    ``key(values=raw)`` before delegating to ``set_context``.
+    """
+
+    values: sc.DataArray | None = None
+
+
+def synthesise_provider(
+    name: str,
+    impl: Callable[..., Any],
+    annotations: dict[str, Any],
+) -> Any:
+    """Synthesise a Sciline provider with explicit named positional parameters.
+
+    Returns a function ``name(p1, p2, ...)`` whose ``__annotations__`` come
+    from ``annotations`` (with ``'return'`` consumed as the return type) and
+    whose body delegates to ``impl(p1, p2, ...)``.
+
+    Why code synthesis is unavoidable: Sciline introspects providers via
+    ``inspect.getfullargspec()``, which reads the underlying ``__code__``
+    object and ignores ``__signature__``. ``__annotations__`` only attaches
+    types to parameters that already exist in the code object — it cannot
+    invent them. Producing N named typed positional parameters therefore
+    requires building a real function via ``exec``/``compile``. This is the
+    same technique ``dataclasses``, ``attrs``, ``pydantic``, and
+    ``collections.namedtuple`` use to generate ``__init__`` /
+    ``__new__``. Callers are responsible for constructing safe parameter
+    names — no external string should reach the template.
+    """
+    params = [n for n in annotations if n != 'return']
+    arg_list = ', '.join(params)
+    src = f"def {name}({arg_list}):\n    return _impl({arg_list})\n"
+    ns: dict[str, Any] = {'_impl': impl}
+    exec(src, ns)  # noqa: S102
+    fn = ns[name]
+    fn.__annotations__ = dict(annotations)
+    return fn
 
 
 class StreamProcessorWorkflow(Workflow):
@@ -96,22 +152,18 @@ class StreamProcessorWorkflow(Workflow):
         # the routing layer ensures only jobs that subscribed to a stream
         # receive its data.
         #
-        # Wrapping rule: if a Sciline key is a TransformValueLog subclass, the raw
-        # NXlog payload is wrapped via ``key(log=raw)`` before set_context, so
-        # the patched transformation-chain provider sees a typed value. The
+        # Wrapping rule: if a Sciline key is a ValueLog subclass, the raw
+        # NXlog payload is wrapped via ``key(values=raw)`` before set_context,
+        # so consumers (e.g. patched chain providers) see a typed value. The
         # ``isinstance(sciline_key, type)`` guard is non-negotiable: NewType
         # instances and parameterised generics are not classes and issubclass
         # would raise TypeError on them.
-        from .dynamic_transforms import TransformValueLog
-
         context = {}
         for key, sciline_key in self._context_keys.items():
             if key not in data:
                 continue
             raw = data[key]
-            if isinstance(sciline_key, type) and issubclass(
-                sciline_key, TransformValueLog
-            ):
+            if isinstance(sciline_key, type) and issubclass(sciline_key, ValueLog):
                 context[sciline_key] = sciline_key(values=raw)
             else:
                 context[sciline_key] = raw

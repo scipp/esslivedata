@@ -11,10 +11,8 @@ if TYPE_CHECKING:
     import sciline
 
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
-    from ess.livedata.handlers.dynamic_transforms import (
-        DynamicTransformBinding,
-        TransformValueLog,
-    )
+    from ess.livedata.handlers.log_context import LogContextBinding
+    from ess.livedata.handlers.stream_processor_workflow import ValueLog
 
 import pydantic
 import scipp as sc
@@ -96,7 +94,7 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
-    dynamic_transforms: list[DynamicTransformBinding] = field(default_factory=list)
+    log_context_bindings: list[LogContextBinding] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
@@ -113,6 +111,15 @@ class Instrument:
         from ess.livedata.handlers.timeseries_workflow_specs import (
             register_timeseries_workflow_specs,
         )
+
+        # Auto-derive f144_attribute_registry entries from bindings that
+        # declare units. Explicit registry entries win on conflict.
+        for binding in self.log_context_bindings:
+            if binding.units is None:
+                continue
+            self.f144_attribute_registry.setdefault(
+                binding.stream_name, {'units': binding.units}
+            )
 
         timeseries_names = list(self.f144_attribute_registry.keys())
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
@@ -361,16 +368,17 @@ class Instrument:
         self,
         workflow: sciline.Pipeline,
         components: Mapping[str, type],
-    ) -> dict[str, type[TransformValueLog]]:
+    ) -> dict[str, type[ValueLog]]:
         """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
 
         For each ``(source_name, component_type)`` entry, selects every
-        binding in :attr:`dynamic_transforms` whose ``dependent_sources``
-        set includes that source name. For each component type with at
-        least one match, replaces the ``NeXusTransformationChain[T,
-        SampleRun]`` provider with a closure that consumes the matched
-        bindings' ``log_key`` parameters and writes the latest sample
-        into the chain.
+        :class:`DynamicTransformBinding` in :attr:`log_context_bindings`
+        whose ``dependent_sources`` set includes that source name. For each
+        component type with at least one match, replaces the
+        ``NeXusTransformationChain[T, SampleRun]`` provider with a closure
+        that consumes the matched bindings' ``log_key`` parameters and
+        writes the latest sample into the chain. Non-transform bindings
+        on the instrument are ignored.
 
         Parameters
         ----------
@@ -393,17 +401,23 @@ class Instrument:
             f144 NXlog to the right Sciline parameter.
         """
         from ess.livedata.handlers.dynamic_transforms import (
-            _build_patched_chain_provider,
+            DynamicTransformBinding,
+            build_patched_chain_provider,
         )
 
-        context_keys: dict[str, type[TransformValueLog]] = {}
+        transform_bindings = [
+            b
+            for b in self.log_context_bindings
+            if isinstance(b, DynamicTransformBinding)
+        ]
+        context_keys: dict[str, type[ValueLog]] = {}
         for source_name, component_type in components.items():
             matched = [
-                b for b in self.dynamic_transforms if source_name in b.dependent_sources
+                b for b in transform_bindings if source_name in b.dependent_sources
             ]
             if not matched:
                 continue
-            workflow.insert(_build_patched_chain_provider(component_type, matched))
+            workflow.insert(build_patched_chain_provider(component_type, matched))
             for binding in matched:
                 context_keys[binding.stream_name] = binding.log_key
         return context_keys
@@ -468,11 +482,11 @@ class Instrument:
         -------
         Handle for attaching factory later.
         """
-        # Merge dynamic-transform aux sources scoped per spec source list,
-        # so factories using ``apply_dynamic_transforms`` automatically have
-        # the routing layer deliver matching f144 streams.
-        if self.dynamic_transforms and source_names:
-            from ess.livedata.handlers.dynamic_transforms import compose_aux_sources
+        # Merge log-context aux sources scoped per spec source list, so
+        # factories whose bindings cover any of the spec's sources
+        # automatically have the routing layer deliver matching f144 streams.
+        if self.log_context_bindings and source_names:
+            from ess.livedata.handlers.log_context import compose_aux_sources
 
             aux_sources = compose_aux_sources(self, list(source_names), aux_sources)
 

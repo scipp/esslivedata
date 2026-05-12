@@ -8,8 +8,10 @@ import sciline
 import scipp as sc
 
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.dynamic_transforms import TransformValueLog
-from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+from ess.livedata.handlers.stream_processor_workflow import (
+    StreamProcessorWorkflow,
+    ValueLog,
+)
 
 Streamed = NewType('Streamed', int)
 Context = NewType('Context', int)
@@ -359,13 +361,13 @@ class TestWindowOutputs:
         assert result3['current'].coords['start_time'].value == 9000
 
 
-class _CarriageContainer(TransformValueLog):
+class _CarriageContainer(ValueLog):
     pass
 
 
-class TestTransformValueLogWrappingRule:
-    """SPW wraps raw NXlog payloads in a TransformValueLog subclass before
-    set_context iff the Sciline key is a TransformValueLog subclass."""
+class TestValueLogWrappingRule:
+    """SPW wraps raw NXlog payloads in a ValueLog subclass before
+    set_context iff the Sciline key is a ValueLog subclass."""
 
     @pytest.fixture
     def workflow_using_log(self) -> sciline.Pipeline:
@@ -376,7 +378,7 @@ class TestTransformValueLogWrappingRule:
 
         return sciline.Pipeline((consume_log,))
 
-    def test_wraps_transformlog_subclass(self, workflow_using_log) -> None:
+    def test_wraps_valuelog_subclass(self, workflow_using_log) -> None:
         wf = StreamProcessorWorkflow(
             workflow_using_log,
             dynamic_keys={},
@@ -393,7 +395,7 @@ class TestTransformValueLogWrappingRule:
         result = wf.finalize()
         assert result['output'] == 42
 
-    def test_passes_through_non_transformlog_keys(self) -> None:
+    def test_passes_through_non_valuelog_keys(self) -> None:
         # Plain integer context — must not be wrapped.
         def consume(value: Context) -> Output:
             return Output(value * 2)

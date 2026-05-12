@@ -19,11 +19,9 @@ from scippnexus import NXdetector
 
 from ess.livedata.config import Instrument
 from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.handlers.dynamic_transforms import (
-    DynamicTransformBinding,
-    TransformValueLog,
-    compose_aux_sources,
-)
+from ess.livedata.handlers.dynamic_transforms import DynamicTransformBinding
+from ess.livedata.handlers.log_context import compose_aux_sources
+from ess.livedata.handlers.stream_processor_workflow import ValueLog
 
 # --- Test fixtures: minimal artifact builders ---
 
@@ -133,11 +131,11 @@ def _make_artifact(
     return fn
 
 
-class _CarriageLog(TransformValueLog):
+class _CarriageLog(ValueLog):
     pass
 
 
-class _OtherLog(TransformValueLog):
+class _OtherLog(ValueLog):
     pass
 
 
@@ -157,7 +155,7 @@ def _make_workflow_loading(fn: str, source_name: str) -> sciline.Pipeline:
 def _make_instrument(
     bindings: list[DynamicTransformBinding],
 ) -> Instrument:
-    inst = Instrument(name='_test', dynamic_transforms=bindings)
+    inst = Instrument(name='_test', log_context_bindings=bindings)
     return inst
 
 

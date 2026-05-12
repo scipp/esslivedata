@@ -369,16 +369,16 @@ class TestCreateMonitorWorkflow:
         from ess.livedata.config import Instrument
         from ess.livedata.handlers.dynamic_transforms import (
             DynamicTransformBinding,
-            TransformValueLog,
         )
+        from ess.livedata.handlers.stream_processor_workflow import ValueLog
 
-        class _SomeLog(TransformValueLog):
+        class _SomeLog(ValueLog):
             pass
 
         instrument = Instrument(
             name='_test',
             monitors=['monitor_1', 'monitor_2'],
-            dynamic_transforms=[
+            log_context_bindings=[
                 DynamicTransformBinding(
                     nxlog_path='/entry/instrument/some/value',
                     stream_name='some_stream',
@@ -396,16 +396,16 @@ class TestCreateMonitorWorkflow:
         from ess.livedata.config import Instrument
         from ess.livedata.handlers.dynamic_transforms import (
             DynamicTransformBinding,
-            TransformValueLog,
         )
+        from ess.livedata.handlers.stream_processor_workflow import ValueLog
 
-        class _CarriageLog(TransformValueLog):
+        class _CarriageLog(ValueLog):
             pass
 
         instrument = Instrument(
             name='_test',
             monitors=['monitor_1'],
-            dynamic_transforms=[
+            log_context_bindings=[
                 DynamicTransformBinding(
                     nxlog_path='/entry/instrument/carriage/value',
                     stream_name='carriage',
@@ -423,16 +423,16 @@ class TestCreateMonitorWorkflow:
         from ess.livedata.config import Instrument
         from ess.livedata.handlers.dynamic_transforms import (
             DynamicTransformBinding,
-            TransformValueLog,
         )
+        from ess.livedata.handlers.stream_processor_workflow import ValueLog
 
-        class _CarriageLog(TransformValueLog):
+        class _CarriageLog(ValueLog):
             pass
 
         instrument = Instrument(
             name='_test',
             monitors=['monitor_1'],
-            dynamic_transforms=[
+            log_context_bindings=[
                 DynamicTransformBinding(
                     nxlog_path='/entry/instrument/carriage/value',
                     stream_name='carriage',
