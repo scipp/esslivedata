@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
     from ess.livedata.handlers.dynamic_transforms import (
         DynamicTransformBinding,
-        TransformLog,
+        TransformValueLog,
     )
 
 import pydantic
@@ -361,12 +361,12 @@ class Instrument:
         self,
         workflow: sciline.Pipeline,
         components: Mapping[str, type],
-    ) -> dict[str, type[TransformLog]]:
+    ) -> dict[str, type[TransformValueLog]]:
         """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
 
         For each ``(source_name, component_type)`` entry, selects every
-        binding in :attr:`dynamic_transforms` whose ``consumers`` set
-        includes that source name. For each component type with at
+        binding in :attr:`dynamic_transforms` whose ``dependent_sources``
+        set includes that source name. For each component type with at
         least one match, replaces the ``NeXusTransformationChain[T,
         SampleRun]`` provider with a closure that consumes the matched
         bindings' ``log_key`` parameters and writes the latest sample
@@ -396,9 +396,11 @@ class Instrument:
             _build_patched_chain_provider,
         )
 
-        context_keys: dict[str, type[TransformLog]] = {}
+        context_keys: dict[str, type[TransformValueLog]] = {}
         for source_name, component_type in components.items():
-            matched = [b for b in self.dynamic_transforms if source_name in b.consumers]
+            matched = [
+                b for b in self.dynamic_transforms if source_name in b.dependent_sources
+            ]
             if not matched:
                 continue
             workflow.insert(_build_patched_chain_provider(component_type, matched))

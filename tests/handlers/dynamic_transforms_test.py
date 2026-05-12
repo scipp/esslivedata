@@ -21,7 +21,7 @@ from ess.livedata.config import Instrument
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.handlers.dynamic_transforms import (
     DynamicTransformBinding,
-    TransformLog,
+    TransformValueLog,
     compose_aux_sources,
 )
 
@@ -133,11 +133,11 @@ def _make_artifact(
     return fn
 
 
-class _CarriageLog(TransformLog):
+class _CarriageLog(TransformValueLog):
     pass
 
 
-class _OtherLog(TransformLog):
+class _OtherLog(TransformValueLog):
     pass
 
 
@@ -169,7 +169,7 @@ def test_apply_no_op_when_chain_has_no_dynamic_nxlog(tmp_path) -> None:
                 nxlog_path='/entry/instrument/detector_carriage/value',
                 stream_name='detector_carriage',
                 log_key=_CarriageLog,
-                consumers=frozenset({'loki_detector_0'}),
+                dependent_sources=frozenset({'loki_detector_0'}),
             ),
         ]
     )
@@ -187,7 +187,7 @@ def test_apply_patches_chain_for_matching_component(tmp_path) -> None:
                 nxlog_path='/entry/instrument/detector_carriage/value',
                 stream_name='detector_carriage',
                 log_key=_CarriageLog,
-                consumers=frozenset({'loki_detector_0'}),
+                dependent_sources=frozenset({'loki_detector_0'}),
             ),
         ]
     )
@@ -207,14 +207,14 @@ def test_apply_no_samples_yet_raises_at_compute(tmp_path) -> None:
                 nxlog_path='/entry/instrument/detector_carriage/value',
                 stream_name='detector_carriage',
                 log_key=_CarriageLog,
-                consumers=frozenset({'loki_detector_0'}),
+                dependent_sources=frozenset({'loki_detector_0'}),
             ),
         ]
     )
     source_name = 'loki_detector_0'
     wf = _make_workflow_loading(fn, source_name)
     inst.apply_dynamic_transforms(wf, {source_name: NXdetector})
-    wf[_CarriageLog] = _CarriageLog(log=None)
+    wf[_CarriageLog] = _CarriageLog(values=None)
     with pytest.raises(ValueError, match='No samples yet'):
         wf.compute(NeXusTransformationChain[NXdetector, SampleRun])
 
@@ -227,7 +227,7 @@ def test_apply_uses_latest_sample(tmp_path) -> None:
                 nxlog_path='/entry/instrument/detector_carriage/value',
                 stream_name='detector_carriage',
                 log_key=_CarriageLog,
-                consumers=frozenset({'loki_detector_0'}),
+                dependent_sources=frozenset({'loki_detector_0'}),
             ),
         ]
     )
@@ -242,7 +242,7 @@ def test_apply_uses_latest_sample(tmp_path) -> None:
             )
         },
     )
-    wf[_CarriageLog] = _CarriageLog(log=log)
+    wf[_CarriageLog] = _CarriageLog(values=log)
     chain = wf.compute(NeXusTransformationChain[NXdetector, SampleRun])
     patched_value = chain.transformations[
         '/entry/instrument/detector_carriage/value'
@@ -266,13 +266,13 @@ def test_compose_aux_inputs_filtered_by_consumers() -> None:
                 nxlog_path='/a',
                 stream_name='stream_a',
                 log_key=_CarriageLog,
-                consumers=frozenset({'src_a'}),
+                dependent_sources=frozenset({'src_a'}),
             ),
             DynamicTransformBinding(
                 nxlog_path='/b',
                 stream_name='stream_b',
                 log_key=_OtherLog,
-                consumers=frozenset({'src_b'}),
+                dependent_sources=frozenset({'src_b'}),
             ),
         ]
     )
@@ -294,13 +294,13 @@ def test_compose_render_filtered_by_source_name() -> None:
                 nxlog_path='/a',
                 stream_name='stream_a',
                 log_key=_CarriageLog,
-                consumers=frozenset({'src_a', 'src_shared'}),
+                dependent_sources=frozenset({'src_a', 'src_shared'}),
             ),
             DynamicTransformBinding(
                 nxlog_path='/b',
                 stream_name='stream_b',
                 log_key=_OtherLog,
-                consumers=frozenset({'src_b'}),
+                dependent_sources=frozenset({'src_b'}),
             ),
         ]
     )

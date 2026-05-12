@@ -78,9 +78,9 @@ class DetectorViewFactory:
     instrument:
         Optional instrument whose ``dynamic_transforms`` registry is consulted
         when constructing the workflow. If provided and the instrument has any
-        dynamic-transform bindings whose ``consumers`` include the workflow's
-        ``source_name``, ``apply_dynamic_transforms`` patches the workflow at
-        :meth:`make_workflow` time.
+        dynamic-transform bindings whose ``dependent_sources`` include the
+        workflow's ``source_name``, ``apply_dynamic_transforms`` patches the
+        workflow at :meth:`make_workflow` time.
     """
 
     def __init__(
@@ -258,9 +258,10 @@ class DetectorViewFactory:
             )
 
         # Wire dynamic NeXus transforms (f144 NXlog streams) if the instrument
-        # declares any whose ``consumers`` include this source. Walks the
-        # depends_on chain in the artifact to identify matches; raises if the
-        # chain encounters an empty NXlog placeholder not covered by a binding.
+        # declares any whose ``dependent_sources`` include this source. Walks
+        # the depends_on chain in the artifact to identify matches; raises if
+        # the chain encounters an empty NXlog placeholder not covered by a
+        # binding.
         if self._instrument is not None:
             context_keys.update(
                 self._instrument.apply_dynamic_transforms(

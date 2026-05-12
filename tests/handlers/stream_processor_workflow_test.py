@@ -8,7 +8,7 @@ import sciline
 import scipp as sc
 
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.dynamic_transforms import TransformLog
+from ess.livedata.handlers.dynamic_transforms import TransformValueLog
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
 Streamed = NewType('Streamed', int)
@@ -359,20 +359,20 @@ class TestWindowOutputs:
         assert result3['current'].coords['start_time'].value == 9000
 
 
-class _CarriageContainer(TransformLog):
+class _CarriageContainer(TransformValueLog):
     pass
 
 
-class TestTransformLogWrappingRule:
-    """SPW wraps raw NXlog payloads in a TransformLog subclass before
-    set_context iff the Sciline key is a TransformLog subclass."""
+class TestTransformValueLogWrappingRule:
+    """SPW wraps raw NXlog payloads in a TransformValueLog subclass before
+    set_context iff the Sciline key is a TransformValueLog subclass."""
 
     @pytest.fixture
     def workflow_using_log(self) -> sciline.Pipeline:
         def consume_log(container: _CarriageContainer) -> Output:
             assert isinstance(container, _CarriageContainer)
-            assert isinstance(container.log, sc.DataArray)
-            return Output(int(container.log.values[0]))
+            assert isinstance(container.values, sc.DataArray)
+            return Output(int(container.values.values[0]))
 
         return sciline.Pipeline((consume_log,))
 

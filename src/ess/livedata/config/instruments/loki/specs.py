@@ -20,7 +20,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 from ess.livedata.handlers.dynamic_transforms import (
     DynamicTransformBinding,
-    TransformLog,
+    TransformValueLog,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
@@ -34,9 +34,9 @@ from .views import get_tube_view
 
 
 #: Sciline key for the rear-detector carriage f144 NXlog. Subclassing
-#: TransformLog gives the binding its own grep-able Sciline node, distinct
+#: TransformValueLog gives the binding its own grep-able Sciline node, distinct
 #: from any future bindings on the same component type.
-class DetectorCarriageLog(TransformLog):
+class DetectorCarriageLog(TransformValueLog):
     """Carriage f144 NXlog (drives ``loki_detector_0`` chain)."""
 
 
@@ -45,14 +45,15 @@ class DetectorCarriageLog(TransformLog):
 #: is also movable (on the carriage), but the artifact represents its
 #: position via a separate empty NXlog rather than ``detector_carriage/value``;
 #: wiring m4 needs either a ``make_geometry_nexus.py`` change so it shares the
-#: carriage chain (then add ``'beam_monitor_m4'`` to ``consumers`` here) or a
-#: separate f144 stream registration. Tracked as follow-up to issue #922.
+#: carriage chain (then add ``'beam_monitor_m4'`` to ``dependent_sources``
+#: here) or a separate f144 stream registration. Tracked as follow-up to
+#: issue #922.
 LOKI_DYNAMIC_TRANSFORMS = [
     DynamicTransformBinding(
         nxlog_path='/entry/instrument/detector_carriage/value',
         stream_name='detector_carriage',
         log_key=DetectorCarriageLog,
-        consumers=frozenset({'loki_detector_0'}),
+        dependent_sources=frozenset({'loki_detector_0'}),
     ),
 ]
 

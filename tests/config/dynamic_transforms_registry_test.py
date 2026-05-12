@@ -84,7 +84,7 @@ def test_registry_log_keys_are_unique(instrument) -> None:
 def test_registry_paths_match_artifact(instrument) -> None:
     artifact = str(get_nexus_geometry_filename(instrument.name))
     for binding in instrument.dynamic_transforms:
-        for source_name in binding.consumers:
+        for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
             assert binding.nxlog_path in chain, (
                 f"Binding {binding.stream_name!r} declares nxlog_path "
@@ -139,7 +139,7 @@ def test_consumers_subset_of_registered_sources(instrument) -> None:
     """Each consumer must be a registered source on the instrument."""
     valid = set(instrument.detector_names) | set(instrument.monitors)
     for binding in instrument.dynamic_transforms:
-        unknown = binding.consumers - valid
+        unknown = binding.dependent_sources - valid
         assert not unknown, (
             f"Binding {binding.stream_name!r} declares unknown consumers "
             f"{unknown}; valid sources: {sorted(valid)}"

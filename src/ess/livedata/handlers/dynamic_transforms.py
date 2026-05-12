@@ -40,17 +40,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class TransformLog:
+class TransformValueLog:
     """Latest NXlog samples for a dynamic-transform binding.
 
-    Subclass to create a distinct Sciline key per binding. ``log`` is
+    Subclass to create a distinct Sciline key per binding. ``values`` is
     ``None`` before the first ``set_context`` call (essreduce's
     ``StreamProcessor`` pre-sets every context key to ``None``);
     otherwise it is the NXlog produced by ``ToNXlog`` — possibly still
     empty if no f144 message has arrived yet.
     """
 
-    log: sc.DataArray | None = None
+    values: sc.DataArray | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,20 +66,20 @@ class DynamicTransformBinding:
         Name of the f144 aux stream that supplies live samples. Must
         appear in :attr:`Instrument.f144_attribute_registry`.
     log_key:
-        :class:`TransformLog` subclass used as the Sciline key for this
+        :class:`TransformValueLog` subclass used as the Sciline key for this
         binding. Each binding declares its own subclass so the
         per-binding log appears as a distinct, grep-able Sciline node.
-    consumers:
+    dependent_sources:
         Source names whose ``depends_on`` chain walks through
         ``nxlog_path``. Used to scope aux-source routing per spec —
         only specs covering at least one listed consumer carry the
-        stream, and only matching consumers receive it at render time.
+        stream, and only matching dependent sources receive it at render time.
     """
 
     nxlog_path: str
     stream_name: str
-    log_key: type[TransformLog]
-    consumers: frozenset[str]
+    log_key: type[TransformValueLog]
+    dependent_sources: frozenset[str]
 
 
 def _synthesise_provider(
@@ -130,7 +130,7 @@ def _build_patched_chain_provider(
     """
     bindings_local = list(matched)
 
-    def _impl(component: Any, *containers: TransformLog | None) -> Any:
+    def _impl(component: Any, *containers: TransformValueLog | None) -> Any:
         chain = get_transformation_chain(component)
         patched = deepcopy(chain)
         for binding, container in zip(bindings_local, containers, strict=True):
@@ -138,14 +138,14 @@ def _build_patched_chain_provider(
                 continue
             if (
                 container is None
-                or container.log is None
-                or container.log.sizes.get('time', 0) == 0
+                or container.values is None
+                or container.values.sizes.get('time', 0) == 0
             ):
                 raise ValueError(
                     f"No samples yet for {binding.stream_name!r} "
                     f"(transform {binding.nxlog_path!r})"
                 )
-            log = container.log
+            log = container.values
             patched.transformations[binding.nxlog_path].value = log['time', -1].data
         return patched
 
@@ -164,10 +164,10 @@ def _build_patched_chain_provider(
 class _DynamicTransformAuxSources(AuxSources):
     """Aux sources covering an instrument's dynamic-transform bindings.
 
-    Inputs include every binding whose ``consumers`` set intersects the
-    spec's ``source_names``. ``render`` returns only the streams whose
-    binding includes ``job_id.source_name`` in its consumers, rendered
-    un-prefixed (these are global f144 streams shared across jobs).
+    Inputs include every binding whose ``dependent_sources`` set intersects
+    the spec's ``source_names``. ``render`` returns only the streams whose
+    binding includes ``job_id.source_name`` in its ``dependent_sources``,
+    rendered un-prefixed (these are global f144 streams shared across jobs).
     """
 
     def __init__(self, instrument: Instrument, source_names: list[str]) -> None:
@@ -176,7 +176,7 @@ class _DynamicTransformAuxSources(AuxSources):
         inputs: dict[str, str] = {
             b.stream_name: b.stream_name
             for b in instrument.dynamic_transforms
-            if b.consumers & selected
+            if b.dependent_sources & selected
         }
         super().__init__(dict(inputs))
 
@@ -188,7 +188,7 @@ class _DynamicTransformAuxSources(AuxSources):
         return {
             b.stream_name: b.stream_name
             for b in self._instrument.dynamic_transforms
-            if job_id.source_name in b.consumers
+            if job_id.source_name in b.dependent_sources
         }
 
 
