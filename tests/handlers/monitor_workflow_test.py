@@ -343,6 +343,96 @@ class TestCreateMonitorWorkflow:
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
 
+    def test_instrument_without_matching_binding_adds_no_context_keys(self, toa_edges):
+        from ess.livedata.config import Instrument
+        from ess.livedata.handlers.dynamic_transforms import (
+            DynamicTransformBinding,
+            TransformValueLog,
+        )
+
+        class _SomeLog(TransformValueLog):
+            pass
+
+        instrument = Instrument(
+            name='_test',
+            monitors=['monitor_1', 'monitor_2'],
+            dynamic_transforms=[
+                DynamicTransformBinding(
+                    nxlog_path='/entry/instrument/some/value',
+                    stream_name='some_stream',
+                    log_key=_SomeLog,
+                    dependent_sources=frozenset({'monitor_2'}),
+                ),
+            ],
+        )
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
+        assert workflow._context_keys == {}
+
+    def test_instrument_with_matching_binding_merges_context_keys(self, toa_edges):
+        from ess.livedata.config import Instrument
+        from ess.livedata.handlers.dynamic_transforms import (
+            DynamicTransformBinding,
+            TransformValueLog,
+        )
+
+        class _CarriageLog(TransformValueLog):
+            pass
+
+        instrument = Instrument(
+            name='_test',
+            monitors=['monitor_1'],
+            dynamic_transforms=[
+                DynamicTransformBinding(
+                    nxlog_path='/entry/instrument/carriage/value',
+                    stream_name='carriage',
+                    log_key=_CarriageLog,
+                    dependent_sources=frozenset({'monitor_1'}),
+                ),
+            ],
+        )
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
+        assert workflow._context_keys == {'carriage': _CarriageLog}
+
+    def test_instrument_keys_merge_with_caller_supplied_context_keys(self, toa_edges):
+        from ess.livedata.config import Instrument
+        from ess.livedata.handlers.dynamic_transforms import (
+            DynamicTransformBinding,
+            TransformValueLog,
+        )
+
+        class _CarriageLog(TransformValueLog):
+            pass
+
+        instrument = Instrument(
+            name='_test',
+            monitors=['monitor_1'],
+            dynamic_transforms=[
+                DynamicTransformBinding(
+                    nxlog_path='/entry/instrument/carriage/value',
+                    stream_name='carriage',
+                    log_key=_CarriageLog,
+                    dependent_sources=frozenset({'monitor_1'}),
+                ),
+            ],
+        )
+        caller_keys: dict[str, type] = {'extra': sc.Variable}
+        workflow = create_monitor_workflow(
+            'monitor_1',
+            toa_edges,
+            context_keys=caller_keys,
+            instrument=instrument,
+        )
+        assert workflow._context_keys == {
+            'extra': sc.Variable,
+            'carriage': _CarriageLog,
+        }
+        # The caller's dict must not have been mutated.
+        assert caller_keys == {'extra': sc.Variable}
+
 
 class TestMonitorWorkflowIntegration:
     """Integration tests for the V2 monitor workflow."""
