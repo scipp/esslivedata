@@ -40,6 +40,14 @@ from ess.livedata.parameter_models import (
 )
 
 
+@pytest.fixture
+def instrument():
+    """Minimal instrument used by create_monitor_workflow tests."""
+    from ess.livedata.config.instrument import Instrument
+
+    return Instrument(name='test_inst', monitors=['monitor_1', 'monitor_2'])
+
+
 class TestMonitorDataParams:
     """Tests for MonitorDataParams Pydantic model."""
 
@@ -277,38 +285,49 @@ class TestCreateMonitorWorkflow:
     def toa_edges(self):
         return sc.linspace('time_of_arrival', 0, 71_000_000, num=101, unit='ns')
 
-    def test_creates_stream_processor_workflow(self, toa_edges):
+    def test_creates_stream_processor_workflow(self, instrument, toa_edges):
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
 
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         assert isinstance(workflow, StreamProcessorWorkflow)
 
-    def test_workflow_has_required_methods(self, toa_edges):
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+    def test_workflow_has_required_methods(self, instrument, toa_edges):
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         assert hasattr(workflow, 'accumulate')
         assert hasattr(workflow, 'finalize')
         assert hasattr(workflow, 'clear')
 
-    def test_workflow_with_range_filter(self, toa_edges):
+    def test_workflow_with_range_filter(self, instrument, toa_edges):
         range_filter = (
             sc.scalar(10_000_000, unit='ns'),
             sc.scalar(60_000_000, unit='ns'),
         )
         workflow = create_monitor_workflow(
-            'monitor_1', toa_edges, range_filter=range_filter
+            'monitor_1', toa_edges, range_filter=range_filter, instrument=instrument
         )
         assert workflow is not None
 
-    def test_workflow_with_wavelength_mode_requires_lookup_table(self, toa_edges):
+    def test_workflow_with_wavelength_mode_requires_lookup_table(
+        self, instrument, toa_edges
+    ):
         """Test that wavelength mode requires lookup_table_filename."""
         with pytest.raises(ValueError, match="lookup_table_filename is required"):
             create_monitor_workflow(
-                'monitor_1', toa_edges, coordinate_mode='wavelength'
+                'monitor_1',
+                toa_edges,
+                coordinate_mode='wavelength',
+                instrument=instrument,
             )
 
-    def test_workflow_with_wavelength_mode_requires_geometry_file(self, toa_edges):
+    def test_workflow_with_wavelength_mode_requires_geometry_file(
+        self, instrument, toa_edges
+    ):
         """Test that wavelength mode requires geometry_filename."""
         with pytest.raises(ValueError, match="geometry_filename is required"):
             create_monitor_workflow(
@@ -316,9 +335,10 @@ class TestCreateMonitorWorkflow:
                 toa_edges,
                 coordinate_mode='wavelength',
                 lookup_table_filename='/path/to/lookup.h5',
+                instrument=instrument,
             )
 
-    def test_context_keys_forwarded_to_stream_processor(self, toa_edges):
+    def test_context_keys_forwarded_to_stream_processor(self, instrument, toa_edges):
         """Test that context_keys are passed through to StreamProcessorWorkflow."""
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
@@ -326,20 +346,22 @@ class TestCreateMonitorWorkflow:
 
         context_keys = {'position': sc.Variable}
         workflow = create_monitor_workflow(
-            'monitor_1', toa_edges, context_keys=context_keys
+            'monitor_1', toa_edges, context_keys=context_keys, instrument=instrument
         )
         assert isinstance(workflow, StreamProcessorWorkflow)
         # Verify context_keys are stored on the workflow
         assert 'position' in workflow._context_keys
         assert workflow._context_keys['position'] is sc.Variable
 
-    def test_without_context_keys_still_works(self, toa_edges):
+    def test_without_context_keys_still_works(self, instrument, toa_edges):
         """Test that omitting context_keys preserves existing behavior."""
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
 
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
 
@@ -452,8 +474,10 @@ class TestMonitorWorkflowIntegration:
         binned = sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
         return binned
 
-    def test_full_workflow_cycle(self, toa_edges, sample_binned_events):
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+    def test_full_workflow_cycle(self, instrument, toa_edges, sample_binned_events):
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
 
         # Accumulate data
         workflow.accumulate(
@@ -476,9 +500,13 @@ class TestMonitorWorkflowIntegration:
         assert results['counts_total'].value == 5.0
         assert results['counts_in_toa_range'].value == 5.0
 
-    def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
+    def test_time_coords_on_delta_outputs(
+        self, instrument, toa_edges, sample_binned_events
+    ):
         """Delta outputs get time, start_time, end_time coords."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -511,10 +539,12 @@ class TestMonitorWorkflowIntegration:
         assert results['counts_in_toa_range'].coords['end_time'].value == 2000
 
     def test_cumulative_output_has_no_time_coords(
-        self, toa_edges, sample_binned_events
+        self, instrument, toa_edges, sample_binned_events
     ):
         """Cumulative output should not have time coords (spans all time)."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -527,10 +557,12 @@ class TestMonitorWorkflowIntegration:
         assert 'end_time' not in results['cumulative'].coords
 
     def test_time_coords_track_first_start_last_end(
-        self, toa_edges, sample_binned_events
+        self, instrument, toa_edges, sample_binned_events
     ):
         """Time coords should track first start_time and last end_time."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
         # Multiple accumulate calls before finalize
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
@@ -554,9 +586,13 @@ class TestMonitorWorkflowIntegration:
         assert results['current'].coords['start_time'].value == 1000
         assert results['current'].coords['end_time'].value == 4000
 
-    def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
+    def test_time_coords_reset_after_finalize(
+        self, instrument, toa_edges, sample_binned_events
+    ):
         """Time coords should reset between finalize cycles."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
 
         # First cycle
         workflow.accumulate(
@@ -579,10 +615,12 @@ class TestMonitorWorkflowIntegration:
         assert results2['current'].coords['end_time'].value == 6000
 
     def test_cumulative_accumulates_window_clears(
-        self, toa_edges, sample_binned_events
+        self, instrument, toa_edges, sample_binned_events
     ):
         """Verify cumulative accumulates while window clears each cycle."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
 
         # First cycle
         workflow.accumulate(
@@ -607,9 +645,11 @@ class TestMonitorWorkflowIntegration:
         # Current only has the latest cycle
         assert results2['current'].sum().value == 5.0
 
-    def test_full_workflow_cycle_histogram_mode(self, toa_edges):
+    def test_full_workflow_cycle_histogram_mode(self, instrument, toa_edges):
         """Test full workflow cycle with histogram-mode monitor data."""
-        workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, instrument=instrument
+        )
 
         # Create histogram data like Cumulative preprocessor produces
         input_edges = sc.linspace('tof', 0, 10, num=11, unit='ns')
@@ -704,6 +744,7 @@ class TestRegisterMonitorWorkflowSpecs:
                 edges=params.get_active_edges(),
                 range_filter=params.get_active_range(),
                 coordinate_mode=mode,
+                instrument=test_instrument,
             )
 
         # Verify factory works by creating a workflow
@@ -719,7 +760,7 @@ class TestRegisterMonitorWorkflowSpecs:
 class TestMonitorWorkflowFactoryCoordinateMode:
     """Tests for coordinate mode in monitor workflow factory."""
 
-    def test_wavelength_mode_requires_geometry_and_lookup_table(self):
+    def test_wavelength_mode_requires_geometry_and_lookup_table(self, instrument):
         """Test that wavelength mode requires geometry and lookup table files.
 
         The create_monitor_workflow_factory doesn't provide these parameters,
@@ -739,7 +780,7 @@ class TestMonitorWorkflowFactoryCoordinateMode:
         )
 
         with pytest.raises(ValueError, match="lookup_table_filename is required"):
-            create_monitor_workflow_factory('monitor_1', params)
+            create_monitor_workflow_factory('monitor_1', params, instrument)
 
 
 @pytest.mark.slow
@@ -813,7 +854,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         )
 
     def test_wavelength_mode_with_histogram_input(
-        self, wavelength_edges, geometry_filename, lookup_table_filename
+        self, instrument, wavelength_edges, geometry_filename, lookup_table_filename
     ):
         """Test wavelength mode workflow with histogram input data.
 
@@ -832,6 +873,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             coordinate_mode='wavelength',
             geometry_filename=str(geometry_filename),
             lookup_table_filename=str(lookup_table_filename),
+            instrument=instrument,
         )
 
         # Create histogram data like fake_monitors da00 mode produces

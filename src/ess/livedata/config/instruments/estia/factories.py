@@ -54,6 +54,7 @@ def setup_factories(instrument: Instrument) -> None:
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode='toa',
+            instrument=instrument,
         )
 
     @specs.reflectometry_reduction_handle.attach_factory()

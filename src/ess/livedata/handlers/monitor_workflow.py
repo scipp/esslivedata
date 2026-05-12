@@ -172,12 +172,12 @@ def create_monitor_workflow(
     source_name: str,
     edges: sc.Variable,
     *,
+    instrument: Instrument,
     range_filter: tuple[sc.Variable, sc.Variable] | None = None,
     coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
     lookup_table_filename: str | None = None,
     context_keys: dict[str, type] | None = None,
-    instrument: Instrument | None = None,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -189,6 +189,14 @@ def create_monitor_workflow(
         and as the NeXus component name when loading geometry from file.
     edges:
         Bin edges for histogramming (TOA or wavelength edges depending on mode).
+    instrument:
+        Instrument whose ``dynamic_transforms`` registry is consulted. When a
+        binding's ``dependent_sources`` includes ``source_name``,
+        ``apply_dynamic_transforms`` patches the workflow's
+        ``NeXusTransformationChain[NXmonitor, SampleRun]`` provider so the
+        monitor's ``depends_on`` chain is driven by live f144 streams; the
+        resulting Sciline context keys are merged into ``context_keys``. With
+        no matching binding the call is a no-op.
     range_filter:
         Optional (low, high) range for ratemeter counts.
     coordinate_mode:
@@ -202,13 +210,6 @@ def create_monitor_workflow(
         Optional mapping from aux source stream names to sciline pipeline keys.
         Used to inject dynamic data (e.g., position streams) into the workflow
         via StreamProcessorWorkflow's context mechanism.
-    instrument:
-        Optional instrument whose ``dynamic_transforms`` registry is consulted.
-        If provided and any binding's ``dependent_sources`` includes
-        ``source_name``, ``apply_dynamic_transforms`` patches the workflow's
-        ``NeXusTransformationChain[NXmonitor, SampleRun]`` provider so the
-        monitor's ``depends_on`` chain is driven by live f144 streams. The
-        resulting Sciline context keys are merged into ``context_keys``.
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
@@ -248,10 +249,9 @@ def create_monitor_workflow(
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
     merged_context_keys: dict[str, type] = dict(context_keys) if context_keys else {}
-    if instrument is not None:
-        merged_context_keys.update(
-            instrument.apply_dynamic_transforms(workflow, {source_name: NXmonitor})
-        )
+    merged_context_keys.update(
+        instrument.apply_dynamic_transforms(workflow, {source_name: NXmonitor})
+    )
 
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from

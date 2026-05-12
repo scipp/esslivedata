@@ -250,7 +250,11 @@ def register_monitor_workflow_specs(
     )
 
 
-def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams):
+def create_monitor_workflow_factory(
+    source_name: str,
+    params: MonitorDataParams,
+    instrument: Instrument,
+):
     """
     Factory function for monitor workflow from MonitorDataParams.
 
@@ -267,4 +271,5 @@ def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams)
         edges=params.get_active_edges(),
         range_filter=params.get_active_range(),
         coordinate_mode=mode,
+        instrument=instrument,
     )

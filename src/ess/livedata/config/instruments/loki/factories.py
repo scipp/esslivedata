@@ -155,6 +155,7 @@ def setup_factories(instrument: Instrument) -> None:
             coordinate_mode=mode,
             lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
+            instrument=instrument,
         )
 
     # --- Providers for current_run transmission mode ---
