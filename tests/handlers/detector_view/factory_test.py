@@ -2,8 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for DetectorViewScilineFactory."""
 
+import pytest
 import scipp as sc
 
+from ess.livedata.config.instrument import Instrument
 from ess.livedata.handlers.detector_view.data_source import DetectorNumberSource
 from ess.livedata.handlers.detector_view.factory import DetectorViewFactory
 from ess.livedata.handlers.detector_view.types import (
@@ -14,10 +16,17 @@ from ess.livedata.handlers.detector_view.types import (
 from .utils import make_fake_detector_number
 
 
+@pytest.fixture
+def instrument():
+    return Instrument(name='_test')
+
+
 class TestDetectorViewScilineFactory:
     """Tests for DetectorViewScilineFactory."""
 
-    def test_factory_initialization_with_logical_and_geometric_configs(self):
+    def test_factory_initialization_with_logical_and_geometric_configs(
+        self, instrument
+    ):
         """Test factory initialization with logical and geometric view configs."""
         detector_number = make_fake_detector_number(4, 4)
 
@@ -28,6 +37,7 @@ class TestDetectorViewScilineFactory:
         logical_factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             view_config=LogicalViewConfig(transform=transform),
+            instrument=instrument,
         )
         assert logical_factory is not None
         assert isinstance(logical_factory._view_config, LogicalViewConfig)
@@ -40,12 +50,13 @@ class TestDetectorViewScilineFactory:
                 projection_type='xy_plane',
                 resolution={'x': 100, 'y': 100},
             ),
+            instrument=instrument,
         )
         assert geometric_factory is not None
         assert isinstance(geometric_factory._view_config, GeometricViewConfig)
         assert geometric_factory._view_config.projection_type == 'xy_plane'
 
-    def test_factory_initialization_with_per_source_configs(self):
+    def test_factory_initialization_with_per_source_configs(self, instrument):
         """Test that factory can be initialized with per-source configs."""
         detector_number = make_fake_detector_number(4, 4)
 
@@ -61,6 +72,7 @@ class TestDetectorViewScilineFactory:
                     resolution={'x': 100, 'y': 100},
                 ),
             },
+            instrument=instrument,
         )
 
         assert factory is not None

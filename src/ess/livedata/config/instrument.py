@@ -535,6 +535,7 @@ class Instrument:
                 factory = DetectorViewFactory(
                     data_source=InstrumentDetectorSource(self),
                     view_config=view_config,
+                    instrument=self,
                 )
                 handle.attach_factory()(factory.make_workflow)
 

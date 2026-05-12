@@ -76,11 +76,12 @@ class DetectorViewFactory:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
     instrument:
-        Optional instrument whose ``dynamic_transforms`` registry is consulted
-        when constructing the workflow. If provided and the instrument has any
-        dynamic-transform bindings whose ``dependent_sources`` include the
-        workflow's ``source_name``, ``apply_dynamic_transforms`` patches the
-        workflow at :meth:`make_workflow` time.
+        Instrument whose ``dynamic_transforms`` registry is consulted when
+        constructing the workflow. When a binding's ``dependent_sources``
+        includes the workflow's ``source_name``,
+        ``apply_dynamic_transforms`` patches the workflow at
+        :meth:`make_workflow` time. With no matching binding this is a
+        no-op.
     """
 
     def __init__(
@@ -88,7 +89,7 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        instrument: Instrument | None = None,
+        instrument: Instrument,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
@@ -257,17 +258,15 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic NeXus transforms (f144 NXlog streams) if the instrument
-        # declares any whose ``dependent_sources`` include this source. Walks
-        # the depends_on chain in the artifact to identify matches; raises if
-        # the chain encounters an empty NXlog placeholder not covered by a
-        # binding.
-        if self._instrument is not None:
-            context_keys.update(
-                self._instrument.apply_dynamic_transforms(
-                    workflow, {source_name: NXdetector}
-                )
+        # Wire dynamic NeXus transforms (f144 NXlog streams) for any binding
+        # whose ``dependent_sources`` include this source. With no matching
+        # binding this is a no-op; with one, the patched chain provider
+        # raises later if the chain reaches an unpatched empty NXlog.
+        context_keys.update(
+            self._instrument.apply_dynamic_transforms(
+                workflow, {source_name: NXdetector}
             )
+        )
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

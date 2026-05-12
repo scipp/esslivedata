@@ -37,6 +37,8 @@ def _rebin_x_transform(histogram: sc.DataArray, params: _RebinParams) -> sc.Data
 def _make_factory_with_spectrum(
     spec: SpectrumViewSpec, *, y_size: int = 4, x_size: int = 4
 ) -> DetectorViewFactory:
+    from ess.livedata.config.instrument import Instrument
+
     detector_number = make_fake_detector_number(y_size, x_size)
 
     def logical_transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
@@ -45,6 +47,7 @@ def _make_factory_with_spectrum(
     return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
         view_config=LogicalViewConfig(transform=logical_transform, spectrum_view=spec),
+        instrument=Instrument(name='_test'),
     )
 
 
@@ -100,6 +103,8 @@ class TestSpectrumViewIntegration:
 
     def test_no_spectrum_view_when_spec_absent(self):
         """Without a SpectrumViewSpec, spectrum_view is not in the outputs."""
+        from ess.livedata.config.instrument import Instrument
+
         detector_number = make_fake_detector_number(4, 4)
 
         def logical_transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
@@ -108,6 +113,7 @@ class TestSpectrumViewIntegration:
         factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             view_config=LogicalViewConfig(transform=logical_transform),
+            instrument=Instrument(name='_test'),
         )
         params = make_detector_view_params()()
         workflow = factory.make_workflow('detector', params=params)

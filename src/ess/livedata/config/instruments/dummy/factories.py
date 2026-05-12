@@ -46,6 +46,7 @@ def setup_factories(instrument: Instrument) -> None:
     _panel_0_view = DetectorViewFactory(
         data_source=InstrumentDetectorSource(instrument),
         view_config=LogicalViewConfig(),  # Identity transform
+        instrument=instrument,
     )
 
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_workflow)

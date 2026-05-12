@@ -116,6 +116,8 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
 
     Uses DetectorNumberSource for fast, file-less workflow creation.
     """
+    from ess.livedata.config.instrument import Instrument
+
     detector_number = make_fake_detector_number(y_size, x_size)
 
     def logical_transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
@@ -124,6 +126,7 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
     return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
         view_config=LogicalViewConfig(transform=logical_transform),
+        instrument=Instrument(name='_test'),
     )
 
 
