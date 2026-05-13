@@ -12,7 +12,8 @@ source of truth.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -76,3 +77,78 @@ class LogContextBinding:
     stream_name: str
     workflow_key: Any
     dependent_sources: frozenset[str]
+
+
+def build_streams(
+    parsed: Iterable[F144Stream],
+    *,
+    overrides: dict[str, dict[str, Any]] | None = None,
+    synthetics: Iterable[F144Stream] | None = None,
+) -> dict[str, Stream]:
+    """Compose a final stream registry from parsed + overrides + synthetics.
+
+    The typical caller is an instrument's ``streams.py`` that imports a
+    checked-in ``streams_parsed.py`` (auto-generated from a NeXus geometry
+    file) and applies hand-edited fixes:
+
+    * ``overrides`` is keyed by either ``stream_name`` (the suggested
+      internal name in the parsed list) or ``nexus_path`` (the stable NeXus
+      identity). Values are ``dict``-of-field-overrides applied via
+      :func:`dataclasses.replace`. Renaming an entry is just
+      ``{key: dict(stream_name='new_name')}``.
+    * ``synthetics`` declares streams that do not exist on the wire (e.g.
+      in-process synthesisers). They are merged in alongside parsed entries.
+
+    Raises ``ValueError`` if:
+
+    * an override key matches no parsed entry,
+    * two parsed entries collide on ``stream_name`` (the parser cannot
+      currently produce this; only an after-rename override can),
+    * a synthetic collides with a parsed entry on ``stream_name``.
+    """
+    parsed_list = list(parsed)
+    registry: dict[str, F144Stream] = {}
+    path_index: dict[str, str] = {}
+
+    for stream in parsed_list:
+        if stream.stream_name in registry:
+            raise ValueError(
+                f"Duplicate stream_name {stream.stream_name!r} in parsed entries"
+            )
+        registry[stream.stream_name] = stream
+        if stream.nexus_path is not None:
+            path_index[stream.nexus_path] = stream.stream_name
+
+    for override_key, fields in (overrides or {}).items():
+        if override_key in registry:
+            current_name = override_key
+        elif override_key in path_index:
+            current_name = path_index[override_key]
+        else:
+            raise ValueError(
+                f"Override key {override_key!r} matches no parsed entry; "
+                f"known stream_names: {sorted(registry)}, "
+                f"known nexus_paths: {sorted(path_index)}"
+            )
+        old = registry.pop(current_name)
+        if old.nexus_path is not None:
+            path_index.pop(old.nexus_path, None)
+        new = replace(old, **fields)
+        if new.stream_name in registry:
+            raise ValueError(
+                f"Override on {override_key!r} renames to {new.stream_name!r}, "
+                f"which already exists in the registry"
+            )
+        registry[new.stream_name] = new
+        if new.nexus_path is not None:
+            path_index[new.nexus_path] = new.stream_name
+
+    final: dict[str, Stream] = dict(registry)
+    for synthetic in synthetics or ():
+        if synthetic.stream_name in final:
+            raise ValueError(
+                f"Synthetic stream {synthetic.stream_name!r} collides with a "
+                f"parsed entry"
+            )
+        final[synthetic.stream_name] = synthetic
+    return final

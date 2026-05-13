@@ -169,51 +169,91 @@ def filter_f144_streams(
     return result
 
 
-def generate_f144_log_streams_code(
+def _dedupe_by_suggested_name(
+    infos: list[StreamInfo],
+) -> dict[str, StreamInfo]:
+    """Group f144 streams by suggested internal name, preferring ``/value``.
+
+    Multiple HDF5 groups can map to the same suggested name (e.g. ``value``,
+    ``idle_flag``, ``target_value`` siblings). The ``/value`` entry is the
+    primary readback; the others are auxiliary and dropped here. If multiple
+    candidates remain at the same priority, the lexicographically first
+    ``group_path`` wins for determinism.
+    """
+    by_name: dict[str, StreamInfo] = {}
+    for info in sorted(infos, key=lambda i: i.group_path):
+        name = suggest_internal_name(info)
+        existing = by_name.get(name)
+        if existing is None:
+            by_name[name] = info
+            continue
+        if info.group_path.endswith('/value') and not existing.group_path.endswith(
+            '/value'
+        ):
+            by_name[name] = info
+    return by_name
+
+
+def generate_streams_parsed_module(
     infos: list[StreamInfo],
     *,
-    topic: str,
-    variable_name: str = 'f144_streams',
+    variable_name: str = 'PARSED_STREAMS',
+    source_file: str | None = None,
 ) -> str:
-    """Generate Python code for an ``F144Stream`` list literal.
+    """Generate a complete ``streams_parsed.py`` module from f144 ``StreamInfo``s.
+
+    The output is a self-contained, importable Python module: SPDX header,
+    a banner identifying it as auto-generated, the ``F144Stream`` import,
+    and a single sorted ``list[F144Stream]`` literal. The instrument's
+    hand-edited ``streams.py`` is expected to import this list and pass it
+    through :func:`build_streams` with any overrides or synthetics.
 
     Parameters
     ----------
     infos:
-        List of StreamInfo objects (should be pre-filtered to f144 only).
-    topic:
-        The Kafka topic these streams come from.
+        StreamInfo entries (pre-filtered to ``writer_module='f144'``).
     variable_name:
-        Name for the generated variable.
+        Name of the generated top-level list. Defaults to ``PARSED_STREAMS``.
+    source_file:
+        Optional path string for the originating geometry file, included in
+        the auto-generated banner so reviewers can trace provenance.
     """
-    # Group by suggested internal name, preferring 'value' entries
-    by_name: dict[str, StreamInfo] = {}
-    for info in infos:
-        if info.topic != topic:
-            continue
-        name = suggest_internal_name(info)
-        # Prefer 'value' entries over 'idle_flag' or 'target_value'
-        if name not in by_name or info.group_path.endswith('/value'):
-            by_name[name] = info
+    by_name = _dedupe_by_suggested_name(infos)
 
-    lines = [
-        "# Generated from NeXus file - review and adjust names as needed",
-        f"# Topic: {topic}",
-        f"{variable_name}: list[F144Stream] = [",
+    lines: list[str] = [
+        '# SPDX-License-Identifier: BSD-3-Clause',
+        '# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)',
+        '"""Auto-generated NeXus f144 stream declarations.',
+        '',
+        'Do not edit by hand. Regenerate with',
+        '``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.',
     ]
-
-    for name in sorted(by_name.keys()):
+    if source_file is not None:
+        lines.extend(['', f'Source: {Path(source_file).name}'])
+    lines.extend(
+        [
+            '"""',
+            '',
+            'from ess.livedata.config import F144Stream',
+            '',
+            f'{variable_name}: list[F144Stream] = [',
+        ]
+    )
+    for name in sorted(by_name):
         info = by_name[name]
         units = info.units or 'dimensionless'
-        lines.append("    F144Stream(")
-        lines.append(f"        stream_name='{name}',")
-        lines.append(f"        nexus_path='/{info.group_path}',")
-        lines.append(f"        source='{info.source}',")
-        lines.append(f"        topic='{topic}',")
-        lines.append(f"        units='{units}',")
-        lines.append("    ),")
-
-    lines.append("]")
+        lines.extend(
+            [
+                '    F144Stream(',
+                f'        stream_name={name!r},',
+                f"        nexus_path='/{info.group_path}',",
+                f'        source={info.source!r},',
+                f'        topic={info.topic!r},',
+                f'        units={units!r},',
+                '    ),',
+            ]
+        )
+    lines.extend([']', ''])
     return '\n'.join(lines)
 
 
@@ -232,12 +272,13 @@ Examples:
   # List only f144 streams
   python -m ess.livedata.nexus_helpers file.hdf --f144
 
-  # Generate code for motion topic
-  python -m ess.livedata.nexus_helpers file.hdf --generate --topic bifrost_motion
+  # Generate an importable streams_parsed.py module (all topics)
+  python -m ess.livedata.nexus_helpers file.hdf --generate \\
+      --output src/ess/livedata/config/instruments/loki/streams_parsed.py
 
-  # Filter by topic and exclude choppers
-  python -m ess.livedata.nexus_helpers file.hdf --f144 --topic bifrost_motion \\
-      --exclude "Chopper"
+  # Generate, restricted to one topic, excluding a pattern
+  python -m ess.livedata.nexus_helpers file.hdf --generate \\
+      --topic bifrost_motion --exclude Chopper
 """,
     )
     parser.add_argument('nexus_file', help='Path to NeXus/HDF5 file')
@@ -254,12 +295,19 @@ Examples:
     parser.add_argument(
         '--generate',
         action='store_true',
-        help='Generate Python code for f144_log_streams dict',
+        help='Generate an importable streams_parsed.py module for f144 streams',
     )
     parser.add_argument(
         '--var-name',
-        default='f144_log_streams',
-        help='Variable name for generated code (default: f144_log_streams)',
+        default='PARSED_STREAMS',
+        help='Variable name for the generated list (default: PARSED_STREAMS)',
+    )
+    parser.add_argument(
+        '--output',
+        help=(
+            'Write generated module to this path instead of stdout. '
+            'Only used with --generate.'
+        ),
     )
 
     args = parser.parse_args()
@@ -272,13 +320,14 @@ Examples:
         )
 
     if args.generate:
-        if not args.topic:
-            sys.stderr.write("Error: --generate requires --topic\n")
-            sys.exit(1)
-        code = generate_f144_log_streams_code(
-            infos, topic=args.topic, variable_name=args.var_name
+        code = generate_streams_parsed_module(
+            infos, variable_name=args.var_name, source_file=args.nexus_file
         )
-        sys.stdout.write(code + '\n')
+        if args.output:
+            Path(args.output).write_text(code)
+            sys.stderr.write(f"Wrote {args.output} ({len(infos)} f144 streams)\n")
+        else:
+            sys.stdout.write(code)
     else:
         sys.stdout.write(f"Found {len(infos)} streaming data groups\n\n")
         for info in infos:
