@@ -13,6 +13,7 @@ source of truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -55,3 +56,23 @@ class F144Stream(Stream):
     units: str | None = None
     writer_module: str = 'f144'
     nx_class: str = 'NXlog'
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LogContextBinding:
+    """One f144 stream feeding a Sciline workflow key, scoped to dependents.
+
+    The binding declares that the value of an f144 stream
+    (:attr:`stream_name`, an entry in :attr:`Instrument.streams`) should be
+    routed to a Sciline pipeline as the value of ``workflow_key``, but only
+    when wiring workflows for the spec source names listed in
+    :attr:`dependent_sources`.
+
+    ``workflow_key`` is typed as :class:`Any` because Sciline keys are
+    parameterised generics (e.g. ``InstrumentAngle[SampleRun]``) and Python's
+    type system cannot describe "type of any Sciline key" precisely.
+    """
+
+    stream_name: str
+    workflow_key: Any
+    dependent_sources: frozenset[str]
