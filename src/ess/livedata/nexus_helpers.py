@@ -121,20 +121,46 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
-def suggest_internal_name(info: StreamInfo) -> str:
-    """Suggest an internal name based on the group path.
+_DATA_LEAF_SUFFIXES: frozenset[str] = frozenset(
+    {'value', 'idle_flag', 'target_value', 'value_log'}
+)
 
-    Uses the parent group name (last path component before 'value', 'idle_flag', etc.)
-    as the basis for the internal name.
+#: NeXus container groups that carry no entity-level meaning. Removed from the
+#: path before constructing an internal name so that e.g.
+#: ``entry/instrument/wfm1/transformations/translation1`` becomes
+#: ``wfm1_translation1`` and not ``transformations_translation1``.
+_GENERIC_GROUPS: frozenset[str] = frozenset(
+    {'entry', 'instrument', 'sample', 'sample_environment', 'transformations'}
+)
+
+
+def suggest_internal_name(info: StreamInfo) -> str:
+    """Suggest a per-stream internal name from the NeXus group path.
+
+    Strategy:
+
+    * If the leaf is a data-name suffix (``value``, ``idle_flag``,
+      ``target_value``, ``value_log``), drop it: the parent group is the
+      actual NXlog and carries the entity name.
+    * Filter out generic NeXus container groups (``entry``, ``instrument``,
+      ``sample``, ``sample_environment``, ``transformations``) — they add
+      no meaning and only inflate names.
+    * Join the last two remaining components so the parent group becomes
+      part of the name, disambiguating e.g. ``phase`` from
+      ``rotation_speed`` across multiple choppers
+      (``005_PulseShapingChopper_phase`` vs.
+      ``005_PulseShapingChopper_rotation_speed``).
+    * If only one component survives filtering, return it bare.
     """
-    parts = info.group_path.split('/')
-    # For paths like '.../rotation_stage/value', use 'rotation_stage'
-    for i, part in enumerate(parts):
-        if part in ('value', 'idle_flag', 'target_value'):
-            if i > 0:
-                return parts[i - 1]
-    # Fallback: use last non-value component
-    return parts[-2] if len(parts) >= 2 else parts[-1]
+    parts = info.group_path.strip('/').split('/')
+    if parts and parts[-1] in _DATA_LEAF_SUFFIXES:
+        parts = parts[:-1]
+    meaningful = [p for p in parts if p not in _GENERIC_GROUPS]
+    if not meaningful:
+        return parts[-1] if parts else ''
+    if len(meaningful) == 1:
+        return meaningful[0]
+    return '_'.join(meaningful[-2:])
 
 
 def filter_f144_streams(
@@ -172,26 +198,57 @@ def filter_f144_streams(
 def _dedupe_by_suggested_name(
     infos: list[StreamInfo],
 ) -> dict[str, StreamInfo]:
-    """Group f144 streams by suggested internal name, preferring ``/value``.
+    """Group f144 streams by suggested internal name, preferring readbacks.
 
-    Multiple HDF5 groups can map to the same suggested name (e.g. ``value``,
-    ``idle_flag``, ``target_value`` siblings). The ``/value`` entry is the
-    primary readback; the others are auxiliary and dropped here. If multiple
-    candidates remain at the same priority, the lexicographically first
-    ``group_path`` wins for determinism.
+    Within a single NXlog group, the writer publishes value/idle_flag/
+    target_value as siblings — they collapse to one suggested name (the
+    parent). The ``/value`` (or ``/value_log``) entry is the primary readback
+    and is kept; auxiliary siblings are dropped.
+
+    Different HDF5 groups can still collide (e.g., two choppers both
+    publishing ``phase``). The improved :func:`suggest_internal_name`
+    prepends the parent group so this is rare in practice, but if a
+    collision survives, :func:`generate_streams_parsed_module` raises with
+    a list of conflicting paths.
     """
+
+    def priority(info: StreamInfo) -> int:
+        # 0 = primary readback; 1 = anything else (idle_flag, target_value, ...)
+        leaf = info.group_path.rsplit('/', 1)[-1]
+        return 0 if leaf in ('value', 'value_log') else 1
+
     by_name: dict[str, StreamInfo] = {}
-    for info in sorted(infos, key=lambda i: i.group_path):
+    for info in sorted(
+        infos, key=lambda i: (priority(i), i.group_path)
+    ):  # readbacks first
         name = suggest_internal_name(info)
-        existing = by_name.get(name)
-        if existing is None:
-            by_name[name] = info
-            continue
-        if info.group_path.endswith('/value') and not existing.group_path.endswith(
-            '/value'
-        ):
-            by_name[name] = info
+        by_name.setdefault(name, info)
     return by_name
+
+
+def _detect_collisions(
+    infos: list[StreamInfo],
+) -> dict[str, list[StreamInfo]]:
+    """Group infos by suggested name *without* deduping readback siblings.
+
+    Returns groups with more than one distinct NXlog parent: these are
+    real collisions that the caller must resolve via overrides.
+    """
+    groups: dict[str, list[StreamInfo]] = {}
+    for info in infos:
+        groups.setdefault(suggest_internal_name(info), []).append(info)
+
+    def parent(info: StreamInfo) -> str:
+        path = info.group_path.strip('/').split('/')
+        if path and path[-1] in _DATA_LEAF_SUFFIXES:
+            return '/'.join(path[:-1])
+        return '/'.join(path)
+
+    return {
+        name: group
+        for name, group in groups.items()
+        if len({parent(i) for i in group}) > 1
+    }
 
 
 def generate_streams_parsed_module(
@@ -218,6 +275,21 @@ def generate_streams_parsed_module(
         Optional path string for the originating geometry file, included in
         the auto-generated banner so reviewers can trace provenance.
     """
+    collisions = _detect_collisions(infos)
+    if collisions:
+        message = ['Suggested-name collisions across distinct NXlog groups:']
+        for name, group in sorted(collisions.items()):
+            message.append(f'  {name!r}:')
+            message.extend(
+                f'    {info.group_path}  (source={info.source})'
+                for info in sorted(group, key=lambda i: i.group_path)
+            )
+        message.append(
+            'Resolve via build_streams(overrides={...}) keyed by nexus_path, '
+            'or improve suggest_internal_name.'
+        )
+        raise ValueError('\n'.join(message))
+
     by_name = _dedupe_by_suggested_name(infos)
 
     lines: list[str] = [

@@ -401,50 +401,76 @@ class TestStreamInfo:
         assert info.units == 'degrees'
 
 
-class TestSuggestInternalName:
-    def test_extracts_name_before_value(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/rotation_stage/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'rotation_stage'
+def _info(path: str) -> StreamInfo:
+    return StreamInfo(
+        group_path=path,
+        topic='motion',
+        source='src',
+        nx_class='NXlog',
+        parent_nx_class='NXpositioner',
+        writer_module='f144',
+    )
 
-    def test_extracts_name_before_idle_flag(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/rotation_stage/idle_flag',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
+
+class TestSuggestInternalName:
+    def test_drops_value_suffix_uses_parent(self) -> None:
+        assert (
+            suggest_internal_name(_info('entry/instrument/rotation_stage/value'))
+            == 'rotation_stage'
         )
-        assert suggest_internal_name(info) == 'rotation_stage'
+
+    def test_drops_idle_flag_suffix(self) -> None:
+        assert (
+            suggest_internal_name(_info('entry/instrument/rotation_stage/idle_flag'))
+            == 'rotation_stage'
+        )
+
+    def test_drops_value_log_suffix(self) -> None:
+        assert (
+            suggest_internal_name(
+                _info('entry/sample/sample_environment/HTR1/value_log')
+            )
+            == 'HTR1'
+        )
+
+    def test_drops_target_value_suffix(self) -> None:
+        assert (
+            suggest_internal_name(_info('entry/instrument/rotation_stage/target_value'))
+            == 'rotation_stage'
+        )
+
+    def test_filters_generic_containers(self) -> None:
+        # 'transformations' is a NeXus container, not an entity
+        assert (
+            suggest_internal_name(
+                _info('entry/instrument/wfm1/transformations/translation1')
+            )
+            == 'wfm1_translation1'
+        )
+
+    def test_joins_parent_and_leaf_when_leaf_is_generic(self) -> None:
+        # 'phase' alone would collide across choppers; include parent for context
+        assert (
+            suggest_internal_name(
+                _info('entry/instrument/005_PulseShapingChopper/phase')
+            )
+            == '005_PulseShapingChopper_phase'
+        )
+
+    def test_single_meaningful_component_returned_bare(self) -> None:
+        # Path under sample_environment with no further nesting
+        assert (
+            suggest_internal_name(_info('entry/sample/sample_environment/SETP_S1'))
+            == 'SETP_S1'
+        )
 
     def test_preserves_r0_suffix(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/detector_tank_angle_r0/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
+        assert (
+            suggest_internal_name(
+                _info('entry/instrument/detector_tank_angle_r0/value')
+            )
+            == 'detector_tank_angle_r0'
         )
-        assert suggest_internal_name(info) == 'detector_tank_angle_r0'
-
-    def test_preserves_t0_suffix(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/sample_stage_t0/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'sample_stage_t0'
 
 
 class TestFilterF144Streams:
@@ -585,6 +611,16 @@ class TestGenerateStreamsParsedModule:
         assert 'Source: geometry-foo.nxs' in code
         # Absolute path is stripped
         assert '/some/abs/path' not in code
+
+    def test_raises_on_name_collision_across_groups(self) -> None:
+        # Two paths that survive the generic-container filter with the same
+        # final component: NXlog parents 'instrument/foo' and 'sample/foo'.
+        infos = [
+            _f144_info(group_path='entry/instrument/foo/value', source='SRC_A'),
+            _f144_info(group_path='entry/sample/foo/value', source='SRC_B'),
+        ]
+        with pytest.raises(ValueError, match='collisions'):
+            generate_streams_parsed_module(infos)
 
     def test_combines_multiple_topics(self) -> None:
         infos = [

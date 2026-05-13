@@ -4,18 +4,20 @@
 ODIN instrument spec registration.
 """
 
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, build_streams, instrument_registry
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
+from .streams_parsed import PARSED_STREAMS
 from .views import fold_image
 
 instrument = Instrument(
     name='odin',
     detector_names=['timepix3'],
     monitors=['monitor1', 'monitor2'],
+    streams=build_streams(PARSED_STREAMS),
 )
 
 instrument_registry.register(instrument)

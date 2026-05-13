@@ -9,9 +9,9 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import (
-    F144Stream,
     Instrument,
     SourceMetadata,
+    build_streams,
     instrument_registry,
 )
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
@@ -22,6 +22,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
 )
 
 from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
+from .streams_parsed import PARSED_STREAMS
 from .views import get_multiblade_view
 
 detector_names = ['multiblade_detector']
@@ -185,28 +186,25 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
     )
 
 
-# f144 log streams for ESTIA. The detector rotation is the only time-dependent
-# transformation in the multiblade detector's depends_on chain; sample-detector
-# distance is invariant under this rotation, so the value is currently exposed
-# only for plotting, not for geometry. The PV channel ``.RBV`` (readback) is
-# taken from ``coda_estia_999999_00027641.hdf`` under
-# ``/entry/instrument/detector_arm/detector_rotation/value`` (NXpositioner).
-# The same positioner also publishes ``.VAL`` (setpoint) and ``.DMOV``
-# (done-moving) on the same topic; not exposed here.
-f144_streams: list[F144Stream] = [
-    F144Stream(
-        stream_name='detector_rotation',
-        source='ESTIA-DtRot:MC-RotZ01:Mtr.RBV',
-        topic='estia_motion',
-        units='deg',
-    ),
-]
+# Pin ``detector_rotation`` to the .RBV (readback) entry; without the
+# override the suggested name would be ``detector_arm_detector_rotation``.
+# The file also publishes a depends_on-chain reference under
+# multiblade_detector/transformations/detector_rotation with a placeholder
+# source (missing .RBV suffix) — left as-is; only the readback is used.
+streams = build_streams(
+    PARSED_STREAMS,
+    overrides={
+        '/entry/instrument/detector_arm/detector_rotation/value': {
+            'stream_name': 'detector_rotation',
+        },
+    },
+)
 
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=list(GENERIC_CBM_MONITORS),
-    streams={s.stream_name: s for s in f144_streams},
+    streams=streams,
     source_metadata={
         'detector_rotation': SourceMetadata(
             title='Detector Rotation',
