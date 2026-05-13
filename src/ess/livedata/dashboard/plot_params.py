@@ -11,8 +11,16 @@ import pydantic
 
 
 class WindowMode(enum.StrEnum):
-    """Enumeration of extraction modes."""
+    """Enumeration of extraction modes.
 
+    - ``since_start``: latest cumulative value (subscribes to the
+      ``since_start`` stream of the selected output view).
+    - ``latest``: the most recent per-update value (subscribes to the
+      ``per_update`` stream of the selected output view).
+    - ``window``: aggregate the per-update stream over a fixed time window.
+    """
+
+    since_start = 'since_start'
     latest = 'latest'
     window = 'window'
 
@@ -194,8 +202,11 @@ class WindowParams(pydantic.BaseModel):
 
     mode: WindowMode = pydantic.Field(
         default=WindowMode.latest,
-        description="Extraction mode: 'latest' for single frame (typically accumulated "
-        "for 1 second), 'window' for aggregation over multiple frames.",
+        description=(
+            "Extraction mode: 'since_start' for the cumulative value since the "
+            "run started, 'latest' for the most recent update, 'window' for an "
+            "aggregation over multiple updates."
+        ),
         title="Mode",
     )
     window_duration_seconds: float = pydantic.Field(

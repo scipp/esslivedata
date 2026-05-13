@@ -29,13 +29,13 @@ class TestFormatWindowInfo:
 
     def test_returns_latest_for_latest_mode(self) -> None:
         params = _FakeParams(window=WindowParams(mode=WindowMode.latest))
-        assert _format_window_info(params) == 'latest'
+        assert _format_window_info(params) == 'latest update'
 
     def test_returns_window_info_for_window_mode(self) -> None:
         params = _FakeParams(
             window=WindowParams(mode=WindowMode.window, window_duration_seconds=10)
         )
-        assert _format_window_info(params) == '10s window'
+        assert _format_window_info(params) == 'last 10s'
 
     def test_returns_empty_when_no_window_attr(self) -> None:
         class NoWindowParams(pydantic.BaseModel):
@@ -83,7 +83,7 @@ class TestGetPlotCellDisplayInfo:
                 PRIMARY: DataSourceConfig(
                     workflow_id=wf_id,
                     source_names=['src1'],
-                    output_name='cumulative',
+                    view_name='cumulative',
                 )
             },
             plot_name='lines',
@@ -129,7 +129,7 @@ class TestGetPlotCellDisplayInfo:
                 PRIMARY: DataSourceConfig(
                     workflow_id=wf_id,
                     source_names=['src1'],
-                    output_name='current',
+                    view_name='current',
                 )
             },
             plot_name='lines',

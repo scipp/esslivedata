@@ -27,6 +27,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     JobNumber,
     ResultKey,
+    StreamRole,
     WorkflowId,
     WorkflowSpec,
 )
@@ -37,6 +38,7 @@ from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plot_data_service import LayerId, PlotDataService
+from .plot_params import WindowMode
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -118,12 +120,15 @@ class CellGeometry:
 class DataSourceConfig:
     """Configuration for a single data source in a plot layer.
 
-    This defines how to connect a layer to a workflow's output.
+    This defines how to connect a layer to a workflow's user-facing output
+    view. The backend pydantic field name (used in ``ResultKey``) is
+    resolved at subscription time from the view name plus the current
+    window mode.
     """
 
     workflow_id: WorkflowId
     source_names: list[str]
-    output_name: str = 'result'
+    view_name: str = 'result'
 
 
 @dataclass
@@ -164,18 +169,18 @@ class PlotConfig:
         return self.data_sources[PRIMARY].source_names
 
     @property
-    def output_name(self) -> str:
-        """Output name from the primary data source."""
+    def view_name(self) -> str:
+        """Output view name from the primary data source."""
         if PRIMARY not in self.data_sources:
-            raise ValueError("Cannot access output_name: no primary data source")
-        return self.data_sources[PRIMARY].output_name
+            raise ValueError("Cannot access view_name: no primary data source")
+        return self.data_sources[PRIMARY].view_name
 
     def is_static(self) -> bool:
         """Return True if this is a static overlay (no workflow subscription needed).
 
         Static overlays have only a primary data source with empty source_names.
         They use a synthetic workflow ID and store the user-defined overlay name
-        in output_name.
+        in view_name.
         """
         if PRIMARY not in self.data_sources or len(self.data_sources) != 1:
             return False
@@ -260,34 +265,93 @@ class LifecycleSubscription:
     on_cell_removed: CellRemovedCallback | None = None
 
 
+def _stream_role_for_mode(mode: WindowMode) -> StreamRole:
+    """Map a window mode to the stream role its data is subscribed from."""
+    return 'since_start' if mode is WindowMode.since_start else 'per_update'
+
+
+def resolve_field_name(
+    spec: WorkflowSpec,
+    view_name: str,
+    *,
+    role: StreamRole = 'since_start',
+) -> str:
+    """Resolve a (view, role) pair to the backend pydantic field name.
+
+    Falls back to ``view_name`` as a raw field name when no matching view
+    is declared (lets unannotated reduction outputs work unchanged). When
+    the preferred role is unavailable for the view, falls back to the
+    other role rather than failing — preserving legacy behaviour for
+    pre-existing configs.
+    """
+    view = spec.get_output_view_or_none(view_name)
+    if view is None:
+        return view_name
+    field_name = view.streams.get(role)
+    if field_name is not None:
+        return field_name
+    return next(iter(view.streams.values()))
+
+
+def _build_resolved_data_sources(
+    config: PlotConfig,
+    registry: Mapping[WorkflowId, WorkflowSpec],
+) -> dict[str, DataSourceConfig]:
+    """Build a copy of ``config.data_sources`` with view names resolved to fields.
+
+    The returned mapping carries backend pydantic field names in
+    ``view_name`` (which is then used as ``ResultKey.output_name``). Only
+    the primary role honours the current window mode; non-primary roles
+    (correlation axes) prefer the ``per_update`` stream when available
+    and fall back to ``since_start`` otherwise.
+    """
+    window = getattr(config.params, 'window', None)
+    primary_role: StreamRole = (
+        _stream_role_for_mode(window.mode) if window is not None else 'per_update'
+    )
+    resolved: dict[str, DataSourceConfig] = {}
+    for role, ds in config.data_sources.items():
+        spec = registry.get(ds.workflow_id)
+        if spec is None:
+            resolved[role] = ds
+            continue
+        if role == PRIMARY:
+            field_name = resolve_field_name(spec, ds.view_name, role=primary_role)
+        else:
+            view = spec.get_output_view_or_none(ds.view_name)
+            field_name = (
+                view.streams.get('per_update') or view.streams.get('since_start')
+                if view is not None
+                else ds.view_name
+            )
+            if field_name is None:
+                field_name = ds.view_name
+        resolved[role] = DataSourceConfig(
+            workflow_id=ds.workflow_id,
+            source_names=ds.source_names,
+            view_name=field_name,
+        )
+    return resolved
+
+
 def _resolve_supports_windowing(
     data_sources: dict[str, DataSourceConfig],
     registry: Mapping[WorkflowId, WorkflowSpec],
 ) -> bool:
-    """Determine whether the primary output supports time-based windowing.
+    """Determine whether the primary view exposes window/latest modes.
 
-    Parameters
-    ----------
-    data_sources:
-        Mapping of data roles to their source configurations.
-    registry:
-        Workflow registry to look up workflow specifications.
-
-    Returns
-    -------
-    :
-        ``True`` if windowing is supported or if no primary source is
-        available, ``False`` for cumulative outputs.
+    Returns ``False`` for cumulative-only views (no ``per_update`` stream),
+    in which case only ``WindowMode.since_start`` is meaningful.
     """
     if PRIMARY not in data_sources:
         return True
-    from .plotting_controller import output_has_time_coord
+    from .plotting_controller import output_view_supports_windowing
 
     primary = data_sources[PRIMARY]
     spec = registry.get(primary.workflow_id)
     if spec is None:
         return True
-    return output_has_time_coord(spec, primary.output_name)
+    return output_view_supports_windowing(spec, primary.view_name)
 
 
 class PlotOrchestrator:
@@ -837,11 +901,13 @@ class PlotOrchestrator:
             return None
 
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
-        """Build a TitleResolver for a layer, checking cell-level output uniqueness.
+        """Build a TitleResolver for a layer, checking cell-level view uniqueness.
 
-        When all non-static layers in the same cell share the same primary output_name,
-        the output title is already shown on the Y-axis and is stripped from the legend
-        label to reduce redundancy.
+        When all non-static layers in the same cell share the same primary view,
+        the view title is already shown on the Y-axis and is stripped from the
+        legend label to reduce redundancy. The resolver maps backend pydantic
+        field names (which appear in ``ResultKey.output_name``) back to their
+        owning view's title so legends and axes show user-facing titles.
         """
         from .plots import TitleResolver, _identity
 
@@ -851,17 +917,25 @@ class PlotOrchestrator:
 
         cell_id = self._layer_to_cell[layer_id]
         cell = self.get_cell(cell_id)
-        output_names = {
-            layer.config.output_name
+        view_names = {
+            layer.config.view_name
             for layer in cell.layers
             if not layer.config.is_static()
         }
 
+        def field_to_view_title(field_name: str) -> str:
+            if spec is None:
+                return field_name
+            for view in spec.get_output_views():
+                if field_name in view.streams.values():
+                    return view.title
+            return spec.get_output_title(field_name)
+
         return TitleResolver(
             source=self.get_source_title,
-            output=spec.get_output_title if spec is not None else _identity,
+            output=field_to_view_title if spec is not None else _identity,
             dim=self.get_dim_title,
-            include_output_in_label=len(output_names) != 1,
+            include_output_in_label=len(view_names) != 1,
         )
 
     def _refresh_resolvers_for_cell(self, cell_id: CellId) -> None:
@@ -960,8 +1034,11 @@ class PlotOrchestrator:
         def on_any_job_stopped(job_number: JobNumber) -> None:
             self._on_layer_job_stopped(layer_id, job_number)
 
+        resolved_data_sources = _build_resolved_data_sources(
+            config, self._job_orchestrator.get_workflow_registry()
+        )
         subscription = LayerSubscription(
-            data_sources=config.data_sources,
+            data_sources=resolved_data_sources,
             job_orchestrator=self._job_orchestrator,
             on_ready=on_all_jobs_ready,
             on_stopped=on_any_job_stopped,
@@ -1162,11 +1239,27 @@ class PlotOrchestrator:
         if params is None:
             return None
 
+        # Invalidate layers persisted in the legacy ``output_name`` schema. The
+        # view-based migration intentionally does not auto-convert backend field
+        # names to views; users must reconfigure the affected plots.
+        legacy_roles = [
+            role
+            for role, ds in layer_data['data_sources'].items()
+            if 'view_name' not in ds and 'output_name' in ds
+        ]
+        if legacy_roles:
+            self._logger.warning(
+                'Skipping layer with legacy data-source keys (output_name): %s. '
+                'Reconfigure the plot to convert it to the view-based schema.',
+                legacy_roles,
+            )
+            return None
+
         data_sources: dict[str, DataSourceConfig] = {
             role: DataSourceConfig(
                 workflow_id=WorkflowId.from_string(ds['workflow_id']),
                 source_names=ds['source_names'],
-                output_name=ds.get('output_name', 'result'),
+                view_name=ds.get('view_name', 'result'),
             )
             for role, ds in layer_data['data_sources'].items()
         }
@@ -1332,7 +1425,7 @@ class PlotOrchestrator:
                 role: {
                     'workflow_id': str(ds.workflow_id),
                     'source_names': ds.source_names,
-                    'output_name': ds.output_name,
+                    'view_name': ds.view_name,
                 }
                 for role, ds in config.data_sources.items()
             },

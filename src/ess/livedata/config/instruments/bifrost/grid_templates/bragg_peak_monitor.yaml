@@ -13,7 +13,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/monitor_data/monitor_histogram/1
-        output_name: counts_in_toa_range
+        view_name: total_in_range
         source_names:
         - bragg_peak_monitor
     plot_name: timeseries
@@ -29,13 +29,15 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/monitor_data/monitor_histogram/1
-        output_name: current
+        view_name: histogram
         source_names:
         - bragg_peak_monitor
     plot_name: lines
     params:
       plot_aspect:
         aspect_type: Free
+      window:
+        mode: latest
 - geometry:
     row: 2
     col: 0
@@ -45,7 +47,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/monitor_data/monitor_histogram/1
-        output_name: counts_total
+        view_name: total_counts
         source_names:
         - bragg_peak_monitor
     plot_name: timeseries
@@ -61,10 +63,12 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/monitor_data/monitor_histogram/1
-        output_name: cumulative
+        view_name: histogram
         source_names:
         - bragg_peak_monitor
     plot_name: lines
     params:
       plot_aspect:
         aspect_type: Free
+      window:
+        mode: since_start

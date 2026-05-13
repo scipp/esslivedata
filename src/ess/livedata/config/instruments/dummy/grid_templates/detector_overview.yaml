@@ -14,7 +14,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: dummy/detector_data/area_panel_xy/1
-        output_name: current
+        view_name: image
         source_names:
         - area_panel
     plot_name: image
@@ -46,7 +46,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: dummy/detector_data/panel_0_xy/1
-        output_name: current
+        view_name: image
         source_names:
         - panel_0
     plot_name: image

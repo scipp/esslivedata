@@ -655,7 +655,7 @@ class PlotGridTabs:
         self,
         cell_id: CellId,
         base_config: PlotConfig,
-        output_name: str,
+        view_name: str,
         plotter_name: str,
     ) -> None:
         """
@@ -667,8 +667,8 @@ class PlotGridTabs:
             ID of the cell to add the overlay to.
         base_config
             Configuration of the base layer (e.g., image layer).
-        output_name
-            Name of the output for the overlay (e.g., 'rectangles_readback').
+        view_name
+            Name of the output view for the overlay (e.g., 'roi_rectangle').
         plotter_name
             Name of the plotter to use for the overlay.
         """
@@ -682,7 +682,7 @@ class PlotGridTabs:
                 PRIMARY: DataSourceConfig(
                     workflow_id=base_config.workflow_id,
                     source_names=list(base_config.source_names),
-                    output_name=output_name,
+                    view_name=view_name,
                 )
             },
             plot_name=plotter_name,
@@ -775,8 +775,8 @@ class PlotGridTabs:
             def make_overlay_callback(
                 cid: CellId, cfg: PlotConfig
             ) -> Callable[[str, str], None]:
-                def on_overlay(output_name: str, plotter_name: str) -> None:
-                    self._create_overlay_layer(cid, cfg, output_name, plotter_name)
+                def on_overlay(view_name: str, plotter_name: str) -> None:
+                    self._create_overlay_layer(cid, cfg, view_name, plotter_name)
 
                 return on_overlay
 
@@ -821,7 +821,7 @@ class PlotGridTabs:
             state = layer_states[layer.layer_id]
 
             workflow_title, output_title = get_workflow_display_info(
-                self._workflow_registry, config.workflow_id, config.output_name
+                self._workflow_registry, config.workflow_id, config.view_name
             )
 
             # Determine status from explicit state enum

@@ -13,17 +13,19 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/detector_data/unified_detector_view/1
-        output_name: current
+        view_name: image
         source_names:
         - unified_detector
     plot_name: image
     params:
       plot_aspect:
         aspect_type: Free
+      window:
+        mode: latest
   - data_sources:
       primary:
         workflow_id: static/static_overlay/geometric/1
-        output_name: Triplet bounds
+        view_name: Triplet bounds
         source_names: []
     plot_name: rectangles
     params:
@@ -43,7 +45,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/data_reduction/detector_ratemeter/1
-        output_name: detector_region_counts
+        view_name: detector_region_counts
         source_names:
         - unified_detector
     plot_name: bars
@@ -61,7 +63,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/data_reduction/detector_ratemeter/1
-        output_name: detector_region_counts
+        view_name: detector_region_counts
         source_names:
         - unified_detector
     plot_name: timeseries

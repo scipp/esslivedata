@@ -157,13 +157,18 @@ class LayerSubscription:
             self._on_stopped(job_number)
 
     def _build_keys_by_role(self) -> dict[str, list[ResultKey]]:
-        """Build ResultKeys grouped by role."""
+        """Build ResultKeys grouped by role.
+
+        ``DataSourceConfig.view_name`` is expected to already carry the
+        resolved backend pydantic field name (see
+        ``_build_resolved_data_sources`` in ``plot_orchestrator``).
+        """
         return {
             role: [
                 ResultKey(
                     workflow_id=ds.workflow_id,
                     job_id=JobId(source_name=sn, job_number=self._job_numbers[role]),
-                    output_name=ds.output_name,
+                    output_name=ds.view_name,
                 )
                 for sn in ds.source_names
             ]

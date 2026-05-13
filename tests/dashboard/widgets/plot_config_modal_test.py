@@ -50,12 +50,12 @@ def _make_axis_sources(
     wf_id = _make_workflow_id()
     sources: dict[str, DataSourceConfig] = {
         X_AXIS: DataSourceConfig(
-            workflow_id=wf_id, source_names=[x_source], output_name="delta"
+            workflow_id=wf_id, source_names=[x_source], view_name="delta"
         ),
     }
     if y_source is not None:
         sources[Y_AXIS] = DataSourceConfig(
-            workflow_id=wf_id, source_names=[y_source], output_name="delta"
+            workflow_id=wf_id, source_names=[y_source], view_name="delta"
         )
     return sources
 
@@ -281,7 +281,7 @@ class TestBuildTimeseriesOptions:
 class TestResolveOutputDisplayHints:
     def test_static_overlay_preselects_all_and_no_hidden_fields(self):
         hints = _resolve_output_display_hints(
-            is_static=True, workflow_spec=None, output_name="any"
+            is_static=True, workflow_spec=None, view_name="any"
         )
         assert hints.preselect_all_sources is True
         assert hints.hidden_fields == frozenset()
@@ -294,7 +294,7 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Scalar output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="counts"
+            is_static=False, workflow_spec=spec, view_name="counts"
         )
         assert hints.preselect_all_sources is True
 
@@ -306,7 +306,7 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("1D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="spectrum"
+            is_static=False, workflow_spec=spec, view_name="spectrum"
         )
         assert hints.preselect_all_sources is True
 
@@ -318,7 +318,7 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("2D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="image"
+            is_static=False, workflow_spec=spec, view_name="image"
         )
         assert hints.preselect_all_sources is False
 
@@ -332,7 +332,7 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("3D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="volume"
+            is_static=False, workflow_spec=spec, view_name="volume"
         )
         assert hints.preselect_all_sources is False
 
@@ -347,9 +347,9 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Windowed output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="spectrum"
+            is_static=False, workflow_spec=spec, view_name="spectrum"
         )
-        assert 'window' not in hints.hidden_fields
+        assert 'window' in hints.hidden_fields
 
     def test_output_without_time_coord_hides_window(self):
         class Outputs(WorkflowOutputsBase):
@@ -359,7 +359,7 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Cumulative output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="total"
+            is_static=False, workflow_spec=spec, view_name="total"
         )
         assert 'window' in hints.hidden_fields
 
@@ -371,6 +371,6 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Some workflow", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, output_name="nonexistent"
+            is_static=False, workflow_spec=spec, view_name="nonexistent"
         )
         assert hints.preselect_all_sources is True

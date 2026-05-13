@@ -108,7 +108,7 @@ def build_save_filename_from_cell(
             instrument = config.workflow_id.instrument
         source_titles.extend(get_source_title(s) for s in config.source_names)
         _, output_title = get_workflow_display_info(
-            workflow_registry, config.workflow_id, config.output_name
+            workflow_registry, config.workflow_id, config.view_name
         )
         output_titles.append(output_title)
     if instrument is None:

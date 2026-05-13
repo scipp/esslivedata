@@ -79,7 +79,7 @@ def _make_layer(
             'primary': DataSourceConfig(
                 workflow_id=workflow_id,
                 source_names=sources,
-                output_name=output_name,
+                view_name=output_name,
             )
         },
         plot_name='test_plot',

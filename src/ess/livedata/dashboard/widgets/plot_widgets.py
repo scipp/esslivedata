@@ -234,10 +234,10 @@ def create_cell_toolbar(
 def get_workflow_display_info(
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
     workflow_id: WorkflowId,
-    output_name: str | None,
+    view_name: str | None,
 ) -> tuple[str, str]:
     """
-    Look up workflow and output display titles from the registry.
+    Look up workflow and view display titles from the registry.
 
     Parameters
     ----------
@@ -245,15 +245,15 @@ def get_workflow_display_info(
         Registry mapping workflow IDs to their specifications.
     workflow_id:
         ID of the workflow to look up.
-    output_name:
-        Name of the output field, or None.
+    view_name:
+        Name of the output view, or None.
 
     Returns
     -------
     :
-        Tuple of (workflow_title, output_title). If the workflow is not found,
-        workflow_title falls back to str(workflow_id). If output_name is None
-        or not found in the spec, output_title falls back to output_name or
+        Tuple of (workflow_title, view_title). If the workflow is not found,
+        workflow_title falls back to str(workflow_id). If view_name is None
+        or not found in the spec, view_title falls back to view_name or
         empty string.
     """
     workflow_spec = workflow_registry.get(workflow_id)
@@ -264,13 +264,13 @@ def get_workflow_display_info(
     else:
         workflow_title = str(workflow_id)
 
-    # Get output title from spec if available
-    if workflow_spec is not None and output_name:
-        output_title = workflow_spec.get_output_title(output_name)
+    # Get view title from spec if available
+    if workflow_spec is not None and view_name:
+        view_title = workflow_spec.get_output_title(view_name)
     else:
-        output_title = output_name or ''
+        view_title = view_name or ''
 
-    return workflow_title, output_title
+    return workflow_title, view_title
 
 
 def _format_window_info(params, *, supports_windowing: bool = True) -> str:
@@ -282,22 +282,27 @@ def _format_window_info(params, *, supports_windowing: bool = True) -> str:
     params:
         Plotter params that may contain window settings.
     supports_windowing:
-        Whether the output supports windowing. When ``False`` (e.g. for
-        cumulative outputs), an empty string is returned.
+        Whether the output view exposes ``per_update``-derived windowing
+        modes. When ``False`` (cumulative-only views), returns
+        ``'since run start'`` if the mode is ``since_start``, else ''.
 
     Returns
     -------
     :
-        Formatted string like "current" or "10s average".
+        Formatted string like ``'latest update'`` or ``'last 10s'``.
     """
-    if not supports_windowing:
-        return ''
     window = getattr(params, 'window', None)
     if window is None:
         return ''
 
+    if window.mode == WindowMode.since_start:
+        return 'since run start'
+
+    if not supports_windowing:
+        return ''
+
     if window.mode == WindowMode.latest:
-        return 'latest'
+        return 'latest update'
 
     # Window mode with duration
     duration = window.window_duration_seconds
@@ -306,12 +311,11 @@ def _format_window_info(params, *, supports_windowing: bool = True) -> str:
     else:
         duration_str = f'{duration:.1f}s'
 
-    # Include aggregation if not 'auto'
     if window.aggregation != 'auto':
         agg_display = window.aggregation.replace('nan', '')
-        return f'{duration_str} {agg_display}'
+        return f'last {duration_str} ({agg_display})'
 
-    return f'{duration_str} window'
+    return f'last {duration_str}'
 
 
 def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
@@ -327,8 +331,8 @@ def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
         plotter_title = plotter_name.replace('_', ' ').title()
         plotter_desc = ''
 
-    # Use the user's custom name from output_name
-    custom_name = config.output_name
+    # Use the user's custom name from view_name
+    custom_name = config.view_name
 
     # Format title as "Plotter → Custom Name"
     title = f'{plotter_title} &rarr; {custom_name}'
@@ -370,7 +374,7 @@ def get_plot_cell_display_info(
         return _get_static_overlay_display_info(config)
 
     workflow_title, output_title = get_workflow_display_info(
-        workflow_registry, config.workflow_id, config.output_name
+        workflow_registry, config.workflow_id, config.view_name
     )
 
     # Build title: "Workflow → Output (source, window)"
@@ -408,10 +412,10 @@ def get_plot_cell_display_info(
     if window_info:
         description_parts.append(f'Window: {window_info}')
 
-    # Append output description from the workflow spec if available
+    # Append view description from the workflow spec if available
     workflow_spec = workflow_registry.get(config.workflow_id)
-    if workflow_spec is not None and config.output_name:
-        output_desc = workflow_spec.get_output_description(config.output_name)
+    if workflow_spec is not None and config.view_name:
+        output_desc = workflow_spec.get_output_description(config.view_name)
         if output_desc:
             description_parts.append(f'\n{output_desc}')
 

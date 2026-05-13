@@ -4,12 +4,19 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pydantic
 import scipp as sc
 
 from .. import parameter_models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import MONITORS, AuxSources, WorkflowOutputsBase
+from ..config.workflow_spec import (
+    MONITORS,
+    AuxSources,
+    OutputView,
+    WorkflowOutputsBase,
+)
 from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
@@ -141,15 +148,42 @@ class MonitorDataParams(pydantic.BaseModel):
 class MonitorHistogramOutputs(WorkflowOutputsBase):
     """Outputs for the monitor histogram workflow."""
 
-    # Field names are legacy identifiers kept for compatibility with existing
-    # workflow templates and serialized configs. Titles are user-facing names.
+    output_views: ClassVar[tuple[OutputView, ...]] = (
+        OutputView(
+            name='histogram',
+            title='Histogram',
+            streams={'since_start': 'cumulative', 'per_update': 'current'},
+            description=(
+                'Monitor histogram. With "since run start" shows accumulated '
+                'counts; with "latest update" or a window, shows recent counts.'
+            ),
+        ),
+        OutputView(
+            name='total_counts',
+            title='Total Counts',
+            streams={'per_update': 'counts_total'},
+            description='Total number of monitor events per update interval.',
+        ),
+        OutputView(
+            name='total_in_range',
+            title='Total in range',
+            streams={'per_update': 'counts_in_toa_range'},
+            description=(
+                'Number of monitor events within the configured range filter '
+                'per update interval.'
+            ),
+        ),
+    )
+
+    # Field names are kept stable as wire-format identifiers (ResultKey,
+    # da00 serialisation) and are referenced by ``output_views`` above.
 
     cumulative: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
             coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
         ),
-        title='Histogram (cumulative)',
+        title='Histogram',
         description='Monitor histogram accumulated since the start of the run.',
     )
     current: sc.DataArray = pydantic.Field(
@@ -160,7 +194,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'time': sc.scalar(0, unit='ns'),
             },
         ),
-        title='Histogram (current)',
+        title='Histogram update',
         description=(
             'Monitor histogram for the latest update interval only. '
             'Resets each update interval.'
@@ -171,7 +205,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Total (current)',
+        title='Total Counts',
         description=(
             'Total number of monitor events for the latest update interval only. '
             'Resets each update interval.'
@@ -182,7 +216,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Total in interval (current)',
+        title='Total in range',
         description=(
             'Number of monitor events within the configured range filter '
             'for the latest update interval only. Resets each update interval.'

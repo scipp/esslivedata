@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import uuid
+
 import holoviews as hv
 import pydantic
 import pytest
@@ -7,13 +9,14 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
+    WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plotting_controller import (
     PlottingController,
-    output_has_time_coord,
+    output_view_supports_windowing,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -66,7 +69,7 @@ class TestGetAvailablePlottersFromSpec:
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
-            workflow_spec=spec, output_name='i_of_q'
+            workflow_spec=spec, view_name='i_of_q'
         )
 
         assert has_template is True
@@ -99,7 +102,7 @@ class TestGetAvailablePlottersFromSpec:
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
-            workflow_spec=spec, output_name='detector'
+            workflow_spec=spec, view_name='detector'
         )
 
         assert has_template is True
@@ -124,7 +127,7 @@ class TestGetAvailablePlottersFromSpec:
         )
 
         plotters, has_template = plotting_controller.get_available_plotters_from_spec(
-            workflow_spec=spec, output_name='result'
+            workflow_spec=spec, view_name='result'
         )
 
         assert has_template is False
@@ -556,37 +559,29 @@ class TestOverlayPatterns:
                 assert all('request' in name for name in overlays)
 
 
-class TestOutputHasTimeCoord:
-    def test_true_when_template_has_time_coord(self) -> None:
+class TestOutputViewSupportsWindowing:
+    def test_true_when_view_has_per_update_stream(self) -> None:
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
         class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='image',
+                    title='Image',
+                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                ),
+            )
+
             current: sc.DataArray = pydantic.Field(
                 default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['time', 'x'], shape=[0, 0], unit='counts'),
-                    coords={
-                        'time': sc.arange('time', 0, unit='s'),
-                        'x': sc.arange('x', 0, unit='m'),
-                    },
+                    sc.zeros(dims=['x'], shape=[0]),
                 )
             )
-
-        spec = WorkflowSpec(
-            instrument='test',
-            name='wf',
-            version=1,
-            title='T',
-            description='D',
-            outputs=Outputs,
-            params=None,
-            group=REDUCTION,
-        )
-        assert output_has_time_coord(spec, 'current') is True
-
-    def test_false_when_template_has_no_time_coord(self) -> None:
-        class Outputs(WorkflowOutputsBase):
             cumulative: sc.DataArray = pydantic.Field(
                 default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[0], unit='counts'),
-                    coords={'x': sc.arange('x', 0, unit='m')},
+                    sc.zeros(dims=['x'], shape=[0]),
                 )
             )
 
@@ -600,9 +595,40 @@ class TestOutputHasTimeCoord:
             params=None,
             group=REDUCTION,
         )
-        assert output_has_time_coord(spec, 'cumulative') is False
+        assert output_view_supports_windowing(spec, 'image') is True
 
-    def test_true_when_no_template_available(self) -> None:
+    def test_false_for_cumulative_only_view(self) -> None:
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='i_of_q',
+                    title='I(Q)',
+                    streams={'since_start': 'i_of_q'},
+                ),
+            )
+            i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        assert output_view_supports_windowing(spec, 'i_of_q') is False
+
+    def test_true_when_view_unknown(self) -> None:
         class Outputs(WorkflowOutputsBase):
             result: sc.DataArray = pydantic.Field(title='Result')
 
@@ -616,4 +642,145 @@ class TestOutputHasTimeCoord:
             params=None,
             group=REDUCTION,
         )
-        assert output_has_time_coord(spec, 'result') is True
+        # Default (fallback) view per field uses `since_start`, so no windowing.
+        assert output_view_supports_windowing(spec, 'result') is False
+        # Unknown view name → True (be permissive).
+        assert output_view_supports_windowing(spec, 'nonexistent') is True
+
+
+class TestCreateExtractorsFromParams:
+    """Verify the new ``since_start`` window mode uses LatestValueExtractor."""
+
+    def _make_keys(self) -> list:
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
+        return [
+            ResultKey(
+                workflow_id=wf_id,
+                job_id=JobId(source_name='src', job_number=uuid.UUID(int=0)),
+                output_name='current',
+            )
+        ]
+
+    def test_since_start_uses_latest_value_extractor(self) -> None:
+        import uuid as _uuid  # noqa: F401  (avoid masking)
+
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plotting_controller import (
+            create_extractors_from_params,
+        )
+
+        keys = self._make_keys()
+        params = WindowParams(mode=WindowMode.since_start)
+        extractors = create_extractors_from_params(keys, params)
+        assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
+
+    def test_latest_uses_latest_value_extractor(self) -> None:
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plotting_controller import (
+            create_extractors_from_params,
+        )
+
+        keys = self._make_keys()
+        params = WindowParams(mode=WindowMode.latest)
+        extractors = create_extractors_from_params(keys, params)
+        assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
+
+    def test_window_uses_window_aggregating_extractor(self) -> None:
+        from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
+        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plotting_controller import (
+            create_extractors_from_params,
+        )
+
+        keys = self._make_keys()
+        params = WindowParams(mode=WindowMode.window, window_duration_seconds=5.0)
+        extractors = create_extractors_from_params(keys, params)
+        assert all(
+            isinstance(e, WindowAggregatingExtractor) for e in extractors.values()
+        )
+
+
+class TestResolveFieldName:
+    """Verify ``resolve_field_name`` maps (view, role) to the backing field."""
+
+    def _spec(self) -> WorkflowSpec:
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='image',
+                    title='Image',
+                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                ),
+                OutputView(
+                    name='total_counts',
+                    title='Total Counts',
+                    streams={'per_update': 'counts_total'},
+                ),
+            )
+            cumulative: sc.DataArray = pydantic.Field()
+            current: sc.DataArray = pydantic.Field()
+            counts_total: sc.DataArray = pydantic.Field()
+
+        return WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+
+    def test_since_start_role_resolves_to_cumulative(self) -> None:
+        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
+
+        assert (
+            resolve_field_name(self._spec(), 'image', role='since_start')
+            == 'cumulative'
+        )
+
+    def test_per_update_role_resolves_to_current(self) -> None:
+        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
+
+        assert resolve_field_name(self._spec(), 'image', role='per_update') == 'current'
+
+    def test_falls_back_to_other_role_when_requested_missing(self) -> None:
+        """``total_counts`` only declares ``per_update``; asking for
+        ``since_start`` falls back to it."""
+        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
+
+        assert (
+            resolve_field_name(self._spec(), 'total_counts', role='since_start')
+            == 'counts_total'
+        )
+
+    def test_falls_back_to_view_name_when_no_view_declared(self) -> None:
+        """For unannotated outputs classes, the view name is treated as the
+        backing field name."""
+        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
+
+        class BareOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = pydantic.Field()
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=BareOutputs,
+            params=None,
+            group=REDUCTION,
+        )
+        # The auto-generated view maps `result` via since_start. Asking for
+        # per_update on this view falls back to since_start.
+        assert resolve_field_name(spec, 'result', role='per_update') == 'result'

@@ -588,7 +588,7 @@ class PlotGridManager:
             first_layer = cell.layers[0]
             config = first_layer.config
             workflow_title, output_title = get_workflow_display_info(
-                self._workflow_registry, config.workflow_id, config.output_name
+                self._workflow_registry, config.workflow_id, config.view_name
             )
 
             # Truncate long titles for the compact preview
