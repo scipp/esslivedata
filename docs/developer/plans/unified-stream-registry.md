@@ -76,40 +76,42 @@ Additionally:
    `__post_init__` of `Instrument` auto-derives one from the other,
    but the entry point of truth is the per-instrument dict, and that
    itself is hand-typed.
-3. **Display split.** Title/description for an f144 stream live in
-   `source_metadata`, separate from the routing/units/path facets.
-   Two lookups to fully describe a stream.
-4. **No room for synthesised streams.** Streams that exist only
+3. **No room for synthesised streams.** Streams that exist only
    in-process (a synthesiser plateau-detecting on a noisy upstream
    readback, e.g. `<chopper>_delay_setpoint`) don't fit the
    "filewriter row" mental model; today they live in a separate
    `_SYNTHETIC_LOG_ATTRS` dict in `timeseries_handler.py`.
-5. **Hand-coding doesn't scale.** Some instruments will eventually
+4. **Hand-coding doesn't scale.** Some instruments will eventually
    have O(100) f144 streams (DREAM is the largest case). A
    hand-maintained dict per instrument is fine at ~10 streams; it
    will not be at 100.
+
+(Title/description for f144 streams also live in `source_metadata`
+separately from the registry. This proposal *does not* address that
+split — see Choice 4 for why.)
 
 ## Scope
 
 The registry is f144-first. `Stream` is designed as the base for all
 writer modules (ev44, tdct, ...) so detectors and monitors can later
-become `Stream` subclasses and `source_metadata` can be drained, but
-that migration is out of scope for this proposal. Initial rollout
-touches only the f144 fragmentation. Display lookups (`get_source_title`
-etc.) consult both the streams registry and `source_metadata` in the
-transitional period — small enough to be a non-issue.
+become `Stream` subclasses, but that migration is out of scope for
+this proposal. Initial rollout touches only the f144 fragmentation.
+Display lookups (`get_source_title` etc.) stay routed through
+`source_metadata` unchanged.
 
 ## Target shape
 
 ### A. Canonical record per stream + separate consumer bindings
 
-One record describes the NeXus-facing facts and display facets of a
-streaming group: how it arrives over Kafka, where it sits in the NeXus
-structure, how it is named/described in the UI, and (for f144) its
-units. *Runtime overlay* that wires a stream into a specific consumer
-(e.g., Sciline log keys, dependent-source scoping) lives in a separate
-typed list per consumer, referencing streams by name. The registry is
-the noun; bindings are the verbs that point at it.
+One record describes the NeXus-facing facts of a streaming group: how
+it arrives over Kafka, where it sits in the NeXus structure, and (for
+f144) its units. *Runtime overlay* that wires a stream into a Sciline
+workflow (workflow key, dependent-source scoping) lives in a separate
+`log_context_bindings` list, referencing streams by name. *Display info*
+(title, description) stays in `source_metadata`, the existing
+side-dict that already covers detectors and monitors. The registry is
+the noun for data plumbing; bindings are the verbs that point at it;
+source_metadata is the display map.
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -127,10 +129,6 @@ class Stream:
     nx_class: str = ''                   # 'NXlog', 'NXevent_data', ...
     parent_nx_class: str | None = None   # 'NXdetector', 'NXdisk_chopper', ...
 
-    # Display
-    title: str | None = None
-    description: str | None = None
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class F144Stream(Stream):
@@ -140,9 +138,11 @@ class F144Stream(Stream):
 ```
 
 `Instrument.streams: dict[StreamName, Stream]` replaces
-`f144_log_streams`, `f144_attribute_registry`, and the f144 entries in
-`source_metadata`. The dict is keyed by `stream_name`, which is what
-every non-kafka-boundary consumer uses as the routing handle.
+`f144_log_streams` and `f144_attribute_registry`. The dict is keyed by
+`stream_name`, which is what every non-kafka-boundary consumer uses as
+the routing handle. Display fields (`title`, `description`) stay in
+`source_metadata` (see Choice 4) — the stream record is purely data
+plumbing.
 
 All current registry usages become derived views:
 
@@ -151,41 +151,76 @@ All current registry usages become derived views:
 - Auto-registration of timeseries specs → iterate
   `[s for s in instrument.streams.values() if isinstance(s, F144Stream)]`
   and read `stream_name`.
-- Display lookup → `stream.title` / `stream.description` (with
-  `stream_name` as fallback).
 - `StreamLUT[logs]` → built once in `streams.py` from
   `{(s.topic, s.source): s.stream_name for s in instrument.streams.values() if s.topic is not None}`.
 
-The runtime overlay — the dynamic-transforms work, the chopper-workflow
-work — lives in *consumer-owned* binding lists:
+The runtime overlay — wiring f144 streams into Sciline workflows for
+both the dynamic-transforms work and the chopper-workflow work — lives
+in a single flat list of `LogContextBinding` records:
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LogContextBinding:
-    """One f144 stream feeding a Sciline log key, scoped to dependents."""
+    """One f144 stream feeding a Sciline workflow key, scoped to dependents."""
     stream_name: str                     # references Instrument.streams[stream_name]
-    log_key: type[ValueLog]
-    dependent_sources: frozenset[str]
+    workflow_key: type[ValueLog]         # Sciline key type the value gets bound to
+    dependent_sources: frozenset[str]    # spec source_names that pick up this binding
 ```
 
-`Instrument.log_context_bindings: list[LogContextBinding]` (and
-analogous per-consumer lists as they appear). Bindings are thin: they
-no longer mirror `units` or `nexus_path` — those live on the stream
-record they reference. A binding is purely "consumer X wants stream Y,
-scoped to dependents Z".
+`Instrument.log_context_bindings: list[LogContextBinding]`. Bindings are thin:
+they no longer mirror `units` or `nexus_path` — those live on the
+stream record they reference. A binding is purely "stream X feeds
+Sciline key K, scoped to dependents D".
 
-Why split runtime overlay from the stream record:
+One binding type covers both known consumers:
+
+- *Dynamic-transforms* binding example:
+  `LogContextBinding(stream_name='detector_carriage', workflow_key=DetectorCarriagePosition, dependent_sources=frozenset({'loki_detector_0'}))`.
+  The detector spec for `loki_detector_0` picks up the live readback
+  as an aux input, keyed by `DetectorCarriagePosition`, and patches it
+  into the transform chain.
+- *Chopper-workflow* binding example:
+  `LogContextBinding(stream_name='bw_chopper1_delay_setpoint', workflow_key=BwChopper1DelaySetpoint, dependent_sources=frozenset({'chopper_cascade_in_phase'}))`.
+  The chopper workflow spec is triggered by the synthetic
+  `chopper_cascade_in_phase` stream; every chopper f144 stream
+  declares itself as an aux input to that trigger and feeds a typed
+  Sciline key. A `make_chopper_bindings(choppers, fields, trigger=...)`
+  helper generates the `len(choppers) * len(fields)` entries from the
+  per-instrument chopper list.
+
+The aux-source routing mechanism (`LogContextAuxSources`) iterates
+`instrument.log_context_bindings` once and filters by `dependent_sources &
+spec.source_names`. The dispatch between "feed a detector's transform
+chain" vs. "feed a chopper workflow" is driven by *the workflow_key
+type* and the Sciline graph downstream, not by separate binding kinds.
+
+Why one list, not per-consumer lists:
 
 - `dependent_sources` is a property of the *consumer-stream binding*,
-  not the stream. Different consumers reading the same stream may have
-  different scoping needs (e.g., the chopper-workflow consumer routes
-  by chopper group name, not by detector scope).
+  not of the stream itself. Different bindings for the same stream
+  may have different scoping. Putting bindings on the stream record
+  (the original §1 fat-record idea) wedges this into a single global
+  answer.
+- One mechanism, one list: the same `LogContextAuxSources` plumbing
+  serves both consumers. Adding a third Sciline-key-driven consumer is
+  just more `LogContextBinding` entries — no new field on `Instrument`, no
+  new routing class.
 - The registry stays writer-module-symmetric: ev44 and tdct don't
   inherently need any runtime-overlay fields, so they don't gain a
-  subclass just to default them to None.
-- The split makes adoption of a new consumer kind a local change in
-  one place (a new binding type plus its consumer code), not a new
-  field on every `Stream` subclass.
+  subclass just to default them to None. If a future ev44 consumer
+  needs its own binding shape (different from `type[ValueLog]` keys),
+  that gets its own binding type and field — the unification asserted
+  here is across f144 Sciline-key consumers, not across all writer
+  modules.
+
+**Chopper-consumer precondition.** Today's chopper handler maps
+`<chopper>_delay_setpoint` → `raw_choppers[<chopper>]['delay']` by
+parsing stream names. To participate in this unified binding model,
+the chopper workflow must consume its f144 inputs as typed `ValueLog`
+subclasses (one per chopper f144 stream), with the destination mapping
+moving into the Sciline graph. This is a real refactor of the chopper
+consumer, not just a config-shape change; the simplification of the
+overall config is conditional on it.
 
 ### B. Codegen-time parse, not runtime parse
 
@@ -215,21 +250,22 @@ from .streams_parsed import PARSED_STREAMS
 streams = build_streams(
     PARSED_STREAMS,
     overrides={
-        'sample_temperature': dict(title='Sample temperature'),
         '/entry/.../wrong_units_path': dict(units='K'),  # filewriter bug fix
     },
     synthetics=[
         F144Stream(stream_name='delay_setpoint', nexus_path=None,
-                   topic=None, source=None, title='Delay setpoint', ...),
+                   topic=None, source=None, ...),
     ],
 )
 ```
 
-`build_streams` returns the `dict[StreamName, Stream]`. Override keys
-are accepted as either `stream_name` (for hand-named entries) or
-`nexus_path` (the stable NeXus identity, for entries that haven't been
-renamed). Collisions on `stream_name` raise at codegen *and*
-construction time.
+`build_streams` returns the `dict[StreamName, Stream]`. Overrides are
+expected to be rare (filewriter unit bugs, hand-chosen `stream_name`
+renames); display fields live in `source_metadata` and are set there
+separately. Override keys are accepted as either `stream_name` (for
+hand-named entries) or `nexus_path` (the stable NeXus identity, for
+entries that haven't been renamed). Collisions on `stream_name` raise
+at codegen *and* construction time.
 
 For instruments with few streams (LOKI, BIFROST today), the registry
 is a hand-written dict literal. The parser/generator is opt-in.
@@ -258,7 +294,7 @@ A `__post_init__` invariant enforces that `topic`, `source`, and
 `nexus_path` are all None or all non-None.
 
 Consumers must be oblivious to the distinction: workflow harnesses,
-timeseries UI, display lookups, and binding resolution all index into
+timeseries UI, and binding resolution all index into
 `Instrument.streams` by name and read the same fields regardless of
 origin. The only place that filters by `topic is None` is the
 kafka-boundary `StreamLUT` builder, which has no entry to emit for a
@@ -268,36 +304,34 @@ but the runtime registry is a single flat dict.
 
 ## Choices and reasoning
 
-### 1. NeXus facts + display on the record, runtime overlay split off
+### 1. NeXus facts on the record, runtime overlay and display split off
 
-**Choice.** The record (`Stream` / `F144Stream`) holds NeXus-derivable
-facts plus optional display fields (`title`, `description`) and, for
-f144, `units`. *Consumer-specific runtime overlay* — `log_key`,
-`dependent_sources`, future binding kinds — lives in per-consumer
-binding lists on `Instrument` that reference streams by name.
+**Choice.** The record (`Stream` / `F144Stream`) holds only
+NeXus-derivable facts plus, for f144, `units`. *Runtime overlay* —
+`workflow_key`, `dependent_sources` — lives in a separate
+`log_context_bindings` list on `Instrument` that references streams by
+name. *Display* — `title`, `description` — stays in
+`source_metadata` (see Choice 4).
 
 **Alternative considered (and rejected).** A single fat record per
-stream carrying every facet: NeXus facts, display, log_key,
-dependent_sources, and whatever future consumers need.
+stream carrying every facet: NeXus facts, display, workflow_key,
+dependent_sources.
 
-**Reasoning.** `dependent_sources` is a property of *a consumer-stream
-binding*, not of the stream itself. A given stream may be read by
-multiple consumers with different scoping rules (the dynamic-transforms
-consumer scopes by detector; the chopper-workflow consumer routes by
-chopper group). Bolting `dependent_sources` onto the stream forces a
-single global answer, which is wrong as soon as there's a second
-consumer. The same argument applies to `log_key` and any future
-consumer-specific routing facet.
+**Reasoning.** `dependent_sources` is a property of *a stream-binding*,
+not of the stream itself. A given stream may participate in multiple
+bindings with different scoping (e.g., the same f144 stream feeding
+two different Sciline workflows triggered by different sources).
+Bolting `dependent_sources` onto the stream forces a single global
+answer, which is wrong as soon as there's a second binding. The same
+argument applies to `workflow_key`.
 
-Putting display fields (`title`, `description`) on the record *is*
-correct: they are properties of "this streaming entity", not of a
-particular consumer's wiring. Likewise `units` for f144 — it is a
-filewriter-level property of the stream, just sometimes wrong in the
-file and needing override in code.
+`units` for f144 stays on the record because it is a filewriter-level
+property of the stream — read from the NeXus file and rarely
+overridden in code (only for filewriter bugs).
 
 The drift problem that motivated the proposal still goes away: `units`
 no longer lives in two places (registry + binding); it lives only on
-the stream record. Bindings become thin (`stream_name`, `log_key`,
+the stream record. Bindings become thin (`stream_name`, `workflow_key`,
 `dependent_sources`) and don't mirror anything.
 
 ### 2. `nexus_path` on the base, not the subclass
@@ -348,25 +382,42 @@ If `units` ends up being the only f144-specific field forever, the
 subclass is light. If more f144 fields appear later (e.g., a rate hint
 for batching), they have a natural home.
 
-### 4. Display fields on the stream record
+### 4. Display stays in `source_metadata`, separate from the stream registry
 
-**Choice.** `title` and `description` are fields on `Stream` itself,
-not in a parallel `source_metadata` dict.
+**Choice.** `title` and `description` are *not* on `Stream`. They live
+in `Instrument.source_metadata: dict[str, SourceMetadata]`, the same
+side-dict that already holds display info for detectors and monitors.
+`get_source_title(name)` / `get_source_description(name)` keep their
+current shape, consulting `source_metadata` only.
 
-**Reasoning.** Display info is a property of "this streaming entity",
-just not derivable from NeXus. Same pattern as `log_key` *would have
-been* if it weren't consumer-specific: a non-NeXus fact set in
-per-instrument code. Putting it on the record:
+**Alternative considered (and rejected).** Move display fields onto
+`Stream` records, with `source_metadata` retained only for
+detector/monitor entries during a transitional period.
 
-- Eliminates the "two lookups to fully describe a stream" problem.
-- Doesn't break detector/monitor metadata: those eventually become
-  `Stream` subclasses (`Ev44Stream` with `parent_nx_class='NXdetector'`
-  / `'NXmonitor'`) with their own display fields, draining
-  `source_metadata` entirely. Out of scope for this proposal.
+**Reasoning.** `Stream` is "what arrives on the wire / what NeXus
+says" — pure data plumbing. Display labels are a UI concern with a
+different lifecycle and a different audience. Merging them onto the
+record conflates the two: every override path, every parser fixture,
+every record-equality test now also concerns itself with human-readable
+strings.
 
-The codegen path leaves `title` / `description` as `None`; the
-per-instrument `streams.py` is where human-readable text is set via
-the overrides dict.
+Keeping display in `source_metadata`:
+
+- Source_metadata's "keyed by source name across entity kinds" overload
+  is the right shape, not a bug. It is the single display map for
+  streams, detectors, monitors, and (eventually) anything else with a
+  source name.
+- The "two lookups to fully describe a stream" cost is one helper
+  method internally; consumers call `instrument.get_source_title(name)`
+  and don't see the split.
+- No transitional state. Display for f144 entries is set in
+  `source_metadata` the same way detector/monitor display already is.
+- The override surface on `build_streams` shrinks to "filewriter unit
+  bugs and stream_name renames" — small enough that the typed override
+  class is overkill.
+- Future Detector/Monitor records (when `Ev44Stream` lands) can stay
+  data-only too; their display continues to live in
+  `source_metadata`. No follow-up drain needed.
 
 ### 5. Override identity is `nexus_path` (or `stream_name`), not the dict key alone
 
@@ -417,8 +468,8 @@ are filters (`isinstance(s, F144Stream)`).
 or split lists per writer module.
 
 **Reasoning.** Lookup is the dominant access pattern (bindings,
-display, NXlog-attrs, derived StreamLUT entries). A dict makes those
-O(1) and lets bindings reference streams by name without scanning. The
+NXlog-attrs, derived StreamLUT entries). A dict makes those O(1) and
+lets bindings reference streams by name without scanning. The
 parser still yields `list[Stream]`; the construction step
 (`build_streams`) converts to a dict and raises on `stream_name`
 collisions. Collisions are statically known per geometry — the rename
@@ -471,55 +522,94 @@ A future move to dynamic distribution is local: `Stream` is a frozen
 dataclass that round-trips through any serialisation layer, and the
 seam is "who populates `Instrument.streams` at startup".
 
+### 10. Construction-time invariants, not test-time validation
+
+**Choice.** Misconfiguration in the registry, bindings, or overrides
+fails at process startup, not at pytest time. Specifically:
+
+- `Instrument.__post_init__` raises if:
+  - any `log_context_bindings[i].stream_name` is missing from
+    `Instrument.streams`, or
+  - any override key passed to `build_streams` did not match a parsed
+    record (caught inside `build_streams` itself, which raises before
+    returning).
+- End of `Instrument.load_factories()` raises if any
+  `log_context_bindings[i].dependent_sources` element does not match the
+  `source_names` of some registered spec. This check has to run *after*
+  factory loading because spec registration populates `source_names`.
+
+Pytest checks remain only for *the invariant logic itself* (does the
+validator correctly reject a malformed binding?), not as enumeration
+of every binding as a regression test.
+
+**Alternative considered.** Keep the existing test-time pattern
+(`dynamic_transforms_registry_test.py` and analogues). Catches errors
+in CI but not at the moment of misconfiguration; a typo only surfaces
+when pytest runs.
+
+**Reasoning.** Misconfiguration is a deployment-blocking error, not a
+warning. The dashboard and backend both import `Instrument` at
+startup; a typo in `streams.py` (wrong stream_name, missing override
+target, unknown dependent source) should crash the process before
+traffic starts. This matches the project's fail-fast preference and
+removes a category of "tests pass, deploy fails" surprises.
+
+Consumer-specific reachability checks (e.g., dynamic-transforms's
+"every binding's `nexus_path` lies on a depends-on chain that some
+detector loads") move into that consumer's own construction-time
+check, not the registry's. The registry only validates registry
+invariants; consumers validate consumer invariants.
+
 ## What this enables
 
 Stating these as motivations rather than work items, so the proposal
 can stand on its own.
 
 - **Adoption of a new f144-driven workflow consumer becomes a one-line
-  binding entry.** A new `LogContextBinding(stream_name=..., log_key=...,
+  binding entry.** A new `LogContextBinding(stream_name=..., workflow_key=...,
   dependent_sources=...)` references an existing stream record. No
   duplication of `units` or `nexus_path`, no separate attribute
   registry, no manual splice.
 - **NeXus-driven instruments scale to O(100) streams.** The
   hand-maintained per-instrument dict for DREAM-class instruments
   becomes a generated `streams_parsed.py` plus a small overrides dict
-  in `streams.py` — a few human-meaningful entries for streams that
-  drive display, run consumer bindings, or fix file bugs.
-- **The two ongoing efforts simplify symmetrically.** A consumer that
-  patches `depends_on` chains reads `nexus_path` off `F144Stream`
-  records via its own binding list. A consumer that builds chopper
-  `DataGroups` reads the same fields with its own binding type and
-  dispatches differently. Neither owns its own routing/attribute
-  lists; both reference the registry by name.
+  in `streams.py` — overrides are expected to be rare (filewriter unit
+  bugs, hand-chosen `stream_name` renames).
+- **Both known Sciline-key consumers use the same binding mechanism.**
+  Dynamic-transforms (detector-scope) and chopper-workflow (trigger-scope)
+  produce entries in the same `log_context_bindings` list, distinguished
+  only by their `workflow_key` types and `dependent_sources`. The
+  chopper consumer must adopt typed `ValueLog`-keyed inputs (moving
+  destination mapping out of name parsing) to participate.
 - **Synthesised streams stop being a special case.** They are
   `F144Stream` records with `topic=None`. Consumers iterate the
   registry blind to the distinction; only the kafka-boundary LUT
   builder filters them out.
+- **`StreamProcessorWorkflow.context_keys` for f144 streams becomes
+  a derived view of the bindings.** Today's factories hand-code the
+  stream-name → Sciline-key mapping (e.g.
+  `bifrost/factories.py:_make_cut_stream_processor` literally
+  declares `context_keys={'detector_rotation': InstrumentAngle[SampleRun], ...}`;
+  `detector_view/factory.py` mixes f144 entries derived from
+  `_dynamic_transforms` config with non-f144 ROI entries). Post-bindings,
+  factories filter `instrument.log_context_bindings` by
+  `dependent_sources & spec.source_names` and derive `context_keys`
+  from the matched entries. The stream-name → Sciline-key mapping
+  lives in one place — the binding declaration — instead of being
+  duplicated in every factory that wires up an `f144`-consuming
+  workflow. Non-f144 `context_keys` entries (UI control signals like
+  `roi_rectangle: ROIRectangleRequest`) stay hand-coded in the factory;
+  bindings cover the f144 half where the duplication actually existed.
 
 ## Open questions worth flagging
 
-1. **Generalising overlay beyond f144 — and whether other consumers
-   need their own binding types.** When ev44/tdct streams gain
+1. **Generalising overlay beyond f144.** When ev44/tdct streams gain
    per-stream runtime config (rate hints, decoder choices), each gets
-   a `Stream` subclass. Separately, the chopper-workflow consumer
-   will want its own binding type (analogous to `LogContextBinding`)
-   that captures whatever scoping it needs. Worth nailing down the
-   binding-type pattern once the second concrete consumer lands.
-2. **`source_metadata` migration.** Display fields for f144 streams
-   move onto the stream record; detector/monitor entries stay in
-   `source_metadata` until those become `Ev44Stream`-style records.
-   Worth deciding whether to do that drain incrementally or as a
-   single follow-up.
-3. **Validation timing.** Today's
-   `dynamic_transforms_registry_test.py` walks NeXus depends-on
-   chains and verifies every binding's path is reachable. With the
-   unified record this generalises to two checks: (a) every binding's
-   `stream_name` exists in `Instrument.streams`, (b) every override's
-   key matches a parsed record. Both could move from tests to
-   instrument-construction-time invariants. Worth deciding before the
-   first big rollout PR.
-4. **Codegen drift protection.** A CI check that re-runs the
+   a `Stream` subclass. If a future ev44/tdct consumer needs its own
+   binding shape (key types other than `type[ValueLog]`), a second
+   binding type and field is added — `LogContextBinding` is asserted to
+   unify f144 Sciline-key consumers, not all writer modules.
+2. **Codegen drift protection.** A CI check that re-runs the
    generator and fails on diff against the committed
    `streams_parsed.py` is straightforward but needs a stable input
    (the geometry file in pooch, pinned). Worth confirming the
@@ -544,13 +634,23 @@ The change is naturally incremental and behaviour-preserving:
    `instrument.streams` instead of importing the per-instrument dict.
 5. Drop the redundant `f144_log_streams` dicts and
    `f144_attribute_registry` constructor kwargs.
-6. Move `title` / `description` for f144 streams from
-   `source_metadata` onto the records.
-7. Introduce `Instrument.log_context_bindings: list[LogContextBinding]`
-   (the consumer-side overlay), and migrate the dynamic-transforms
-   work onto it. Bindings reference streams by `stream_name`; they no
-   longer carry `units`.
-8. Extend the existing `nexus_helpers` CLI generator to emit a
+6. Introduce `Instrument.log_context_bindings: list[LogContextBinding]` and
+   migrate the dynamic-transforms work onto it. Bindings reference
+   streams by `stream_name`; they no longer carry `units`.
+7. Refactor factories that hand-code f144 `context_keys` to derive them
+   from `instrument.log_context_bindings` filtered by spec source_names.
+   Concrete sites: `bifrost/factories.py:_make_cut_stream_processor`
+   (drops the hand-coded
+   `{'detector_rotation': InstrumentAngle[SampleRun], 'sample_rotation': SampleAngle[SampleRun]}`),
+   `detector_view/factory.py` (drops the f144 portion built from
+   `_dynamic_transforms`; non-f144 ROI entries stay).
+8. Refactor the chopper consumer to consume f144 inputs as typed
+   `ValueLog` subclasses, moving the `<chopper>_<field>` destination
+   mapping out of name parsing and into the Sciline graph. Once that
+   lands, the chopper consumer's `make_chopper_bindings(...)` helper
+   produces `list[LogContextBinding]` entries that go into the same
+   `log_context_bindings` list as the dynamic-transform entries.
+9. Extend the existing `nexus_helpers` CLI generator to emit a
    `streams_parsed.py` containing a `list[F144Stream]` literal. Add
    `build_streams(parsed, overrides, synthetics) -> dict[StreamName, Stream]`.
    Migrate one stream-heavy instrument to validate the override
@@ -558,6 +658,6 @@ The change is naturally incremental and behaviour-preserving:
 
 Each step is a small reviewable PR. Consumers (the dynamic-transforms
 work, the chopper work) become much smaller follow-ups once the
-unified record is in place, because they just *read* fields that
-already exist on the record instead of declaring their own parallel
-lists.
+unified record and binding list are in place, because they just *read*
+fields that already exist on the record instead of declaring their own
+parallel lists.
