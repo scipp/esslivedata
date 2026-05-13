@@ -173,12 +173,9 @@ def generate_f144_log_streams_code(
     infos: list[StreamInfo],
     *,
     topic: str,
-    variable_name: str = 'f144_log_streams',
+    variable_name: str = 'f144_streams',
 ) -> str:
-    """Generate Python code for f144_log_streams dictionary.
-
-    The generated dictionary maps internal names to source, units, and topic info,
-    which can be used to derive both f144_attribute_registry and StreamLUT.
+    """Generate Python code for an ``F144Stream`` list literal.
 
     Parameters
     ----------
@@ -202,19 +199,21 @@ def generate_f144_log_streams_code(
     lines = [
         "# Generated from NeXus file - review and adjust names as needed",
         f"# Topic: {topic}",
-        f"{variable_name}: dict[str, dict[str, str]] = {{",
+        f"{variable_name}: list[F144Stream] = [",
     ]
 
     for name in sorted(by_name.keys()):
         info = by_name[name]
         units = info.units or 'dimensionless'
-        entry = (
-            f"    '{name}': {{'source': '{info.source}', 'units': '{units}', "
-            f"'topic': '{topic}'}}"
-        )
-        lines.append(f"{entry},")
+        lines.append("    F144Stream(")
+        lines.append(f"        stream_name='{name}',")
+        lines.append(f"        nexus_path='/{info.group_path}',")
+        lines.append(f"        source='{info.source}',")
+        lines.append(f"        topic='{topic}',")
+        lines.append(f"        units='{units}',")
+        lines.append("    ),")
 
-    lines.append("}")
+    lines.append("]")
     return '\n'.join(lines)
 
 

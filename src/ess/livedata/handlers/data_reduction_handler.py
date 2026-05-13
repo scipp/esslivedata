@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..config.instrument import Instrument
+from ..config.stream import F144Stream
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative
@@ -23,11 +24,10 @@ class ReductionHandlerFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.MONITOR_COUNTS:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LOG:
-                # Skip log data for sources not in the attribute registry
-                attrs = self._instrument.f144_attribute_registry.get(key.name)
-                if attrs is None:
+                stream = self._instrument.streams.get(key.name)
+                if not isinstance(stream, F144Stream):
                     return None
-                return ToNXlog(attrs=attrs)
+                return ToNXlog(attrs={'units': stream.units})
             case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
             case StreamKind.DETECTOR_EVENTS:

@@ -8,7 +8,12 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
+from ess.livedata.config import (
+    F144Stream,
+    Instrument,
+    SourceMetadata,
+    instrument_registry,
+)
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -188,21 +193,20 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 # ``/entry/instrument/detector_arm/detector_rotation/value`` (NXpositioner).
 # The same positioner also publishes ``.VAL`` (setpoint) and ``.DMOV``
 # (done-moving) on the same topic; not exposed here.
-f144_log_streams = {
-    'detector_rotation': {
-        'source': 'ESTIA-DtRot:MC-RotZ01:Mtr.RBV',
-        'topic': 'estia_motion',
-        'units': 'deg',
-    },
-}
+f144_streams: list[F144Stream] = [
+    F144Stream(
+        stream_name='detector_rotation',
+        source='ESTIA-DtRot:MC-RotZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='deg',
+    ),
+]
 
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=list(GENERIC_CBM_MONITORS),
-    f144_attribute_registry={
-        name: {'units': info['units']} for name, info in f144_log_streams.items()
-    },
+    streams={s.stream_name: s for s in f144_streams},
     source_metadata={
         'detector_rotation': SourceMetadata(
             title='Detector Rotation',

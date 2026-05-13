@@ -509,11 +509,12 @@ class TestGenerateF144LogStreamsCode:
             ),
         ]
         code = generate_f144_log_streams_code(infos, topic='motion')
-        assert "f144_log_streams: dict[str, dict[str, str]] = {" in code
-        assert (
-            "'motor': {'source': 'MOTOR:PV:RBV', 'units': 'degrees', 'topic': 'motion'}"
-            in code
-        )
+        assert 'f144_streams: list[F144Stream] = [' in code
+        assert "stream_name='motor'" in code
+        assert "source='MOTOR:PV:RBV'" in code
+        assert "topic='motion'" in code
+        assert "units='degrees'" in code
+        assert "nexus_path='/entry/motor/value'" in code
 
     def test_uses_dimensionless_for_empty_units(self) -> None:
         infos = [
@@ -528,7 +529,7 @@ class TestGenerateF144LogStreamsCode:
             ),
         ]
         code = generate_f144_log_streams_code(infos, topic='motion')
-        assert "'units': 'dimensionless', 'topic': 'motion'" in code
+        assert "units='dimensionless'" in code
 
     def test_prefers_value_over_idle_flag(self) -> None:
         infos = [
@@ -571,4 +572,4 @@ class TestGenerateF144LogStreamsCode:
         code = generate_f144_log_streams_code(
             infos, topic='motion', variable_name='my_streams'
         )
-        assert 'my_streams: dict[str, dict[str, str]] = {' in code
+        assert 'my_streams: list[F144Stream] = [' in code

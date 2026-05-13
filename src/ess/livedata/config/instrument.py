@@ -16,6 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
+from .stream import F144Stream, Stream
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
@@ -102,7 +103,7 @@ class Instrument:
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
-    f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    streams: dict[str, Stream] = field(default_factory=dict)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
@@ -121,10 +122,25 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
-        timeseries_names = list(self.f144_attribute_registry.keys())
+        for name, stream in self.streams.items():
+            if name != stream.stream_name:
+                raise ValueError(
+                    f"streams dict key {name!r} does not match "
+                    f"stream_name {stream.stream_name!r}"
+                )
+        timeseries_names = list(self.f144_streams)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=timeseries_names
         )
+
+    @property
+    def f144_streams(self) -> dict[str, F144Stream]:
+        """Subset of :attr:`streams` carrying f144 (NXlog) data."""
+        return {
+            name: stream
+            for name, stream in self.streams.items()
+            if isinstance(stream, F144Stream)
+        }
 
     @property
     def nexus_file(self) -> str:

@@ -8,6 +8,7 @@ import re
 import scipp as sc
 
 from ..config.instrument import Instrument
+from ..config.stream import F144Stream
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
@@ -53,10 +54,10 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.LIVEDATA_ROI:
                 return LatestValueHandler()
             case StreamKind.LOG:
-                attrs = self._instrument.f144_attribute_registry.get(key.name)
-                if attrs is None:
+                stream = self._instrument.streams.get(key.name)
+                if not isinstance(stream, F144Stream):
                     return None
-                return ToNXlog(attrs=attrs)
+                return ToNXlog(attrs={'units': stream.units})
             case _:
                 return None
 

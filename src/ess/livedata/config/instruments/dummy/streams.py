@@ -35,7 +35,7 @@ stream_mapping = {
         'dummy',
         detector_names=list(detector_fakes),
         area_detector_names=list(area_detector_fakes),
-        log_names=list(instrument.f144_attribute_registry.keys()),
+        log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='dummy'),

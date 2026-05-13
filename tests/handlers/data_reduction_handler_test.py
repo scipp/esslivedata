@@ -5,6 +5,7 @@ import scipp as sc
 
 from ess.livedata import StreamId, StreamKind
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.stream import F144Stream
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.handlers.to_nxlog import ToNXlog
 
@@ -13,23 +14,27 @@ class TestReductionHandlerFactory:
     @pytest.fixture
     def instrument_with_logs(self):
         """Create an instrument with log attribute configuration."""
-        instrument = Instrument(name='test_instrument', detector_names=['det1'])
+        streams = {
+            'temp_sensor': F144Stream(
+                stream_name='temp_sensor',
+                source='temp_sensor',
+                topic='topic',
+                units='K',
+            ),
+            'pressure_sensor': F144Stream(
+                stream_name='pressure_sensor',
+                source='pressure_sensor',
+                topic='topic',
+                units='Pa',
+            ),
+        }
+        instrument = Instrument(
+            name='test_instrument', detector_names=['det1'], streams=streams
+        )
         instrument.configure_detector(
             'det1',
             detector_number=sc.arange('detector_number', 0, 10, unit=None),
         )
-        instrument.f144_attribute_registry = {
-            'temp_sensor': {
-                'value': {'shape': [], 'dtype': 'float'},
-                'timestamp': {'shape': [], 'dtype': 'uint64'},
-                'offset': 0.0,
-            },
-            'pressure_sensor': {
-                'value': {'shape': [], 'dtype': 'float'},
-                'timestamp': {'shape': [], 'dtype': 'uint64'},
-                'offset': 0.0,
-            },
-        }
         return instrument
 
     @pytest.fixture

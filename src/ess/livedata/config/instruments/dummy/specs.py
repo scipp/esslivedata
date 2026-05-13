@@ -7,7 +7,7 @@ Dummy instrument spec registration.
 import pydantic
 import scipp as sc
 
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
@@ -34,11 +34,20 @@ class TotalCountsOutputs(WorkflowOutputsBase):
 
 detector_names = ['panel_0', 'area_panel']
 
+f144_streams: list[F144Stream] = [
+    F144Stream(
+        stream_name='motion1', source='motion1', topic='dummy_motion', units='mm'
+    ),
+    F144Stream(
+        stream_name='motion2', source='motion2', topic='dummy_motion', units='deg'
+    ),
+]
+
 instrument = Instrument(
     name='dummy',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
-    f144_attribute_registry={'motion1': {'units': 'mm'}, 'motion2': {'units': 'deg'}},
+    streams={s.stream_name: s for s in f144_streams},
 )
 
 # Register instrument

@@ -2,5 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
+from .stream import F144Stream, Stream
 
-__all__ = ['Instrument', 'SourceMetadata', 'instrument_registry']
+__all__ = [
+    'F144Stream',
+    'Instrument',
+    'SourceMetadata',
+    'Stream',
+    'instrument_registry',
+]

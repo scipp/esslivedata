@@ -12,6 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
+from ess.livedata.config.stream import F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -89,23 +90,34 @@ class TestInstrument:
 
         assert instrument.name == "test_instrument"
         assert isinstance(instrument.workflow_factory, WorkflowFactory)
-        assert instrument.f144_attribute_registry == {}
+        assert instrument.streams == {}
+        assert instrument.f144_streams == {}
         assert instrument.detector_names == []
 
     def test_instrument_creation_with_custom_values(self):
         """Test creating instrument with custom values."""
         custom_factory = WorkflowFactory()
-        f144_registry = {"attr1": {"key": "value"}}
+        stream = F144Stream(
+            stream_name='attr1', source='src', topic='topic', units='mm'
+        )
 
         instrument = Instrument(
             name="custom_instrument",
             workflow_factory=custom_factory,
-            f144_attribute_registry=f144_registry,
+            streams={'attr1': stream},
         )
 
         assert instrument.name == "custom_instrument"
         assert instrument.workflow_factory is custom_factory
-        assert instrument.f144_attribute_registry == f144_registry
+        assert instrument.streams == {'attr1': stream}
+        assert instrument.f144_streams == {'attr1': stream}
+
+    def test_instrument_rejects_streams_with_mismatched_keys(self):
+        stream = F144Stream(
+            stream_name='real_name', source='src', topic='topic', units='mm'
+        )
+        with pytest.raises(ValueError, match='does not match'):
+            Instrument(name='test', streams={'wrong_key': stream})
 
     def test_configure_detector_with_explicit_number(self):
         """Test configuring detector with explicit detector number."""
