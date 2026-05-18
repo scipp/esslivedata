@@ -17,14 +17,13 @@ from typing import Literal
 import pydantic
 import scipp as sc
 
-from ess.livedata.config import Instrument, Stream, instrument_registry
+from ess.livedata.config import Instrument, instrument_registry, name_streams
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.nexus_helpers import suggest_names
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 from .streams_parsed import PARSED_STREAMS
@@ -222,17 +221,16 @@ monitors = [
 # Stream names referenced by factory bindings and bifrost_aux_sources above
 # must survive verbatim. Other entries take the auto-suggested names.
 # Renames are keyed by stable nexus_path.
-_RENAMES = {
-    (
-        '/entry/instrument/detector_tank_angle/transformations/'
-        'detector_tank_angle_r0/value'
-    ): 'detector_rotation',
-    '/entry/instrument/114_sample_stack/rotation_stage/value': 'sample_rotation',
-}
-_names = suggest_names(PARSED_STREAMS)
-streams: dict[str, Stream] = {
-    _RENAMES.get(path, _names[path]): stream for path, stream in PARSED_STREAMS.items()
-}
+streams = name_streams(
+    PARSED_STREAMS,
+    rename={
+        (
+            '/entry/instrument/detector_tank_angle/transformations/'
+            'detector_tank_angle_r0/value'
+        ): 'detector_rotation',
+        '/entry/instrument/114_sample_stack/rotation_stage/value': 'sample_rotation',
+    },
+)
 
 # Create instrument
 instrument = Instrument(

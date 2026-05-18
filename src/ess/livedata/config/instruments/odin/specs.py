@@ -4,12 +4,11 @@
 ODIN instrument spec registration.
 """
 
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, instrument_registry, name_streams
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.nexus_helpers import suggest_names
 
 from .streams_parsed import PARSED_STREAMS
 from .views import fold_image
@@ -18,10 +17,7 @@ instrument = Instrument(
     name='odin',
     detector_names=['timepix3'],
     monitors=['monitor1', 'monitor2'],
-    streams={
-        name: PARSED_STREAMS[path]
-        for path, name in suggest_names(PARSED_STREAMS).items()
-    },
+    streams=name_streams(PARSED_STREAMS),
 )
 
 instrument_registry.register(instrument)

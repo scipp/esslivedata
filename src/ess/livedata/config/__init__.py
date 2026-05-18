@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
-from .stream import F144Stream, LogContextBinding, Stream
+from .stream import F144Stream, LogContextBinding, Stream, name_streams
 
 __all__ = [
     'F144Stream',
@@ -11,4 +11,5 @@ __all__ = [
     'SourceMetadata',
     'Stream',
     'instrument_registry',
+    'name_streams',
 ]

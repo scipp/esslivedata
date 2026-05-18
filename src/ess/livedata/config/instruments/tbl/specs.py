@@ -8,6 +8,7 @@ from ess.livedata.config import (
     Instrument,
     SourceMetadata,
     instrument_registry,
+    name_streams,
 )
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
@@ -15,7 +16,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.nexus_helpers import suggest_names
 
 from .streams_parsed import PARSED_STREAMS
 from .views import fold_image, get_he3_detector_view, get_multiblade_view, identity
@@ -35,10 +35,7 @@ instrument = Instrument(
     name='tbl',
     detector_names=detector_names,
     monitors=monitor_names,
-    streams={
-        name: PARSED_STREAMS[path]
-        for path, name in suggest_names(PARSED_STREAMS).items()
-    },
+    streams=name_streams(PARSED_STREAMS),
     source_metadata={
         'timepix3_detector': SourceMetadata(title='Timepix3'),
         'multiblade_detector': SourceMetadata(title='Multiblade'),

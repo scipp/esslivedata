@@ -11,8 +11,8 @@ from ess.livedata import parameter_models
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
-    Stream,
     instrument_registry,
+    name_streams,
 )
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
@@ -20,7 +20,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.nexus_helpers import suggest_names
 
 from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
 from .streams_parsed import PARSED_STREAMS
@@ -192,13 +191,12 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 # The file also publishes a depends_on-chain reference under
 # multiblade_detector/transformations/detector_rotation with a placeholder
 # source (missing .RBV suffix) — left as-is; only the readback is used.
-_RENAMES = {
-    '/entry/instrument/detector_arm/detector_rotation/value': 'detector_rotation',
-}
-_names = suggest_names(PARSED_STREAMS)
-streams: dict[str, Stream] = {
-    _RENAMES.get(path, _names[path]): stream for path, stream in PARSED_STREAMS.items()
-}
+streams = name_streams(
+    PARSED_STREAMS,
+    rename={
+        '/entry/instrument/detector_arm/detector_rotation/value': 'detector_rotation',
+    },
+)
 
 instrument = Instrument(
     name='estia',

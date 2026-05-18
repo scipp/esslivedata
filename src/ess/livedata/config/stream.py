@@ -73,3 +73,41 @@ class LogContextBinding:
     stream_name: str
     workflow_key: Any
     dependent_sources: frozenset[str]
+
+
+def name_streams(
+    parsed: dict[str, Stream],
+    *,
+    rename: dict[str, str] | None = None,
+) -> dict[str, Stream]:
+    """Build a name-keyed :attr:`Instrument.streams` dict from a parsed dict.
+
+    The typical caller is an instrument's ``specs.py`` that imports a
+    path-keyed ``PARSED_STREAMS`` from the auto-generated ``streams_parsed``
+    module. Unrenamed entries get auto-suggested names from
+    :func:`ess.livedata.nexus_helpers.suggest_names`; entries in ``rename``
+    (keyed by ``nexus_path``) override those suggestions.
+
+    Raises ``ValueError`` if a rename key matches no parsed entry, or if
+    the resulting names are not unique.
+    """
+    from ess.livedata.nexus_helpers import suggest_names
+
+    rename = rename or {}
+    missing = set(rename) - set(parsed)
+    if missing:
+        raise ValueError(
+            f"rename keys not in parsed: {sorted(missing)}; "
+            f"known nexus_paths: {sorted(parsed)}"
+        )
+    suggested = suggest_names(parsed)
+    result: dict[str, Stream] = {}
+    for path, stream in parsed.items():
+        name = rename.get(path, suggested[path])
+        if name in result:
+            raise ValueError(
+                f"name {name!r} produced for {path!r} collides with an "
+                f"earlier entry; check rename map"
+            )
+        result[name] = stream
+    return result
