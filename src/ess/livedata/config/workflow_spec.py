@@ -41,6 +41,18 @@ class OutputView:
     streams: Mapping[StreamRole, str]
     description: str | None = None
 
+    def field_for(self, role: StreamRole) -> str:
+        """Return the backend field name for the requested role.
+
+        Falls back to the other declared role when the requested role is
+        absent — handles views that only expose one role (e.g. cumulative-
+        only quantities).
+        """
+        if (field_name := self.streams.get(role)) is not None:
+            return field_name
+        other: StreamRole = 'per_update' if role == 'since_start' else 'since_start'
+        return self.streams[other]
+
 
 class WorkflowOutputsBase(BaseModel):
     """Base class for all workflow output models.

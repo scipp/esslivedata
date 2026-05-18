@@ -279,17 +279,22 @@ def resolve_field_name(
     """Resolve a (view, role) pair to the backend pydantic field name.
 
     Falls back to ``view_name`` as a raw field name when no matching view
-    is declared (lets unannotated reduction outputs work unchanged). When
-    the requested role is not available for the view, falls back to any
-    declared stream — handles views that only expose one role.
+    is declared (lets unannotated reduction outputs work unchanged).
     """
     view = spec.get_output_view(view_name)
-    if view is None:
-        return view_name
-    field_name = view.streams.get(role)
-    if field_name is not None:
-        return field_name
-    return next(iter(view.streams.values()))
+    return view.field_for(role) if view is not None else view_name
+
+
+def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
+    """Return the stream role wanted by a data-source slot.
+
+    The primary slot follows the user-selected window mode; correlation
+    axes always want per-update data.
+    """
+    if slot != PRIMARY:
+        return 'per_update'
+    window = getattr(params, 'window', None)
+    return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
 
 
 def _build_resolved_data_sources(
@@ -299,33 +304,18 @@ def _build_resolved_data_sources(
     """Build a copy of ``config.data_sources`` with view names resolved to fields.
 
     The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``ResultKey.output_name``). Only
-    the primary role honours the current window mode; non-primary roles
-    (correlation axes) prefer the ``per_update`` stream when available
-    and fall back to ``since_start`` otherwise.
+    ``view_name`` (which is then used as ``ResultKey.output_name``).
     """
-    window = getattr(config.params, 'window', None)
-    primary_role: StreamRole = (
-        _stream_role_for_mode(window.mode) if window is not None else 'per_update'
-    )
     resolved: dict[str, DataSourceConfig] = {}
-    for role, ds in config.data_sources.items():
+    for slot, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
         if spec is None:
-            resolved[role] = ds
+            resolved[slot] = ds
             continue
-        if role == PRIMARY:
-            field_name = resolve_field_name(spec, ds.view_name, role=primary_role)
-        else:
-            view = spec.get_output_view(ds.view_name)
-            field_name = (
-                view.streams.get('per_update') or view.streams.get('since_start')
-                if view is not None
-                else ds.view_name
-            )
-            if field_name is None:
-                field_name = ds.view_name
-        resolved[role] = DataSourceConfig(
+        field_name = resolve_field_name(
+            spec, ds.view_name, role=_role_for_slot(slot, config.params)
+        )
+        resolved[slot] = DataSourceConfig(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
             view_name=field_name,
