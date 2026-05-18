@@ -102,6 +102,52 @@ class TestSuggestNames:
             '/entry/sample/foo/value': 'sample_foo_value',
         }
 
+    def test_min_depth_one_returns_bare_unique_leaf(self) -> None:
+        names = suggest_names(
+            ['/entry/instrument/114_sample_stack/rotation_stage'], min_depth=1
+        )
+        assert names == {
+            '/entry/instrument/114_sample_stack/rotation_stage': 'rotation_stage'
+        }
+
+    def test_min_depth_one_collapses_doubled_prefix(self) -> None:
+        # ``transformations`` filters out; depth=2 would emit
+        # ``detector_tank_angle_detector_tank_angle_r0``.
+        names = suggest_names(
+            [
+                '/entry/instrument/detector_tank_angle/transformations/'
+                'detector_tank_angle_r0'
+            ],
+            min_depth=1,
+        )
+        assert names == {
+            '/entry/instrument/detector_tank_angle/transformations/'
+            'detector_tank_angle_r0': 'detector_tank_angle_r0'
+        }
+
+    def test_min_depth_one_extends_on_collision(self) -> None:
+        names = suggest_names(
+            [
+                '/entry/instrument/wfm1/translation1',
+                '/entry/instrument/wfm2/translation1',
+            ],
+            min_depth=1,
+        )
+        assert names == {
+            '/entry/instrument/wfm1/translation1': 'wfm1_translation1',
+            '/entry/instrument/wfm2/translation1': 'wfm2_translation1',
+        }
+
+    def test_forbidden_extends_to_longer_tail(self) -> None:
+        names = suggest_names(
+            ['/entry/instrument/parent/rotation_stage'],
+            min_depth=1,
+            forbidden={'rotation_stage'},
+        )
+        assert names == {
+            '/entry/instrument/parent/rotation_stage': 'parent_rotation_stage'
+        }
+
 
 class TestNameStreams:
     def test_assigns_suggested_names_by_default(self) -> None:
@@ -237,3 +283,36 @@ class TestDeviceDetection:
         }
         with pytest.raises(ValueError, match='not in parsed'):
             name_streams(parsed, rename={'/no/such/path': 'foo'})
+
+    def test_device_name_drops_redundant_parent_prefix(self) -> None:
+        # Parent group's leaf already encodes the entity name; min_depth=1
+        # in the device pass keeps the name short instead of doubling.
+        parsed = {
+            '/entry/instrument/114_sample_stack/rotation_stage/value': self._motor(
+                'X.RBV', units='deg'
+            ),
+            '/entry/instrument/114_sample_stack/rotation_stage/idle_flag': self._motor(
+                'X.DMOV', units='dimensionless'
+            ),
+        }
+        result = name_streams(parsed)
+        assert 'rotation_stage' in result
+        assert isinstance(result['rotation_stage'], Device)
+
+    def test_device_name_collides_with_substream_extends(self) -> None:
+        # Two sibling devices with the same parent-leaf name: substream pass
+        # uses parent-prefixed names; device pass starts at depth=1, both
+        # collide, extends to depth=2 like substreams.
+        parsed = {
+            '/entry/instrument/a/motor/value': self._motor('X.RBV'),
+            '/entry/instrument/a/motor/idle_flag': self._motor(
+                'X.DMOV', units='dimensionless'
+            ),
+            '/entry/instrument/b/motor/value': self._motor('Y.RBV'),
+            '/entry/instrument/b/motor/idle_flag': self._motor(
+                'Y.DMOV', units='dimensionless'
+            ),
+        }
+        result = name_streams(parsed)
+        assert isinstance(result['a_motor'], Device)
+        assert isinstance(result['b_motor'], Device)

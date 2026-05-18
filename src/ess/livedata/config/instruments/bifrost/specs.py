@@ -218,16 +218,7 @@ monitors = [
 ]
 
 
-_DETECTOR_TANK_ANGLE_R0_PATH = (
-    '/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0'
-)
-streams = name_streams(
-    PARSED_STREAMS,
-    rename={
-        '/entry/instrument/114_sample_stack/rotation_stage': 'rotation_stage',
-        _DETECTOR_TANK_ANGLE_R0_PATH: 'detector_tank_angle_r0',
-    },
-)
+streams = name_streams(PARSED_STREAMS)
 
 # Create instrument
 instrument = Instrument(

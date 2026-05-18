@@ -110,15 +110,27 @@ _GENERIC_GROUPS: frozenset[str] = frozenset(
 )
 
 
-def suggest_names(paths: Iterable[str]) -> dict[str, str]:
+def suggest_names(
+    paths: Iterable[str],
+    *,
+    min_depth: int = 2,
+    forbidden: Iterable[str] | None = None,
+) -> dict[str, str]:
     """Suggest a unique internal name for each NeXus group path.
 
     Generic NeXus container groups (``entry``, ``instrument``, ``sample``,
     ``sample_environment``, ``transformations``) are dropped — they add no
-    meaning and only inflate names. The name is then the shortest tail
-    (minimum two components, when available) of the remaining path that is
-    unique across the input set. Duplicates extend to the next-longer tail
-    until uniqueness is reached.
+    meaning and only inflate names. The name is then the shortest tail of
+    the remaining path (minimum ``min_depth`` components, when available)
+    that is unique across the input set and not in ``forbidden``. Duplicates
+    and forbidden names extend to the next-longer tail until uniqueness is
+    reached.
+
+    ``min_depth=2`` (the default) suits leaf-keyed paths where the leaf
+    alone (``value``, ``target_value``, …) is a generic role label. Callers
+    naming *parent* groups (where the leaf is itself an entity name) should
+    pass ``min_depth=1`` and supply already-assigned names as ``forbidden``
+    to keep the two namespaces disjoint by construction.
 
     Paths that still collide after exhausting the filtered tail (i.e. they
     differ only in filtered-out generic ancestors) fall back to the full
@@ -128,6 +140,7 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     each path produces at most one name, no two paths share a name.
     """
     paths = list(paths)
+    forbidden_set = frozenset() if forbidden is None else frozenset(forbidden)
     full: dict[str, list[str]] = {p: p.strip('/').split('/') for p in paths}
     filtered: dict[str, list[str]] = {
         p: [c for c in full[p] if c not in _GENERIC_GROUPS] or full[p] for p in paths
@@ -137,8 +150,8 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     pending = set(paths)
     for parts in (filtered, full):
         max_d = max((len(parts[p]) for p in pending), default=1)
-        depth = 2
-        while pending and depth <= max(max_d, 2):
+        depth = min_depth
+        while pending and depth <= max(max_d, min_depth):
             candidates = {
                 p: '_'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
             }
@@ -147,7 +160,7 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
                 counts[name] = counts.get(name, 0) + 1
             next_pending: set[str] = set()
             for path, name in candidates.items():
-                if counts[name] == 1:
+                if counts[name] == 1 and name not in forbidden_set:
                     result[path] = name
                 else:
                     next_pending.add(path)
@@ -270,9 +283,10 @@ def name_streams(
 
     Motorised devices are detected by structural child-name pattern (RBV +
     at least one of VAL/DMOV) and emitted as :class:`Device` entries with
-    auto-populated substream-name pointers. Device names come from the same
-    :func:`suggest_names` pass run on the union of substream paths and
-    device parent-group paths, guaranteeing unique names across both.
+    auto-populated substream-name pointers. Substreams and device parents
+    are named in two passes: substreams with ``min_depth=2`` (current
+    behaviour), then devices with ``min_depth=1`` and the substream names
+    as ``forbidden``. The two namespaces are disjoint by construction.
 
     Raises ``ValueError`` if a rename key matches no parsed entry, if any
     rename or device name collides, or if RBV/VAL units disagree on a
@@ -287,7 +301,13 @@ def name_streams(
             f"rename keys not in parsed or detected device parents: "
             f"{sorted(missing)}; known nexus_paths: {sorted(parsed)}"
         )
-    suggested = suggest_names(list(parsed) + list(devices))
+    substream_names = suggest_names(parsed.keys())
+    device_names = suggest_names(
+        devices.keys(),
+        min_depth=1,
+        forbidden=substream_names.values(),
+    )
+    suggested = {**substream_names, **device_names}
 
     def resolve(path: str) -> str:
         return rename.get(path, suggested[path])
