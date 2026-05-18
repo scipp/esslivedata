@@ -139,6 +139,18 @@ class TestTitleResolver:
         resolver = TitleResolver()
         assert resolver.get_axis_label('total_counts') == 'total_counts'
 
+    def test_dim_default_is_identity(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver()
+        assert resolver.dim('detector_number') == 'detector_number'
+
+    def test_dim_callback_applied(self):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        resolver = TitleResolver(dim=lambda _: 'Pixel ID')
+        assert resolver.dim('detector_number') == 'Pixel ID'
+
 
 class TestImagePlotter:
     def test_plot_with_all_zeros_does_not_raise(
@@ -403,6 +415,21 @@ class TestLinePlotter:
         line_plotter.compute({'primary': {data_key: data}})
         result = line_plotter.get_cached_state()
         assert result.label == 'test_source/test_result'
+
+    def test_plot_applies_dim_label_to_axis(self, line_plotter, data_key):
+        """LinePlotter.plot should pass dim_label through to the x-axis kdim."""
+        data = sc.DataArray(
+            sc.array(dims=['detector_number'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'detector_number': sc.array(
+                    dims=['detector_number'], values=[4, 5], unit=None
+                )
+            },
+        )
+        result = line_plotter.plot(data, data_key, dim_label=lambda _: 'Pixel ID')
+
+        assert result.kdims[0].name == 'detector_number'
+        assert result.kdims[0].label == 'Pixel ID'
 
     def test_line_mode_produces_curve(self, data_key):
         params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.line))
