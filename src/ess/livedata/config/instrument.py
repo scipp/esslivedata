@@ -16,7 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .stream import F144Stream, LogContextBinding, Stream
+from .stream import Device, F144Stream, LogContextBinding, Stream
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
@@ -125,7 +125,20 @@ class Instrument:
 
         for binding in self.log_context_bindings:
             self._validate_binding_stream_name(binding)
-        timeseries_names = list(self.f144_streams)
+        # Device substreams are suppressed by DeviceSynthesizer; expose the
+        # merged Device stream instead of the per-PV substream plots.
+        devices = self.devices
+        suppressed: set[str] = set()
+        for d in devices.values():
+            suppressed.add(d.value)
+            if d.target is not None:
+                suppressed.add(d.target)
+            if d.settled is not None:
+                suppressed.add(d.settled)
+        timeseries_names = [
+            name for name in self.f144_streams if name not in suppressed
+        ]
+        timeseries_names.extend(devices)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=timeseries_names
         )
@@ -137,6 +150,15 @@ class Instrument:
             name: stream
             for name, stream in self.streams.items()
             if isinstance(stream, F144Stream)
+        }
+
+    @property
+    def devices(self) -> dict[str, Device]:
+        """Subset of :attr:`streams` carrying synthesised :class:`Device` streams."""
+        return {
+            name: stream
+            for name, stream in self.streams.items()
+            if isinstance(stream, Device)
         }
 
     def _validate_binding_stream_name(self, binding: LogContextBinding) -> None:

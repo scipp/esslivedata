@@ -14,6 +14,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Stream:
@@ -53,6 +57,28 @@ class F144Stream(Stream):
     units: str | None = None
     writer_module: str = 'f144'
     nx_class: str = 'NXlog'
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Device(Stream):
+    """Synthesised stream merging RBV/VAL/DMOV substreams of a motorised device.
+
+    A ``Device`` is not transported over Kafka; it is materialised in-process
+    by :class:`DeviceSynthesizer` from the substreams referenced by
+    :attr:`value`, :attr:`target`, and :attr:`settled` (each is a key into
+    :attr:`Instrument.streams`).
+
+    ``value`` is required and points to the RBV substream. ``target`` and
+    ``settled`` are optional: only RBV is required for the synthesizer to
+    emit a sample.
+    """
+
+    value: str
+    target: str | None = None
+    settled: str | None = None
+    units: str | None = None
+    writer_module: str = 'device'
+    nx_class: str = 'NXpositioner'
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -130,6 +156,105 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     return result
 
 
+#: Child-leaf names recognised as the readback (RBV) substream of a device.
+_RBV_LEAVES: tuple[str, ...] = ('value', 'position_readback')
+#: Child-leaf names recognised as the setpoint (VAL) substream.
+_VAL_LEAVES: tuple[str, ...] = ('target_value', 'position_setpoint')
+#: Child-leaf names recognised as the "done moving" (DMOV) substream.
+_DMOV_LEAVES: tuple[str, ...] = ('idle_flag',)
+
+#: Expected EPICS source suffixes per role; mismatch logs a warning but does
+#: not block detection.
+_RBV_SOURCE_SUFFIXES: tuple[str, ...] = ('.RBV', '-PosReadback')
+_VAL_SOURCE_SUFFIXES: tuple[str, ...] = ('.VAL',)
+_DMOV_SOURCE_SUFFIXES: tuple[str, ...] = ('.DMOV',)
+
+
+def _classify_leaf(leaf: str) -> str | None:
+    if leaf in _RBV_LEAVES:
+        return 'value'
+    if leaf in _VAL_LEAVES:
+        return 'target'
+    if leaf in _DMOV_LEAVES:
+        return 'settled'
+    return None
+
+
+def _source_suffix_matches(source: str | None, suffixes: tuple[str, ...]) -> bool:
+    if source is None:
+        return True
+    return any(source.endswith(s) for s in suffixes)
+
+
+@dataclass(frozen=True, slots=True)
+class _DetectedDevice:
+    """Internal record for a detected device group during ``name_streams``."""
+
+    value: str
+    target: str | None
+    settled: str | None
+    units: str | None
+
+
+def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
+    """Detect device groups by structural child-name pattern.
+
+    Returns a dict ``parent_path -> _DetectedDevice``. Only parents with an
+    RBV-like child *and* at least one of VAL/DMOV are emitted. Raises
+    :class:`ValueError` if RBV and VAL units disagree.
+    """
+    by_parent: dict[str, dict[str, str]] = {}
+    for path, stream in parsed.items():
+        if not isinstance(stream, F144Stream):
+            continue
+        parent, _, leaf = path.rpartition('/')
+        role = _classify_leaf(leaf)
+        if role is None:
+            continue
+        by_parent.setdefault(parent, {})[role] = path
+
+    devices: dict[str, _DetectedDevice] = {}
+    for parent, roles in by_parent.items():
+        if 'value' not in roles:
+            continue
+        if 'target' not in roles and 'settled' not in roles:
+            continue
+        rbv = parsed[roles['value']]
+        units = rbv.units if isinstance(rbv, F144Stream) else None
+        if 'target' in roles:
+            val = parsed[roles['target']]
+            val_units = val.units if isinstance(val, F144Stream) else None
+            if val_units != units:
+                raise ValueError(
+                    f"Device at {parent!r}: RBV units {units!r} differ from "
+                    f"VAL units {val_units!r}; units must match"
+                )
+        for role, suffixes in (
+            ('value', _RBV_SOURCE_SUFFIXES),
+            ('target', _VAL_SOURCE_SUFFIXES),
+            ('settled', _DMOV_SOURCE_SUFFIXES),
+        ):
+            child_path = roles.get(role)
+            if child_path is None:
+                continue
+            if not _source_suffix_matches(parsed[child_path].source, suffixes):
+                logger.warning(
+                    "Device at %r %s substream source %r does not match "
+                    "expected suffixes %r",
+                    parent,
+                    role,
+                    parsed[child_path].source,
+                    suffixes,
+                )
+        devices[parent] = _DetectedDevice(
+            value=roles['value'],
+            target=roles.get('target'),
+            settled=roles.get('settled'),
+            units=units,
+        )
+    return devices
+
+
 def name_streams(
     parsed: dict[str, Stream],
     *,
@@ -143,24 +268,51 @@ def name_streams(
     :func:`suggest_names`; entries in ``rename`` (keyed by ``nexus_path``)
     override those suggestions.
 
-    Raises ``ValueError`` if a rename key matches no parsed entry, or if
-    the resulting names are not unique.
+    Motorised devices are detected by structural child-name pattern (RBV +
+    at least one of VAL/DMOV) and emitted as :class:`Device` entries with
+    auto-populated substream-name pointers. Device names come from the same
+    :func:`suggest_names` pass run on the union of substream paths and
+    device parent-group paths, guaranteeing unique names across both.
+
+    Raises ``ValueError`` if a rename key matches no parsed entry, if any
+    rename or device name collides, or if RBV/VAL units disagree on a
+    detected device.
     """
     rename = rename or {}
-    missing = set(rename) - set(parsed)
+    devices = _detect_devices(parsed)
+    valid_paths = set(parsed) | set(devices)
+    missing = set(rename) - valid_paths
     if missing:
         raise ValueError(
-            f"rename keys not in parsed: {sorted(missing)}; "
-            f"known nexus_paths: {sorted(parsed)}"
+            f"rename keys not in parsed or detected device parents: "
+            f"{sorted(missing)}; known nexus_paths: {sorted(parsed)}"
         )
-    suggested = suggest_names(parsed)
+    suggested = suggest_names(list(parsed) + list(devices))
+
+    def resolve(path: str) -> str:
+        return rename.get(path, suggested[path])
+
     result: dict[str, Stream] = {}
     for path, stream in parsed.items():
-        name = rename.get(path, suggested[path])
+        name = resolve(path)
         if name in result:
             raise ValueError(
                 f"name {name!r} produced for {path!r} collides with an "
                 f"earlier entry; check rename map"
             )
         result[name] = stream
+    for parent_path, info in devices.items():
+        device_name = resolve(parent_path)
+        if device_name in result:
+            raise ValueError(
+                f"device name {device_name!r} for parent {parent_path!r} "
+                f"collides with an existing stream; check rename map"
+            )
+        result[device_name] = Device(
+            nexus_path=parent_path,
+            value=resolve(info.value),
+            target=resolve(info.target) if info.target is not None else None,
+            settled=resolve(info.settled) if info.settled is not None else None,
+            units=info.units,
+        )
     return result

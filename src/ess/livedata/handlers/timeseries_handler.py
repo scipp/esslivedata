@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 import scipp as sc
 import structlog
 
-from ..config.stream import F144Stream
-from ..core.handler import JobBasedPreprocessorFactoryBase
-from ..core.message import StreamId
+from ..config.stream import Device, F144Stream
+from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
+from ..core.message import StreamId, StreamKind
 from .accumulators import LogData
+from .to_device_log import ToDeviceLog
 from .to_nxlog import ToNXlog
 from .wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 from .workflow_factory import Workflow
@@ -79,7 +80,16 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
     def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
 
-    def make_preprocessor(self, key: StreamId) -> ToNXlog | None:
+    def make_preprocessor(self, key: StreamId) -> Accumulator | None:
+        if key.kind == StreamKind.DEVICE:
+            device = self._instrument.streams.get(key.name)
+            if not isinstance(device, Device):
+                return None
+            return ToDeviceLog(
+                units=device.units,
+                has_target=device.target is not None,
+                has_settled=device.settled is not None,
+            )
         source_name = key.name
         stream = self._instrument.streams.get(source_name)
         if isinstance(stream, F144Stream):

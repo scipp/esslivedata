@@ -37,6 +37,22 @@ class LogData:
         return LogData(time=f144.timestamp_unix_ns, value=f144.value)
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceSample:
+    """In-process payload representing a merged device-state sample.
+
+    Emitted by :class:`DeviceSynthesizer` and consumed by :class:`ToDeviceLog`.
+    ``time`` carries the synthesizer's max-timestamp across substreams (see
+    plan: DeviceSample timestamp policy). ``target`` and ``settled`` are
+    ``None`` for devices that have no VAL / DMOV substream configured.
+    """
+
+    time: Timestamp
+    value: float
+    target: float | None = None
+    settled: bool | None = None
+
+
 class NullAccumulator(Accumulator[Any, None]):
     def add(self, timestamp: Timestamp, data: Any) -> bool:
         return True

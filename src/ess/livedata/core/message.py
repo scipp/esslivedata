@@ -22,6 +22,7 @@ class StreamKind(StrEnum):
     DETECTOR_EVENTS = "detector_events"
     AREA_DETECTOR = "area_detector"
     LOG = "log"
+    DEVICE = "device"
     LIVEDATA_COMMANDS = "livedata_commands"
     LIVEDATA_RESPONSES = "livedata_responses"
     LIVEDATA_DATA = "livedata_data"

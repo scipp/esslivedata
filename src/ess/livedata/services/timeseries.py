@@ -11,6 +11,7 @@ from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
 from ess.livedata.kafka.chopper_synthesizer import ChopperSynthesizer
+from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
@@ -45,6 +46,7 @@ def make_timeseries_service_builder(
     # service). However, this service processes only logs, where that logic would
     # indefinitely withhold the last log message. We use the NaiveMessageBatcher here,
     # which emits messages as soon as they arrive.
+    devices = instrument_obj.devices
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -58,7 +60,9 @@ def make_timeseries_service_builder(
         # scaffolding for an upstream-side gap (the producer does not yet
         # publish a ``chopper_cascade_reached`` f144); when it does, drop
         # the wrapper and the workflow becomes a plain f144 consumer.
-        outer_source_wrapper=ChopperSynthesizer,
+        outer_source_wrapper=lambda src: DeviceSynthesizer(
+            ChopperSynthesizer(src), devices=devices
+        ),
     )
 
 

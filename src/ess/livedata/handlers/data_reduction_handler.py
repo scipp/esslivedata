@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from ..config.instrument import Instrument
-from ..config.stream import F144Stream
+from ..config.stream import Device, F144Stream
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative
 from .group_by_pixel import GroupByPixel
+from .to_device_log import ToDeviceLog
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import ToNXlog
 
@@ -28,6 +29,15 @@ class ReductionHandlerFactory(JobBasedPreprocessorFactoryBase):
                 if not isinstance(stream, F144Stream):
                     return None
                 return ToNXlog(attrs={'units': stream.units})
+            case StreamKind.DEVICE:
+                device = self._instrument.streams.get(key.name)
+                if not isinstance(device, Device):
+                    return None
+                return ToDeviceLog(
+                    units=device.units,
+                    has_target=device.target is not None,
+                    has_settled=device.settled is not None,
+                )
             case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
             case StreamKind.DETECTOR_EVENTS:

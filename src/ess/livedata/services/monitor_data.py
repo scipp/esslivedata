@@ -7,6 +7,7 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
+from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
@@ -33,6 +34,7 @@ def make_monitor_service_builder(
     )
     service_name = 'monitor_data'
     preprocessor_factory = ReductionHandlerFactory(instrument=instrument_obj)
+    devices = instrument_obj.devices
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -40,6 +42,7 @@ def make_monitor_service_builder(
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
         stream_counter=stream_counter,
+        outer_source_wrapper=lambda src: DeviceSynthesizer(src, devices=devices),
     )
 
 

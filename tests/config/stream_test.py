@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from ess.livedata.config import F144Stream, name_streams
+from ess.livedata.config import Device, F144Stream, name_streams
 from ess.livedata.config.stream import suggest_names
 
 
@@ -132,11 +132,108 @@ class TestNameStreams:
             name_streams(parsed, rename={'/entry/instrument/bar/value': 'foo_value'})
 
     def test_sibling_leaves_get_distinct_names(self) -> None:
+        # RBV alone is just an F144Stream; pair with an idle_flag to also
+        # auto-detect a Device named after the parent group.
         parsed = {
-            '/entry/instrument/motor/value': _parsed('/entry/instrument/motor/value'),
+            '/entry/instrument/motor/value': _parsed(
+                '/entry/instrument/motor/value', source='X.RBV'
+            ),
             '/entry/instrument/motor/idle_flag': _parsed(
-                '/entry/instrument/motor/idle_flag'
+                '/entry/instrument/motor/idle_flag', source='X.DMOV'
             ),
         }
         result = name_streams(parsed)
-        assert set(result) == {'motor_value', 'motor_idle_flag'}
+        assert set(result) == {'motor_value', 'motor_idle_flag', 'motor'}
+
+
+class TestDeviceDetection:
+    def _motor(self, source: str, units: str = 'mm') -> F144Stream:
+        return F144Stream(source=source, topic='topic', units=units)
+
+    def test_emits_device_for_rbv_plus_val_plus_dmov(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+            '/entry/instrument/m/target_value': self._motor('X.VAL'),
+            '/entry/instrument/m/idle_flag': self._motor(
+                'X.DMOV', units='dimensionless'
+            ),
+        }
+        result = name_streams(parsed)
+        assert 'm' in result
+        device = result['m']
+        assert isinstance(device, Device)
+        assert device.value == 'm_value'
+        assert device.target == 'm_target_value'
+        assert device.settled == 'm_idle_flag'
+        assert device.units == 'mm'
+
+    def test_emits_device_for_rbv_plus_val_only(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+            '/entry/instrument/m/target_value': self._motor('X.VAL'),
+        }
+        result = name_streams(parsed)
+        device = result['m']
+        assert isinstance(device, Device)
+        assert device.target == 'm_target_value'
+        assert device.settled is None
+
+    def test_emits_device_for_rbv_plus_dmov_only(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+            '/entry/instrument/m/idle_flag': self._motor(
+                'X.DMOV', units='dimensionless'
+            ),
+        }
+        result = name_streams(parsed)
+        device = result['m']
+        assert isinstance(device, Device)
+        assert device.target is None
+        assert device.settled == 'm_idle_flag'
+
+    def test_no_device_for_lone_rbv(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+        }
+        result = name_streams(parsed)
+        assert all(not isinstance(s, Device) for s in result.values())
+
+    def test_recognises_alt_names_position_readback_setpoint(self) -> None:
+        parsed = {
+            '/entry/instrument/m/position_readback': self._motor('X-PosReadback'),
+            '/entry/instrument/m/position_setpoint': self._motor('X.VAL'),
+        }
+        result = name_streams(parsed)
+        device = result['m']
+        assert isinstance(device, Device)
+        assert device.value == 'm_position_readback'
+        assert device.target == 'm_position_setpoint'
+
+    def test_unit_mismatch_raises(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV', units='mm'),
+            '/entry/instrument/m/target_value': self._motor('X.VAL', units='deg'),
+        }
+        with pytest.raises(ValueError, match='units must match'):
+            name_streams(parsed)
+
+    def test_rename_device_parent_path(self) -> None:
+        parsed = {
+            '/entry/instrument/big_name/m/value': self._motor('X.RBV'),
+            '/entry/instrument/big_name/m/idle_flag': self._motor(
+                'X.DMOV', units='dimensionless'
+            ),
+        }
+        result = name_streams(parsed, rename={'/entry/instrument/big_name/m': 'short'})
+        assert 'short' in result
+        assert isinstance(result['short'], Device)
+        # Substream pointers reference auto-suggested names.
+        assert result['short'].value == 'm_value'
+
+    def test_invalid_rename_path_raises(self) -> None:
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+            '/entry/instrument/m/idle_flag': self._motor('X.DMOV'),
+        }
+        with pytest.raises(ValueError, match='not in parsed'):
+            name_streams(parsed, rename={'/no/such/path': 'foo'})
