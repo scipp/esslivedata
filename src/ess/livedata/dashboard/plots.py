@@ -67,6 +67,8 @@ class TitleResolver:
         Maps raw source names to display titles.
     output:
         Maps raw output names to display titles.
+    dim:
+        Maps coord/dim names to display titles for plot axis labels.
     include_output_in_label:
         Whether to include the output name in legend labels. When all layers
         in a cell share the same output, the output is already on the Y-axis
@@ -75,6 +77,7 @@ class TitleResolver:
 
     source: Callable[[str], str] = _identity
     output: Callable[[str], str] = _identity
+    dim: Callable[[str], str] = _identity
     include_output_in_label: bool = True
 
     def get_legend_label(self, source_name: str, output_name: str) -> str:
@@ -448,6 +451,7 @@ class Plotter:
                     label=label,
                     source_display_name=source_display_name,
                     output_display_name=output_display_name,
+                    dim_label=resolver.dim,
                     **kwargs,
                 )
                 plots.append(plot_element)
@@ -664,11 +668,14 @@ class LinePlotter(Plotter):
         *,
         label: str = '',
         output_display_name: str = '',
+        dim_label: Callable[[str], str] | None = None,
         **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
         mode, da = _resolve_line1d_mode(self._mode, data)
-        converter = HvConverter1d(da, value_label=output_display_name)
+        converter = HvConverter1d(
+            da, value_label=output_display_name, dim_label=dim_label
+        )
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
 
@@ -681,6 +688,7 @@ class LinePlotter(Plotter):
                 converter = HvConverter1d(
                     da.assign_coords({da.dim: sc.midpoints(da.coords[da.dim])}),
                     value_label=output_display_name,
+                    dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
             error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
@@ -737,6 +745,7 @@ class ImagePlotter(Plotter):
         *,
         label: str = '',
         output_display_name: str = '',
+        dim_label: Callable[[str], str] | None = None,
         **kwargs,
     ) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
@@ -751,7 +760,7 @@ class ImagePlotter(Plotter):
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
-        histogram = to_holoviews(plot_data, label=label)
+        histogram = to_holoviews(plot_data, label=label, dim_label=dim_label)
         opts = dict(self._base_opts)
         opts['framewise'] = framewise
         # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
@@ -899,6 +908,7 @@ class Overlay1DPlotter(Plotter):
         *,
         label: str = '',
         output_display_name: str = '',
+        dim_label: Callable[[str], str] | None = None,
         **kwargs,
     ) -> hv.Overlay | hv.Element:
         """
@@ -940,7 +950,9 @@ class Overlay1DPlotter(Plotter):
             color = self._colors[color_idx]
 
             curve_label = f"{slice_dim}={coord_val}"
-            converter = HvConverter1d(slice_data, value_label=output_display_name)
+            converter = HvConverter1d(
+                slice_data, value_label=output_display_name, dim_label=dim_label
+            )
             base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
             base = base_method(label=curve_label).opts(
                 color=color, framewise=framewise, **self._base_opts
@@ -956,7 +968,9 @@ class Overlay1DPlotter(Plotter):
                             )
                         }
                     )
-                    converter = HvConverter1d(mid, value_label=output_display_name)
+                    converter = HvConverter1d(
+                        mid, value_label=output_display_name, dim_label=dim_label
+                    )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
                 error_el = error_method(label=curve_label).opts(
                     color=color,
