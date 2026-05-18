@@ -17,7 +17,7 @@ Both need a stream → Sciline-key routing layer with per-consumer scoping.
 ### `Stream` and `F144Stream` records
 
 `Stream` is a frozen dataclass for any streaming group; `F144Stream` subclasses it for the f144 writer module and adds `units`.
-The base carries the NeXus identity (`nexus_path`, `nx_class`, `parent_nx_class`) and the wire identity (`topic`, `source`) — the facts the filewriter collocates as group attrs at a specific HDF5 path.
+The base carries the NeXus identity (`nexus_path`, `nx_class`) and the wire identity (`topic`, `source`) — the facts the filewriter collocates as group attrs at a specific HDF5 path.
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -27,7 +27,6 @@ class Stream:
     topic: str | None = None
     source: str | None = None
     nx_class: str = ''
-    parent_nx_class: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

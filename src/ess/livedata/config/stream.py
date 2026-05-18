@@ -31,7 +31,6 @@ class Stream:
     topic: str | None = None
     source: str | None = None
     nx_class: str = ''
-    parent_nx_class: str | None = None
 
     def __post_init__(self) -> None:
         # Synthesised streams have no Kafka identity. The converse is not
