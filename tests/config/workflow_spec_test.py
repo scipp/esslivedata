@@ -898,7 +898,7 @@ class TestOutputViews:
         assert [v.name for v in views] == ['histogram']
         assert spec.get_output_title('histogram') == 'Histogram'
 
-    def test_get_output_view_raises_for_unknown(self) -> None:
+    def test_get_output_view_returns_none_for_unknown(self) -> None:
         class Outputs(WorkflowOutputsBase):
             result: sc.DataArray = Field()
 
@@ -912,8 +912,7 @@ class TestOutputViews:
             params=None,
             group=REDUCTION,
         )
-        with pytest.raises(KeyError):
-            spec.get_output_view('nonexistent')
+        assert spec.get_output_view('nonexistent') is None
 
     def test_get_output_template_via_view(self) -> None:
         """``get_output_template`` resolves a view name to its backing field."""

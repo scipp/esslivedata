@@ -346,14 +346,7 @@ class WorkflowSpec(BaseModel):
         """
         return _resolve_output_views(self.outputs)
 
-    def get_output_view(self, view_name: str) -> OutputView:
-        """Return the named output view, raising KeyError if not found."""
-        for view in self.get_output_views():
-            if view.name == view_name:
-                return view
-        raise KeyError(f"Unknown output view {view_name!r}")
-
-    def get_output_view_or_none(self, view_name: str) -> OutputView | None:
+    def get_output_view(self, view_name: str) -> OutputView | None:
         """Return the named output view, or None if not found."""
         for view in self.get_output_views():
             if view.name == view_name:
@@ -365,7 +358,7 @@ class WorkflowSpec(BaseModel):
 
         Falls back to the raw view name when the view is unknown.
         """
-        view = self.get_output_view_or_none(view_name)
+        view = self.get_output_view(view_name)
         return view.title if view is not None else view_name
 
     def get_output_description(self, view_name: str) -> str | None:
@@ -374,7 +367,7 @@ class WorkflowSpec(BaseModel):
         For views without an explicit description, falls back to the
         description of the ``since_start`` (or ``per_update``) backing field.
         """
-        view = self.get_output_view_or_none(view_name)
+        view = self.get_output_view(view_name)
         if view is None:
             return None
         if view.description is not None:
@@ -411,7 +404,7 @@ class WorkflowSpec(BaseModel):
             DataArray created by the backing field's default_factory, or
             None if neither the view nor the field is found.
         """
-        view = self.get_output_view_or_none(view_name)
+        view = self.get_output_view(view_name)
         if view is not None:
             for role in ('since_start', 'per_update'):
                 field_name = view.streams.get(role)  # type: ignore[arg-type]

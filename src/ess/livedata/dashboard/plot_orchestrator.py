@@ -283,7 +283,7 @@ def resolve_field_name(
     the requested role is not available for the view, falls back to any
     declared stream — handles views that only expose one role.
     """
-    view = spec.get_output_view_or_none(view_name)
+    view = spec.get_output_view(view_name)
     if view is None:
         return view_name
     field_name = view.streams.get(role)
@@ -317,7 +317,7 @@ def _build_resolved_data_sources(
         if role == PRIMARY:
             field_name = resolve_field_name(spec, ds.view_name, role=primary_role)
         else:
-            view = spec.get_output_view_or_none(ds.view_name)
+            view = spec.get_output_view(ds.view_name)
             field_name = (
                 view.streams.get('per_update') or view.streams.get('since_start')
                 if view is not None

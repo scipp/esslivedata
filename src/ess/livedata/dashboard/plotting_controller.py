@@ -268,7 +268,7 @@ def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) 
     Views that are cumulative-only (e.g. ``I(Q)``) lock the mode to
     ``since_start``.
     """
-    view = workflow_spec.get_output_view_or_none(view_name)
+    view = workflow_spec.get_output_view(view_name)
     if view is None:
         return True
     return 'per_update' in view.streams
