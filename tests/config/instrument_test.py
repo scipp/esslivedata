@@ -97,9 +97,7 @@ class TestInstrument:
     def test_instrument_creation_with_custom_values(self):
         """Test creating instrument with custom values."""
         custom_factory = WorkflowFactory()
-        stream = F144Stream(
-            stream_name='attr1', source='src', topic='topic', units='mm'
-        )
+        stream = F144Stream(source='src', topic='topic', units='mm')
 
         instrument = Instrument(
             name="custom_instrument",
@@ -111,13 +109,6 @@ class TestInstrument:
         assert instrument.workflow_factory is custom_factory
         assert instrument.streams == {'attr1': stream}
         assert instrument.f144_streams == {'attr1': stream}
-
-    def test_instrument_rejects_streams_with_mismatched_keys(self):
-        stream = F144Stream(
-            stream_name='real_name', source='src', topic='topic', units='mm'
-        )
-        with pytest.raises(ValueError, match='does not match'):
-            Instrument(name='test', streams={'wrong_key': stream})
 
     def test_configure_detector_with_explicit_number(self):
         """Test configuring detector with explicit detector number."""
@@ -333,7 +324,7 @@ class _OtherKey:
 
 
 def _f144(name: str) -> F144Stream:
-    return F144Stream(stream_name=name, source=name, topic='topic', units='mm')
+    return F144Stream(source=name, topic='topic', units='mm')
 
 
 class TestLogContextBindings:

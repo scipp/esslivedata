@@ -10,1951 +10,1673 @@ Source: coda_odin_999999_00000800.hdf
 
 from ess.livedata.config import F144Stream
 
-PARSED_STREAMS: list[F144Stream] = [
-    F144Stream(
-        stream_name='anc_goniometer',
-        nexus_path='/entry/instrument/anc_goniometer/value',
-        source='ODIN-AncGon:MC-Rot-01:Mtr.RBV',
-        topic='odin_motion',
-        units='degrees',
-    ),
-    F144Stream(
-        stream_name='anc_goniometer_idle_flag',
+PARSED_STREAMS: dict[str, F144Stream] = {
+    '/entry/instrument/anc_goniometer/idle_flag': F144Stream(
         nexus_path='/entry/instrument/anc_goniometer/idle_flag',
         source='ODIN-AncGon:MC-Rot-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='anc_goniometer_target_value',
+    '/entry/instrument/anc_goniometer/target_value': F144Stream(
         nexus_path='/entry/instrument/anc_goniometer/target_value',
         source='ODIN-AncGon:MC-Rot-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='anc_linear_1',
-        nexus_path='/entry/instrument/anc_linear_1/value',
-        source='ODIN-AncSt1:MC-Lin-01:Mtr.RBV',
+    '/entry/instrument/anc_goniometer/value': F144Stream(
+        nexus_path='/entry/instrument/anc_goniometer/value',
+        source='ODIN-AncGon:MC-Rot-01:Mtr.RBV',
         topic='odin_motion',
-        units='mm',
+        units='degrees',
     ),
-    F144Stream(
-        stream_name='anc_linear_1_idle_flag',
+    '/entry/instrument/anc_linear_1/idle_flag': F144Stream(
         nexus_path='/entry/instrument/anc_linear_1/idle_flag',
         source='ODIN-AncSt1:MC-Lin-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='anc_linear_1_target_value',
+    '/entry/instrument/anc_linear_1/target_value': F144Stream(
         nexus_path='/entry/instrument/anc_linear_1/target_value',
         source='ODIN-AncSt1:MC-Lin-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='anc_linear_2',
-        nexus_path='/entry/instrument/anc_linear_2/value',
-        source='ODIN-AncSt2:MC-Lin-01:Mtr.RBV',
+    '/entry/instrument/anc_linear_1/value': F144Stream(
+        nexus_path='/entry/instrument/anc_linear_1/value',
+        source='ODIN-AncSt1:MC-Lin-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='anc_linear_2_idle_flag',
+    '/entry/instrument/anc_linear_2/idle_flag': F144Stream(
         nexus_path='/entry/instrument/anc_linear_2/idle_flag',
         source='ODIN-AncSt2:MC-Lin-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='anc_linear_2_target_value',
+    '/entry/instrument/anc_linear_2/target_value': F144Stream(
         nexus_path='/entry/instrument/anc_linear_2/target_value',
         source='ODIN-AncSt2:MC-Lin-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='anc_rotary',
-        nexus_path='/entry/instrument/anc_rotary/value',
-        source='ODIN-AncRot:MC-Rot-01:Mtr.RBV',
+    '/entry/instrument/anc_linear_2/value': F144Stream(
+        nexus_path='/entry/instrument/anc_linear_2/value',
+        source='ODIN-AncSt2:MC-Lin-01:Mtr.RBV',
         topic='odin_motion',
-        units='degrees',
+        units='mm',
     ),
-    F144Stream(
-        stream_name='anc_rotary_idle_flag',
+    '/entry/instrument/anc_rotary/idle_flag': F144Stream(
         nexus_path='/entry/instrument/anc_rotary/idle_flag',
         source='ODIN-AncRot:MC-Rot-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='anc_rotary_target_value',
+    '/entry/instrument/anc_rotary/target_value': F144Stream(
         nexus_path='/entry/instrument/anc_rotary/target_value',
         source='ODIN-AncRot:MC-Rot-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='bpc1_delay',
+    '/entry/instrument/anc_rotary/value': F144Stream(
+        nexus_path='/entry/instrument/anc_rotary/value',
+        source='ODIN-AncRot:MC-Rot-01:Mtr.RBV',
+        topic='odin_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/bpc1/delay': F144Stream(
         nexus_path='/entry/instrument/bpc1/delay',
         source='ODIN-ChpSy1:Chop-BPC-102:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc1_experiment_delay',
+    '/entry/instrument/bpc1/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/bpc1/experiment_delay',
         source='ODIN-ChpSy1:Chop-BPC-102:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc1_mechanical_delay',
+    '/entry/instrument/bpc1/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/bpc1/mechanical_delay',
         source='ODIN-ChpSy1:Chop-BPC-102:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='bpc1_park_angle',
+    '/entry/instrument/bpc1/park_angle': F144Stream(
         nexus_path='/entry/instrument/bpc1/park_angle',
         source='ODIN-ChpSy1:Chop-BPC-102:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='bpc1_pulse_delay',
+    '/entry/instrument/bpc1/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/bpc1/pulse_delay',
         source='ODIN-ChpSy1:Chop-BPC-102:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc1_rotation_speed',
+    '/entry/instrument/bpc1/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bpc1/rotation_speed',
         source='ODIN-ChpSy1:Chop-BPC-102:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bpc1_rotation_speed_setpoint',
+    '/entry/instrument/bpc1/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/bpc1/rotation_speed_setpoint',
         source='ODIN-ChpSy1:Chop-BPC-102:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bpc2_delay',
+    '/entry/instrument/bpc2/delay': F144Stream(
         nexus_path='/entry/instrument/bpc2/delay',
         source='ODIN-ChpSy2:Chop-BPC-202:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc2_experiment_delay',
+    '/entry/instrument/bpc2/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/bpc2/experiment_delay',
         source='ODIN-ChpSy2:Chop-BPC-202:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc2_mechanical_delay',
+    '/entry/instrument/bpc2/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/bpc2/mechanical_delay',
         source='ODIN-ChpSy2:Chop-BPC-202:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='bpc2_park_angle',
+    '/entry/instrument/bpc2/park_angle': F144Stream(
         nexus_path='/entry/instrument/bpc2/park_angle',
         source='ODIN-ChpSy2:Chop-BPC-202:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='bpc2_pulse_delay',
+    '/entry/instrument/bpc2/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/bpc2/pulse_delay',
         source='ODIN-ChpSy2:Chop-BPC-202:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bpc2_rotation_speed',
+    '/entry/instrument/bpc2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bpc2/rotation_speed',
         source='ODIN-ChpSy2:Chop-BPC-202:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bpc2_rotation_speed_setpoint',
+    '/entry/instrument/bpc2/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/bpc2/rotation_speed_setpoint',
         source='ODIN-ChpSy2:Chop-BPC-202:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='camera1_distance',
-        nexus_path='/entry/instrument/camera1_distance/value',
-        source='ODIN-CmDis1:MC-LinZ-01:Mtr.RBV',
-        topic='odin_motion',
-        units='mm',
-    ),
-    F144Stream(
-        stream_name='camera1_distance_idle_flag',
+    '/entry/instrument/camera1_distance/idle_flag': F144Stream(
         nexus_path='/entry/instrument/camera1_distance/idle_flag',
         source='ODIN-CmDis1:MC-LinZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='camera1_distance_target_value',
+    '/entry/instrument/camera1_distance/target_value': F144Stream(
         nexus_path='/entry/instrument/camera1_distance/target_value',
         source='ODIN-CmDis1:MC-LinZ-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='camera1_focus',
-        nexus_path='/entry/instrument/camera1_focus/value',
-        source='ODIN-CmFoc1:MC-RotZ-01:Mtr.RBV',
+    '/entry/instrument/camera1_distance/value': F144Stream(
+        nexus_path='/entry/instrument/camera1_distance/value',
+        source='ODIN-CmDis1:MC-LinZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='degrees',
+        units='mm',
     ),
-    F144Stream(
-        stream_name='camera1_focus_idle_flag',
+    '/entry/instrument/camera1_focus/idle_flag': F144Stream(
         nexus_path='/entry/instrument/camera1_focus/idle_flag',
         source='ODIN-CmFoc1:MC-RotZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='camera1_focus_target_value',
+    '/entry/instrument/camera1_focus/target_value': F144Stream(
         nexus_path='/entry/instrument/camera1_focus/target_value',
         source='ODIN-CmFoc1:MC-RotZ-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='camera2_distance',
-        nexus_path='/entry/instrument/camera2_distance/value',
-        source='ODIN-CmDis2:MC-LinZ-01:Mtr.RBV',
+    '/entry/instrument/camera1_focus/value': F144Stream(
+        nexus_path='/entry/instrument/camera1_focus/value',
+        source='ODIN-CmFoc1:MC-RotZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='mm',
+        units='degrees',
     ),
-    F144Stream(
-        stream_name='camera2_distance_idle_flag',
+    '/entry/instrument/camera2_distance/idle_flag': F144Stream(
         nexus_path='/entry/instrument/camera2_distance/idle_flag',
         source='ODIN-CmDis2:MC-LinZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='camera2_distance_target_value',
+    '/entry/instrument/camera2_distance/target_value': F144Stream(
         nexus_path='/entry/instrument/camera2_distance/target_value',
         source='ODIN-CmDis2:MC-LinZ-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='camera2_focus',
-        nexus_path='/entry/instrument/camera2_focus/value',
-        source='ODIN-CmFoc2:MC-RotZ-01:Mtr.RBV',
+    '/entry/instrument/camera2_distance/value': F144Stream(
+        nexus_path='/entry/instrument/camera2_distance/value',
+        source='ODIN-CmDis2:MC-LinZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='degrees',
+        units='mm',
     ),
-    F144Stream(
-        stream_name='camera2_focus_idle_flag',
+    '/entry/instrument/camera2_focus/idle_flag': F144Stream(
         nexus_path='/entry/instrument/camera2_focus/idle_flag',
         source='ODIN-CmFoc2:MC-RotZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='camera2_focus_target_value',
+    '/entry/instrument/camera2_focus/target_value': F144Stream(
         nexus_path='/entry/instrument/camera2_focus/target_value',
         source='ODIN-CmFoc2:MC-RotZ-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_centre',
-        nexus_path='/entry/instrument/col_slit_1_hori_centre/value',
-        source='ODIN-ColSl1:MC-SlYc-01:Mtr.RBV',
+    '/entry/instrument/camera2_focus/value': F144Stream(
+        nexus_path='/entry/instrument/camera2_focus/value',
+        source='ODIN-CmFoc2:MC-RotZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='mm',
+        units='degrees',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_centre_idle_flag',
+    '/entry/instrument/col_slit_1_hori_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_hori_centre/idle_flag',
         source='ODIN-ColSl1:MC-SlYc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_centre_target_value',
+    '/entry/instrument/col_slit_1_hori_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_hori_centre/target_value',
         source='ODIN-ColSl1:MC-SlYc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_gap',
-        nexus_path='/entry/instrument/col_slit_1_hori_gap/value',
-        source='ODIN-ColSl1:MC-SlYg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_hori_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_hori_centre/value',
+        source='ODIN-ColSl1:MC-SlYc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_gap_idle_flag',
+    '/entry/instrument/col_slit_1_hori_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_hori_gap/idle_flag',
         source='ODIN-ColSl1:MC-SlYg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_hori_gap_target_value',
+    '/entry/instrument/col_slit_1_hori_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_hori_gap/target_value',
         source='ODIN-ColSl1:MC-SlYg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_centre',
-        nexus_path='/entry/instrument/col_slit_1_vert_centre/value',
-        source='ODIN-ColSl1:MC-SlZc-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_hori_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_hori_gap/value',
+        source='ODIN-ColSl1:MC-SlYg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_centre_idle_flag',
+    '/entry/instrument/col_slit_1_vert_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_vert_centre/idle_flag',
         source='ODIN-ColSl1:MC-SlZc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_centre_target_value',
+    '/entry/instrument/col_slit_1_vert_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_vert_centre/target_value',
         source='ODIN-ColSl1:MC-SlZc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_gap',
-        nexus_path='/entry/instrument/col_slit_1_vert_gap/value',
-        source='ODIN-ColSl1:MC-SlZg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_vert_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_vert_centre/value',
+        source='ODIN-ColSl1:MC-SlZc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_gap_idle_flag',
+    '/entry/instrument/col_slit_1_vert_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_vert_gap/idle_flag',
         source='ODIN-ColSl1:MC-SlZg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_vert_gap_target_value',
+    '/entry/instrument/col_slit_1_vert_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_vert_gap/target_value',
         source='ODIN-ColSl1:MC-SlZg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_ym',
-        nexus_path='/entry/instrument/col_slit_1_ym/value',
-        source='ODIN-ColSl1:MC-SlYm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_vert_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_vert_gap/value',
+        source='ODIN-ColSl1:MC-SlZg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_ym_idle_flag',
+    '/entry/instrument/col_slit_1_ym/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_ym/idle_flag',
         source='ODIN-ColSl1:MC-SlYm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_ym_target_value',
+    '/entry/instrument/col_slit_1_ym/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_ym/target_value',
         source='ODIN-ColSl1:MC-SlYm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_yp',
-        nexus_path='/entry/instrument/col_slit_1_yp/value',
-        source='ODIN-ColSl1:MC-SlYp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_ym/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_ym/value',
+        source='ODIN-ColSl1:MC-SlYm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_yp_idle_flag',
+    '/entry/instrument/col_slit_1_yp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_yp/idle_flag',
         source='ODIN-ColSl1:MC-SlYp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_yp_target_value',
+    '/entry/instrument/col_slit_1_yp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_yp/target_value',
         source='ODIN-ColSl1:MC-SlYp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zm',
-        nexus_path='/entry/instrument/col_slit_1_zm/value',
-        source='ODIN-ColSl1:MC-SlZm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_yp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_yp/value',
+        source='ODIN-ColSl1:MC-SlYp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zm_idle_flag',
+    '/entry/instrument/col_slit_1_zm/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_zm/idle_flag',
         source='ODIN-ColSl1:MC-SlZm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zm_target_value',
+    '/entry/instrument/col_slit_1_zm/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_zm/target_value',
         source='ODIN-ColSl1:MC-SlZm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zp',
-        nexus_path='/entry/instrument/col_slit_1_zp/value',
-        source='ODIN-ColSl1:MC-SlZp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_zm/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_zm/value',
+        source='ODIN-ColSl1:MC-SlZm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zp_idle_flag',
+    '/entry/instrument/col_slit_1_zp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_zp/idle_flag',
         source='ODIN-ColSl1:MC-SlZp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_1_zp_target_value',
+    '/entry/instrument/col_slit_1_zp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_1_zp/target_value',
         source='ODIN-ColSl1:MC-SlZp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_centre',
-        nexus_path='/entry/instrument/col_slit_2_hori_centre/value',
-        source='ODIN-ColSl2:MC-SlYc-01:Mtr.RBV',
+    '/entry/instrument/col_slit_1_zp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_1_zp/value',
+        source='ODIN-ColSl1:MC-SlZp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_centre_idle_flag',
+    '/entry/instrument/col_slit_2_hori_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_hori_centre/idle_flag',
         source='ODIN-ColSl2:MC-SlYc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_centre_target_value',
+    '/entry/instrument/col_slit_2_hori_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_hori_centre/target_value',
         source='ODIN-ColSl2:MC-SlYc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_gap',
-        nexus_path='/entry/instrument/col_slit_2_hori_gap/value',
-        source='ODIN-ColSl2:MC-SlYg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_hori_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_hori_centre/value',
+        source='ODIN-ColSl2:MC-SlYc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_gap_idle_flag',
+    '/entry/instrument/col_slit_2_hori_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_hori_gap/idle_flag',
         source='ODIN-ColSl2:MC-SlYg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_hori_gap_target_value',
+    '/entry/instrument/col_slit_2_hori_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_hori_gap/target_value',
         source='ODIN-ColSl2:MC-SlYg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_centre',
-        nexus_path='/entry/instrument/col_slit_2_vert_centre/value',
-        source='ODIN-ColSl2:MC-SlZc-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_hori_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_hori_gap/value',
+        source='ODIN-ColSl2:MC-SlYg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_centre_idle_flag',
+    '/entry/instrument/col_slit_2_vert_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_vert_centre/idle_flag',
         source='ODIN-ColSl2:MC-SlZc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_centre_target_value',
+    '/entry/instrument/col_slit_2_vert_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_vert_centre/target_value',
         source='ODIN-ColSl2:MC-SlZc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_gap',
-        nexus_path='/entry/instrument/col_slit_2_vert_gap/value',
-        source='ODIN-ColSl2:MC-SlZg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_vert_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_vert_centre/value',
+        source='ODIN-ColSl2:MC-SlZc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_gap_idle_flag',
+    '/entry/instrument/col_slit_2_vert_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_vert_gap/idle_flag',
         source='ODIN-ColSl2:MC-SlZg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_vert_gap_target_value',
+    '/entry/instrument/col_slit_2_vert_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_vert_gap/target_value',
         source='ODIN-ColSl2:MC-SlZg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_ym',
-        nexus_path='/entry/instrument/col_slit_2_ym/value',
-        source='ODIN-ColSl2:MC-SlYm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_vert_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_vert_gap/value',
+        source='ODIN-ColSl2:MC-SlZg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_ym_idle_flag',
+    '/entry/instrument/col_slit_2_ym/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_ym/idle_flag',
         source='ODIN-ColSl2:MC-SlYm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_ym_target_value',
+    '/entry/instrument/col_slit_2_ym/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_ym/target_value',
         source='ODIN-ColSl2:MC-SlYm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_yp',
-        nexus_path='/entry/instrument/col_slit_2_yp/value',
-        source='ODIN-ColSl2:MC-SlYp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_ym/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_ym/value',
+        source='ODIN-ColSl2:MC-SlYm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_yp_idle_flag',
+    '/entry/instrument/col_slit_2_yp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_yp/idle_flag',
         source='ODIN-ColSl2:MC-SlYp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_yp_target_value',
+    '/entry/instrument/col_slit_2_yp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_yp/target_value',
         source='ODIN-ColSl2:MC-SlYp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zm',
-        nexus_path='/entry/instrument/col_slit_2_zm/value',
-        source='ODIN-ColSl2:MC-SlZm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_yp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_yp/value',
+        source='ODIN-ColSl2:MC-SlYp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zm_idle_flag',
+    '/entry/instrument/col_slit_2_zm/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_zm/idle_flag',
         source='ODIN-ColSl2:MC-SlZm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zm_target_value',
+    '/entry/instrument/col_slit_2_zm/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_zm/target_value',
         source='ODIN-ColSl2:MC-SlZm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zp',
-        nexus_path='/entry/instrument/col_slit_2_zp/value',
-        source='ODIN-ColSl2:MC-SlZp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_zm/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_zm/value',
+        source='ODIN-ColSl2:MC-SlZm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zp_idle_flag',
+    '/entry/instrument/col_slit_2_zp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_zp/idle_flag',
         source='ODIN-ColSl2:MC-SlZp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_2_zp_target_value',
+    '/entry/instrument/col_slit_2_zp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_2_zp/target_value',
         source='ODIN-ColSl2:MC-SlZp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_centre',
-        nexus_path='/entry/instrument/col_slit_3_hori_centre/value',
-        source='ODIN-ColSl3:MC-SlYc-01:Mtr.RBV',
+    '/entry/instrument/col_slit_2_zp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_2_zp/value',
+        source='ODIN-ColSl2:MC-SlZp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_centre_idle_flag',
+    '/entry/instrument/col_slit_3_hori_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_hori_centre/idle_flag',
         source='ODIN-ColSl3:MC-SlYc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_centre_target_value',
+    '/entry/instrument/col_slit_3_hori_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_hori_centre/target_value',
         source='ODIN-ColSl3:MC-SlYc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_gap',
-        nexus_path='/entry/instrument/col_slit_3_hori_gap/value',
-        source='ODIN-ColSl3:MC-SlYg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_hori_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_hori_centre/value',
+        source='ODIN-ColSl3:MC-SlYc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_gap_idle_flag',
+    '/entry/instrument/col_slit_3_hori_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_hori_gap/idle_flag',
         source='ODIN-ColSl3:MC-SlYg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_hori_gap_target_value',
+    '/entry/instrument/col_slit_3_hori_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_hori_gap/target_value',
         source='ODIN-ColSl3:MC-SlYg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_centre',
-        nexus_path='/entry/instrument/col_slit_3_vert_centre/value',
-        source='ODIN-ColSl3:MC-SlZc-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_hori_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_hori_gap/value',
+        source='ODIN-ColSl3:MC-SlYg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_centre_idle_flag',
+    '/entry/instrument/col_slit_3_vert_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_vert_centre/idle_flag',
         source='ODIN-ColSl3:MC-SlZc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_centre_target_value',
+    '/entry/instrument/col_slit_3_vert_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_vert_centre/target_value',
         source='ODIN-ColSl3:MC-SlZc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_gap',
-        nexus_path='/entry/instrument/col_slit_3_vert_gap/value',
-        source='ODIN-ColSl3:MC-SlZg-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_vert_centre/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_vert_centre/value',
+        source='ODIN-ColSl3:MC-SlZc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_gap_idle_flag',
+    '/entry/instrument/col_slit_3_vert_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_vert_gap/idle_flag',
         source='ODIN-ColSl3:MC-SlZg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_vert_gap_target_value',
+    '/entry/instrument/col_slit_3_vert_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_vert_gap/target_value',
         source='ODIN-ColSl3:MC-SlZg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_ym',
-        nexus_path='/entry/instrument/col_slit_3_ym/value',
-        source='ODIN-ColSl3:MC-SlYm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_vert_gap/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_vert_gap/value',
+        source='ODIN-ColSl3:MC-SlZg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_ym_idle_flag',
+    '/entry/instrument/col_slit_3_ym/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_ym/idle_flag',
         source='ODIN-ColSl3:MC-SlYm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_ym_target_value',
+    '/entry/instrument/col_slit_3_ym/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_ym/target_value',
         source='ODIN-ColSl3:MC-SlYm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_yp',
-        nexus_path='/entry/instrument/col_slit_3_yp/value',
-        source='ODIN-ColSl3:MC-SlYp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_ym/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_ym/value',
+        source='ODIN-ColSl3:MC-SlYm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_yp_idle_flag',
+    '/entry/instrument/col_slit_3_yp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_yp/idle_flag',
         source='ODIN-ColSl3:MC-SlYp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_yp_target_value',
+    '/entry/instrument/col_slit_3_yp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_yp/target_value',
         source='ODIN-ColSl3:MC-SlYp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zm',
-        nexus_path='/entry/instrument/col_slit_3_zm/value',
-        source='ODIN-ColSl3:MC-SlZm-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_yp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_yp/value',
+        source='ODIN-ColSl3:MC-SlYp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zm_idle_flag',
+    '/entry/instrument/col_slit_3_zm/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_zm/idle_flag',
         source='ODIN-ColSl3:MC-SlZm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zm_target_value',
+    '/entry/instrument/col_slit_3_zm/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_zm/target_value',
         source='ODIN-ColSl3:MC-SlZm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zp',
-        nexus_path='/entry/instrument/col_slit_3_zp/value',
-        source='ODIN-ColSl3:MC-SlZp-01:Mtr.RBV',
+    '/entry/instrument/col_slit_3_zm/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_zm/value',
+        source='ODIN-ColSl3:MC-SlZm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zp_idle_flag',
+    '/entry/instrument/col_slit_3_zp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_zp/idle_flag',
         source='ODIN-ColSl3:MC-SlZp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='col_slit_3_zp_target_value',
+    '/entry/instrument/col_slit_3_zp/target_value': F144Stream(
         nexus_path='/entry/instrument/col_slit_3_zp/target_value',
         source='ODIN-ColSl3:MC-SlZp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='experiment_shutter_status',
+    '/entry/instrument/col_slit_3_zp/value': F144Stream(
+        nexus_path='/entry/instrument/col_slit_3_zp/value',
+        source='ODIN-ColSl3:MC-SlZp-01:Mtr.RBV',
+        topic='odin_motion',
+        units='mm',
+    ),
+    '/entry/instrument/experiment_shutter/status': F144Stream(
         nexus_path='/entry/instrument/experiment_shutter/status',
         source='ODIN-ExSht:MC-Pne-01:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='foc1_delay',
+    '/entry/instrument/foc1/delay': F144Stream(
         nexus_path='/entry/instrument/foc1/delay',
         source='ODIN-ChpSy1:Chop-FOC-101:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc1_experiment_delay',
+    '/entry/instrument/foc1/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/foc1/experiment_delay',
         source='ODIN-ChpSy1:Chop-FOC-101:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc1_mechanical_delay',
+    '/entry/instrument/foc1/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/foc1/mechanical_delay',
         source='ODIN-ChpSy1:Chop-FOC-101:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc1_park_angle',
+    '/entry/instrument/foc1/park_angle': F144Stream(
         nexus_path='/entry/instrument/foc1/park_angle',
         source='ODIN-ChpSy1:Chop-FOC-101:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc1_pulse_delay',
+    '/entry/instrument/foc1/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/foc1/pulse_delay',
         source='ODIN-ChpSy1:Chop-FOC-101:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc1_rotation_speed',
+    '/entry/instrument/foc1/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/foc1/rotation_speed',
         source='ODIN-ChpSy1:Chop-FOC-101:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc1_rotation_speed_setpoint',
+    '/entry/instrument/foc1/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/foc1/rotation_speed_setpoint',
         source='ODIN-ChpSy1:Chop-FOC-101:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc2_delay',
+    '/entry/instrument/foc2/delay': F144Stream(
         nexus_path='/entry/instrument/foc2/delay',
         source='ODIN-ChpSy2:Chop-FOC-201:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc2_experiment_delay',
+    '/entry/instrument/foc2/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/foc2/experiment_delay',
         source='ODIN-ChpSy2:Chop-FOC-201:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc2_mechanical_delay',
+    '/entry/instrument/foc2/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/foc2/mechanical_delay',
         source='ODIN-ChpSy2:Chop-FOC-201:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc2_park_angle',
+    '/entry/instrument/foc2/park_angle': F144Stream(
         nexus_path='/entry/instrument/foc2/park_angle',
         source='ODIN-ChpSy2:Chop-FOC-201:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc2_pulse_delay',
+    '/entry/instrument/foc2/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/foc2/pulse_delay',
         source='ODIN-ChpSy2:Chop-FOC-201:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc2_rotation_speed',
+    '/entry/instrument/foc2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/foc2/rotation_speed',
         source='ODIN-ChpSy2:Chop-FOC-201:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc2_rotation_speed_setpoint',
+    '/entry/instrument/foc2/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/foc2/rotation_speed_setpoint',
         source='ODIN-ChpSy2:Chop-FOC-201:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc3_delay',
+    '/entry/instrument/foc3/delay': F144Stream(
         nexus_path='/entry/instrument/foc3/delay',
         source='ODIN-ChpSy2:Chop-FOC-301:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc3_experiment_delay',
+    '/entry/instrument/foc3/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/foc3/experiment_delay',
         source='ODIN-ChpSy2:Chop-FOC-301:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc3_mechanical_delay',
+    '/entry/instrument/foc3/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/foc3/mechanical_delay',
         source='ODIN-ChpSy2:Chop-FOC-301:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc3_park_angle',
+    '/entry/instrument/foc3/park_angle': F144Stream(
         nexus_path='/entry/instrument/foc3/park_angle',
         source='ODIN-ChpSy2:Chop-FOC-301:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc3_pulse_delay',
+    '/entry/instrument/foc3/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/foc3/pulse_delay',
         source='ODIN-ChpSy2:Chop-FOC-301:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc3_rotation_speed',
+    '/entry/instrument/foc3/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/foc3/rotation_speed',
         source='ODIN-ChpSy2:Chop-FOC-301:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc3_rotation_speed_setpoint',
+    '/entry/instrument/foc3/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/foc3/rotation_speed_setpoint',
         source='ODIN-ChpSy2:Chop-FOC-301:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc4_delay',
+    '/entry/instrument/foc4/delay': F144Stream(
         nexus_path='/entry/instrument/foc4/delay',
         source='ODIN-ChpSy2:Chop-FOC-401:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc4_experiment_delay',
+    '/entry/instrument/foc4/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/foc4/experiment_delay',
         source='ODIN-ChpSy2:Chop-FOC-401:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc4_mechanical_delay',
+    '/entry/instrument/foc4/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/foc4/mechanical_delay',
         source='ODIN-ChpSy2:Chop-FOC-401:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc4_park_angle',
+    '/entry/instrument/foc4/park_angle': F144Stream(
         nexus_path='/entry/instrument/foc4/park_angle',
         source='ODIN-ChpSy2:Chop-FOC-401:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc4_pulse_delay',
+    '/entry/instrument/foc4/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/foc4/pulse_delay',
         source='ODIN-ChpSy2:Chop-FOC-401:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc4_rotation_speed',
+    '/entry/instrument/foc4/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/foc4/rotation_speed',
         source='ODIN-ChpSy2:Chop-FOC-401:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc4_rotation_speed_setpoint',
+    '/entry/instrument/foc4/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/foc4/rotation_speed_setpoint',
         source='ODIN-ChpSy2:Chop-FOC-401:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc5_delay',
+    '/entry/instrument/foc5/delay': F144Stream(
         nexus_path='/entry/instrument/foc5/delay',
         source='ODIN-ChpSy4:Chop-FOC-501:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc5_experiment_delay',
+    '/entry/instrument/foc5/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/foc5/experiment_delay',
         source='ODIN-ChpSy4:Chop-FOC-501:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc5_mechanical_delay',
+    '/entry/instrument/foc5/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/foc5/mechanical_delay',
         source='ODIN-ChpSy4:Chop-FOC-501:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc5_park_angle',
+    '/entry/instrument/foc5/park_angle': F144Stream(
         nexus_path='/entry/instrument/foc5/park_angle',
         source='ODIN-ChpSy4:Chop-FOC-501:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='foc5_pulse_delay',
+    '/entry/instrument/foc5/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/foc5/pulse_delay',
         source='ODIN-ChpSy4:Chop-FOC-501:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='foc5_rotation_speed',
+    '/entry/instrument/foc5/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/foc5/rotation_speed',
         source='ODIN-ChpSy4:Chop-FOC-501:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='foc5_rotation_speed_setpoint',
+    '/entry/instrument/foc5/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/foc5/rotation_speed_setpoint',
         source='ODIN-ChpSy4:Chop-FOC-501:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='heavy_shutter_status',
+    '/entry/instrument/heavy_shutter/status': F144Stream(
         nexus_path='/entry/instrument/heavy_shutter/status',
         source='ODIN-HvSht:MC-Pne-01:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='magnetic_guide_field_guide_current',
-        nexus_path='/entry/instrument/magnetic_guide_field/guide_current',
-        source='SIM_odin:instrument:magnetic_guide_field:guide_current',
-        topic='odin_sample_env',
-        units='mA',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82025_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
-        source='CrS-CMS:Cryo-TT-82025:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82027_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
-        source='CrS-CMS:Cryo-TT-82027:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82029_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
-        source='CrS-CMS:Cryo-TT-82029:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82031_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
-        source='CrS-CMS:Cryo-TT-82031:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82033_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
-        source='CrS-CMS:Cryo-TT-82033:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_flat_top_current',
-        nexus_path='/entry/neutron_prod_info/flat_top_current',
-        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
-        topic='tn_data_general',
-        units='mA',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_fsm_machine_active',
-        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
-        source='CrS-CMS:SC-FSM-007x:STS_Active',
-        topic='tn_data_general',
-        units='dimensionless',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_pulse_charge',
-        nexus_path='/entry/neutron_prod_info/pulse_charge',
-        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
-        topic='tn_data_general',
-        units='uC',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_pulse_width',
-        nexus_path='/entry/neutron_prod_info/pulse_width',
-        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
-        topic='tn_data_general',
-        units='ms',
-    ),
-    F144Stream(
-        stream_name='orca_image_key',
+    '/entry/instrument/histogram_mode_detectors/orca/image_key': F144Stream(
         nexus_path='/entry/instrument/histogram_mode_detectors/orca/image_key',
         source='orca_image_type',
         topic='odin_nicos_devices',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='orca_intensifier_gain',
+    '/entry/instrument/histogram_mode_detectors/orca/intensifier_gain': F144Stream(
         nexus_path='/entry/instrument/histogram_mode_detectors/orca/intensifier_gain',
         source='ODIN-DtCMOS:NDet-ImgInt-002:IntensifierGain-R',
         topic='odin_misc_devices',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='orca_intensifier_gate_delay',
+    '/entry/instrument/histogram_mode_detectors/orca/intensifier_gate_delay': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/histogram_mode_detectors/orca/intensifier_gate_delay',
         source='ODIN-DtCmn:Ctrl-EVR-001:DlyGen0Delay-RB',
         topic='odin_misc_devices',
         units='us',
     ),
-    F144Stream(
-        stream_name='orca_intensifier_gate_width',
+    '/entry/instrument/histogram_mode_detectors/orca/intensifier_gate_width': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/histogram_mode_detectors/orca/intensifier_gate_width',
         source='ODIN-DtCmn:Ctrl-EVR-001:DlyGen0Width-RB',
         topic='odin_misc_devices',
         units='us',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_centre',
-        nexus_path='/entry/instrument/pinhole_1_hori_centre/value',
-        source='ODIN-PinSl1:MC-Yc-01:Mtr.RBV',
-        topic='odin_motion',
-        units='mm',
+    '/entry/instrument/magnetic_guide_field/guide_current': F144Stream(
+        nexus_path='/entry/instrument/magnetic_guide_field/guide_current',
+        source='SIM_odin:instrument:magnetic_guide_field:guide_current',
+        topic='odin_sample_env',
+        units='mA',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_centre_idle_flag',
+    '/entry/instrument/pinhole_1_hori_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_hori_centre/idle_flag',
         source='ODIN-PinSl1:MC-Yc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_centre_target_value',
+    '/entry/instrument/pinhole_1_hori_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_hori_centre/target_value',
         source='ODIN-PinSl1:MC-Yc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_gap',
-        nexus_path='/entry/instrument/pinhole_1_hori_gap/value',
-        source='ODIN-PinSl1:MC-Yg-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_hori_centre/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_hori_centre/value',
+        source='ODIN-PinSl1:MC-Yc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_gap_idle_flag',
+    '/entry/instrument/pinhole_1_hori_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_hori_gap/idle_flag',
         source='ODIN-PinSl1:MC-Yg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_hori_gap_target_value',
+    '/entry/instrument/pinhole_1_hori_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_hori_gap/target_value',
         source='ODIN-PinSl1:MC-Yg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_centre',
-        nexus_path='/entry/instrument/pinhole_1_vert_centre/value',
-        source='ODIN-PinSl1:MC-Zc-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_hori_gap/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_hori_gap/value',
+        source='ODIN-PinSl1:MC-Yg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_centre_idle_flag',
+    '/entry/instrument/pinhole_1_vert_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_vert_centre/idle_flag',
         source='ODIN-PinSl1:MC-Zc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_centre_target_value',
+    '/entry/instrument/pinhole_1_vert_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_vert_centre/target_value',
         source='ODIN-PinSl1:MC-Zc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_gap',
-        nexus_path='/entry/instrument/pinhole_1_vert_gap/value',
-        source='ODIN-PinSl1:MC-Zg-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_vert_centre/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_vert_centre/value',
+        source='ODIN-PinSl1:MC-Zc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_gap_idle_flag',
+    '/entry/instrument/pinhole_1_vert_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_vert_gap/idle_flag',
         source='ODIN-PinSl1:MC-Zg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_vert_gap_target_value',
+    '/entry/instrument/pinhole_1_vert_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_vert_gap/target_value',
         source='ODIN-PinSl1:MC-Zg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_ym',
-        nexus_path='/entry/instrument/pinhole_1_ym/value',
-        source='ODIN-PinSl1:MC-SlYm-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_vert_gap/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_vert_gap/value',
+        source='ODIN-PinSl1:MC-Zg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_ym_idle_flag',
+    '/entry/instrument/pinhole_1_ym/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_ym/idle_flag',
         source='ODIN-PinSl1:MC-SlYm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_ym_target_value',
+    '/entry/instrument/pinhole_1_ym/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_ym/target_value',
         source='ODIN-PinSl1:MC-SlYm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_yp',
-        nexus_path='/entry/instrument/pinhole_1_yp/value',
-        source='ODIN-PinSl1:MC-SlYp-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_ym/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_ym/value',
+        source='ODIN-PinSl1:MC-SlYm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_yp_idle_flag',
+    '/entry/instrument/pinhole_1_yp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_yp/idle_flag',
         source='ODIN-PinSl1:MC-SlYp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_yp_target_value',
+    '/entry/instrument/pinhole_1_yp/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_yp/target_value',
         source='ODIN-PinSl1:MC-SlYp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zm',
-        nexus_path='/entry/instrument/pinhole_1_zm/value',
-        source='ODIN-PinSl1:MC-SlZm-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_yp/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_yp/value',
+        source='ODIN-PinSl1:MC-SlYp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zm_idle_flag',
+    '/entry/instrument/pinhole_1_zm/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_zm/idle_flag',
         source='ODIN-PinSl1:MC-SlZm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zm_target_value',
+    '/entry/instrument/pinhole_1_zm/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_zm/target_value',
         source='ODIN-PinSl1:MC-SlZm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zp',
-        nexus_path='/entry/instrument/pinhole_1_zp/value',
-        source='ODIN-PinSl1:MC-SlZp-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_zm/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_zm/value',
+        source='ODIN-PinSl1:MC-SlZm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zp_idle_flag',
+    '/entry/instrument/pinhole_1_zp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_zp/idle_flag',
         source='ODIN-PinSl1:MC-SlZp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_1_zp_target_value',
+    '/entry/instrument/pinhole_1_zp/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_1_zp/target_value',
         source='ODIN-PinSl1:MC-SlZp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_centre',
-        nexus_path='/entry/instrument/pinhole_2_hori_centre/value',
-        source='ODIN-PinSl2:MC-Yc-01:Mtr.RBV',
+    '/entry/instrument/pinhole_1_zp/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_1_zp/value',
+        source='ODIN-PinSl1:MC-SlZp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_centre_idle_flag',
+    '/entry/instrument/pinhole_2_hori_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_hori_centre/idle_flag',
         source='ODIN-PinSl2:MC-Yc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_centre_target_value',
+    '/entry/instrument/pinhole_2_hori_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_hori_centre/target_value',
         source='ODIN-PinSl2:MC-Yc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_gap',
-        nexus_path='/entry/instrument/pinhole_2_hori_gap/value',
-        source='ODIN-PinSl2:MC-Yg-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_hori_centre/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_hori_centre/value',
+        source='ODIN-PinSl2:MC-Yc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_gap_idle_flag',
+    '/entry/instrument/pinhole_2_hori_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_hori_gap/idle_flag',
         source='ODIN-PinSl2:MC-Yg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_hori_gap_target_value',
+    '/entry/instrument/pinhole_2_hori_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_hori_gap/target_value',
         source='ODIN-PinSl2:MC-Yg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_centre',
-        nexus_path='/entry/instrument/pinhole_2_vert_centre/value',
-        source='ODIN-PinSl2:MC-Zc-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_hori_gap/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_hori_gap/value',
+        source='ODIN-PinSl2:MC-Yg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_centre_idle_flag',
+    '/entry/instrument/pinhole_2_vert_centre/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_vert_centre/idle_flag',
         source='ODIN-PinSl2:MC-Zc-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_centre_target_value',
+    '/entry/instrument/pinhole_2_vert_centre/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_vert_centre/target_value',
         source='ODIN-PinSl2:MC-Zc-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_gap',
-        nexus_path='/entry/instrument/pinhole_2_vert_gap/value',
-        source='ODIN-PinSl2:MC-Zg-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_vert_centre/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_vert_centre/value',
+        source='ODIN-PinSl2:MC-Zc-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_gap_idle_flag',
+    '/entry/instrument/pinhole_2_vert_gap/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_vert_gap/idle_flag',
         source='ODIN-PinSl2:MC-Zg-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_vert_gap_target_value',
+    '/entry/instrument/pinhole_2_vert_gap/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_vert_gap/target_value',
         source='ODIN-PinSl2:MC-Zg-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_ym',
-        nexus_path='/entry/instrument/pinhole_2_ym/value',
-        source='ODIN-PinSl2:MC-SlYm-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_vert_gap/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_vert_gap/value',
+        source='ODIN-PinSl2:MC-Zg-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_ym_idle_flag',
+    '/entry/instrument/pinhole_2_ym/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_ym/idle_flag',
         source='ODIN-PinSl2:MC-SlYm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_ym_target_value',
+    '/entry/instrument/pinhole_2_ym/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_ym/target_value',
         source='ODIN-PinSl2:MC-SlYm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_yp',
-        nexus_path='/entry/instrument/pinhole_2_yp/value',
-        source='ODIN-PinSl2:MC-SlYp-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_ym/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_ym/value',
+        source='ODIN-PinSl2:MC-SlYm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_yp_idle_flag',
+    '/entry/instrument/pinhole_2_yp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_yp/idle_flag',
         source='ODIN-PinSl2:MC-SlYp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_yp_target_value',
+    '/entry/instrument/pinhole_2_yp/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_yp/target_value',
         source='ODIN-PinSl2:MC-SlYp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zm',
-        nexus_path='/entry/instrument/pinhole_2_zm/value',
-        source='ODIN-PinSl2:MC-SlZm-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_yp/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_yp/value',
+        source='ODIN-PinSl2:MC-SlYp-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zm_idle_flag',
+    '/entry/instrument/pinhole_2_zm/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_zm/idle_flag',
         source='ODIN-PinSl2:MC-SlZm-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zm_target_value',
+    '/entry/instrument/pinhole_2_zm/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_zm/target_value',
         source='ODIN-PinSl2:MC-SlZm-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zp',
-        nexus_path='/entry/instrument/pinhole_2_zp/value',
-        source='ODIN-PinSl2:MC-SlZp-01:Mtr.RBV',
+    '/entry/instrument/pinhole_2_zm/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_zm/value',
+        source='ODIN-PinSl2:MC-SlZm-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zp_idle_flag',
+    '/entry/instrument/pinhole_2_zp/idle_flag': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_zp/idle_flag',
         source='ODIN-PinSl2:MC-SlZp-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_2_zp_target_value',
+    '/entry/instrument/pinhole_2_zp/target_value': F144Stream(
         nexus_path='/entry/instrument/pinhole_2_zp/target_value',
         source='ODIN-PinSl2:MC-SlZp-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_diffuser_status',
+    '/entry/instrument/pinhole_2_zp/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_2_zp/value',
+        source='ODIN-PinSl2:MC-SlZp-01:Mtr.RBV',
+        topic='odin_motion',
+        units='mm',
+    ),
+    '/entry/instrument/pinhole_diffuser/status': F144Stream(
         nexus_path='/entry/instrument/pinhole_diffuser/status',
         source='ODIN-PinDif:MC-Pne-01:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_filter_1_status',
+    '/entry/instrument/pinhole_filter_1/status': F144Stream(
         nexus_path='/entry/instrument/pinhole_filter_1/status',
         source='ODIN-PinFil:MC-Pne-01:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_filter_2_status',
+    '/entry/instrument/pinhole_filter_2/status': F144Stream(
         nexus_path='/entry/instrument/pinhole_filter_2/status',
         source='ODIN-PinFil:MC-Pne-02:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='pinhole_filter_3_status',
+    '/entry/instrument/pinhole_filter_3/status': F144Stream(
         nexus_path='/entry/instrument/pinhole_filter_3/status',
         source='ODIN-PinFil:MC-Pne-03:ShtAuxBits07',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='source_current',
+    '/entry/instrument/source/current': F144Stream(
         nexus_path='/entry/instrument/source/current',
         source='SIM_odin:instrument:source:current',
         topic='odin_sample_env',
         units='mA',
     ),
-    F144Stream(
-        stream_name='source_energy',
+    '/entry/instrument/source/energy': F144Stream(
         nexus_path='/entry/instrument/source/energy',
         source='SIM_odin:instrument:source:energy',
         topic='odin_sample_env',
         units='kV',
     ),
-    F144Stream(
-        stream_name='source_power',
+    '/entry/instrument/source/power': F144Stream(
         nexus_path='/entry/instrument/source/power',
         source='SIM_odin:instrument:source:power',
         topic='odin_sample_env',
         units='W',
     ),
-    F144Stream(
-        stream_name='spst1_lin_x',
-        nexus_path='/entry/instrument/spst1_lin_x/value',
-        source='ODIN-SpSt1:MC-LinX-01:Mtr.RBV',
-        topic='odin_motion',
-        units='mm',
-    ),
-    F144Stream(
-        stream_name='spst1_lin_x_idle_flag',
+    '/entry/instrument/spst1_lin_x/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_x/idle_flag',
         source='ODIN-SpSt1:MC-LinX-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_lin_x_target_value',
+    '/entry/instrument/spst1_lin_x/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_x/target_value',
         source='ODIN-SpSt1:MC-LinX-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_lin_y',
-        nexus_path='/entry/instrument/spst1_lin_y/value',
-        source='ODIN-SpSt1:MC-LinY-01:Mtr.RBV',
+    '/entry/instrument/spst1_lin_x/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_lin_x/value',
+        source='ODIN-SpSt1:MC-LinX-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_lin_y_idle_flag',
+    '/entry/instrument/spst1_lin_y/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_y/idle_flag',
         source='ODIN-SpSt1:MC-LinY-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_lin_y_target_value',
+    '/entry/instrument/spst1_lin_y/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_y/target_value',
         source='ODIN-SpSt1:MC-LinY-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_lin_z',
-        nexus_path='/entry/instrument/spst1_lin_z/value',
-        source='ODIN-SpSt1:MC-LinZ-01:Mtr.RBV',
+    '/entry/instrument/spst1_lin_y/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_lin_y/value',
+        source='ODIN-SpSt1:MC-LinY-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_lin_z_idle_flag',
+    '/entry/instrument/spst1_lin_z/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_z/idle_flag',
         source='ODIN-SpSt1:MC-LinZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_lin_z_target_value',
+    '/entry/instrument/spst1_lin_z/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_lin_z/target_value',
         source='ODIN-SpSt1:MC-LinZ-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_rot_x',
-        nexus_path='/entry/instrument/spst1_rot_x/value',
-        source='ODIN-SpSt1:MC-RotX-01:Mtr.RBV',
+    '/entry/instrument/spst1_lin_z/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_lin_z/value',
+        source='ODIN-SpSt1:MC-LinZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='degrees',
+        units='mm',
     ),
-    F144Stream(
-        stream_name='spst1_rot_x_idle_flag',
+    '/entry/instrument/spst1_rot_x/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_x/idle_flag',
         source='ODIN-SpSt1:MC-RotX-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_rot_x_target_value',
+    '/entry/instrument/spst1_rot_x/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_x/target_value',
         source='ODIN-SpSt1:MC-RotX-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst1_rot_y',
-        nexus_path='/entry/instrument/spst1_rot_y/value',
-        source='ODIN-SpSt1:MC-RotY-01:Mtr.RBV',
+    '/entry/instrument/spst1_rot_x/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_rot_x/value',
+        source='ODIN-SpSt1:MC-RotX-01:Mtr.RBV',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst1_rot_y_idle_flag',
+    '/entry/instrument/spst1_rot_y/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_y/idle_flag',
         source='ODIN-SpSt1:MC-RotY-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_rot_y_target_value',
+    '/entry/instrument/spst1_rot_y/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_y/target_value',
         source='ODIN-SpSt1:MC-RotY-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst1_rot_z',
-        nexus_path='/entry/instrument/spst1_rot_z/value',
-        source='ODIN-SpSt1:MC-RotZ-01:Mtr.RBV',
+    '/entry/instrument/spst1_rot_y/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_rot_y/value',
+        source='ODIN-SpSt1:MC-RotY-01:Mtr.RBV',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst1_rot_z_idle_flag',
+    '/entry/instrument/spst1_rot_z/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_z/idle_flag',
         source='ODIN-SpSt1:MC-RotZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst1_rot_z_target_value',
+    '/entry/instrument/spst1_rot_z/target_value': F144Stream(
         nexus_path='/entry/instrument/spst1_rot_z/target_value',
         source='ODIN-SpSt1:MC-RotZ-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_lin_x',
-        nexus_path='/entry/instrument/spst2_lin_x/value',
-        source='ODIN-SpSt2:MC-LinX-01:Mtr.RBV',
+    '/entry/instrument/spst1_rot_z/value': F144Stream(
+        nexus_path='/entry/instrument/spst1_rot_z/value',
+        source='ODIN-SpSt1:MC-RotZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='mm',
+        units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_lin_x_idle_flag',
+    '/entry/instrument/spst2_lin_x/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_x/idle_flag',
         source='ODIN-SpSt2:MC-LinX-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_lin_x_target_value',
+    '/entry/instrument/spst2_lin_x/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_x/target_value',
         source='ODIN-SpSt2:MC-LinX-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_lin_y',
-        nexus_path='/entry/instrument/spst2_lin_y/value',
-        source='ODIN-SpSt2:MC-LinY-01:Mtr.RBV',
+    '/entry/instrument/spst2_lin_x/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_lin_x/value',
+        source='ODIN-SpSt2:MC-LinX-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_lin_y_idle_flag',
+    '/entry/instrument/spst2_lin_y/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_y/idle_flag',
         source='ODIN-SpSt2:MC-LinY-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_lin_y_target_value',
+    '/entry/instrument/spst2_lin_y/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_y/target_value',
         source='ODIN-SpSt2:MC-LinY-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_lin_z',
-        nexus_path='/entry/instrument/spst2_lin_z/value',
-        source='ODIN-SpSt2:MC-LinZ-01:Mtr.RBV',
+    '/entry/instrument/spst2_lin_y/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_lin_y/value',
+        source='ODIN-SpSt2:MC-LinY-01:Mtr.RBV',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_lin_z_idle_flag',
+    '/entry/instrument/spst2_lin_z/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_z/idle_flag',
         source='ODIN-SpSt2:MC-LinZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_lin_z_target_value',
+    '/entry/instrument/spst2_lin_z/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_lin_z/target_value',
         source='ODIN-SpSt2:MC-LinZ-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_rot_x',
-        nexus_path='/entry/instrument/spst2_rot_x/value',
-        source='ODIN-SpSt2:MC-RotX-01:Mtr.RBV',
+    '/entry/instrument/spst2_lin_z/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_lin_z/value',
+        source='ODIN-SpSt2:MC-LinZ-01:Mtr.RBV',
         topic='odin_motion',
-        units='degrees',
+        units='mm',
     ),
-    F144Stream(
-        stream_name='spst2_rot_x_idle_flag',
+    '/entry/instrument/spst2_rot_x/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_x/idle_flag',
         source='ODIN-SpSt2:MC-RotX-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_rot_x_target_value',
+    '/entry/instrument/spst2_rot_x/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_x/target_value',
         source='ODIN-SpSt2:MC-RotX-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_rot_y',
-        nexus_path='/entry/instrument/spst2_rot_y/value',
-        source='ODIN-SpSt2:MC-RotY-01:Mtr.RBV',
+    '/entry/instrument/spst2_rot_x/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_rot_x/value',
+        source='ODIN-SpSt2:MC-RotX-01:Mtr.RBV',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_rot_y_idle_flag',
+    '/entry/instrument/spst2_rot_y/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_y/idle_flag',
         source='ODIN-SpSt2:MC-RotY-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_rot_y_target_value',
+    '/entry/instrument/spst2_rot_y/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_y/target_value',
         source='ODIN-SpSt2:MC-RotY-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_rot_z',
-        nexus_path='/entry/instrument/spst2_rot_z/value',
-        source='ODIN-SpSt2:MC-RotZ-01:Mtr.RBV',
+    '/entry/instrument/spst2_rot_y/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_rot_y/value',
+        source='ODIN-SpSt2:MC-RotY-01:Mtr.RBV',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='spst2_rot_z_idle_flag',
+    '/entry/instrument/spst2_rot_z/idle_flag': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_z/idle_flag',
         source='ODIN-SpSt2:MC-RotZ-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='spst2_rot_z_target_value',
+    '/entry/instrument/spst2_rot_z/target_value': F144Stream(
         nexus_path='/entry/instrument/spst2_rot_z/target_value',
         source='ODIN-SpSt2:MC-RotZ-01:Mtr.VAL',
         topic='odin_motion',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='t0_delay',
+    '/entry/instrument/spst2_rot_z/value': F144Stream(
+        nexus_path='/entry/instrument/spst2_rot_z/value',
+        source='ODIN-SpSt2:MC-RotZ-01:Mtr.RBV',
+        topic='odin_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/t0/delay': F144Stream(
         nexus_path='/entry/instrument/t0/delay',
         source='SIM_odin:instrument:t0:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='t0_experiment_delay',
+    '/entry/instrument/t0/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/t0/experiment_delay',
         source='SIM_odin:instrument:t0:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='t0_mechanical_delay',
+    '/entry/instrument/t0/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/t0/mechanical_delay',
         source='SIM_odin:instrument:t0:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='t0_park_angle',
+    '/entry/instrument/t0/park_angle': F144Stream(
         nexus_path='/entry/instrument/t0/park_angle',
         source='SIM_odin:instrument:t0:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='t0_pulse_delay',
+    '/entry/instrument/t0/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/t0/pulse_delay',
         source='SIM_odin:instrument:t0:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='t0_rotation_speed',
+    '/entry/instrument/t0/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/t0/rotation_speed',
         source='SIM_odin:instrument:t0:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='t0_rotation_speed_setpoint',
+    '/entry/instrument/t0/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/t0/rotation_speed_setpoint',
         source='SIM_odin:instrument:t0:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='wfm1_delay',
+    '/entry/instrument/wfm1/delay': F144Stream(
         nexus_path='/entry/instrument/wfm1/delay',
         source='ODIN-ChpSy1:Chop-WFMC-101:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm1_experiment_delay',
+    '/entry/instrument/wfm1/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/wfm1/experiment_delay',
         source='ODIN-ChpSy1:Chop-WFMC-101:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm1_mechanical_delay',
+    '/entry/instrument/wfm1/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/wfm1/mechanical_delay',
         source='ODIN-ChpSy1:Chop-WFMC-101:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='wfm1_park_angle',
+    '/entry/instrument/wfm1/park_angle': F144Stream(
         nexus_path='/entry/instrument/wfm1/park_angle',
         source='ODIN-ChpSy1:Chop-WFMC-101:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='wfm1_pulse_delay',
+    '/entry/instrument/wfm1/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/wfm1/pulse_delay',
         source='ODIN-ChpSy1:Chop-WFMC-101:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm1_rotation_speed',
+    '/entry/instrument/wfm1/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/wfm1/rotation_speed',
         source='ODIN-ChpSy1:Chop-WFMC-101:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='wfm1_rotation_speed_setpoint',
+    '/entry/instrument/wfm1/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/wfm1/rotation_speed_setpoint',
         source='ODIN-ChpSy1:Chop-WFMC-101:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='wfm1_translation1',
+    '/entry/instrument/wfm1/transformations/translation1': F144Stream(
         nexus_path='/entry/instrument/wfm1/transformations/translation1',
         source='SIM_odin:wfm1:transformations:translation1',
         topic='odin_motion',
         units='m',
     ),
-    F144Stream(
-        stream_name='wfm2_delay',
+    '/entry/instrument/wfm2/delay': F144Stream(
         nexus_path='/entry/instrument/wfm2/delay',
         source='ODIN-ChpSy1:Chop-WFMC-102:TotDly',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm2_experiment_delay',
+    '/entry/instrument/wfm2/experiment_delay': F144Stream(
         nexus_path='/entry/instrument/wfm2/experiment_delay',
         source='ODIN-ChpSy1:Chop-WFMC-102:ChopDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm2_mechanical_delay',
+    '/entry/instrument/wfm2/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/wfm2/mechanical_delay',
         source='ODIN-ChpSy1:Chop-WFMC-102:MechDly-S',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='wfm2_park_angle',
+    '/entry/instrument/wfm2/park_angle': F144Stream(
         nexus_path='/entry/instrument/wfm2/park_angle',
         source='ODIN-ChpSy1:Chop-WFMC-102:Pos_R',
         topic='odin_choppers',
         units='degrees',
     ),
-    F144Stream(
-        stream_name='wfm2_pulse_delay',
+    '/entry/instrument/wfm2/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/wfm2/pulse_delay',
         source='ODIN-ChpSy1:Chop-WFMC-102:BeamPosDly-S',
         topic='odin_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='wfm2_rotation_speed',
+    '/entry/instrument/wfm2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/wfm2/rotation_speed',
         source='ODIN-ChpSy1:Chop-WFMC-102:Spd_R',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='wfm2_rotation_speed_setpoint',
+    '/entry/instrument/wfm2/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/wfm2/rotation_speed_setpoint',
         source='ODIN-ChpSy1:Chop-WFMC-102:Spd_S',
         topic='odin_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='wfm2_translation1',
+    '/entry/instrument/wfm2/transformations/translation1': F144Stream(
         nexus_path='/entry/instrument/wfm2/transformations/translation1',
         source='SIM_odin:wfm2:transformations:translation1',
         topic='odin_motion',
         units='m',
     ),
-    F144Stream(
-        stream_name='wfmc_translation',
-        nexus_path='/entry/instrument/wfmc_translation/value',
-        source='ODIN-ChpLin:MC-LinX-01:Mtr.RBV',
-        topic='odin_motion',
-        units='mm',
-    ),
-    F144Stream(
-        stream_name='wfmc_translation_idle_flag',
+    '/entry/instrument/wfmc_translation/idle_flag': F144Stream(
         nexus_path='/entry/instrument/wfmc_translation/idle_flag',
         source='ODIN-ChpLin:MC-LinX-01:Mtr.DMOV',
         topic='odin_motion',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='wfmc_translation_target_value',
+    '/entry/instrument/wfmc_translation/target_value': F144Stream(
         nexus_path='/entry/instrument/wfmc_translation/target_value',
         source='ODIN-ChpLin:MC-LinX-01:Mtr.VAL',
         topic='odin_motion',
         units='mm',
     ),
-]
+    '/entry/instrument/wfmc_translation/value': F144Stream(
+        nexus_path='/entry/instrument/wfmc_translation/value',
+        source='ODIN-ChpLin:MC-LinX-01:Mtr.RBV',
+        topic='odin_motion',
+        units='mm',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
+        source='CrS-CMS:Cryo-TT-82025:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82027_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
+        source='CrS-CMS:Cryo-TT-82027:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82029_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
+        source='CrS-CMS:Cryo-TT-82029:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82031_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
+        source='CrS-CMS:Cryo-TT-82031:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82033_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
+        source='CrS-CMS:Cryo-TT-82033:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/flat_top_current': F144Stream(
+        nexus_path='/entry/neutron_prod_info/flat_top_current',
+        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/neutron_prod_info/fsm_machine_active': F144Stream(
+        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
+        source='CrS-CMS:SC-FSM-007x:STS_Active',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/neutron_prod_info/pulse_charge': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_charge',
+        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/neutron_prod_info/pulse_width': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_width',
+        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
+        topic='tn_data_general',
+        units='ms',
+    ),
+}

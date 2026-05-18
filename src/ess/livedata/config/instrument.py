@@ -123,12 +123,6 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
-        for name, stream in self.streams.items():
-            if name != stream.stream_name:
-                raise ValueError(
-                    f"streams dict key {name!r} does not match "
-                    f"stream_name {stream.stream_name!r}"
-                )
         for binding in self.log_context_bindings:
             self._validate_binding_stream_name(binding)
         timeseries_names = list(self.f144_streams)

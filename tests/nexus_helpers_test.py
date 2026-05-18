@@ -576,13 +576,13 @@ class TestGenerateStreamsParsedModule:
             for _f144 in [_f144_info]
         ]
         code = generate_streams_parsed_module(infos)
-        # SPDX header + module docstring + import + list literal
+        # SPDX header + module docstring + import + dict literal
         assert code.startswith('# SPDX-License-Identifier:')
         assert 'Auto-generated' in code
         assert 'from ess.livedata.config import F144Stream' in code
-        assert 'PARSED_STREAMS: list[F144Stream] = [' in code
+        assert 'PARSED_STREAMS: dict[str, F144Stream] = {' in code
         # Entry content
-        assert "stream_name='motor'" in code
+        assert "'/entry/motor/value': F144Stream(" in code
         assert "source='MOTOR:PV:RBV'" in code
         assert "topic='motion'" in code
         assert "units='degrees'" in code
@@ -601,10 +601,10 @@ class TestGenerateStreamsParsedModule:
         exec(code, ns)  # noqa: S102 — controlled test input
         parsed = ns['PARSED_STREAMS']
         assert len(parsed) == 1
-        assert parsed[0].stream_name == 'motor'
-        assert parsed[0].nexus_path == '/entry/motor/value'
-        assert parsed[0].source == 'MOTOR:PV:RBV'
-        assert parsed[0].units == 'degrees'
+        stream = parsed['/entry/motor/value']
+        assert stream.nexus_path == '/entry/motor/value'
+        assert stream.source == 'MOTOR:PV:RBV'
+        assert stream.units == 'degrees'
 
     def test_uses_dimensionless_for_empty_units(self) -> None:
         infos = [_f144_info(group_path='entry/switch/value', source='SWITCH:PV')]
@@ -623,13 +623,13 @@ class TestGenerateStreamsParsedModule:
         code = generate_streams_parsed_module(infos)
         assert 'MOTOR:RBV' in code
         assert 'MOTOR:DMOV' in code
-        assert "stream_name='motor'" in code
-        assert "stream_name='motor_idle_flag'" in code
+        assert "'/entry/motor/value': F144Stream(" in code
+        assert "'/entry/motor/idle_flag': F144Stream(" in code
 
     def test_custom_variable_name(self) -> None:
         infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]
         code = generate_streams_parsed_module(infos, variable_name='MY_STREAMS')
-        assert 'MY_STREAMS: list[F144Stream] = [' in code
+        assert 'MY_STREAMS: dict[str, F144Stream] = {' in code
 
     def test_includes_source_filename_when_provided(self) -> None:
         infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]

@@ -4,8 +4,6 @@
 ESTIA instrument spec registration.
 """
 
-from dataclasses import replace
-
 import pydantic
 import scipp as sc
 
@@ -22,6 +20,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.nexus_helpers import suggest_names
 
 from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
 from .streams_parsed import PARSED_STREAMS
@@ -196,11 +195,10 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 _RENAMES = {
     '/entry/instrument/detector_arm/detector_rotation/value': 'detector_rotation',
 }
-streams: dict[str, Stream] = {}
-for _s in PARSED_STREAMS:
-    if (_new := _RENAMES.get(_s.nexus_path)) is not None:
-        _s = replace(_s, stream_name=_new)
-    streams[_s.stream_name] = _s
+_names = suggest_names(PARSED_STREAMS)
+streams: dict[str, Stream] = {
+    _RENAMES.get(path, _names[path]): stream for path, stream in PARSED_STREAMS.items()
+}
 
 instrument = Instrument(
     name='estia',

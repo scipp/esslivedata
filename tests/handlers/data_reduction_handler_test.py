@@ -16,13 +16,11 @@ class TestReductionHandlerFactory:
         """Create an instrument with log attribute configuration."""
         streams = {
             'temp_sensor': F144Stream(
-                stream_name='temp_sensor',
                 source='temp_sensor',
                 topic='topic',
                 units='K',
             ),
             'pressure_sensor': F144Stream(
-                stream_name='pressure_sensor',
                 source='pressure_sensor',
                 topic='topic',
                 units='Pa',

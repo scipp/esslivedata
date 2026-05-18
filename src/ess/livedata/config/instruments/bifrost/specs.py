@@ -11,7 +11,6 @@ See https://backend.orbit.dtu.dk/ws/portalfiles/portal/409340969/RSI25-AR-00125.
 for full instrument details.
 """
 
-from dataclasses import replace
 from enum import StrEnum
 from typing import Literal
 
@@ -25,6 +24,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.nexus_helpers import suggest_names
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 from .streams_parsed import PARSED_STREAMS
@@ -220,20 +220,19 @@ monitors = [
 
 
 # Stream names referenced by factory bindings and bifrost_aux_sources above
-# must survive verbatim. Other entries take the auto-generated names from
-# `streams_parsed.py`. Renames are keyed by stable nexus_path.
+# must survive verbatim. Other entries take the auto-suggested names.
+# Renames are keyed by stable nexus_path.
 _RENAMES = {
     (
         '/entry/instrument/detector_tank_angle/transformations/'
         'detector_tank_angle_r0/value'
     ): 'detector_rotation',
-    '/entry/instrument/114_sample_stack/rotation_stage/value': ('sample_rotation'),
+    '/entry/instrument/114_sample_stack/rotation_stage/value': 'sample_rotation',
 }
-streams: dict[str, Stream] = {}
-for _s in PARSED_STREAMS:
-    if (_new := _RENAMES.get(_s.nexus_path)) is not None:
-        _s = replace(_s, stream_name=_new)
-    streams[_s.stream_name] = _s
+_names = suggest_names(PARSED_STREAMS)
+streams: dict[str, Stream] = {
+    _RENAMES.get(path, _names[path]): stream for path, stream in PARSED_STREAMS.items()
+}
 
 # Create instrument
 instrument = Instrument(

@@ -32,8 +32,8 @@ def _make_odin_detectors() -> StreamLUT:
 def _make_odin_logs() -> StreamLUT:
     """Odin f144 log mapping derived from instrument.streams."""
     return {
-        InputStreamKey(topic=s.topic, source_name=s.source): s.stream_name
-        for s in instrument.f144_streams.values()
+        InputStreamKey(topic=s.topic, source_name=s.source): name
+        for name, s in instrument.f144_streams.items()
         if s.topic is not None
     }
 

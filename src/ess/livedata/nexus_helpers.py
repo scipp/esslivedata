@@ -250,23 +250,23 @@ def generate_streams_parsed_module(
 
     The output is a self-contained, importable Python module: SPDX header,
     a banner identifying it as auto-generated, the ``F144Stream`` import,
-    and a single sorted ``list[F144Stream]`` literal. The instrument's
-    hand-edited ``specs.py`` is expected to import this list and build the
-    final ``Instrument.streams`` dict (applying any per-instrument renames
-    or merging in synthetic streams).
+    and a single ``dict[str, F144Stream]`` literal keyed by ``nexus_path``.
+    The instrument's hand-edited ``specs.py`` is expected to import this
+    dict and turn it into ``Instrument.streams`` — assigning names (via
+    :func:`suggest_names` or any other convention), applying renames, and
+    merging in synthetic streams.
 
     Parameters
     ----------
     infos:
         StreamInfo entries (pre-filtered to ``writer_module='f144'``).
     variable_name:
-        Name of the generated top-level list. Defaults to ``PARSED_STREAMS``.
+        Name of the generated top-level dict. Defaults to ``PARSED_STREAMS``.
     source_file:
         Optional path string for the originating geometry file, included in
         the auto-generated banner so reviewers can trace provenance.
     """
     by_path = {f'/{info.group_path}': info for info in infos}
-    names = suggest_names(by_path)
 
     lines: list[str] = [
         '# SPDX-License-Identifier: BSD-3-Clause',
@@ -284,16 +284,18 @@ def generate_streams_parsed_module(
             '',
             'from ess.livedata.config import F144Stream',
             '',
-            f'{variable_name}: list[F144Stream] = [',
+            f'{variable_name}: dict[str, F144Stream] = {{',
         ]
     )
-    for path in sorted(by_path, key=lambda p: names[p]):
+    for path in sorted(by_path):
         info = by_path[path]
         units = info.units or 'dimensionless'
+        # Line exceeding 88 chars due to long nexus_path dict keys
+        dict_key_line = f'    {path!r}: F144Stream('
+        noqa_comment = '  # noqa: E501' if len(dict_key_line) > 88 else ''
         lines.extend(
             [
-                '    F144Stream(',
-                f'        stream_name={names[path]!r},',
+                dict_key_line + noqa_comment,
                 f'        nexus_path={path!r},',
                 f'        source={info.source!r},',
                 f'        topic={info.topic!r},',
@@ -301,7 +303,7 @@ def generate_streams_parsed_module(
                 '    ),',
             ]
         )
-    lines.extend([']', ''])
+    lines.extend(['}', ''])
     return '\n'.join(lines)
 
 

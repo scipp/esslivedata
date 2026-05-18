@@ -150,7 +150,6 @@ class TestDetectorHandlerFactoryLogStreams:
     def instrument_with_logs(self):
         streams = {
             'position_sensor': F144Stream(
-                stream_name='position_sensor',
                 source='position_sensor',
                 topic='topic',
                 units='mm',

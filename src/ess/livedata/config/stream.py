@@ -2,12 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Canonical records describing streaming data declarations.
 
-A :class:`Stream` is the unified description of one streaming group in a NeXus
-file (or a synthesised in-process stream). :class:`F144Stream` adds f144-specific
-fields. Per-instrument configuration holds these records in
-``Instrument.streams: dict[str, Stream]``; downstream consumers derive everything
-else (StreamLUT, NXlog attrs, timeseries spec registration, ...) from this single
-source of truth.
+A :class:`Stream` describes one streaming group in a NeXus file (or a
+synthesised in-process stream) at the wire level — what it is, not what an
+instrument chooses to call it. The instrument-facing name is the key into
+:attr:`Instrument.streams`, supplied per-instrument in ``specs.py``.
 """
 
 from __future__ import annotations
@@ -27,7 +25,6 @@ class Stream:
     cross-referenced with a NeXus geometry file.
     """
 
-    stream_name: str
     writer_module: str
     nexus_path: str | None = None
     topic: str | None = None
@@ -41,11 +38,11 @@ class Stream:
         # codegen path is in place.
         if self.topic is None and self.source is not None:
             raise ValueError(
-                f"Stream {self.stream_name!r}: source set but topic is None"
+                f"Stream {self.nexus_path!r}: source set but topic is None"
             )
         if self.source is None and self.topic is not None:
             raise ValueError(
-                f"Stream {self.stream_name!r}: topic set but source is None"
+                f"Stream {self.nexus_path!r}: topic set but source is None"
             )
 
 

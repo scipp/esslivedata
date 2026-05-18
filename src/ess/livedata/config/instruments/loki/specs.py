@@ -33,6 +33,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     register_wavelength_lut_workflow_spec,
 )
+from ess.livedata.nexus_helpers import suggest_names
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
@@ -192,7 +193,9 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # f144 streams come from streams_parsed.py (auto-generated from the LOKI
 # geometry file). The detector carriage readback is the position dependency of
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
-streams = {s.stream_name: s for s in PARSED_STREAMS}
+streams = {
+    name: PARSED_STREAMS[path] for path, name in suggest_names(PARSED_STREAMS).items()
+}
 
 # Create instrument
 instrument = Instrument(

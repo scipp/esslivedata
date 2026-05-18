@@ -14,6 +14,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.nexus_helpers import suggest_names
 
 from .streams_parsed import PARSED_STREAMS
 
@@ -25,7 +26,10 @@ instrument = Instrument(
     name='nmx',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
-    streams={s.stream_name: s for s in PARSED_STREAMS},
+    streams={
+        name: PARSED_STREAMS[path]
+        for path, name in suggest_names(PARSED_STREAMS).items()
+    },
 )
 
 # Register instrument

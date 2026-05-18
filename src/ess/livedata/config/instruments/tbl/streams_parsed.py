@@ -10,481 +10,413 @@ Source: coda_tbl_999999_00023688.hdf
 
 from ess.livedata.config import F144Stream
 
-PARSED_STREAMS: list[F144Stream] = [
-    F144Stream(
-        stream_name='SOM',
-        nexus_path='/entry/sample/transformations/SOM',
-        source='SIM_tbl:sample:transformations:SOM',
-        topic='tbl_motion',
-        units='degrees',
-    ),
-    F144Stream(
-        stream_name='SOZ',
-        nexus_path='/entry/sample/transformations/SOZ',
-        source='SIM_tbl:sample:transformations:SOZ',
-        topic='tbl_motion',
-        units='m',
-    ),
-    F144Stream(
-        stream_name='attentuator_position_readback',
+PARSED_STREAMS: dict[str, F144Stream] = {
+    '/entry/instrument/attentuator/position_readback': F144Stream(
         nexus_path='/entry/instrument/attentuator/position_readback',
         source='TBL-AttChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='attentuator_position_setpoint',
+    '/entry/instrument/attentuator/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/attentuator/position_setpoint',
         source='TBL-AttChg:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='bwc_1_delay',
+    '/entry/instrument/bwc_1/delay': F144Stream(
         nexus_path='/entry/instrument/bwc_1/delay',
         source='TBL-ChpSy1:Chop-BWC-101:TotDly',
         topic='tbl_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bwc_1_rotation_speed',
+    '/entry/instrument/bwc_1/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bwc_1/rotation_speed',
         source='TBL-ChpSy1:Chop-BWC-101:Spd_R',
         topic='tbl_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bwc_1_rotation_speed_setpoint',
+    '/entry/instrument/bwc_1/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/bwc_1/rotation_speed_setpoint',
         source='TBL-ChpSy1:Chop-BWC-101:Spd_S',
         topic='tbl_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bwc_2_delay',
+    '/entry/instrument/bwc_2/delay': F144Stream(
         nexus_path='/entry/instrument/bwc_2/delay',
         source='TBL-ChpSy1:Chop-BWC-102:TotDly',
         topic='tbl_choppers',
         units='ns',
     ),
-    F144Stream(
-        stream_name='bwc_2_rotation_speed',
+    '/entry/instrument/bwc_2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bwc_2/rotation_speed',
         source='TBL-ChpSy1:Chop-BWC-102:Spd_R',
         topic='tbl_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='bwc_2_rotation_speed_setpoint',
+    '/entry/instrument/bwc_2/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/bwc_2/rotation_speed_setpoint',
         source='TBL-ChpSy1:Chop-BWC-102:Spd_S',
         topic='tbl_choppers',
         units='Hz',
     ),
-    F144Stream(
-        stream_name='camera_stage_position_readback',
+    '/entry/instrument/camera_stage/position_readback': F144Stream(
         nexus_path='/entry/instrument/camera_stage/position_readback',
         source='TBL-TBL:MC-Pos-303:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='camera_stage_position_setpoint',
+    '/entry/instrument/camera_stage/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/camera_stage/position_setpoint',
         source='TBL-TBL:MC-Pos-303:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='collimator_horizontal_position_readback',
+    '/entry/instrument/collimator_horizontal/position_readback': F144Stream(
         nexus_path='/entry/instrument/collimator_horizontal/position_readback',
         source='TBL-PinLin:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='collimator_horizontal_position_setpoint',
+    '/entry/instrument/collimator_horizontal/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/collimator_horizontal/position_setpoint',
         source='TBL-PinLin:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='collimator_vertical_position_readback',
+    '/entry/instrument/collimator_vertical/position_readback': F144Stream(
         nexus_path='/entry/instrument/collimator_vertical/position_readback',
         source='TBL-PinLif:MC-LinZ-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='collimator_vertical_position_setpoint',
+    '/entry/instrument/collimator_vertical/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/collimator_vertical/position_setpoint',
         source='TBL-PinLif:MC-LinZ-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_1_position_readback',
+    '/entry/instrument/filter_1/position_readback': F144Stream(
         nexus_path='/entry/instrument/filter_1/position_readback',
         source='TBL-FilChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_1_position_setpoint',
+    '/entry/instrument/filter_1/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/filter_1/position_setpoint',
         source='TBL-FilChg:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_2_position_readback',
+    '/entry/instrument/filter_2/position_readback': F144Stream(
         nexus_path='/entry/instrument/filter_2/position_readback',
         source='TBL-FilChg:MC-LinY-02:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_2_position_setpoint',
+    '/entry/instrument/filter_2/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/filter_2/position_setpoint',
         source='TBL-FilChg:MC-LinY-02:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_3_position_readback',
+    '/entry/instrument/filter_3/position_readback': F144Stream(
         nexus_path='/entry/instrument/filter_3/position_readback',
         source='TBL-FilChg:MC-LinY-03:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='filter_3_position_setpoint',
+    '/entry/instrument/filter_3/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/filter_3/position_setpoint',
         source='TBL-FilChg:MC-LinY-03:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch00_current',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch00-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch00_voltage',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch01_current',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch01-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch01_voltage',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch02_current',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch02-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch02_voltage',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch03_current',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch03-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank0_he3_bank0_hvps_board101_ch03_voltage',
+    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch00_current',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch00-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch00_voltage',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch01_current',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch01-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch01_voltage',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch02_current',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch02-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch02_voltage',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch03_current',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_current': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch03-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='he3_detector_bank1_he3_bank1_hvps_board102_ch03_voltage',
+    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_voltage': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='monitor_1_hvps_voltage',
+    '/entry/instrument/monitor_1/hvps_voltage': F144Stream(
         nexus_path='/entry/instrument/monitor_1/hvps_voltage',
         source='TBL-BM:NDet-CDTIBM-001:HighVoltage-R',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch00_current',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_current': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch00-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch00_voltage',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_voltage': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch01_current',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_current': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch01-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch01_voltage',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_voltage': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch02_current',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_current': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch02-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch02_voltage',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_voltage': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch03_current',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_current': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch03-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='multiblade_detector_mb_hvps_board100_ch03_voltage',
+    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_voltage': F144Stream(
         nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82025_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
-        source='CrS-CMS:Cryo-TT-82025:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82027_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
-        source='CrS-CMS:Cryo-TT-82027:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82029_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
-        source='CrS-CMS:Cryo-TT-82029:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82031_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
-        source='CrS-CMS:Cryo-TT-82031:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_cryo_tt_82033_temperature',
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
-        source='CrS-CMS:Cryo-TT-82033:MeasValue',
-        topic='tn_data_general',
-        units='K',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_flat_top_current',
-        nexus_path='/entry/neutron_prod_info/flat_top_current',
-        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
-        topic='tn_data_general',
-        units='mA',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_fsm_machine_active',
-        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
-        source='CrS-CMS:SC-FSM-007x:STS_Active',
-        topic='tn_data_general',
-        units='dimensionless',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_pulse_charge',
-        nexus_path='/entry/neutron_prod_info/pulse_charge',
-        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
-        topic='tn_data_general',
-        units='uC',
-    ),
-    F144Stream(
-        stream_name='neutron_prod_info_pulse_width',
-        nexus_path='/entry/neutron_prod_info/pulse_width',
-        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
-        topic='tn_data_general',
-        units='ms',
-    ),
-    F144Stream(
-        stream_name='ngem_detector_ngem_hvps_board103_ch00_current',
+    '/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_current': F144Stream(
         nexus_path='/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-103:Ch00-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='ngem_detector_ngem_hvps_board103_ch00_voltage',
+    '/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_voltage': F144Stream(
         nexus_path='/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-103:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='ngem_detector_ngem_lvps_board105_ch00_current',
+    '/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_current': F144Stream(
         nexus_path='/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_current',
         source='TBL-DtCmn:PwrC-LVM-105:Ch00-IMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='ngem_detector_ngem_lvps_board105_ch00_voltage',
+    '/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_voltage': F144Stream(
         nexus_path='/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_voltage',
         source='TBL-DtCmn:PwrC-LVM-105:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    F144Stream(
-        stream_name='orca_detector_image_key',
+    '/entry/instrument/orca_detector/image_key': F144Stream(
         nexus_path='/entry/instrument/orca_detector/image_key',
         source='orca_image_type',
         topic='tbl_nicos_devices',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='orca_detector_intensifier',
+    '/entry/instrument/orca_detector/intensifier': F144Stream(
         nexus_path='/entry/instrument/orca_detector/intensifier',
         source='TBL-DtCMOS:NDet-ImgInt-001:IntensifierGain-R',
         topic='tbl_misc_devices',
         units='dimensionless',
     ),
-    F144Stream(
-        stream_name='orca_detector_intensifier_gate_delay',
+    '/entry/instrument/orca_detector/intensifier_gate_delay': F144Stream(
         nexus_path='/entry/instrument/orca_detector/intensifier_gate_delay',
         source='TBL-DtCmn:Ctrl-EVR-001:DlyGen1Delay-RB',
         topic='tbl_misc_devices',
         units='us',
     ),
-    F144Stream(
-        stream_name='orca_detector_intensifier_gate_width',
+    '/entry/instrument/orca_detector/intensifier_gate_width': F144Stream(
         nexus_path='/entry/instrument/orca_detector/intensifier_gate_width',
         source='TBL-DtCmn:Ctrl-EVR-001:DlyGen1Width-RB',
         topic='tbl_misc_devices',
         units='us',
     ),
-    F144Stream(
-        stream_name='pinhole_position_readback',
+    '/entry/instrument/pinhole/position_readback': F144Stream(
         nexus_path='/entry/instrument/pinhole/position_readback',
         source='TBL-PinChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='pinhole_position_setpoint',
+    '/entry/instrument/pinhole/position_setpoint': F144Stream(
         nexus_path='/entry/instrument/pinhole/position_setpoint',
         source='TBL-PinChg:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    F144Stream(
-        stream_name='polarizer_translation1',
+    '/entry/instrument/polarizer/transformations/translation1': F144Stream(
         nexus_path='/entry/instrument/polarizer/transformations/translation1',
         source='SIM_tbl:polarizer:transformations:translation1',
         topic='tbl_sample_env',
         units='m',
     ),
-    F144Stream(
-        stream_name='timepix3_detector_intensifier',
+    '/entry/instrument/timepix3_detector/intensifier': F144Stream(
         nexus_path='/entry/instrument/timepix3_detector/intensifier',
         source='TBL-DtTPX:NDet-ImgInt-001:AO0',
         topic='tbl_misc_devices',
         units='V',
     ),
-]
+    '/entry/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
+        source='CrS-CMS:Cryo-TT-82025:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82027_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
+        source='CrS-CMS:Cryo-TT-82027:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82029_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
+        source='CrS-CMS:Cryo-TT-82029:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82031_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
+        source='CrS-CMS:Cryo-TT-82031:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82033_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
+        source='CrS-CMS:Cryo-TT-82033:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/flat_top_current': F144Stream(
+        nexus_path='/entry/neutron_prod_info/flat_top_current',
+        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/neutron_prod_info/fsm_machine_active': F144Stream(
+        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
+        source='CrS-CMS:SC-FSM-007x:STS_Active',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/neutron_prod_info/pulse_charge': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_charge',
+        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/neutron_prod_info/pulse_width': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_width',
+        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
+        topic='tn_data_general',
+        units='ms',
+    ),
+    '/entry/sample/transformations/SOM': F144Stream(
+        nexus_path='/entry/sample/transformations/SOM',
+        source='SIM_tbl:sample:transformations:SOM',
+        topic='tbl_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/SOZ': F144Stream(
+        nexus_path='/entry/sample/transformations/SOZ',
+        source='SIM_tbl:sample:transformations:SOZ',
+        topic='tbl_motion',
+        units='m',
+    ),
+}
