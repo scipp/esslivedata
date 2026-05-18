@@ -220,9 +220,9 @@ def test_workflow_config_widget_adapter_compatibility(
 
 
 def _collect_workflow_outputs():
-    """Collect (instrument, workflow_id, output_name) for all workflow outputs.
+    """Collect (instrument, workflow_id, view_name) for all workflow output views.
 
-    This enables per-output testing for finer-grained failure reporting.
+    This enables per-view testing for finer-grained failure reporting.
     """
     outputs = []
     for instrument_name in available_instruments():
@@ -235,42 +235,43 @@ def _collect_workflow_outputs():
                 pytest.param(
                     instrument_name,
                     workflow_id,
-                    output_name,
-                    id=f"{workflow_id}/{output_name}",
+                    view.name,
+                    id=f"{workflow_id}/{view.name}",
                 )
-                for output_name in spec.outputs.model_fields
+                for view in spec.get_output_views()
             )
     return outputs
 
 
 @pytest.mark.parametrize(
-    ("instrument_name", "workflow_id", "output_name"), _collect_workflow_outputs()
+    ("instrument_name", "workflow_id", "view_name"), _collect_workflow_outputs()
 )
 def test_workflow_output_has_compatible_plotter(
-    instrument_name: str, workflow_id: WorkflowId, output_name: str
+    instrument_name: str, workflow_id: WorkflowId, view_name: str
 ):
-    """Test that each workflow output has at least one compatible plotter.
+    """Test that each workflow output view has at least one compatible plotter.
 
     This ensures the dashboard can offer valid plotting options for every
-    declared workflow output. The plotter matching uses the output's template
-    DataArray (from default_factory) to validate against plotter requirements.
+    declared workflow output view. The plotter matching uses the view's
+    template DataArray (from default_factory) to validate against plotter
+    requirements.
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
 
-    template = spec.get_output_template(output_name)
+    template = spec.get_output_template(view_name)
     if template is None:
         pytest.fail(
-            f"Output '{output_name}' of {workflow_id} has no template. "
-            f"Add default_factory to the field definition to enable plotter matching."
+            f"View '{view_name}' of {workflow_id} has no template. "
+            f"Add default_factory to the backing field to enable plotter matching."
         )
 
     compatible = plotter_registry.get_compatible_plotters_with_spec(
-        {output_name: template}, spec.aux_sources
+        {view_name: template}, spec.aux_sources
     )
 
     assert compatible, (
-        f"Output '{output_name}' of {workflow_id} has no compatible plotter. "
+        f"View '{view_name}' of {workflow_id} has no compatible plotter. "
         f"Template: ndim={template.ndim}, dims={template.dims}, "
         f"coords={list(template.coords)}"
     )

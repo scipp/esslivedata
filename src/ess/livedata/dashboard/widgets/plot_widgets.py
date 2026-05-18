@@ -265,10 +265,12 @@ def get_workflow_display_info(
         workflow_title = str(workflow_id)
 
     # Get view title from spec if available
-    if workflow_spec is not None and view_name:
-        view_title = workflow_spec.get_output_title(view_name)
-    else:
-        view_title = view_name or ''
+    view = (
+        workflow_spec.get_output_view(view_name)
+        if workflow_spec and view_name
+        else None
+    )
+    view_title = view.title if view is not None else (view_name or '')
 
     return workflow_title, view_title
 
@@ -414,10 +416,13 @@ def get_plot_cell_display_info(
 
     # Append view description from the workflow spec if available
     workflow_spec = workflow_registry.get(config.workflow_id)
-    if workflow_spec is not None and config.view_name:
-        output_desc = workflow_spec.get_output_description(config.view_name)
-        if output_desc:
-            description_parts.append(f'\n{output_desc}')
+    view = (
+        workflow_spec.get_output_view(config.view_name)
+        if workflow_spec is not None and config.view_name
+        else None
+    )
+    if view is not None and view.description:
+        description_parts.append(f'\n{view.description}')
 
     # Append plotter-specific description (e.g., usage instructions)
     from ..plotter_registry import plotter_registry

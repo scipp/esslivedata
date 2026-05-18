@@ -918,7 +918,7 @@ class PlotOrchestrator:
             for view in spec.get_output_views():
                 if field_name in view.streams.values():
                     return view.title
-            return spec.get_output_title(field_name)
+            return field_name
 
         return TitleResolver(
             source=self.get_source_title,

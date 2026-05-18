@@ -95,7 +95,8 @@ def _resolve_axis_source_titles(
             if workflow_registry is not None:
                 spec = workflow_registry.get(ds.workflow_id)
                 if spec is not None and len(spec.get_output_views()) > 1:
-                    view_title = spec.get_output_title(ds.view_name)
+                    view = spec.get_output_view(ds.view_name)
+                    view_title = view.title if view is not None else ds.view_name
                     title = f"{title} ({view_title})"
             result[field_name] = title
     return result
@@ -220,7 +221,8 @@ def _build_timeseries_options(
         # Append view title only when the workflow has multiple views,
         # to disambiguate which view is being selected.
         if spec is not None and len(spec.get_output_views()) > 1:
-            view_title = spec.get_output_title(view_name)
+            view = spec.get_output_view(view_name)
+            view_title = view.title if view is not None else view_name
             display_name = f"{display_name} ({view_title})"
         options[display_name] = (workflow_id, source_name, view_name)
     return options
@@ -523,8 +525,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         desc = None
         if self._selected_workflow_id is not None and self._selected_view is not None:
             spec = self._workflow_registry.get(self._selected_workflow_id)
-            if spec is not None:
-                desc = spec.get_output_description(self._selected_view)
+            view = (
+                spec.get_output_view(self._selected_view) if spec is not None else None
+            )
+            if view is not None:
+                desc = view.description
         if desc:
             self._output_description.object = desc
             self._output_description.visible = True

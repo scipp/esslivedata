@@ -365,71 +365,22 @@ class WorkflowSpec(BaseModel):
                 return view
         return None
 
-    def get_output_title(self, view_name: str) -> str:
-        """Return the user-facing title for an output view.
+    def get_output_template(self, view_name: str) -> sc.DataArray | None:
+        """Get a template DataArray for the specified output view.
 
-        Falls back to the raw view name when the view is unknown.
-        """
-        view = self.get_output_view(view_name)
-        return view.title if view is not None else view_name
+        Returns the ``default_factory`` template of the view's canonical
+        backing field (``since_start`` if present, else ``per_update``).
+        Templates are empty DataArrays demonstrating the expected structure
+        (dims, coords, units), used by the dashboard for plotter selection
+        before any data has arrived.
 
-    def get_output_description(self, view_name: str) -> str | None:
-        """Return the description for an output view, or None.
-
-        For views without an explicit description, falls back to the
-        description of the ``since_start`` (or ``per_update``) backing field.
+        Returns None if the view is unknown or its canonical field has no
+        ``default_factory``.
         """
         view = self.get_output_view(view_name)
         if view is None:
             return None
-        if view.description is not None:
-            return view.description
-        for role in ('since_start', 'per_update'):
-            field_name = view.streams.get(role)  # type: ignore[arg-type]
-            if field_name is None:
-                continue
-            field_info = self.outputs.model_fields.get(field_name)
-            if field_info is not None and field_info.description is not None:
-                return field_info.description
-        return None
-
-    def get_output_template(self, view_name: str) -> sc.DataArray | None:
-        """
-        Get a template DataArray for the specified output view.
-
-        Returns a DataArray created by the backing field's ``default_factory``.
-        By convention, this is an empty DataArray (shape=0) demonstrating the
-        expected structure (dims, coords, units) of the workflow output.
-
-        Falls back to looking up ``view_name`` as a raw field name when no
-        matching view is declared — keeps callers working for the implicit
-        one-view-per-field case as well as for direct field lookups.
-
-        Parameters
-        ----------
-        view_name:
-            Name of the output view (or a raw field name).
-
-        Returns
-        -------
-        :
-            DataArray created by the backing field's default_factory, or
-            None if neither the view nor the field is found.
-        """
-        view = self.get_output_view(view_name)
-        if view is not None:
-            for role in ('since_start', 'per_update'):
-                field_name = view.streams.get(role)  # type: ignore[arg-type]
-                if field_name is None:
-                    continue
-                template = self._template_for_field(field_name)
-                if template is not None:
-                    return template
-            return None
-        return self._template_for_field(view_name)
-
-    def _template_for_field(self, field_name: str) -> sc.DataArray | None:
-        field_info = self.outputs.model_fields.get(field_name)
+        field_info = self.outputs.model_fields.get(view.field_for('since_start'))
         if field_info is None or not field_info.default_factory:
             return None
         return field_info.default_factory()
@@ -634,21 +585,13 @@ def find_timeseries_outputs(
 
         timeseries_views: list[str] = []
         for view in spec.get_output_views():
-            template: sc.DataArray | None = None
-            for role in ('per_update', 'since_start'):
-                field_name = view.streams.get(role)  # type: ignore[arg-type]
-                if field_name is None:
+            for field_name in view.streams.values():
+                field_info = spec.outputs.model_fields.get(field_name)
+                if field_info is None or not field_info.default_factory:
                     continue
-                template = spec._template_for_field(field_name)
-                if template is not None:
-                    break
-            if template is None:
-                continue
-            try:
-                if _is_timeseries_output(template):
+                if _is_timeseries_output(field_info.default_factory()):
                     timeseries_views.append(view.name)
-            except Exception:  # noqa: S112
-                continue
+                    break
 
         results.extend(
             (workflow_id, source_name, view_name)

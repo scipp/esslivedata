@@ -228,110 +228,6 @@ class TestWorkflowSpecOutputs:
         assert template1 is not template2
 
 
-class TestGetOutputTitle:
-    """Tests for WorkflowSpec.get_output_title()."""
-
-    def test_returns_title_when_defined(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='I(d)')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('result') == 'I(d)'
-
-    def test_falls_back_to_field_name_when_no_title(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='No title set')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('result') == 'result'
-
-    def test_falls_back_to_output_name_for_missing_field(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='Result')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('nonexistent') == 'nonexistent'
-
-
-class TestGetOutputDescription:
-    """Tests for WorkflowSpec.get_output_description()."""
-
-    def test_returns_description_when_defined(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='A detailed description.')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('result') == 'A detailed description.'
-
-    def test_returns_none_when_no_description(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='Result')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('result') is None
-
-    def test_returns_none_for_missing_field(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='Exists')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('nonexistent') is None
-
-
 class TestWorkflowConfigAuxSourceNames:
     """Tests for WorkflowConfig.aux_source_names field."""
 
@@ -896,7 +792,7 @@ class TestOutputViews:
         )
         views = spec.get_output_views()
         assert [v.name for v in views] == ['histogram']
-        assert spec.get_output_title('histogram') == 'Histogram'
+        assert views[0].title == 'Histogram'
 
     def test_get_output_view_returns_none_for_unknown(self) -> None:
         class Outputs(WorkflowOutputsBase):
