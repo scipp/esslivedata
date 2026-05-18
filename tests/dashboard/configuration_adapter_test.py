@@ -6,6 +6,7 @@ import pydantic
 
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources
 from ess.livedata.dashboard.configuration_adapter import (
+    DEFAULT_SOURCE_PRESELECTION_CAP,
     ConfigurationAdapter,
     ConfigurationState,
 )
@@ -120,6 +121,64 @@ class TestInitialSourceNames:
         adapter = ConcreteAdapter(
             available_sources=['source1', 'source2', 'source3'],
             initial_source_names=[],
+        )
+        assert adapter.initial_source_names == []
+
+    def test_default_returns_all_at_cap(self) -> None:
+        """Defaulting returns all sources when exactly at the cap."""
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP)]
+        adapter = ConcreteAdapter(available_sources=sources)
+        assert adapter.initial_source_names == sources
+
+    def test_default_returns_empty_above_cap(self) -> None:
+        """Defaulting returns empty list when source count exceeds the cap."""
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP + 1)]
+        adapter = ConcreteAdapter(available_sources=sources)
+        assert adapter.initial_source_names == []
+
+    def test_explicit_list_above_cap_without_config_state_returns_empty(self) -> None:
+        """Caller-supplied list exceeding the cap is emptied when no config exists.
+
+        Without stored configuration, the explicit list reflects intent only
+        (e.g., "configure these unconfigured sources"), so the cap applies.
+        """
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP + 3)]
+        adapter = ConcreteAdapter(
+            available_sources=sources,
+            initial_source_names=sources,
+        )
+        assert adapter.initial_source_names == []
+
+    def test_explicit_list_above_cap_with_config_state_preserved(self) -> None:
+        """Caller-supplied list is preserved when stored configuration exists.
+
+        Stored configuration indicates the user is editing existing data — the
+        prior selection must not be silently truncated by the cap.
+        """
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP + 3)]
+        adapter = ConcreteAdapter(
+            available_sources=sources,
+            config_state=ConfigurationState(params={'value': 1}),
+            initial_source_names=sources,
+        )
+        assert adapter.initial_source_names == sources
+
+    def test_explicit_list_at_cap_preserved(self) -> None:
+        """Caller-supplied list within the cap is returned as-is."""
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP + 5)]
+        selected = sources[:DEFAULT_SOURCE_PRESELECTION_CAP]
+        adapter = ConcreteAdapter(
+            available_sources=sources,
+            initial_source_names=selected,
+        )
+        assert adapter.initial_source_names == selected
+
+    def test_fallback_above_cap_returns_empty(self) -> None:
+        """Fallback from unavailable sources also respects the cap."""
+        sources = [f's{i}' for i in range(DEFAULT_SOURCE_PRESELECTION_CAP + 2)]
+        adapter = ConcreteAdapter(
+            available_sources=sources,
+            initial_source_names=['nonexistent1', 'nonexistent2'],
         )
         assert adapter.initial_source_names == []
 
