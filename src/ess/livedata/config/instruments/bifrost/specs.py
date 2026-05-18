@@ -11,13 +11,14 @@ See https://backend.orbit.dtu.dk/ws/portalfiles/portal/409340969/RSI25-AR-00125.
 for full instrument details.
 """
 
+from dataclasses import replace
 from enum import StrEnum
 from typing import Literal
 
 import pydantic
 import scipp as sc
 
-from ess.livedata.config import Instrument, build_streams, instrument_registry
+from ess.livedata.config import Instrument, Stream, instrument_registry
 from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -220,19 +221,19 @@ monitors = [
 
 # Stream names referenced by factory bindings and bifrost_aux_sources above
 # must survive verbatim. Other entries take the auto-generated names from
-# `streams_parsed.py`.
-_DETECTOR_TANK_ANGLE = (
-    '/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/value'
-)
-streams = build_streams(
-    PARSED_STREAMS,
-    overrides={
-        _DETECTOR_TANK_ANGLE: {'stream_name': 'detector_rotation'},
-        '/entry/instrument/114_sample_stack/rotation_stage/value': {
-            'stream_name': 'sample_rotation',
-        },
-    },
-)
+# `streams_parsed.py`. Renames are keyed by stable nexus_path.
+_RENAMES = {
+    (
+        '/entry/instrument/detector_tank_angle/transformations/'
+        'detector_tank_angle_r0/value'
+    ): 'detector_rotation',
+    '/entry/instrument/114_sample_stack/rotation_stage/value': ('sample_rotation'),
+}
+streams: dict[str, Stream] = {}
+for _s in PARSED_STREAMS:
+    if (_new := _RENAMES.get(_s.nexus_path)) is not None:
+        _s = replace(_s, stream_name=_new)
+    streams[_s.stream_name] = _s
 
 # Create instrument
 instrument = Instrument(

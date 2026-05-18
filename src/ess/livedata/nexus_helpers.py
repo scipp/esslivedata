@@ -262,8 +262,9 @@ def generate_streams_parsed_module(
     The output is a self-contained, importable Python module: SPDX header,
     a banner identifying it as auto-generated, the ``F144Stream`` import,
     and a single sorted ``list[F144Stream]`` literal. The instrument's
-    hand-edited ``streams.py`` is expected to import this list and pass it
-    through :func:`build_streams` with any overrides or synthetics.
+    hand-edited ``specs.py`` is expected to import this list and build the
+    final ``Instrument.streams`` dict (applying any per-instrument renames
+    or merging in synthetic streams).
 
     Parameters
     ----------
@@ -285,8 +286,8 @@ def generate_streams_parsed_module(
                 for info in sorted(group, key=lambda i: i.group_path)
             )
         message.append(
-            'Resolve via build_streams(overrides={...}) keyed by nexus_path, '
-            'or improve suggest_internal_name.'
+            'Resolve via a per-instrument rename keyed by nexus_path in '
+            'specs.py, or improve suggest_internal_name.'
         )
         raise ValueError('\n'.join(message))
 

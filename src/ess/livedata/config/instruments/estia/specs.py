@@ -4,6 +4,8 @@
 ESTIA instrument spec registration.
 """
 
+from dataclasses import replace
+
 import pydantic
 import scipp as sc
 
@@ -11,7 +13,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
-    build_streams,
+    Stream,
     instrument_registry,
 )
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
@@ -187,18 +189,18 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 
 
 # Pin ``detector_rotation`` to the .RBV (readback) entry; without the
-# override the suggested name would be ``detector_arm_detector_rotation``.
+# rename the suggested name would be ``detector_arm_detector_rotation``.
 # The file also publishes a depends_on-chain reference under
 # multiblade_detector/transformations/detector_rotation with a placeholder
 # source (missing .RBV suffix) — left as-is; only the readback is used.
-streams = build_streams(
-    PARSED_STREAMS,
-    overrides={
-        '/entry/instrument/detector_arm/detector_rotation/value': {
-            'stream_name': 'detector_rotation',
-        },
-    },
-)
+_RENAMES = {
+    '/entry/instrument/detector_arm/detector_rotation/value': 'detector_rotation',
+}
+streams: dict[str, Stream] = {}
+for _s in PARSED_STREAMS:
+    if (_new := _RENAMES.get(_s.nexus_path)) is not None:
+        _s = replace(_s, stream_name=_new)
+    streams[_s.stream_name] = _s
 
 instrument = Instrument(
     name='estia',
