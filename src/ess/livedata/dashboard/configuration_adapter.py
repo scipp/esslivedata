@@ -11,6 +11,15 @@ from ess.livedata.config.workflow_spec import AuxSources
 
 Model = TypeVar('Model')
 
+DEFAULT_SOURCE_PRESELECTION_CAP = 5
+"""Maximum number of sources to pre-select by default.
+
+Above this threshold, ``initial_source_names`` defaults to an empty list so
+the user is not faced with a long pre-selection that they have to trim. The
+configuration widget exposes "Select all" / "Select none" buttons so the
+user can opt into the full set with a single click.
+"""
+
 
 class ConfigurationState(BaseModel):
     """
@@ -153,19 +162,34 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         Initially selected source names.
 
-        Returns the pre-configured source names (filtered to available sources),
-        or all available sources if none were specified. An explicit empty list
-        is preserved (e.g., for 2D outputs where no source should be pre-selected).
-        If a non-empty list filters down to nothing (all sources became unavailable),
-        falls back to all available sources.
+        Returns the pre-configured source names (filtered to available sources).
+        An explicit empty list is preserved (e.g., for 2D outputs where no source
+        should be pre-selected).
+
+        When no stored configuration exists (``config_state is None``), defaults
+        to all available sources but caps at ``DEFAULT_SOURCE_PRESELECTION_CAP``:
+        beyond that, returns an empty list to avoid overwhelming the user. The
+        cap also applies to a caller-supplied list in the no-stored-config case,
+        since the list then represents intent (e.g., "configure these unconfigured
+        sources") rather than a previous selection. When stored configuration is
+        present, the caller-supplied list is trusted as-is — restoring a saved
+        selection (e.g., editing an existing plot or workflow group) must never
+        silently drop entries.
         """
         if self._initial_source_names is not None:
             if not self._initial_source_names:
                 return []
             available = set(self.source_names)
             filtered = [s for s in self._initial_source_names if s in available]
-            return filtered if filtered else self.source_names
-        return self.source_names
+            if filtered:
+                if self._config_state is None:
+                    return self._cap_default_preselection(filtered)
+                return filtered
+        return self._cap_default_preselection(self.source_names)
+
+    def _cap_default_preselection(self, names: list[str]) -> list[str]:
+        """Return ``names`` if within the preselection cap, else empty list."""
+        return names if len(names) <= DEFAULT_SOURCE_PRESELECTION_CAP else []
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
