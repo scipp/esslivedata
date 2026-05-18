@@ -8,7 +8,6 @@ was streamed during acquisition.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -122,61 +121,6 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
-#: NeXus container groups that carry no entity-level meaning. Removed from the
-#: path before constructing an internal name so that e.g.
-#: ``entry/instrument/wfm1/transformations/translation1`` becomes
-#: ``wfm1_translation1`` and not ``transformations_translation1``.
-_GENERIC_GROUPS: frozenset[str] = frozenset(
-    {'entry', 'instrument', 'sample', 'sample_environment', 'transformations'}
-)
-
-
-def suggest_names(paths: Iterable[str]) -> dict[str, str]:
-    """Suggest a unique internal name for each NeXus group path.
-
-    Generic NeXus container groups (``entry``, ``instrument``, ``sample``,
-    ``sample_environment``, ``transformations``) are dropped — they add no
-    meaning and only inflate names. The name is then the shortest tail
-    (minimum two components, when available) of the remaining path that is
-    unique across the input set. Duplicates extend to the next-longer tail
-    until uniqueness is reached.
-
-    Paths that still collide after exhausting the filtered tail (i.e. they
-    differ only in filtered-out generic ancestors) fall back to the full
-    unfiltered path. HDF5 path uniqueness guarantees this resolves.
-
-    The returned dict is keyed by path. Since paths are unique in HDF5 and
-    each path produces at most one name, no two paths share a name.
-    """
-    paths = list(paths)
-    full: dict[str, list[str]] = {p: p.strip('/').split('/') for p in paths}
-    filtered: dict[str, list[str]] = {
-        p: [c for c in full[p] if c not in _GENERIC_GROUPS] or full[p] for p in paths
-    }
-
-    result: dict[str, str] = {}
-    pending = set(paths)
-    for parts in (filtered, full):
-        max_d = max((len(parts[p]) for p in pending), default=1)
-        depth = 2
-        while pending and depth <= max(max_d, 2):
-            candidates = {
-                p: '_'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
-            }
-            counts: dict[str, int] = {}
-            for name in candidates.values():
-                counts[name] = counts.get(name, 0) + 1
-            next_pending: set[str] = set()
-            for path, name in candidates.items():
-                if counts[name] == 1:
-                    result[path] = name
-                else:
-                    next_pending.add(path)
-            pending = next_pending
-            depth += 1
-    return result
-
-
 def filter_f144_streams(
     infos: list[StreamInfo],
     *,
@@ -222,8 +166,8 @@ def generate_streams_parsed_module(
     and a single ``dict[str, F144Stream]`` literal keyed by ``nexus_path``.
     The instrument's hand-edited ``specs.py`` is expected to import this
     dict and turn it into ``Instrument.streams`` — assigning names (via
-    :func:`suggest_names` or any other convention), applying renames, and
-    merging in synthetic streams.
+    :func:`ess.livedata.config.name_streams` or any other convention),
+    applying renames, and merging in synthetic streams.
 
     Parameters
     ----------
