@@ -586,14 +586,12 @@ class WorkflowStatusWidget:
 
     def _create_outputs_section(self) -> pn.Column:
         """Create the outputs section with chips."""
-        outputs = self._workflow_spec.outputs
-        if outputs is None:
+        if self._workflow_spec.outputs is None:
             return pn.Column(margin=0)
 
-        # Get output field names and titles
         chips_html = ''
-        for field_name, field_info in outputs.model_fields.items():
-            title = field_info.title or field_name
+        for view in self._workflow_spec.get_output_views():
+            title = view.title
             chip_bg = WorkflowWidgetStyles.OUTPUT_CHIP_BG
             chip_border = WorkflowWidgetStyles.OUTPUT_CHIP_BORDER
             chip_text = WorkflowWidgetStyles.OUTPUT_CHIP_TEXT
