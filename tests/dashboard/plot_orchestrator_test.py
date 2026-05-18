@@ -1907,6 +1907,113 @@ class TestDataSubscriptionCleanup:
         assert len(fake_data_service._subscribers) == subscriber_count_with_layer - 1
 
 
+class TestPlotAfterWorkflowStopped:
+    """A layer created after the workflow has stopped binds to the retained
+    buffered data from the previous job and ends up in the STOPPED state
+    with a cached plot."""
+
+    def _add_data(
+        self,
+        fake_data_service,
+        workflow_id,
+        config,
+        job_number,
+    ):
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in config.source_names:
+            key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=config.output_name,
+            )
+            fake_data_service[key] = sc.scalar(1.0)
+
+    def test_new_layer_after_stop_displays_retained_data(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        plot_data_service,
+    ):
+        from ess.livedata.dashboard.plot_data_service import LayerState
+
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._add_data(
+            fake_data_service, workflow_id, plot_cell[1], job_ids[0].job_number
+        )
+        job_orchestrator.stop_workflow(workflow_id)
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        state = plot_data_service.get(layer_id)
+        assert state is not None
+        assert state.state == LayerState.STOPPED
+        assert state.plotter is not None
+        assert state.plotter.has_cached_state()
+
+    def test_update_layer_config_after_stop_displays_retained_data(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        plot_data_service,
+    ):
+        from ess.livedata.dashboard.plot_data_service import LayerState
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        original_layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._add_data(
+            fake_data_service, workflow_id, plot_cell[1], job_ids[0].job_number
+        )
+        job_orchestrator.stop_workflow(workflow_id)
+
+        plot_orchestrator.update_layer_config(original_layer_id, plot_cell[1])
+
+        new_layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        assert new_layer_id != original_layer_id
+
+        state = plot_data_service.get(new_layer_id)
+        assert state is not None
+        assert state.state == LayerState.STOPPED
+        assert state.plotter.has_cached_state()
+
+    def test_new_layer_with_no_previous_job_stays_waiting(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        plot_data_service,
+    ):
+        from ess.livedata.dashboard.plot_data_service import LayerState
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        state = plot_data_service.get(layer_id)
+        assert state is not None
+        assert state.state == LayerState.WAITING_FOR_JOB
+
+
 class TestTitleResolver:
     """Tests for TitleResolver construction in multi-layer cells."""
 

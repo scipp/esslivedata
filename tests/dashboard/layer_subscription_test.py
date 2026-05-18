@@ -34,11 +34,20 @@ class FakeJobOrchestrator:
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
         self._running_jobs: dict[WorkflowId, JobNumber] = {}
+        self._previous_jobs: dict[WorkflowId, JobNumber] = {}
         self._next_sub_id = 0
 
     def add_running_job(self, workflow_id: WorkflowId, job_number: JobNumber) -> None:
         """Mark a workflow as running with the given job number."""
         self._running_jobs[workflow_id] = job_number
+
+    def add_previous_job(self, workflow_id: WorkflowId, job_number: JobNumber) -> None:
+        """Mark a workflow as having a stopped (previous) job with retained data."""
+        self._previous_jobs[workflow_id] = job_number
+
+    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """Return the most recently stopped job number, if any."""
+        return self._previous_jobs.get(workflow_id)
 
     def subscribe_to_workflow(
         self,
@@ -86,6 +95,7 @@ class FakeJobOrchestrator:
     ) -> None:
         """Simulate workflow stopping (notifies only subscribers for workflow)."""
         self._running_jobs.pop(workflow_id, None)
+        self._previous_jobs[workflow_id] = job_number
         for sub_id in self._workflow_subscriptions.get(workflow_id, set()):
             if sub_id in self._subscriptions:
                 callbacks = self._subscriptions[sub_id]
