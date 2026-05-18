@@ -186,17 +186,7 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
     )
 
 
-# Pin ``detector_rotation`` to the .RBV (readback) entry; without the
-# rename the suggested name would be ``detector_arm_detector_rotation``.
-# The file also publishes a depends_on-chain reference under
-# multiblade_detector/transformations/detector_rotation with a placeholder
-# source (missing .RBV suffix) — left as-is; only the readback is used.
-streams = name_streams(
-    PARSED_STREAMS,
-    rename={
-        '/entry/instrument/detector_arm/detector_rotation/value': 'detector_rotation',
-    },
-)
+streams = name_streams(PARSED_STREAMS)
 
 instrument = Instrument(
     name='estia',
