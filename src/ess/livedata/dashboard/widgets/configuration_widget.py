@@ -125,7 +125,9 @@ class ConfigurationWidget:
             select_all_btn,
             select_none_btn,
             sizing_mode='stretch_width',
-            margin=(0, 0, 4, 0),
+            # Match MultiChoice's default horizontal margin so the right-aligned
+            # buttons line up with the selector's right edge.
+            margin=(0, 10, 4, 10),
         )
 
     def _select_all_sources(self) -> None:
