@@ -1,7 +1,7 @@
 {
     "sliders": [
         {
-            "stream_name": "detector_carriage",
+            "stream_name": "detector_carriage_value",
             "label": "Sample-Rear Distance (mm)",
             "min": 1000.0,
             "max": 12000.0,
