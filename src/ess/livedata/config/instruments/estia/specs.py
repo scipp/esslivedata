@@ -194,7 +194,7 @@ instrument = Instrument(
     monitors=list(GENERIC_CBM_MONITORS),
     streams=streams,
     source_metadata={
-        'detector_rotation': SourceMetadata(
+        'detector_rotation_value': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),

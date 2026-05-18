@@ -71,12 +71,12 @@ def setup_factories(instrument: Instrument) -> None:
     # Bifrost f144 streams that feed typed Sciline keys on the cut-workflow graph.
     # Routed via context_keys; not NeXus components loaded by name.
     instrument.add_log_context_binding(
-        stream_name='detector_tank_angle_r0',
+        stream_name='detector_tank_angle_r0_value',
         workflow_key=InstrumentAngle[SampleRun],
         dependent_sources=['unified_detector'],
     )
     instrument.add_log_context_binding(
-        stream_name='rotation_stage',
+        stream_name='rotation_stage_value',
         workflow_key=SampleAngle[SampleRun],
         dependent_sources=['unified_detector'],
     )

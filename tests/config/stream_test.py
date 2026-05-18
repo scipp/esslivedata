@@ -19,8 +19,8 @@ class TestNameStreams:
             '/entry/instrument/motor/value': _parsed('/entry/instrument/motor/value')
         }
         result = name_streams(parsed)
-        assert list(result) == ['motor']
-        assert result['motor'].nexus_path == '/entry/instrument/motor/value'
+        assert list(result) == ['motor_value']
+        assert result['motor_value'].nexus_path == '/entry/instrument/motor/value'
 
     def test_rename_overrides_suggestion(self) -> None:
         path = '/entry/instrument/detector_arm/detector_rotation/value'
@@ -39,11 +39,9 @@ class TestNameStreams:
             '/entry/instrument/bar/value': _parsed('/entry/instrument/bar/value'),
         }
         with pytest.raises(ValueError, match='collides'):
-            name_streams(parsed, rename={'/entry/instrument/bar/value': 'foo'})
+            name_streams(parsed, rename={'/entry/instrument/bar/value': 'foo_value'})
 
-    def test_auxiliary_siblings_get_distinct_names(self) -> None:
-        # idle_flag is not a primary-readback suffix, so it is preserved
-        # and the parent NXlog is prepended for context.
+    def test_sibling_leaves_get_distinct_names(self) -> None:
         parsed = {
             '/entry/instrument/motor/value': _parsed('/entry/instrument/motor/value'),
             '/entry/instrument/motor/idle_flag': _parsed(
@@ -51,4 +49,4 @@ class TestNameStreams:
             ),
         }
         result = name_streams(parsed)
-        assert set(result) == {'motor', 'motor_idle_flag'}
+        assert set(result) == {'motor_value', 'motor_idle_flag'}

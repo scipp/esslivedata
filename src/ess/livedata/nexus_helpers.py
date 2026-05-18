@@ -122,12 +122,6 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
-#: Suffixes that mark the primary readback entry of an NXlog. Stripped from
-#: the leaf so e.g. ``/entry/.../motor/value`` is named for the parent NXlog
-#: (``motor``). Auxiliary siblings (``idle_flag``, ``target_value``, ...) are
-#: NOT stripped — they keep their suffix so they remain distinguishable.
-_READBACK_SUFFIXES: frozenset[str] = frozenset({'value', 'value_log'})
-
 #: NeXus container groups that carry no entity-level meaning. Removed from the
 #: path before constructing an internal name so that e.g.
 #: ``entry/instrument/wfm1/transformations/translation1`` becomes
@@ -137,57 +131,37 @@ _GENERIC_GROUPS: frozenset[str] = frozenset(
 )
 
 
-def _path_meta(path: str) -> tuple[list[str], int]:
-    """Return (meaningful path components, minimum useful depth).
-
-    The minimum depth is 1 if the leaf was a primary-readback suffix
-    (stripped, so depth-1 is the parent NXlog name) or 2 otherwise (so
-    the parent context is always part of an auxiliary entry's name).
-    """
-    parts = path.strip('/').split('/')
-    stripped = parts and parts[-1] in _READBACK_SUFFIXES
-    if stripped:
-        parts = parts[:-1]
-    meaningful = [p for p in parts if p not in _GENERIC_GROUPS]
-    return meaningful, 1 if stripped else 2
-
-
 def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     """Suggest a unique internal name for each NeXus group path.
 
-    Strategy:
-
-    * Strip the primary-readback leaf (``value``/``value_log``) so an NXlog's
-      primary entry is named after the parent. Auxiliary siblings
-      (``idle_flag``, ``target_value``) keep their suffix and always include
-      the parent NXlog name for context.
-    * Filter out generic NeXus container groups (``entry``, ``instrument``,
-      ``sample``, ``sample_environment``, ``transformations``) — they add
-      no meaning and only inflate names.
-    * Pick the shortest tail of meaningful components that yields a unique
-      name across the input set. When duplicates emerge, the duplicated
-      subset extends to the next-longer tail until uniqueness is reached.
+    Generic NeXus container groups (``entry``, ``instrument``, ``sample``,
+    ``sample_environment``, ``transformations``) are dropped — they add no
+    meaning and only inflate names. The name is then the shortest tail
+    (minimum two components, when available) of the remaining path that is
+    unique across the input set. Duplicates extend to the next-longer tail
+    until uniqueness is reached.
 
     The returned dict is keyed by path. Since paths are unique in HDF5 and
     each path produces at most one name, no two paths share a name.
     """
     paths = list(paths)
-    meta: dict[str, tuple[list[str], int]] = {p: _path_meta(p) for p in paths}
+    parts: dict[str, list[str]] = {
+        p: [c for c in p.strip('/').split('/') if c not in _GENERIC_GROUPS]
+        for p in paths
+    }
 
     def _name(path: str, depth: int) -> str:
-        parts, _ = meta[path]
-        if not parts:
-            stripped = path.strip('/').split('/')
-            return stripped[-1] if stripped else ''
-        d = min(max(depth, 1), len(parts))
-        return '_'.join(parts[-d:])
+        p_parts = parts[path]
+        if not p_parts:
+            return path.strip('/').rsplit('/', 1)[-1]
+        return '_'.join(p_parts[-min(depth, len(p_parts)) :])
 
-    max_depth = max((len(parts) for parts, _ in meta.values()), default=1)
+    max_depth = max((len(v) for v in parts.values()), default=1)
     result: dict[str, str] = {}
     pending = set(paths)
-    depth = 1
-    while pending and depth <= max_depth:
-        candidates = {p: _name(p, max(depth, meta[p][1])) for p in pending}
+    depth = 2
+    while pending and depth <= max(max_depth, 2):
+        candidates = {p: _name(p, depth) for p in pending}
         counts: dict[str, int] = {}
         for name in candidates.values():
             counts[name] = counts.get(name, 0) + 1

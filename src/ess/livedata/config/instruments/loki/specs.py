@@ -46,7 +46,7 @@ from .views import get_tube_view
 LOKI_DYNAMIC_TRANSFORMS: dict[str, TransformValueStream] = {
     'loki_detector_0': TransformValueStream(
         transform_name='/entry/instrument/detector_carriage/value',
-        aux_stream='detector_carriage',
+        aux_stream='detector_carriage_value',
     ),
 }
 
@@ -233,7 +233,7 @@ instrument = Instrument(
             title='Beam Monitor 4',
             description='Downstream, movable (on detector carriage)',
         ),
-        'detector_carriage': SourceMetadata(
+        'detector_carriage_value': SourceMetadata(
             title='Rear Detector Carriage',
             description='Rear detector carriage position w.r.t. its zero at z=5.098 m '
             'after the sample.',

@@ -413,33 +413,25 @@ def _info(path: str) -> StreamInfo:
 
 
 class TestSuggestNames:
-    def test_strips_value_suffix(self) -> None:
+    def test_includes_value_leaf(self) -> None:
         names = suggest_names(['/entry/instrument/rotation_stage/value'])
-        assert names == {'/entry/instrument/rotation_stage/value': 'rotation_stage'}
+        assert names == {
+            '/entry/instrument/rotation_stage/value': 'rotation_stage_value'
+        }
 
-    def test_strips_value_log_suffix(self) -> None:
+    def test_includes_value_log_leaf(self) -> None:
         names = suggest_names(['/entry/sample/sample_environment/HTR1/value_log'])
-        assert names == {'/entry/sample/sample_environment/HTR1/value_log': 'HTR1'}
+        assert names == {
+            '/entry/sample/sample_environment/HTR1/value_log': 'HTR1_value_log'
+        }
 
-    def test_keeps_idle_flag_suffix(self) -> None:
-        # Auxiliary siblings keep their leaf so they stay distinguishable
-        # from the primary readback.
+    def test_includes_aux_leaf(self) -> None:
         names = suggest_names(['/entry/instrument/rotation_stage/idle_flag'])
         assert names == {
             '/entry/instrument/rotation_stage/idle_flag': 'rotation_stage_idle_flag'
         }
 
-    def test_keeps_target_value_suffix(self) -> None:
-        names = suggest_names(['/entry/instrument/rotation_stage/target_value'])
-        assert names == {
-            '/entry/instrument/rotation_stage/target_value': (
-                'rotation_stage_target_value'
-            )
-        }
-
     def test_filters_generic_containers(self) -> None:
-        # 'transformations' is filtered as a generic container; 'translation1'
-        # is not a primary-readback leaf, so parent context is included.
         names = suggest_names(['/entry/instrument/wfm1/transformations/translation1'])
         assert names == {
             '/entry/instrument/wfm1/transformations/translation1': 'wfm1_translation1'
@@ -465,13 +457,7 @@ class TestSuggestNames:
         names = suggest_names(['/entry/sample/sample_environment/SETP_S1'])
         assert names == {'/entry/sample/sample_environment/SETP_S1': 'SETP_S1'}
 
-    def test_preserves_r0_suffix(self) -> None:
-        names = suggest_names(['/entry/instrument/detector_tank_angle_r0/value'])
-        assert names == {
-            '/entry/instrument/detector_tank_angle_r0/value': ('detector_tank_angle_r0')
-        }
-
-    def test_keeps_primary_readback_and_aux_distinguishable(self) -> None:
+    def test_distinguishes_primary_readback_and_aux(self) -> None:
         names = suggest_names(
             [
                 '/entry/instrument/motor/value',
@@ -480,13 +466,13 @@ class TestSuggestNames:
             ]
         )
         assert names == {
-            '/entry/instrument/motor/value': 'motor',
+            '/entry/instrument/motor/value': 'motor_value',
             '/entry/instrument/motor/idle_flag': 'motor_idle_flag',
             '/entry/instrument/motor/target_value': 'motor_target_value',
         }
 
-    def test_disambiguates_two_paths_collapsing_to_same_leaf(self) -> None:
-        # Two NXlogs in different ancestors with the same leaf name.
+    def test_disambiguates_two_paths_collapsing_to_same_tail(self) -> None:
+        # Two NXlogs in different ancestors with the same parent + leaf.
         names = suggest_names(
             [
                 '/entry/instrument/foo/temperature/value',
@@ -494,8 +480,8 @@ class TestSuggestNames:
             ]
         )
         assert names == {
-            '/entry/instrument/foo/temperature/value': 'foo_temperature',
-            '/entry/instrument/bar/temperature/value': 'bar_temperature',
+            '/entry/instrument/foo/temperature/value': 'foo_temperature_value',
+            '/entry/instrument/bar/temperature/value': 'bar_temperature_value',
         }
 
 
