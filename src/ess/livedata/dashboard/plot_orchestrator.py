@@ -280,9 +280,8 @@ def resolve_field_name(
 
     Falls back to ``view_name`` as a raw field name when no matching view
     is declared (lets unannotated reduction outputs work unchanged). When
-    the preferred role is unavailable for the view, falls back to the
-    other role rather than failing — preserving legacy behaviour for
-    pre-existing configs.
+    the requested role is not available for the view, falls back to any
+    declared stream — handles views that only expose one role.
     """
     view = spec.get_output_view_or_none(view_name)
     if view is None:
@@ -1239,27 +1238,11 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        # Invalidate layers persisted in the legacy ``output_name`` schema. The
-        # view-based migration intentionally does not auto-convert backend field
-        # names to views; users must reconfigure the affected plots.
-        legacy_roles = [
-            role
-            for role, ds in layer_data['data_sources'].items()
-            if 'view_name' not in ds and 'output_name' in ds
-        ]
-        if legacy_roles:
-            self._logger.warning(
-                'Skipping layer with legacy data-source keys (output_name): %s. '
-                'Reconfigure the plot to convert it to the view-based schema.',
-                legacy_roles,
-            )
-            return None
-
         data_sources: dict[str, DataSourceConfig] = {
             role: DataSourceConfig(
                 workflow_id=WorkflowId.from_string(ds['workflow_id']),
                 source_names=ds['source_names'],
-                view_name=ds.get('view_name', 'result'),
+                view_name=ds['view_name'],
             )
             for role, ds in layer_data['data_sources'].items()
         }
