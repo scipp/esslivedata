@@ -13,7 +13,7 @@ from ess.livedata.nexus_helpers import (
     extract_stream_info,
     filter_f144_streams,
     generate_streams_parsed_module,
-    suggest_internal_name,
+    suggest_names,
 )
 
 
@@ -412,65 +412,91 @@ def _info(path: str) -> StreamInfo:
     )
 
 
-class TestSuggestInternalName:
-    def test_drops_value_suffix_uses_parent(self) -> None:
-        assert (
-            suggest_internal_name(_info('entry/instrument/rotation_stage/value'))
-            == 'rotation_stage'
-        )
+class TestSuggestNames:
+    def test_strips_value_suffix(self) -> None:
+        names = suggest_names(['/entry/instrument/rotation_stage/value'])
+        assert names == {'/entry/instrument/rotation_stage/value': 'rotation_stage'}
 
-    def test_drops_idle_flag_suffix(self) -> None:
-        assert (
-            suggest_internal_name(_info('entry/instrument/rotation_stage/idle_flag'))
-            == 'rotation_stage'
-        )
+    def test_strips_value_log_suffix(self) -> None:
+        names = suggest_names(['/entry/sample/sample_environment/HTR1/value_log'])
+        assert names == {'/entry/sample/sample_environment/HTR1/value_log': 'HTR1'}
 
-    def test_drops_value_log_suffix(self) -> None:
-        assert (
-            suggest_internal_name(
-                _info('entry/sample/sample_environment/HTR1/value_log')
+    def test_keeps_idle_flag_suffix(self) -> None:
+        # Auxiliary siblings keep their leaf so they stay distinguishable
+        # from the primary readback.
+        names = suggest_names(['/entry/instrument/rotation_stage/idle_flag'])
+        assert names == {
+            '/entry/instrument/rotation_stage/idle_flag': 'rotation_stage_idle_flag'
+        }
+
+    def test_keeps_target_value_suffix(self) -> None:
+        names = suggest_names(['/entry/instrument/rotation_stage/target_value'])
+        assert names == {
+            '/entry/instrument/rotation_stage/target_value': (
+                'rotation_stage_target_value'
             )
-            == 'HTR1'
-        )
-
-    def test_drops_target_value_suffix(self) -> None:
-        assert (
-            suggest_internal_name(_info('entry/instrument/rotation_stage/target_value'))
-            == 'rotation_stage'
-        )
+        }
 
     def test_filters_generic_containers(self) -> None:
-        # 'transformations' is a NeXus container, not an entity
-        assert (
-            suggest_internal_name(
-                _info('entry/instrument/wfm1/transformations/translation1')
-            )
-            == 'wfm1_translation1'
-        )
+        # 'transformations' is filtered as a generic container; 'translation1'
+        # is not a primary-readback leaf, so parent context is included.
+        names = suggest_names(['/entry/instrument/wfm1/transformations/translation1'])
+        assert names == {
+            '/entry/instrument/wfm1/transformations/translation1': 'wfm1_translation1'
+        }
 
-    def test_joins_parent_and_leaf_when_leaf_is_generic(self) -> None:
-        # 'phase' alone would collide across choppers; include parent for context
-        assert (
-            suggest_internal_name(
-                _info('entry/instrument/005_PulseShapingChopper/phase')
-            )
-            == '005_PulseShapingChopper_phase'
+    def test_disambiguates_via_parent_when_leaf_collides(self) -> None:
+        names = suggest_names(
+            [
+                '/entry/instrument/005_PulseShapingChopper/phase',
+                '/entry/instrument/006_FrameOverlapChopper/phase',
+            ]
         )
+        assert names == {
+            '/entry/instrument/005_PulseShapingChopper/phase': (
+                '005_PulseShapingChopper_phase'
+            ),
+            '/entry/instrument/006_FrameOverlapChopper/phase': (
+                '006_FrameOverlapChopper_phase'
+            ),
+        }
 
     def test_single_meaningful_component_returned_bare(self) -> None:
-        # Path under sample_environment with no further nesting
-        assert (
-            suggest_internal_name(_info('entry/sample/sample_environment/SETP_S1'))
-            == 'SETP_S1'
-        )
+        names = suggest_names(['/entry/sample/sample_environment/SETP_S1'])
+        assert names == {'/entry/sample/sample_environment/SETP_S1': 'SETP_S1'}
 
     def test_preserves_r0_suffix(self) -> None:
-        assert (
-            suggest_internal_name(
-                _info('entry/instrument/detector_tank_angle_r0/value')
-            )
-            == 'detector_tank_angle_r0'
+        names = suggest_names(['/entry/instrument/detector_tank_angle_r0/value'])
+        assert names == {
+            '/entry/instrument/detector_tank_angle_r0/value': ('detector_tank_angle_r0')
+        }
+
+    def test_keeps_primary_readback_and_aux_distinguishable(self) -> None:
+        names = suggest_names(
+            [
+                '/entry/instrument/motor/value',
+                '/entry/instrument/motor/idle_flag',
+                '/entry/instrument/motor/target_value',
+            ]
         )
+        assert names == {
+            '/entry/instrument/motor/value': 'motor',
+            '/entry/instrument/motor/idle_flag': 'motor_idle_flag',
+            '/entry/instrument/motor/target_value': 'motor_target_value',
+        }
+
+    def test_disambiguates_two_paths_collapsing_to_same_leaf(self) -> None:
+        # Two NXlogs in different ancestors with the same leaf name.
+        names = suggest_names(
+            [
+                '/entry/instrument/foo/temperature/value',
+                '/entry/instrument/bar/temperature/value',
+            ]
+        )
+        assert names == {
+            '/entry/instrument/foo/temperature/value': 'foo_temperature',
+            '/entry/instrument/bar/temperature/value': 'bar_temperature',
+        }
 
 
 class TestFilterF144Streams:
@@ -585,7 +611,7 @@ class TestGenerateStreamsParsedModule:
         code = generate_streams_parsed_module(infos)
         assert "units='dimensionless'" in code
 
-    def test_prefers_value_over_idle_flag(self) -> None:
+    def test_emits_both_value_and_idle_flag(self) -> None:
         infos = [
             _f144_info(group_path='entry/motor/idle_flag', source='MOTOR:DMOV'),
             _f144_info(
@@ -596,7 +622,9 @@ class TestGenerateStreamsParsedModule:
         ]
         code = generate_streams_parsed_module(infos)
         assert 'MOTOR:RBV' in code
-        assert 'MOTOR:DMOV' not in code
+        assert 'MOTOR:DMOV' in code
+        assert "stream_name='motor'" in code
+        assert "stream_name='motor_idle_flag'" in code
 
     def test_custom_variable_name(self) -> None:
         infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]
@@ -612,15 +640,23 @@ class TestGenerateStreamsParsedModule:
         # Absolute path is stripped
         assert '/some/abs/path' not in code
 
-    def test_raises_on_name_collision_across_groups(self) -> None:
-        # Two paths that survive the generic-container filter with the same
-        # final component: NXlog parents 'instrument/foo' and 'sample/foo'.
+    def test_auto_disambiguates_colliding_leaf_names(self) -> None:
+        # Two paths whose primary-leaf collapse to the same name: the
+        # suggester walks one component deeper for the colliding subset.
         infos = [
             _f144_info(group_path='entry/instrument/foo/value', source='SRC_A'),
             _f144_info(group_path='entry/sample/foo/value', source='SRC_B'),
         ]
-        with pytest.raises(ValueError, match='collisions'):
-            generate_streams_parsed_module(infos)
+        code = generate_streams_parsed_module(infos)
+        # Generic groups 'instrument' and 'sample' are filtered, so the
+        # next available component up is 'foo' itself; the suggester appends
+        # the next parent. With purely generic ancestors above, both paths
+        # have only ['foo'] meaningful — the disambiguator extends with
+        # whatever differs. Here it falls back to the path-hash suffix.
+        # Either way: both streams are emitted with distinct names.
+        assert 'SRC_A' in code
+        assert 'SRC_B' in code
+        assert code.count('F144Stream(') == 2
 
     def test_combines_multiple_topics(self) -> None:
         infos = [

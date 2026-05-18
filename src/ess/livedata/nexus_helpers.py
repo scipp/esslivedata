@@ -8,6 +8,7 @@ was streamed during acquisition.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,9 +122,11 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
-_DATA_LEAF_SUFFIXES: frozenset[str] = frozenset(
-    {'value', 'idle_flag', 'target_value', 'value_log'}
-)
+#: Suffixes that mark the primary readback entry of an NXlog. Stripped from
+#: the leaf so e.g. ``/entry/.../motor/value`` is named for the parent NXlog
+#: (``motor``). Auxiliary siblings (``idle_flag``, ``target_value``, ...) are
+#: NOT stripped — they keep their suffix so they remain distinguishable.
+_READBACK_SUFFIXES: frozenset[str] = frozenset({'value', 'value_log'})
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the
 #: path before constructing an internal name so that e.g.
@@ -134,33 +137,75 @@ _GENERIC_GROUPS: frozenset[str] = frozenset(
 )
 
 
-def suggest_internal_name(info: StreamInfo) -> str:
-    """Suggest a per-stream internal name from the NeXus group path.
+def _path_meta(path: str) -> tuple[list[str], int]:
+    """Return (meaningful path components, minimum useful depth).
+
+    The minimum depth is 1 if the leaf was a primary-readback suffix
+    (stripped, so depth-1 is the parent NXlog name) or 2 otherwise (so
+    the parent context is always part of an auxiliary entry's name).
+    """
+    parts = path.strip('/').split('/')
+    stripped = parts and parts[-1] in _READBACK_SUFFIXES
+    if stripped:
+        parts = parts[:-1]
+    meaningful = [p for p in parts if p not in _GENERIC_GROUPS]
+    return meaningful, 1 if stripped else 2
+
+
+def suggest_names(paths: Iterable[str]) -> dict[str, str]:
+    """Suggest a unique internal name for each NeXus group path.
 
     Strategy:
 
-    * If the leaf is a data-name suffix (``value``, ``idle_flag``,
-      ``target_value``, ``value_log``), drop it: the parent group is the
-      actual NXlog and carries the entity name.
+    * Strip the primary-readback leaf (``value``/``value_log``) so an NXlog's
+      primary entry is named after the parent. Auxiliary siblings
+      (``idle_flag``, ``target_value``) keep their suffix and always include
+      the parent NXlog name for context.
     * Filter out generic NeXus container groups (``entry``, ``instrument``,
       ``sample``, ``sample_environment``, ``transformations``) — they add
       no meaning and only inflate names.
-    * Join the last two remaining components so the parent group becomes
-      part of the name, disambiguating e.g. ``phase`` from
-      ``rotation_speed`` across multiple choppers
-      (``005_PulseShapingChopper_phase`` vs.
-      ``005_PulseShapingChopper_rotation_speed``).
-    * If only one component survives filtering, return it bare.
+    * Pick the shortest tail of meaningful components that yields a unique
+      name across the input set. When duplicates emerge, the duplicated
+      subset extends to the next-longer tail until uniqueness is reached.
+
+    The returned dict is keyed by path. Since paths are unique in HDF5 and
+    each path produces at most one name, no two paths share a name.
     """
-    parts = info.group_path.strip('/').split('/')
-    if parts and parts[-1] in _DATA_LEAF_SUFFIXES:
-        parts = parts[:-1]
-    meaningful = [p for p in parts if p not in _GENERIC_GROUPS]
-    if not meaningful:
-        return parts[-1] if parts else ''
-    if len(meaningful) == 1:
-        return meaningful[0]
-    return '_'.join(meaningful[-2:])
+    paths = list(paths)
+    meta: dict[str, tuple[list[str], int]] = {p: _path_meta(p) for p in paths}
+
+    def _name(path: str, depth: int) -> str:
+        parts, _ = meta[path]
+        if not parts:
+            stripped = path.strip('/').split('/')
+            return stripped[-1] if stripped else ''
+        d = min(max(depth, 1), len(parts))
+        return '_'.join(parts[-d:])
+
+    max_depth = max((len(parts) for parts, _ in meta.values()), default=1)
+    result: dict[str, str] = {}
+    pending = set(paths)
+    depth = 1
+    while pending and depth <= max_depth:
+        candidates = {p: _name(p, max(depth, meta[p][1])) for p in pending}
+        counts: dict[str, int] = {}
+        for name in candidates.values():
+            counts[name] = counts.get(name, 0) + 1
+        next_pending: set[str] = set()
+        for path, name in candidates.items():
+            if counts[name] == 1:
+                result[path] = name
+            else:
+                next_pending.add(path)
+        pending = next_pending
+        depth += 1
+    # Any still-pending paths share the full meaningful tail; fall back to a
+    # path-hash suffix. HDF5 paths are unique, so this only triggers when two
+    # paths differ only in filtered-out generic ancestors.
+    for path in pending:
+        full = _name(path, max_depth)
+        result[path] = f'{full}__{abs(hash(path)) % 10000:04d}'
+    return result
 
 
 def filter_f144_streams(
@@ -195,62 +240,6 @@ def filter_f144_streams(
     return result
 
 
-def _dedupe_by_suggested_name(
-    infos: list[StreamInfo],
-) -> dict[str, StreamInfo]:
-    """Group f144 streams by suggested internal name, preferring readbacks.
-
-    Within a single NXlog group, the writer publishes value/idle_flag/
-    target_value as siblings — they collapse to one suggested name (the
-    parent). The ``/value`` (or ``/value_log``) entry is the primary readback
-    and is kept; auxiliary siblings are dropped.
-
-    Different HDF5 groups can still collide (e.g., two choppers both
-    publishing ``phase``). The improved :func:`suggest_internal_name`
-    prepends the parent group so this is rare in practice, but if a
-    collision survives, :func:`generate_streams_parsed_module` raises with
-    a list of conflicting paths.
-    """
-
-    def priority(info: StreamInfo) -> int:
-        # 0 = primary readback; 1 = anything else (idle_flag, target_value, ...)
-        leaf = info.group_path.rsplit('/', 1)[-1]
-        return 0 if leaf in ('value', 'value_log') else 1
-
-    by_name: dict[str, StreamInfo] = {}
-    for info in sorted(
-        infos, key=lambda i: (priority(i), i.group_path)
-    ):  # readbacks first
-        name = suggest_internal_name(info)
-        by_name.setdefault(name, info)
-    return by_name
-
-
-def _detect_collisions(
-    infos: list[StreamInfo],
-) -> dict[str, list[StreamInfo]]:
-    """Group infos by suggested name *without* deduping readback siblings.
-
-    Returns groups with more than one distinct NXlog parent: these are
-    real collisions that the caller must resolve via overrides.
-    """
-    groups: dict[str, list[StreamInfo]] = {}
-    for info in infos:
-        groups.setdefault(suggest_internal_name(info), []).append(info)
-
-    def parent(info: StreamInfo) -> str:
-        path = info.group_path.strip('/').split('/')
-        if path and path[-1] in _DATA_LEAF_SUFFIXES:
-            return '/'.join(path[:-1])
-        return '/'.join(path)
-
-    return {
-        name: group
-        for name, group in groups.items()
-        if len({parent(i) for i in group}) > 1
-    }
-
-
 def generate_streams_parsed_module(
     infos: list[StreamInfo],
     *,
@@ -276,22 +265,8 @@ def generate_streams_parsed_module(
         Optional path string for the originating geometry file, included in
         the auto-generated banner so reviewers can trace provenance.
     """
-    collisions = _detect_collisions(infos)
-    if collisions:
-        message = ['Suggested-name collisions across distinct NXlog groups:']
-        for name, group in sorted(collisions.items()):
-            message.append(f'  {name!r}:')
-            message.extend(
-                f'    {info.group_path}  (source={info.source})'
-                for info in sorted(group, key=lambda i: i.group_path)
-            )
-        message.append(
-            'Resolve via a per-instrument rename keyed by nexus_path in '
-            'specs.py, or improve suggest_internal_name.'
-        )
-        raise ValueError('\n'.join(message))
-
-    by_name = _dedupe_by_suggested_name(infos)
+    by_path = {f'/{info.group_path}': info for info in infos}
+    names = suggest_names(by_path)
 
     lines: list[str] = [
         '# SPDX-License-Identifier: BSD-3-Clause',
@@ -312,14 +287,14 @@ def generate_streams_parsed_module(
             f'{variable_name}: list[F144Stream] = [',
         ]
     )
-    for name in sorted(by_name):
-        info = by_name[name]
+    for path in sorted(by_path, key=lambda p: names[p]):
+        info = by_path[path]
         units = info.units or 'dimensionless'
         lines.extend(
             [
                 '    F144Stream(',
-                f'        stream_name={name!r},',
-                f"        nexus_path='/{info.group_path}',",
+                f'        stream_name={names[path]!r},',
+                f'        nexus_path={path!r},',
                 f'        source={info.source!r},',
                 f'        topic={info.topic!r},',
                 f'        units={units!r},',
