@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import structlog
 
@@ -30,15 +31,16 @@ from ..handlers.accumulators import DeviceSample, LogData
 
 logger = structlog.get_logger(__name__)
 
+_Role = Literal['value', 'target', 'settled']
+
 
 @dataclass(slots=True)
 class _DeviceState:
     """Mutable per-device state held by the synthesizer."""
 
     device_name: str
-    value_substream: str
-    target_substream: str | None
-    settled_substream: str | None
+    has_target: bool
+    has_settled: bool
     value: float | None = None
     target: float | None = None
     settled: bool | None = None
@@ -49,9 +51,9 @@ class _DeviceState:
     def bootstrapped(self) -> bool:
         if self.value_time is None:
             return False
-        if self.target_substream is not None and self.target_time is None:
+        if self.has_target and self.target_time is None:
             return False
-        if self.settled_substream is not None and self.settled_time is None:
+        if self.has_settled and self.settled_time is None:
             return False
         return True
 
@@ -85,14 +87,13 @@ class DeviceSynthesizer(MessageSource[Message]):
         self._wrapped = wrapped
         # substream_name -> (device_state, role). One substream is owned by
         # exactly one device.
-        self._by_substream: dict[str, tuple[_DeviceState, str]] = {}
+        self._by_substream: dict[str, tuple[_DeviceState, _Role]] = {}
         self._states: dict[str, _DeviceState] = {}
         for name, device in devices.items():
             state = _DeviceState(
                 device_name=name,
-                value_substream=device.value,
-                target_substream=device.target,
-                settled_substream=device.settled,
+                has_target=device.target is not None,
+                has_settled=device.settled is not None,
             )
             self._states[name] = state
             self._register(state, device.value, 'value')
@@ -101,7 +102,7 @@ class DeviceSynthesizer(MessageSource[Message]):
             if device.settled is not None:
                 self._register(state, device.settled, 'settled')
 
-    def _register(self, state: _DeviceState, substream: str, role: str) -> None:
+    def _register(self, state: _DeviceState, substream: str, role: _Role) -> None:
         if substream in self._by_substream:
             other = self._by_substream[substream][0].device_name
             raise ValueError(
@@ -133,7 +134,7 @@ class DeviceSynthesizer(MessageSource[Message]):
         return out
 
     @staticmethod
-    def _update_state(state: _DeviceState, role: str, log: LogData) -> None:
+    def _update_state(state: _DeviceState, role: _Role, log: LogData) -> None:
         if role == 'value':
             state.value = float(log.value)
             state.value_time = int(log.time)
