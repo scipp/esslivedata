@@ -5,7 +5,11 @@
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
 from .specs import instrument
 
 # Fake detector configuration: detector_name -> (first_id, last_id)
@@ -19,15 +23,6 @@ def _make_estia_detectors() -> StreamLUT:
         InputStreamKey(
             topic='estia_detector', source_name='multiblade'
         ): 'multiblade_detector',
-    }
-
-
-def _make_estia_logs() -> StreamLUT:
-    """ESTIA log data mapping (f144 streams)."""
-    return {
-        InputStreamKey(topic=s.topic, source_name=s.source): name
-        for name, s in instrument.f144_streams.items()
-        if s.topic is not None
     }
 
 
@@ -45,6 +40,6 @@ stream_mapping = {
             cbm_start=0,
         ),
         detectors=_make_estia_detectors(),
-        logs=_make_estia_logs(),
+        logs=make_f144_log_lut(instrument),
     ),
 }

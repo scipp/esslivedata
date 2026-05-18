@@ -7,7 +7,11 @@ TBL instrument stream mapping configuration.
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
 from .specs import instrument, monitor_names
 
 # Note: Panel size is fake and does not correspond to production setting
@@ -59,15 +63,6 @@ def _make_tbl_area_detectors() -> StreamLUT:
     }
 
 
-def _make_tbl_logs() -> StreamLUT:
-    """TBL f144 log mapping derived from instrument.streams."""
-    return {
-        InputStreamKey(topic=s.topic, source_name=s.source): name
-        for name, s in instrument.f144_streams.items()
-        if s.topic is not None
-    }
-
-
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'tbl',
@@ -82,6 +77,6 @@ stream_mapping = {
         ),
         detectors=_make_tbl_detectors(),
         area_detectors=_make_tbl_area_detectors(),
-        logs=_make_tbl_logs(),
+        logs=make_f144_log_lut(instrument),
     ),
 }

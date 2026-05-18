@@ -11,7 +11,11 @@ import scipp as sc
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
 from .specs import instrument, monitors
 
 
@@ -61,20 +65,6 @@ def _make_bifrost_detectors() -> StreamLUT:
     }
 
 
-def _make_bifrost_logs() -> StreamLUT:
-    """
-    Bifrost log data mapping.
-
-    Derives StreamLUT from ``instrument.streams``, mapping Kafka source names
-    (EPICS PV names) to ESSlivedata-internal stream names.
-    """
-    return {
-        InputStreamKey(topic=s.topic, source_name=s.source): name
-        for name, s in instrument.f144_streams.items()
-        if s.topic is not None
-    }
-
-
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'bifrost',
@@ -87,6 +77,6 @@ stream_mapping = {
             instrument='bifrost', monitor_names=monitors
         ),
         detectors=_make_bifrost_detectors(),
-        logs=_make_bifrost_logs(),
+        logs=make_f144_log_lut(instrument),
     ),
 }

@@ -7,7 +7,11 @@ ODIN instrument stream mapping configuration.
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
 from .specs import instrument
 
 detector_fakes = {'timepix3': (1, 4096**2)}
@@ -29,15 +33,6 @@ def _make_odin_detectors() -> StreamLUT:
     # }
 
 
-def _make_odin_logs() -> StreamLUT:
-    """Odin f144 log mapping derived from instrument.streams."""
-    return {
-        InputStreamKey(topic=s.topic, source_name=s.source): name
-        for name, s in instrument.f144_streams.items()
-        if s.topic is not None
-    }
-
-
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'odin',
@@ -47,6 +42,6 @@ stream_mapping = {
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='odin'),
         detectors=_make_odin_detectors(),
-        logs=_make_odin_logs(),
+        logs=make_f144_log_lut(instrument),
     ),
 }
