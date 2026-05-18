@@ -38,7 +38,7 @@ def test_grows_with_target_and_settled_coords() -> None:
     )
     assert_identical(
         result.coords['settled'],
-        sc.array(dims=['time'], values=[False, True]),
+        sc.array(dims=['time'], values=[0, 1], dtype='int32'),
     )
 
 

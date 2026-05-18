@@ -1,28 +1,26 @@
 {
     "sliders": [
         {
-            "stream_name": "detector_rotation",
-            "label": "Detector Rotation (deg)",
+            "label": "Detector Tank Angle (deg)",
             "min": 0.0,
             "max": 90.0,
             "step": 0.1,
-            "initial": 0.0
+            "initial": 0.0,
+            "value_stream": "detector_tank_angle_r0_value",
+            "target_stream": "detector_tank_angle_r0_target_value",
+            "settled_stream": "detector_tank_angle_r0_idle_flag",
+            "ramp_seconds": 2.0
         },
         {
-            "stream_name": "sample_rotation",
             "label": "Sample Rotation (deg)",
             "min": 0.0,
             "max": 360.0,
             "step": 5.0,
-            "initial": 0.0
-        },
-        {
-            "stream_name": "sample_temperature",
-            "label": "Sample Temp (K)",
-            "min": 100.0,
-            "max": 400.0,
-            "step": 1.0,
-            "initial": 300.0
+            "initial": 0.0,
+            "value_stream": "rotation_stage_value",
+            "target_stream": "rotation_stage_target_value",
+            "settled_stream": "rotation_stage_idle_flag",
+            "ramp_seconds": 2.0
         }
     ]
 }

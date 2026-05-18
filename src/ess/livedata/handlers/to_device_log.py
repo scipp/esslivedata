@@ -65,7 +65,9 @@ class ToDeviceLog(Accumulator[DeviceSample, sc.DataArray]):
                     dims=['time'], shape=[2], unit=self._unit, dtype='float64'
                 )
             if self._has_settled:
-                coords['settled'] = sc.zeros(dims=['time'], shape=[2], dtype='bool')
+                # int32 (not bool) because da00 serialization rejects bool.
+                # The coord remains 0/1 valued.
+                coords['settled'] = sc.zeros(dims=['time'], shape=[2], dtype='int32')
             self._timeseries = sc.DataArray(values, coords=coords)
         elif self._at_capacity():
             self._timeseries = sc.concat(
@@ -97,7 +99,9 @@ class ToDeviceLog(Accumulator[DeviceSample, sc.DataArray]):
                 np.nan if data.target is None else data.target
             )
         if self._has_settled:
-            self._timeseries.coords['settled'].values[self._end] = bool(data.settled)
+            self._timeseries.coords['settled'].values[self._end] = int(
+                bool(data.settled)
+            )
         self._end += 1
         self._last_time = sample_time
         return True
