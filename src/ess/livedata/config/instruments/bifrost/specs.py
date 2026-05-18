@@ -182,15 +182,15 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
 
 bifrost_aux_sources = AuxSources(
     {
-        'detector_rotation': AuxInput(
-            choices=('detector_rotation',),
-            default='detector_rotation',
+        'detector_tank_angle_r0': AuxInput(
+            choices=('detector_tank_angle_r0',),
+            default='detector_tank_angle_r0',
             title='Detector Rotation',
             description='Detector bank rotation angle.',
         ),
-        'sample_rotation': AuxInput(
-            choices=('sample_rotation',),
-            default='sample_rotation',
+        'rotation_stage': AuxInput(
+            choices=('rotation_stage',),
+            default='rotation_stage',
             title='Sample Rotation',
             description='Sample rotation angle.',
         ),
@@ -218,19 +218,7 @@ monitors = [
 ]
 
 
-# Stream names referenced by factory bindings and bifrost_aux_sources above
-# must survive verbatim. Other entries take the auto-suggested names.
-# Renames are keyed by stable nexus_path.
-streams = name_streams(
-    PARSED_STREAMS,
-    rename={
-        (
-            '/entry/instrument/detector_tank_angle/transformations/'
-            'detector_tank_angle_r0/value'
-        ): 'detector_rotation',
-        '/entry/instrument/114_sample_stack/rotation_stage/value': 'sample_rotation',
-    },
-)
+streams = name_streams(PARSED_STREAMS)
 
 # Create instrument
 instrument = Instrument(
