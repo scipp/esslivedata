@@ -295,20 +295,31 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     dropped to make room for new data.
     """
 
-    # Coordinates that should be accumulated per-item rather than stored as scalars
-    _ACCUMULATED_COORDS = ('time', 'start_time', 'end_time')
+    # 0-D coord names that are still treated as per-sample on a single-slice
+    # message (where ``time`` dim is absent, so the dim signal can't be used).
+    _SCALAR_ACCUMULATED_NAMES = ('time', 'start_time', 'end_time')
 
     DEFAULT_MAX_MEMORY = 20 * 1024 * 1024  # 20 MB
 
     def __init__(self) -> None:
         """Initialize empty temporal buffer."""
         self._data_buffer: VariableBuffer | None = None
-        self._time_buffer: VariableBuffer | None = None
-        self._start_time_buffer: VariableBuffer | None = None
-        self._end_time_buffer: VariableBuffer | None = None
+        self._coord_buffers: dict[str, VariableBuffer] = {}
         self._reference: sc.DataArray | None = None
         self._max_memory: int = self.DEFAULT_MAX_MEMORY
         self._required_timespan: float = 0.0
+
+    def _accumulated_coord_names(self, data: sc.DataArray) -> list[str]:
+        """Return coords that vary per time step and must be buffered.
+
+        On a thick slice (``time`` in ``data.dims``) any coord carrying the
+        ``time`` dim is per-sample. On a single-slice message all coords are
+        0-D, so we fall back to a name convention for the known time-like
+        annotations.
+        """
+        if 'time' in data.dims:
+            return [name for name, coord in data.coords.items() if 'time' in coord.dims]
+        return [name for name in self._SCALAR_ACCUMULATED_NAMES if name in data.coords]
 
     def add(self, data: sc.DataArray) -> None:
         """
@@ -343,44 +354,27 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
                 if not self._data_buffer.append(data.data):
                     raise ValueError("Data exceeds buffer capacity even after trimming")
 
-        # Time buffer should succeed (buffers kept in sync by trimming)
-        if not self._time_buffer.append(data.coords['time']):
-            raise RuntimeError("Time buffer append failed unexpectedly")
-
-        # Append start_time and end_time if present
-        if self._start_time_buffer is not None and 'start_time' in data.coords:
-            self._start_time_buffer.append(data.coords['start_time'])
-        if self._end_time_buffer is not None and 'end_time' in data.coords:
-            self._end_time_buffer.append(data.coords['end_time'])
+        for name, buf in self._coord_buffers.items():
+            if not buf.append(data.coords[name]):
+                raise RuntimeError(f"Coord buffer {name!r} append failed unexpectedly")
 
     def get(self) -> sc.DataArray | None:
         """Return the complete buffer."""
         if self._data_buffer is None:
             return None
 
-        # Reconstruct DataArray from buffers and reference metadata
-        data_var = self._data_buffer.get()
-        time_coord = self._time_buffer.get()
-
-        coords = {'time': time_coord}
+        coords: dict[str, sc.Variable] = {
+            name: buf.get() for name, buf in self._coord_buffers.items()
+        }
         coords.update(self._reference.coords)
-
-        # Add accumulated start_time and end_time as 1-D coords
-        if self._start_time_buffer is not None:
-            coords['start_time'] = self._start_time_buffer.get()
-        if self._end_time_buffer is not None:
-            coords['end_time'] = self._end_time_buffer.get()
-
         masks = dict(self._reference.masks)
 
-        return sc.DataArray(data=data_var, coords=coords, masks=masks)
+        return sc.DataArray(data=self._data_buffer.get(), coords=coords, masks=masks)
 
     def clear(self) -> None:
         """Clear all buffered data."""
         self._data_buffer = None
-        self._time_buffer = None
-        self._start_time_buffer = None
-        self._end_time_buffer = None
+        self._coord_buffers = {}
         self._reference = None
 
     def set_required_timespan(self, seconds: float) -> None:
@@ -397,57 +391,33 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     def _initialize_buffers(self, data: sc.DataArray) -> None:
         """Initialize buffers with first data, storing reference metadata."""
-        # Store reference as slice at time=0 without accumulated coords
-        if 'time' in data.dims:
-            ref = data['time', 0]
-        else:
-            ref = data
-        # Drop all coords that will be accumulated (not stored in reference)
-        ref = ref.drop_coords(
-            [coord for coord in self._ACCUMULATED_COORDS if coord in ref.coords]
-        )
+        accumulated = self._accumulated_coord_names(data)
+
+        ref = data['time', 0] if 'time' in data.dims else data
+        ref = ref.drop_coords([name for name in accumulated if name in ref.coords])
         self._reference = ref
 
-        # Calculate max_capacity from memory limit, accounting for all buffers
-        # (data + time coord + optional start_time/end_time coords).
-        # 'time' coord is always present: it is required for timeseries extraction.
+        # Calculate max_capacity from memory limit, accounting for the data buffer
+        # plus every accumulated coord buffer.
         bytes_per_element = data.data.values.nbytes
-        bytes_per_element += data.coords['time'].values.nbytes
-        if 'start_time' in data.coords:
-            bytes_per_element += data.coords['start_time'].values.nbytes
-        if 'end_time' in data.coords:
-            bytes_per_element += data.coords['end_time'].values.nbytes
+        for name in accumulated:
+            bytes_per_element += data.coords[name].values.nbytes
         if 'time' in data.dims:
             bytes_per_element /= data.sizes['time']
 
         max_capacity = max(1, int(self._max_memory / bytes_per_element))
 
-        # Create buffers
         self._data_buffer = VariableBuffer(
             data=data.data, max_capacity=max_capacity, concat_dim='time'
         )
-        self._time_buffer = VariableBuffer(
-            data=data.coords['time'], max_capacity=max_capacity, concat_dim='time'
-        )
-
-        # Create buffers for start_time and end_time if present
-        if 'start_time' in data.coords:
-            self._start_time_buffer = VariableBuffer(
-                data=data.coords['start_time'],
+        self._coord_buffers = {
+            name: VariableBuffer(
+                data=data.coords[name],
                 max_capacity=max_capacity,
                 concat_dim='time',
             )
-        else:
-            self._start_time_buffer = None
-
-        if 'end_time' in data.coords:
-            self._end_time_buffer = VariableBuffer(
-                data=data.coords['end_time'],
-                max_capacity=max_capacity,
-                concat_dim='time',
-            )
-        else:
-            self._end_time_buffer = None
+            for name in accumulated
+        }
 
     def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
         """Trim buffer to keep only data within required timespan."""
@@ -473,7 +443,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         cutoff = latest_time - timespan
 
         # Find first index to keep
-        time_coord = self._time_buffer.get()
+        time_coord = self._coord_buffers['time'].get()
         keep_mask = time_coord >= cutoff
 
         if not keep_mask.values.any():
@@ -505,25 +475,17 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     def _drop_from_all_buffers(self, drop_count: int) -> None:
         """Drop data from all buffers to keep them in sync."""
         self._data_buffer.drop(drop_count)
-        self._time_buffer.drop(drop_count)
-        if self._start_time_buffer is not None:
-            self._start_time_buffer.drop(drop_count)
-        if self._end_time_buffer is not None:
-            self._end_time_buffer.drop(drop_count)
+        for buf in self._coord_buffers.values():
+            buf.drop(drop_count)
 
     def _metadata_matches(self, data: sc.DataArray) -> bool:
         """Check if incoming data's metadata matches stored reference metadata."""
-        # Extract comparable slice from incoming data
-        if 'time' in data.dims:
-            new = data['time', 0]
-        else:
-            new = data
+        new = data['time', 0] if 'time' in data.dims else data
+        accumulated = self._accumulated_coord_names(data)
 
-        # Create template with reference data but incoming metadata
-        # Drop all accumulated coords for comparison
         template = new.assign(self._reference.data)
         template = template.drop_coords(
-            [coord for coord in self._ACCUMULATED_COORDS if coord in template.coords]
+            [name for name in accumulated if name in template.coords]
         )
 
         return sc.identical(self._reference, template)

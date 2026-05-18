@@ -378,6 +378,62 @@ class TestTemporalBuffer:
         assert result.coords['time'].values[0] == 999.0
         assert result['time', 0].values[0] == 999.0
 
+    def test_time_varying_coord_is_accumulated_not_reset(self):
+        """Coords carrying the ``time`` dim must be buffered, not treated as metadata.
+
+        Regression test: ``ToDeviceLog`` emits ``target`` and ``settled`` as
+        time-dim coords. Earlier behaviour treated any non-``time`` coord as
+        constant metadata and reset the buffer whenever ``target`` or
+        ``settled`` changed, so a Timeseries plot showed only the latest chunk.
+        """
+
+        def device_chunk(times, values, targets):
+            return sc.DataArray(
+                sc.array(dims=['time'], values=values, unit='mm'),
+                coords={
+                    'time': sc.array(dims=['time'], values=times, unit='s'),
+                    'target': sc.array(dims=['time'], values=targets, unit='mm'),
+                },
+            )
+
+        buffer = TemporalBuffer()
+        buffer.add(device_chunk([0.0, 1.0], [0.0, 0.5], [1.0, 1.0]))
+        # New chunk with a different ``target`` value — previously this
+        # tripped ``_metadata_matches`` and wiped the history.
+        buffer.add(device_chunk([2.0, 3.0], [0.8, 1.0], [1.0, 5.0]))
+
+        result = buffer.get()
+        assert result.sizes['time'] == 4
+        assert list(result.coords['time'].values) == [0.0, 1.0, 2.0, 3.0]
+        assert list(result.coords['target'].values) == [1.0, 1.0, 1.0, 5.0]
+
+    def test_non_time_dim_coord_resets_on_change(self):
+        """Coords without the ``time`` dim are still metadata and must match."""
+        buffer = TemporalBuffer()
+        first = sc.DataArray(
+            sc.array(dims=['time', 'x'], values=[[1.0, 2.0]], unit='counts'),
+            coords={
+                'time': sc.array(dims=['time'], values=[0.0], unit='s'),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+        second = sc.DataArray(
+            sc.array(dims=['time', 'x'], values=[[3.0, 4.0]], unit='counts'),
+            coords={
+                'time': sc.array(dims=['time'], values=[1.0], unit='s'),
+                'x': sc.arange('x', 2, unit='m') + sc.scalar(10.0, unit='m'),
+            },
+        )
+
+        buffer.add(first)
+        buffer.add(second)
+
+        # Mismatched non-time-dim coord forces a reset → only the latest chunk
+        # remains in the buffer.
+        result = buffer.get()
+        assert result.sizes['time'] == 1
+        assert result.coords['time'].values[0] == 1.0
+
 
 class TestVariableBuffer:
     """Tests for VariableBuffer."""
