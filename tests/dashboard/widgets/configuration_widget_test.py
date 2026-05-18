@@ -190,6 +190,29 @@ class TestNoParamsWidget:
         assert widget.get_failing_field_names() == []
 
 
+class TestSourceSelectButtons:
+    def test_buttons_present_when_source_selector_exists(self) -> None:
+        widget = ConfigurationWidget(_Adapter(source_names=['s1', 's2']))
+        assert widget._source_select_buttons is not None
+
+    def test_buttons_absent_when_no_sources(self) -> None:
+        widget = ConfigurationWidget(_Adapter(model=_EmptyModel, source_names=[]))
+        assert widget._source_selector is None
+        assert widget._source_select_buttons is None
+
+    def test_select_all_populates_value_with_all_sources(self) -> None:
+        widget = ConfigurationWidget(_Adapter(source_names=['s1', 's2', 's3']))
+        widget._source_selector.value = []
+        widget._select_all_sources()
+        assert sorted(widget._source_selector.value) == ['s1', 's2', 's3']
+
+    def test_select_none_clears_value(self) -> None:
+        widget = ConfigurationWidget(_Adapter(source_names=['s1', 's2', 's3']))
+        widget._source_selector.value = ['s1', 's2']
+        widget._select_no_sources()
+        assert widget._source_selector.value == []
+
+
 @pytest.fixture(autouse=True)
 def _panel_extensions_loaded():
     """Ensure Panel extensions required by pn.Tabs etc. are loaded."""

@@ -42,6 +42,7 @@ class ConfigurationWidget:
         """
         self._config = config
         self._source_selector = self._create_source_selector()
+        self._source_select_buttons = self._create_source_select_buttons()
         self._aux_sources_widget = self._create_aux_sources_widget()
         self._source_error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._model_widget = self._create_model_widget()
@@ -79,6 +80,65 @@ class ConfigurationWidget:
             placeholder="Select source names to apply workflow to",
             sizing_mode='stretch_width',
         )
+
+    def _create_source_select_buttons(self) -> pn.Row | None:
+        """Create 'Select all' / 'Select none' buttons for the source selector."""
+        if self._source_selector is None:
+            return None
+
+        compact_btn_css = [
+            f"""
+            button {{
+                font-size: 12px !important;
+                padding: 2px 8px !important;
+                border: 1px solid {Colors.BORDER} !important;
+                border-radius: 4px !important;
+            }}
+            button:hover {{
+                background-color: {Colors.BG_MUTED} !important;
+            }}
+            """
+        ]
+
+        select_all_btn = pn.widgets.Button(
+            name='Select all',
+            button_type='light',
+            width=90,
+            height=26,
+            margin=(0, 4, 0, 0),
+            stylesheets=compact_btn_css,
+        )
+        select_all_btn.on_click(lambda _: self._select_all_sources())
+
+        select_none_btn = pn.widgets.Button(
+            name='Select none',
+            button_type='light',
+            width=90,
+            height=26,
+            margin=0,
+            stylesheets=compact_btn_css,
+        )
+        select_none_btn.on_click(lambda _: self._select_no_sources())
+
+        return pn.Row(
+            pn.Spacer(sizing_mode='stretch_width'),
+            select_all_btn,
+            select_none_btn,
+            sizing_mode='stretch_width',
+            margin=(0, 0, 4, 0),
+        )
+
+    def _select_all_sources(self) -> None:
+        """Set source selector value to all available sources."""
+        if self._source_selector is None:
+            return
+        self._source_selector.value = sorted(self._source_selector.options.values())
+
+    def _select_no_sources(self) -> None:
+        """Clear source selector value."""
+        if self._source_selector is None:
+            return
+        self._source_selector.value = []
 
     def _create_aux_sources_widget(self) -> AuxSourcesWidget | None:
         """Create auxiliary sources widget."""
@@ -138,6 +198,8 @@ class ConfigurationWidget:
         """Collect items that belong in the 'General' tab (sources/aux/errors)."""
         items: list[Any] = []
         if self._source_selector is not None:
+            if self._source_select_buttons is not None:
+                items.append(self._source_select_buttons)
             items.append(self._source_selector)
             items.append(self._source_error_pane)
         if self._aux_sources_widget is not None:
