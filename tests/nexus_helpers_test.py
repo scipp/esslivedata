@@ -484,6 +484,22 @@ class TestSuggestNames:
             '/entry/instrument/bar/temperature/value': 'bar_temperature_value',
         }
 
+    def test_falls_back_to_unfiltered_path_when_only_generic_ancestors_differ(
+        self,
+    ) -> None:
+        # The filtered tails collide (``foo_value``); resolving requires
+        # putting a generic ancestor back to disambiguate.
+        names = suggest_names(
+            [
+                '/entry/instrument/foo/value',
+                '/entry/sample/foo/value',
+            ]
+        )
+        assert names == {
+            '/entry/instrument/foo/value': 'instrument_foo_value',
+            '/entry/sample/foo/value': 'sample_foo_value',
+        }
+
 
 class TestFilterF144Streams:
     @pytest.fixture
@@ -626,20 +642,14 @@ class TestGenerateStreamsParsedModule:
         # Absolute path is stripped
         assert '/some/abs/path' not in code
 
-    def test_auto_disambiguates_colliding_leaf_names(self) -> None:
-        # Two paths whose primary-leaf collapse to the same name: the
-        # suggester walks one component deeper for the colliding subset.
+    def test_emits_both_entries_for_paths_with_same_filtered_tail(self) -> None:
+        # Generator keys by nexus_path, not by suggested name, so colliding
+        # leaves do not collapse entries.
         infos = [
             _f144_info(group_path='entry/instrument/foo/value', source='SRC_A'),
             _f144_info(group_path='entry/sample/foo/value', source='SRC_B'),
         ]
         code = generate_streams_parsed_module(infos)
-        # Generic groups 'instrument' and 'sample' are filtered, so the
-        # next available component up is 'foo' itself; the suggester appends
-        # the next parent. With purely generic ancestors above, both paths
-        # have only ['foo'] meaningful — the disambiguator extends with
-        # whatever differs. Here it falls back to the path-hash suffix.
-        # Either way: both streams are emitted with distinct names.
         assert 'SRC_A' in code
         assert 'SRC_B' in code
         assert code.count('F144Stream(') == 2

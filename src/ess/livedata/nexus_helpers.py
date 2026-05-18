@@ -141,44 +141,39 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     unique across the input set. Duplicates extend to the next-longer tail
     until uniqueness is reached.
 
+    Paths that still collide after exhausting the filtered tail (i.e. they
+    differ only in filtered-out generic ancestors) fall back to the full
+    unfiltered path. HDF5 path uniqueness guarantees this resolves.
+
     The returned dict is keyed by path. Since paths are unique in HDF5 and
     each path produces at most one name, no two paths share a name.
     """
     paths = list(paths)
-    parts: dict[str, list[str]] = {
-        p: [c for c in p.strip('/').split('/') if c not in _GENERIC_GROUPS]
-        for p in paths
+    full: dict[str, list[str]] = {p: p.strip('/').split('/') for p in paths}
+    filtered: dict[str, list[str]] = {
+        p: [c for c in full[p] if c not in _GENERIC_GROUPS] or full[p] for p in paths
     }
 
-    def _name(path: str, depth: int) -> str:
-        p_parts = parts[path]
-        if not p_parts:
-            return path.strip('/').rsplit('/', 1)[-1]
-        return '_'.join(p_parts[-min(depth, len(p_parts)) :])
-
-    max_depth = max((len(v) for v in parts.values()), default=1)
     result: dict[str, str] = {}
     pending = set(paths)
-    depth = 2
-    while pending and depth <= max(max_depth, 2):
-        candidates = {p: _name(p, depth) for p in pending}
-        counts: dict[str, int] = {}
-        for name in candidates.values():
-            counts[name] = counts.get(name, 0) + 1
-        next_pending: set[str] = set()
-        for path, name in candidates.items():
-            if counts[name] == 1:
-                result[path] = name
-            else:
-                next_pending.add(path)
-        pending = next_pending
-        depth += 1
-    # Any still-pending paths share the full meaningful tail; fall back to a
-    # path-hash suffix. HDF5 paths are unique, so this only triggers when two
-    # paths differ only in filtered-out generic ancestors.
-    for path in pending:
-        full = _name(path, max_depth)
-        result[path] = f'{full}__{abs(hash(path)) % 10000:04d}'
+    for parts in (filtered, full):
+        max_d = max((len(parts[p]) for p in pending), default=1)
+        depth = 2
+        while pending and depth <= max(max_d, 2):
+            candidates = {
+                p: '_'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
+            }
+            counts: dict[str, int] = {}
+            for name in candidates.values():
+                counts[name] = counts.get(name, 0) + 1
+            next_pending: set[str] = set()
+            for path, name in candidates.items():
+                if counts[name] == 1:
+                    result[path] = name
+                else:
+                    next_pending.add(path)
+            pending = next_pending
+            depth += 1
     return result
 
 
