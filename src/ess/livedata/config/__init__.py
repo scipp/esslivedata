@@ -2,6 +2,5 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
-from .models import ConfigKey
 
-__all__ = ['ConfigKey', 'Instrument', 'SourceMetadata', 'instrument_registry']
+__all__ = ['Instrument', 'SourceMetadata', 'instrument_registry']

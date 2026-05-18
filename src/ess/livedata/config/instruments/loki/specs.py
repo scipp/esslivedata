@@ -258,7 +258,9 @@ monitor_handle = register_monitor_workflow_specs(
 # pixel IDs for this monitor.
 instrument.configure_pixellated_monitor(
     'beam_monitor_m3',
-    detector_number=sc.array(dims=['event_id'], values=[4, 5, 6, 7, 8], unit=None),
+    detector_number=sc.array(
+        dims=['detector_number'], values=[4, 5, 6, 7, 8], unit=None
+    ),
 )
 instrument.add_logical_view(
     name='monitor_counts_per_pixel',

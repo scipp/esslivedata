@@ -3,6 +3,7 @@
 
 import json
 import logging
+import uuid
 
 import numpy as np
 import pytest
@@ -11,10 +12,14 @@ from streaming_data_types import eventdata_ev44
 from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.services.data_reduction import make_reduction_service_builder
 from tests.helpers.livedata_app import LivedataApp
+
+
+def _job_id(source: str) -> JobId:
+    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_from_registry(
@@ -58,12 +63,11 @@ def test_can_configure_and_stop_workflow_with_detector(
     workflow_id, _ = _get_workflow_from_registry(instrument, workflow_name)
 
     source_name = first_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="data_reduction", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No acknowledgement sent when message_id is not set (backward compatibility)
     assert len(sink.messages) == 0
@@ -94,9 +98,7 @@ def test_can_configure_and_stop_workflow_with_detector(
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
-    config_key = ConfigKey(key=command.key)
-    stop = command.model_dump()
-    app.publish_config_message(key=config_key, value=stop)
+    app.publish_config_message(command)
     app.publish_events(size=1000, time=10)
     service.step()
     app.publish_events(size=1000, time=20)
@@ -115,11 +117,10 @@ def test_dream_powder_reduction_produces_tof_output(
     workflow_id, _ = _get_workflow_from_registry('dream', 'powder_reduction')
 
     source_name = first_source_name['dream']
-    config_key = ConfigKey(
-        source_name=source_name, service_name="data_reduction", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
 
     app.publish_events(size=2000, time=2)
@@ -165,18 +166,17 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     workflow_id, spec = _get_workflow_from_registry(instrument, workflow_name)
 
     source_name = first_source_name[instrument]
-    config_key = ConfigKey(
-        source_name=source_name, service_name="data_reduction", key="workflow_config"
-    )
     # Get default aux_source_names from the workflow spec
     aux_source_names = {}
     if spec.aux_sources is not None:
         aux_source_names = spec.aux_sources.get_defaults()
     workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, aux_source_names=aux_source_names
+        identifier=workflow_id,
+        aux_source_names=aux_source_names,
+        job_id=_job_id(source_name),
     )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     sink.messages.clear()  # Clear the workflow status message(s), one per source name.
 
@@ -206,9 +206,7 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
-    config_key = ConfigKey(key=command.key)
-    stop = command.model_dump()
-    app.publish_config_message(key=config_key, value=stop)
+    app.publish_config_message(command)
     app.publish_events(size=1000, time=10)
     service.step()
     app.publish_events(size=1000, time=20)
@@ -226,12 +224,11 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     app.publish_events(size=1000, time=0)
     service.step()
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="data_reduction", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     app.publish_events(size=2000, time=1)
     app.publish_events(size=3000, time=2)
     service.step()
@@ -240,8 +237,7 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     assert sink.messages[-1].value.values.sum() == 5000
 
     model = JobCommand(action=JobAction.reset)
-    config_key = ConfigKey(key=model.key)
-    app.publish_config_message(key=config_key, value=model.model_dump())
+    app.publish_config_message(model)
 
     app.publish_events(size=1000, time=4)
     service.step()
@@ -250,7 +246,7 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     service.step()
     assert sink.messages[-1].value.values.sum() == 2000
 
-    app.publish_config_message(key=config_key, value=model.model_dump())
+    app.publish_config_message(model)
 
     app.publish_events(size=100, time=9)
     service.step()
@@ -269,17 +265,15 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     service = app.service
     workflow_id, _spec = _get_workflow_from_registry('dummy', 'total_counts')
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="data_reduction", key="workflow_config"
-    )
     identifier = workflow_spec.WorkflowId(
         instrument='dummy', name='abcde12345', version=1
     )
     bad_workflow_id = workflow_spec.WorkflowConfig(
         identifier=identifier,  # Invalid workflow ID
+        job_id=_job_id('panel_0'),
     )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=bad_workflow_id.model_dump())
+    app.publish_config_message(bad_workflow_id)
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -290,9 +284,11 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     # No error ack sent when message_id not set (error is logged server-side)
     assert len(sink.messages) == 0
 
-    valid_workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    valid_workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
+    )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=valid_workflow_config.model_dump())
+    app.publish_config_message(valid_workflow_config)
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered; get data only (no ack without message_id)
@@ -308,14 +304,13 @@ def test_service_can_recover_after_bad_workflow_param_was_set(
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy', 'total_counts')
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="data_reduction", key="workflow_config"
-    )
     bad_param_value = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, params={'does_not_exist': 1}
+        identifier=workflow_id,
+        params={'does_not_exist': 1},
+        job_id=_job_id('panel_0'),
     )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=bad_param_value.model_dump())
+    app.publish_config_message(bad_param_value)
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -325,9 +320,11 @@ def test_service_can_recover_after_bad_workflow_param_was_set(
     # No error ack sent when message_id not set (error is logged server-side)
     assert len(sink.messages) == 0
 
-    valid_config = workflow_spec.WorkflowConfig(identifier=workflow_id, params={})
+    valid_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, params={}, job_id=_job_id('panel_0')
+    )
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=valid_config.model_dump())
+    app.publish_config_message(valid_config)
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered; get data only (no ack without message_id)
@@ -344,15 +341,11 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     workflow_id, _ = _get_workflow_from_registry('dummy', 'total_counts')
 
     # Start a valid workflow first
-    config_key = ConfigKey(
-        source_name=first_source_name['dummy'],
-        service_name="data_reduction",
-        key="workflow_config",
-    )
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id,
+        job_id=_job_id(first_source_name['dummy']),
     )
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     service.step()
     # No ack without message_id
     assert len(sink.messages) == 0
@@ -370,8 +363,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     bad_workflow_id = workflow_spec.WorkflowConfig(
         identifier=identifier,  # Invalid workflow ID
         params={},
+        job_id=_job_id(first_source_name['dummy']),
     )
-    app.publish_config_message(key=config_key, value=bad_workflow_id.model_dump())
+    app.publish_config_message(bad_workflow_id)
 
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
@@ -384,8 +378,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     bad_param_value = workflow_spec.WorkflowConfig(
         identifier=workflow_id,
         params={'does_not_exist': 1},  # Invalid parameter
+        job_id=_job_id(first_source_name['dummy']),
     )
-    app.publish_config_message(key=config_key, value=bad_param_value.model_dump())
+    app.publish_config_message(bad_param_value)
 
     # Add more events and verify the original workflow is still running
     app.publish_events(size=1000, time=6)
@@ -417,12 +412,11 @@ def test_workflow_starts_with_specific_source_name(
         service.step()
         assert len(sink.messages) == 0
 
-    config_key = ConfigKey(
-        source_name=source_name, service_name="data_reduction", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     # Process config message before data arrives. Without calling step() the order of
     # processing of config vs data messages is not guaranteed.
     service.step()
@@ -442,12 +436,11 @@ def configured_dummy_reduction() -> LivedataApp:
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy', 'total_counts')
 
-    config_key = ConfigKey(
-        source_name='panel_0', service_name="data_reduction", key="workflow_config"
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('panel_0')
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=workflow_config.model_dump())
+    app.publish_config_message(workflow_config)
     # Process config message before data arrives. Without calling step() the order of
     # processing of config vs data messages is not guaranteed.
     service.step()

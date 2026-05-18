@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import uuid
+
 import pytest
 import sciline
 from ess.reduce.streaming import StreamProcessor
@@ -9,6 +11,7 @@ from ess.livedata.config.workflow_spec import (
     REDUCTION,
     AuxInput,
     AuxSources,
+    JobId,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -159,7 +162,10 @@ class TestWorkflowFactory:
         def factory_func():
             return make_dummy_workflow()
 
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+        )
         processor = factory.create(source_name="any-source", config=config)
         assert isinstance(processor, StreamProcessor)
 
@@ -187,7 +193,10 @@ class TestWorkflowFactory:
         def factory_func(*, source_name):
             return make_dummy_workflow_with_source(source_name=source_name)
 
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
+        )
         processor = factory.create(source_name="source1", config=config)
         assert isinstance(processor, StreamProcessor)
 
@@ -215,7 +224,9 @@ class TestWorkflowFactory:
             return make_dummy_workflow_with_params(params=params)
 
         config = WorkflowConfig(
-            identifier=workflow_id, params={"value": 100, "name": "custom"}
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+            params={"value": 100, "name": "custom"},
         )
         processor = factory.create(source_name="any-source", config=config)
         assert isinstance(processor, StreamProcessor)
@@ -245,6 +256,7 @@ class TestWorkflowFactory:
 
         config = WorkflowConfig(
             identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             params={"value": "not-an-int", "name": "test"},  # Invalid type for 'value'
         )
 
@@ -259,7 +271,10 @@ class TestWorkflowFactory:
             name="non-existent",
             version=1,
         )
-        config = WorkflowConfig(identifier=non_existent_id)
+        config = WorkflowConfig(
+            identifier=non_existent_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+        )
 
         with pytest.raises(KeyError, match="Unknown workflow ID"):
             factory.create(source_name="any-source", config=config)
@@ -289,7 +304,10 @@ class TestWorkflowFactory:
         def factory_func():
             return make_dummy_workflow()
 
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="invalid-source", job_number=uuid.uuid4()),
+        )
 
         with pytest.raises(ValueError, match="Source 'invalid-source' is not allowed"):
             factory.create(source_name="invalid-source", config=config)
@@ -410,8 +428,14 @@ class TestWorkflowFactory:
         assert workflow_id2 in factory
 
         # Both workflows should be callable
-        config1 = WorkflowConfig(identifier=workflow_id1)
-        config2 = WorkflowConfig(identifier=workflow_id2)
+        config1 = WorkflowConfig(
+            identifier=workflow_id1,
+            job_id=JobId(source_name="any", job_number=uuid.uuid4()),
+        )
+        config2 = WorkflowConfig(
+            identifier=workflow_id2,
+            job_id=JobId(source_name="any", job_number=uuid.uuid4()),
+        )
         processor1 = factory.create(source_name="any", config=config1)
         processor2 = factory.create(source_name="any", config=config2)
         assert isinstance(processor1, StreamProcessor)
@@ -440,7 +464,10 @@ class TestWorkflowFactory:
         assert stored_spec.name == ""
 
         # Should still create a processor
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="any", job_number=uuid.uuid4()),
+        )
         processor = factory.create(source_name="any", config=config)
         assert isinstance(processor, StreamProcessor)
 
@@ -469,20 +496,41 @@ class TestWorkflowFactory:
         def factory_func():
             return make_dummy_workflow()
 
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="Source1", job_number=uuid.uuid4()),
+        )
 
         # These should work
         processor1 = factory.create(source_name="Source1", config=config)
-        processor2 = factory.create(source_name="SOURCE2", config=config)
+        processor2 = factory.create(
+            source_name="SOURCE2",
+            config=WorkflowConfig(
+                identifier=workflow_id,
+                job_id=JobId(source_name="SOURCE2", job_number=uuid.uuid4()),
+            ),
+        )
         assert isinstance(processor1, StreamProcessor)
         assert isinstance(processor2, StreamProcessor)
 
         # These should fail due to case sensitivity
         with pytest.raises(ValueError, match="is not allowed"):
-            factory.create(source_name="source1", config=config)
+            factory.create(
+                source_name="source1",
+                config=WorkflowConfig(
+                    identifier=workflow_id,
+                    job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
+                ),
+            )
 
         with pytest.raises(ValueError, match="is not allowed"):
-            factory.create(source_name="source2", config=config)
+            factory.create(
+                source_name="source2",
+                config=WorkflowConfig(
+                    identifier=workflow_id,
+                    job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
+                ),
+            )
 
     def test_create_with_aux_sources(self):
         """Test that workflows can be created with aux_sources parameter."""
@@ -511,6 +559,7 @@ class TestWorkflowFactory:
 
         config = WorkflowConfig(
             identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             aux_source_names={"monitor": "monitor2", "rotation": "rotation2"},
         )
         processor = factory.create(source_name="any-source", config=config)
@@ -540,7 +589,10 @@ class TestWorkflowFactory:
         def factory_func():
             return make_dummy_workflow()
 
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+        )
         processor = factory.create(source_name="any-source", config=config)
         assert isinstance(processor, StreamProcessor)
 
@@ -570,6 +622,7 @@ class TestWorkflowFactory:
 
         config = WorkflowConfig(
             identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             aux_source_names={"monitor": "monitor1"},
         )
 
@@ -711,7 +764,10 @@ class TestTwoPhaseRegistration:
         assert workflow_id in factory
 
         # Should be able to create workflow
-        config = WorkflowConfig(identifier=workflow_id)
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+        )
         processor = factory.create(source_name="any-source", config=config)
         assert isinstance(processor, StreamProcessor)
 
@@ -741,7 +797,9 @@ class TestTwoPhaseRegistration:
 
         # Should be able to create workflow with params
         config = WorkflowConfig(
-            identifier=workflow_id, params={"value": 100, "name": "custom"}
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+            params={"value": 100, "name": "custom"},
         )
         processor = factory.create(source_name="any-source", config=config)
         assert isinstance(processor, StreamProcessor)

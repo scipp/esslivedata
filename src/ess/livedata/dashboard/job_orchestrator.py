@@ -23,8 +23,6 @@ import pydantic
 import structlog
 from pydantic import BaseModel, Field
 
-import ess.livedata.config.keys as keys
-from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobNumber,
@@ -393,10 +391,7 @@ class JobOrchestrator:
             )
             # Create stop commands for all old jobs (no message_id - fire and forget)
             commands.extend(
-                (
-                    ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                    JobCommand(job_id=job_id, action=JobAction.stop),
-                )
+                JobCommand(job_id=job_id, action=JobAction.stop)
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
@@ -421,13 +416,12 @@ class JobOrchestrator:
             # configuration.
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_set.job_number),
                 params=job_config.params,
                 aux_source_names=job_config.aux_source_names,
-                job_number=job_set.job_number,
                 message_id=message_id,
             )
-            key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
-            commands.append((key, workflow_config))
+            commands.append(workflow_config)
 
         # Register pending command for acknowledgement tracking
         self._pending_commands.register(
@@ -872,10 +866,7 @@ class JobOrchestrator:
         message_id = str(uuid.uuid4())
 
         commands = [
-            (
-                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                JobCommand(job_id=job_id, action=action, message_id=message_id),
-            )
+            JobCommand(job_id=job_id, action=action, message_id=message_id)
             for job_id in state.current.job_ids()
         ]
 

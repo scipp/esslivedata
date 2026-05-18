@@ -10,12 +10,14 @@ For tests that require factory implementations, see
 registered_workflow_factories_test.py.
 """
 
+import uuid
+
 import pydantic
 import pytest
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
 from ess.livedata.dashboard.plotter_registry import plotter_registry
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
@@ -133,8 +135,10 @@ def test_workflow_params_serialization_roundtrip(
     original = spec.params()
 
     # Simulate WorkflowConfig.from_params serialization
+    job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
+        job_id=job_id,
         params=original.model_dump(),
     )
     serialized = workflow_config.params
@@ -166,8 +170,10 @@ def test_workflow_aux_sources_serialization_roundtrip(
     defaults = spec.aux_sources.get_defaults()
 
     # Simulate WorkflowConfig.from_params storing aux sources
+    job_id = JobId(source_name="test_source", job_number=uuid.uuid4())
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
+        job_id=job_id,
         aux_source_names=defaults,
     )
     serialized = workflow_config.aux_source_names
