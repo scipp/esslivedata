@@ -40,7 +40,7 @@ class _Substream(Generic[_V]):
     """Last-seen value and timestamp for one device substream."""
 
     value: _V
-    time: int
+    time: Timestamp
 
 
 @dataclass(slots=True)
@@ -56,7 +56,7 @@ class _DeviceState:
 
     def push(self, role: _Role, log: LogData) -> Message[DeviceSample] | None:
         """Record a substream event and emit a sample if all substreams seen."""
-        time = int(log.time)
+        time = Timestamp.from_ns(int(log.time))
         if role == 'value':
             self.value = _Substream(value=float(log.value), time=time)
         elif role == 'target':
@@ -69,10 +69,9 @@ class _DeviceState:
             return None
         if self.has_settled and self.settled is None:
             return None
-        max_time = max(
+        sample_time = max(
             s.time for s in (self.value, self.target, self.settled) if s is not None
         )
-        sample_time = Timestamp.from_ns(max_time)
         return Message(
             timestamp=sample_time,
             stream=StreamId(kind=StreamKind.DEVICE, name=self.device_name),
