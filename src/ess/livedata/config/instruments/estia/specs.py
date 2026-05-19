@@ -21,7 +21,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
-from .._ess import GENERIC_CBM_DESCRIPTION_NOTE, GENERIC_CBM_MONITORS
 from .streams_parsed import PARSED_STREAMS
 from .views import get_multiblade_view
 
@@ -191,7 +190,7 @@ streams = name_streams(PARSED_STREAMS)
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
-    monitors=list(GENERIC_CBM_MONITORS),
+    monitors=['cbm1'],
     streams=streams,
     source_metadata={
         'detector_rotation_value': SourceMetadata(
@@ -207,7 +206,6 @@ monitor_handle = register_monitor_workflow_specs(
     instrument,
     instrument.monitors,
     params=TOAOnlyMonitorDataParams,
-    extra_description=GENERIC_CBM_DESCRIPTION_NOTE,
 )
 
 

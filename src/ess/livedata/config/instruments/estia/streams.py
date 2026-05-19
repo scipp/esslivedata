@@ -37,7 +37,7 @@ stream_mapping = {
         **make_common_stream_mapping_inputs(
             instrument='estia',
             monitor_names=instrument.monitors,
-            cbm_start=0,
+            cbm_start=1,
         ),
         detectors=_make_estia_detectors(),
         logs=make_f144_log_lut(instrument),
