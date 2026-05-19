@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from ess.livedata.config import Device, F144Stream, name_streams
-from ess.livedata.config.stream import suggest_names
+from ess.livedata.config.stream import Stream, suggest_names
 
 
 def _parsed(path: str, *, source: str = 'src') -> F144Stream:
@@ -244,16 +244,62 @@ class TestDeviceDetection:
         result = name_streams(parsed)
         assert all(not isinstance(s, Device) for s in result.values())
 
-    def test_recognises_alt_names_position_readback_setpoint(self) -> None:
+    def test_classifies_by_source_suffix_regardless_of_child_name(self) -> None:
+        # tbl-style: non-canonical NeXus child names but canonical EPICS
+        # source suffixes. Classification is by source, so the child name is
+        # incidental.
         parsed = {
-            '/entry/instrument/m/position_readback': self._motor('X-PosReadback'),
-            '/entry/instrument/m/position_setpoint': self._motor('X.VAL'),
+            '/entry/instrument/m/position_readback': self._motor(
+                'TBL-AttChg:MC-LinY-01:Mtr.RBV'
+            ),
+            '/entry/instrument/m/position_setpoint': self._motor(
+                'TBL-AttChg:MC-LinY-01:Mtr.VAL'
+            ),
         }
         result = name_streams(parsed)
         device = result['m']
         assert isinstance(device, Device)
         assert device.value == 'm_position_readback'
         assert device.target == 'm_position_setpoint'
+
+    def test_ignores_unclassifiable_source_suffix(self) -> None:
+        # Piezo potentiometer readback (-PosReadback) sits alongside a real
+        # motor on the bifrost slit blades; it is not a motor RBV and must
+        # not participate in device synthesis. It remains as a plain stream.
+        parsed = {
+            '/entry/instrument/blade/value': self._motor('BIFRO-SpSl1:MC.RBV'),
+            '/entry/instrument/blade/target_value': self._motor('BIFRO-SpSl1:MC.VAL'),
+            '/entry/instrument/blade/potentiometer_value': self._motor(
+                'BIFRO-SpSl1:MC-SlZm-01:PzMtr-PosReadback'
+            ),
+        }
+        result = name_streams(parsed)
+        device = result['blade']
+        assert isinstance(device, Device)
+        assert device.value == 'blade_value'
+        assert device.target == 'blade_target_value'
+        assert isinstance(result['blade_potentiometer_value'], F144Stream)
+
+    def test_ignores_substream_with_no_source(self) -> None:
+        # Synthesised in-process F144Stream entries have source=None and are
+        # unclassifiable; they do not contribute to device detection.
+        parsed: dict[str, Stream] = {
+            '/entry/instrument/m/value': F144Stream(units='mm'),
+            '/entry/instrument/m/target_value': self._motor('X.VAL'),
+        }
+        result = name_streams(parsed)
+        assert all(not isinstance(s, Device) for s in result.values())
+
+    def test_duplicate_role_in_parent_raises(self) -> None:
+        # Two children classify as 'value' under the same parent: ambiguous,
+        # must fail loudly rather than silently dropping one.
+        parsed = {
+            '/entry/instrument/m/value': self._motor('X.RBV'),
+            '/entry/instrument/m/value_alt': self._motor('Y.RBV'),
+            '/entry/instrument/m/target_value': self._motor('X.VAL'),
+        }
+        with pytest.raises(ValueError, match='two children classify as'):
+            name_streams(parsed)
 
     def test_unit_mismatch_raises(self) -> None:
         parsed = {

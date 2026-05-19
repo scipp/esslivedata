@@ -14,10 +14,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger(__name__)
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Stream:
@@ -169,34 +165,26 @@ def suggest_names(
     return result
 
 
-#: Child-leaf names recognised as the readback (RBV) substream of a device.
-_RBV_LEAVES: tuple[str, ...] = ('value', 'position_readback')
-#: Child-leaf names recognised as the setpoint (VAL) substream.
-_VAL_LEAVES: tuple[str, ...] = ('target_value', 'position_setpoint')
-#: Child-leaf names recognised as the "done moving" (DMOV) substream.
-_DMOV_LEAVES: tuple[str, ...] = ('idle_flag',)
-
-#: Expected EPICS source suffixes per role; mismatch logs a warning but does
-#: not block detection.
-_RBV_SOURCE_SUFFIXES: tuple[str, ...] = ('.RBV', '-PosReadback')
-_VAL_SOURCE_SUFFIXES: tuple[str, ...] = ('.VAL',)
-_DMOV_SOURCE_SUFFIXES: tuple[str, ...] = ('.DMOV',)
+#: EPICS source-attribute suffix identifying each device-substream role.
+#: From the EPICS motor record: ``.RBV`` is the readback, ``.VAL`` the setpoint,
+#: ``.DMOV`` the "done moving" flag. These are fixed by the EPICS motor-record
+#: convention and stable across the facility, while NeXus child names
+#: (``value`` vs ``position_readback`` etc.) drift across instruments.
+_ROLE_BY_SUFFIX: dict[str, str] = {
+    '.RBV': 'value',
+    '.VAL': 'target',
+    '.DMOV': 'settled',
+}
 
 
-def _classify_leaf(leaf: str) -> str | None:
-    if leaf in _RBV_LEAVES:
-        return 'value'
-    if leaf in _VAL_LEAVES:
-        return 'target'
-    if leaf in _DMOV_LEAVES:
-        return 'settled'
-    return None
-
-
-def _source_suffix_matches(source: str | None, suffixes: tuple[str, ...]) -> bool:
+def _classify_source(source: str | None) -> str | None:
+    """Map an f144 ``source`` attribute to a device role, or ``None``."""
     if source is None:
-        return True
-    return any(source.endswith(s) for s in suffixes)
+        return None
+    for suffix, role in _ROLE_BY_SUFFIX.items():
+        if source.endswith(suffix):
+            return role
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,21 +198,34 @@ class _DetectedDevice:
 
 
 def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
-    """Detect device groups by structural child-name pattern.
+    """Detect device groups by EPICS source-suffix classification.
 
-    Returns a dict ``parent_path -> _DetectedDevice``. Only parents with an
-    RBV-like child *and* at least one of VAL/DMOV are emitted. Raises
-    :class:`ValueError` if RBV and VAL units disagree.
+    Each f144 substream is classified by the suffix of its ``source`` attribute
+    (``.RBV`` → value, ``.VAL`` → target, ``.DMOV`` → settled). Substreams
+    co-located under one NeXus parent group form a Device if classified RBV is
+    present and at least one of classified VAL / DMOV is present. Substreams
+    with ``source=None`` or an unrecognised suffix are not classifiable and
+    are ignored.
+
+    Returns a dict ``parent_path -> _DetectedDevice``. Raises
+    :class:`ValueError` if RBV and VAL units disagree, or if two children of
+    one parent classify as the same role.
     """
     by_parent: dict[str, dict[str, str]] = {}
     for path, stream in parsed.items():
         if not isinstance(stream, F144Stream):
             continue
-        parent, _, leaf = path.rpartition('/')
-        role = _classify_leaf(leaf)
+        role = _classify_source(stream.source)
         if role is None:
             continue
-        by_parent.setdefault(parent, {})[role] = path
+        parent, _, _ = path.rpartition('/')
+        roles = by_parent.setdefault(parent, {})
+        if role in roles:
+            raise ValueError(
+                f"Device at {parent!r}: two children classify as {role!r} "
+                f"({roles[role]!r} and {path!r}); only one expected per parent"
+            )
+        roles[role] = path
 
     devices: dict[str, _DetectedDevice] = {}
     for parent, roles in by_parent.items():
@@ -233,31 +234,23 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
         if 'target' not in roles and 'settled' not in roles:
             continue
         rbv = parsed[roles['value']]
-        units = rbv.units if isinstance(rbv, F144Stream) else None
+        if not isinstance(rbv, F144Stream):
+            raise ValueError(
+                f"Device at {parent!r}: RBV substream {roles['value']!r} "
+                f"is not an F144Stream (got {type(rbv).__name__})"
+            )
+        units = rbv.units
         if 'target' in roles:
             val = parsed[roles['target']]
-            val_units = val.units if isinstance(val, F144Stream) else None
-            if val_units != units:
+            if not isinstance(val, F144Stream):
+                raise ValueError(
+                    f"Device at {parent!r}: VAL substream {roles['target']!r} "
+                    f"is not an F144Stream (got {type(val).__name__})"
+                )
+            if val.units != units:
                 raise ValueError(
                     f"Device at {parent!r}: RBV units {units!r} differ from "
-                    f"VAL units {val_units!r}; units must match"
-                )
-        for role, suffixes in (
-            ('value', _RBV_SOURCE_SUFFIXES),
-            ('target', _VAL_SOURCE_SUFFIXES),
-            ('settled', _DMOV_SOURCE_SUFFIXES),
-        ):
-            child_path = roles.get(role)
-            if child_path is None:
-                continue
-            if not _source_suffix_matches(parsed[child_path].source, suffixes):
-                logger.warning(
-                    "Device at %r %s substream source %r does not match "
-                    "expected suffixes %r",
-                    parent,
-                    role,
-                    parsed[child_path].source,
-                    suffixes,
+                    f"VAL units {val.units!r}; units must match"
                 )
         devices[parent] = _DetectedDevice(
             value=roles['value'],

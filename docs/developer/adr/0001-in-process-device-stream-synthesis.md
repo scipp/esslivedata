@@ -26,7 +26,7 @@ Merge per-device substreams **in-process via a `MessageSource` decorator** (`Dev
 4. Emits on **every** input event for a configured substream (union-anchored).
 5. Stamps each emit with `max(rbv_time, val_time, dmov_time)` across the synthesizer's last-seen substream times.
 
-A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by structural child-name pattern. A new `ToDeviceLog` preprocessor (dispatched on `StreamKind.DEVICE`) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `settled` coords.
+A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by EPICS source-suffix classification. A new `ToDeviceLog` preprocessor (dispatched on `StreamKind.DEVICE`) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `settled` coords.
 
 ## Alternatives considered
 
@@ -63,11 +63,15 @@ A mask would silently exclude moving samples from `sum`/`mean`/etc., biasing red
 
 The synthesizer suppresses raw VAL/DMOV/RBV messages for configured devices, so downstream code sees only the merged `Device` stream. This keeps the routing model simple — the merged DataArray is the single canonical view of the device — and forecloses a class of confusion where a consumer might bind a workflow key to a raw substream when the merged view was intended. The merged DataArray carries every substream as a coord, so no information is lost.
 
-### Auto-detection by structural pattern, not NeXus class
+### Auto-detection by EPICS source suffix
 
-`name_streams` detects devices by child-name pattern (`value` / `position_readback` for RBV, plus at least one of `target_value` / `position_setpoint` / `idle_flag`) rather than parent `nx_class == 'NXpositioner'`. Conforming devices exist on `NXcollimator` and `NXlog` parents at ESS; restricting to `NXpositioner` would miss them. False positives are improbable (the child-name combination is a strong f144 motor convention) and cheap (a `Device` the consumer ignores); false negatives leave the consumer with no automatic way to wire up a real device.
+`name_streams` classifies each f144 substream by the suffix of its `source` attribute (the PV name written by the f144 forwarder): `.RBV` → readback, `.VAL` → target, `.DMOV` → settled. Substreams co-located under one NeXus parent group are then bundled into a `Device` if classified RBV is present **and** at least one of classified VAL / DMOV is present. Parent `nx_class` is not consulted — conforming devices exist on `NXcollimator` and `NXlog` parents at ESS; restricting to `NXpositioner` would miss them.
 
-EPICS source suffixes (`.RBV` / `.VAL` / `.DMOV`, plus the bifrost `-PosReadback` variant) are checked as a **secondary** signal: a mismatch logs a warning but does not change the detection outcome. The names are what the f144 forwarder configuration decides to publish — they can drift, and the structural child-name layout is the more stable signal.
+EPICS suffixes are the primary signal rather than NeXus child names because they are fixed by the EPICS motor-record convention while NeXus child names drift across instruments (e.g. tbl uses `position_readback`/`position_setpoint` while bifrost/loki use `value`/`target_value`). The NeXus filewriter template is per-instrument and operator-editable; the source attribute is what the f144 forwarder publishes for the PV, and the IOC-side `.RBV` / `.VAL` / `.DMOV` suffixes are stable across the facility.
+
+Substreams whose `source` is `None` are not classifiable and are not grouped into Devices. Production f144 streams always carry a source; only synthesised or hand-crafted test fixtures can omit it. Test fixtures must set realistic sources to participate in device synthesis.
+
+Non-motor readback variants (`-PosReadback` from piezo encoders, etc.) are deliberately not in the suffix allowlist. They either appear on their own (and remain plain streams) or appear as extra siblings of a canonical `.RBV`/`.VAL`/`.DMOV` group (in which case they remain plain streams alongside the synthesised `Device`).
 
 ### State persists across `RunStart` / `RunStop`
 
