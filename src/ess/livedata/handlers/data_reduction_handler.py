@@ -8,7 +8,6 @@ from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative
 from .group_by_pixel import GroupByPixel
-from .to_device_log import ToDeviceLog
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import ToNXlog
 
@@ -33,8 +32,8 @@ class ReductionHandlerFactory(JobBasedPreprocessorFactoryBase):
                 device = self._instrument.streams.get(key.name)
                 if not isinstance(device, Device):
                     return None
-                return ToDeviceLog(
-                    units=device.units,
+                return ToNXlog(
+                    attrs={'units': device.units},
                     has_target=device.target is not None,
                     has_settled=device.settled is not None,
                 )

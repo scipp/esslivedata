@@ -381,10 +381,11 @@ class TestTemporalBuffer:
     def test_time_varying_coord_is_accumulated_not_reset(self):
         """Coords carrying the ``time`` dim must be buffered, not treated as metadata.
 
-        Regression test: ``ToDeviceLog`` emits ``target`` and ``settled`` as
-        time-dim coords. Earlier behaviour treated any non-``time`` coord as
-        constant metadata and reset the buffer whenever ``target`` or
-        ``settled`` changed, so a Timeseries plot showed only the latest chunk.
+        Regression test: device-configured ``ToNXlog`` emits ``target`` and
+        ``settled`` as time-dim coords. Earlier behaviour treated any
+        non-``time`` coord as constant metadata and reset the buffer whenever
+        ``target`` or ``settled`` changed, so a Timeseries plot showed only
+        the latest chunk.
         """
 
         def device_chunk(times, values, targets):

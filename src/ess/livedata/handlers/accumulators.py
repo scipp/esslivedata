@@ -26,31 +26,21 @@ class LogData:
 
     Decouples our handlers from upstream schema changes. This also simplifies handler
     testing since tests do not have to construct a full logdata_f144.LogData object.
+
+    ``target`` and ``settled`` are populated only by the device-synthesis path
+    (:class:`DeviceSynthesizer`) when a :class:`~..config.stream.Device` declares
+    the corresponding substreams. They are ``None`` for plain f144 logs.
     """
 
     time: int
     value: Any
     variances: Any | None = None
+    target: float | None = None
+    settled: bool | None = None
 
     @staticmethod
     def from_f144(f144: logdata_f144.LogData) -> LogData:
         return LogData(time=f144.timestamp_unix_ns, value=f144.value)
-
-
-@dataclass(frozen=True, slots=True)
-class DeviceSample:
-    """In-process payload representing a merged device-state sample.
-
-    Emitted by :class:`DeviceSynthesizer` and consumed by :class:`ToDeviceLog`.
-    ``time`` carries the synthesizer's max-timestamp across substreams (see
-    plan: DeviceSample timestamp policy). ``target`` and ``settled`` are
-    ``None`` for devices that have no VAL / DMOV substream configured.
-    """
-
-    time: Timestamp
-    value: float
-    target: float | None = None
-    settled: bool | None = None
 
 
 class NullAccumulator(Accumulator[Any, None]):

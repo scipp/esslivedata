@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Integration test: DeviceSynthesizer + ToDeviceLog produce the merged DataArray.
+"""Integration test: DeviceSynthesizer + ToNXlog produce the merged DataArray.
 
 Exercises the full in-process path that all four services share: real synthesizer,
 real accumulator, fake message source feeding LogData substream messages.
@@ -16,8 +16,8 @@ import scipp as sc
 from ess.livedata.config.stream import Device
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.accumulators import DeviceSample, LogData
-from ess.livedata.handlers.to_device_log import ToDeviceLog
+from ess.livedata.handlers.accumulators import LogData
+from ess.livedata.handlers.to_nxlog import ToNXlog
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 
 
@@ -56,9 +56,9 @@ def test_synthesizer_plus_accumulator_produces_merged_dataarray() -> None:
         ),
         devices={'m': device},
     )
-    acc = ToDeviceLog(units='mm', has_target=True, has_settled=True)
+    acc = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_settled=True)
     for msg in syn.get_messages():
-        assert isinstance(msg.value, DeviceSample)
+        assert isinstance(msg.value, LogData)
         acc.add(Timestamp.from_ns(0), msg.value)
 
     result = acc.get()

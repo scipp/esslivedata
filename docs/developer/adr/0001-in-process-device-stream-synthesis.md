@@ -21,12 +21,12 @@ Goal: make each device available as one logical stream and one DataArray — RBV
 Merge per-device substreams **in-process via a `MessageSource` decorator** (`DeviceSynthesizer`), matching the precedent of `ChopperSynthesizer`. The synthesizer:
 
 1. Maintains per-device state (last-seen value + time per substream).
-2. Emits `DeviceSample` messages on a new `StreamKind.DEVICE` once bootstrap is complete (every configured substream observed at least once).
+2. Emits `LogData` messages (with optional `target` / `settled` fields populated per device configuration) on a new `StreamKind.DEVICE` once bootstrap is complete (every configured substream observed at least once).
 3. Suppresses configured substream messages from forwarding — for configured devices, raw VAL/DMOV/RBV no longer reach downstream handlers.
 4. Emits on **every** input event for a configured substream (union-anchored).
 5. Stamps each emit with `max(rbv_time, val_time, dmov_time)` across the synthesizer's last-seen substream times.
 
-A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by EPICS source-suffix classification. A new `ToDeviceLog` preprocessor (dispatched on `StreamKind.DEVICE`) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `settled` coords.
+A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by EPICS source-suffix classification. The existing `ToNXlog` preprocessor (dispatched on `StreamKind.DEVICE` with `has_target` / `has_settled` flags set per device) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `settled` coords.
 
 ## Alternatives considered
 
@@ -49,7 +49,7 @@ Emit on every input event for a configured substream, not on RBV-only or change-
 
 Each row represents "device state as known up to time T". Monotonic by construction — out-of-order substream messages fold into state without producing dropped emits. The alternative ("use the triggering input's time") would drop any emit whose triggering event has an older timestamp than the last, losing both the row and the state update.
 
-Edge case: a substream message older than the current max updates state correctly but emits at the unchanged max-time, which `ToDeviceLog` drops as a duplicate. The new substream value becomes visible at the next emit that advances max. State is never lost; only the addressability of that one transition as its own row.
+Edge case: a substream message older than the current max updates state correctly but emits at the unchanged max-time, which `ToNXlog` drops as a duplicate. The new substream value becomes visible at the next emit that advances max. State is never lost; only the addressability of that one transition as its own row.
 
 ### Bootstrap before first emit
 
@@ -75,7 +75,7 @@ Non-motor readback variants (`-PosReadback` from piezo encoders, etc.) are delib
 
 ### State persists across `RunStart` / `RunStop`
 
-Run boundaries are file-writing markers, not physical events — a motor's position survives the boundary. The synthesizer holds no run-lifecycle hooks; `ToDeviceLog` mirrors `ToNXlog`'s no-clear-on-run behaviour.
+Run boundaries are file-writing markers, not physical events — a motor's position survives the boundary. The synthesizer holds no run-lifecycle hooks; `ToNXlog` (the same accumulator used for plain f144 logs) carries no-clear-on-run behaviour through unchanged.
 
 ## Consequences
 

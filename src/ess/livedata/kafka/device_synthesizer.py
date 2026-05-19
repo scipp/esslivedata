@@ -4,10 +4,10 @@
 
 The synthesizer is a :class:`MessageSource` decorator: it wraps an
 already-adapted source (i.e. domain-level :class:`Message` objects) and
-emits synthetic :class:`DeviceSample` messages on a new
-``StreamKind.DEVICE`` stream per device. Substream messages belonging to a
-configured device are suppressed from forwarding; other messages pass
-through unchanged.
+emits synthetic :class:`LogData` messages on a new ``StreamKind.DEVICE``
+stream per device, carrying ``value`` plus optional ``target`` / ``settled``
+fields. Substream messages belonging to a configured device are suppressed
+from forwarding; other messages pass through unchanged.
 
 State per device: last-seen ``(time, value)`` for each of its configured
 substreams. Emission policy: union-anchored — on every input event for a
@@ -27,7 +27,7 @@ import structlog
 from ..config.stream import Device
 from ..core.message import Message, MessageSource, StreamId, StreamKind
 from ..core.timestamp import Timestamp
-from ..handlers.accumulators import DeviceSample, LogData
+from ..handlers.accumulators import LogData
 
 logger = structlog.get_logger(__name__)
 
@@ -54,7 +54,7 @@ class _DeviceState:
     target: _Substream[float] | None = None
     settled: _Substream[bool] | None = None
 
-    def push(self, role: _Role, log: LogData) -> Message[DeviceSample] | None:
+    def push(self, role: _Role, log: LogData) -> Message[LogData] | None:
         """Record a substream event and emit a sample if all substreams seen."""
         time = Timestamp.from_ns(int(log.time))
         if role == 'value':
@@ -75,8 +75,8 @@ class _DeviceState:
         return Message(
             timestamp=sample_time,
             stream=StreamId(kind=StreamKind.DEVICE, name=self.device_name),
-            value=DeviceSample(
-                time=sample_time,
+            value=LogData(
+                time=sample_time.to_ns(),
                 value=self.value.value,
                 target=self.target.value if self.target is not None else None,
                 settled=self.settled.value if self.settled is not None else None,
@@ -94,7 +94,8 @@ class DeviceSynthesizer(MessageSource[Message]):
     devices:
         Mapping ``device_name -> Device``. Substreams referenced by these
         devices are suppressed from forwarding; a synthesized
-        :class:`DeviceSample` is emitted in their place once bootstrapped.
+        :class:`LogData` (with ``target`` / ``settled`` populated as
+        configured) is emitted in their place once bootstrapped.
     """
 
     def __init__(

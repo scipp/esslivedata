@@ -10,7 +10,7 @@ import pytest
 
 from ess.livedata.config.stream import Device
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
-from ess.livedata.handlers.accumulators import DeviceSample, LogData
+from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 
 
@@ -85,9 +85,9 @@ def test_emits_after_all_substreams_observed() -> None:
     msg = out[0]
     assert msg.stream == StreamId(kind=StreamKind.DEVICE, name='m')
     sample = msg.value
-    assert isinstance(sample, DeviceSample)
+    assert isinstance(sample, LogData)
     # Bootstrap emits a single sample with max-time = 3 (DMOV time).
-    assert sample.time.to_ns() == 3
+    assert sample.time == 3
     assert sample.value == 5.0
     assert sample.target == 10.0
     assert sample.settled is True
@@ -130,13 +130,13 @@ def test_max_time_policy_across_substreams() -> None:
     )
     out = list(syn.get_messages())
     assert len(out) == 1
-    assert out[0].value.time.to_ns() == 5
+    assert out[0].value.time == 5
 
     # Late VAL update with earlier time still updates state but does not move max.
     src.queue([_log('m_target', time=3, value=2.5)])
     out = list(syn.get_messages())
     assert len(out) == 1
-    assert out[0].value.time.to_ns() == 5
+    assert out[0].value.time == 5
     assert out[0].value.target == 2.5
 
 

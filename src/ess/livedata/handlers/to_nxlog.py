@@ -21,12 +21,21 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
 
     Timestamps must be monotonically increasing. Messages with duplicate or out-of-order
     timestamps are skipped to prevent unbounded buffer growth from upstream re-sends.
+
+    When ``has_target`` / ``has_settled`` are set, the per-sample ``target`` /
+    ``settled`` fields on :class:`LogData` are written as time-dim coords. This
+    is used by the device-synthesis path; plain f144 logs leave both flags off.
     """
 
     is_context = True
 
     def __init__(
-        self, *, attrs: dict[str, Any], data_dims: tuple[str, ...] = ()
+        self,
+        *,
+        attrs: dict[str, Any],
+        data_dims: tuple[str, ...] = (),
+        has_target: bool = False,
+        has_settled: bool = False,
     ) -> None:
         self._attrs = attrs
         # Values with no unit are ok
@@ -44,6 +53,8 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._end = 0
         self._last_time: int | None = None
         self._data_dims = data_dims
+        self._has_target = has_target
+        self._has_settled = has_settled
 
     @property
     def unit(self) -> sc.Unit | None:
@@ -52,7 +63,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     def _at_capacity(self) -> bool:
         return self._end >= self._timeseries.sizes['time']
 
-    def _ensure_capacity(self, data: sc.Variable) -> None:
+    def _ensure_capacity(self, data: LogData) -> None:
         if self._timeseries is None:
             # Initialize with initial capacity of 2
             arr = np.asarray(data.value)
@@ -66,9 +77,16 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
             times = sc.zeros(
                 dims=['time'], shape=[2], unit=self._time_unit, dtype='int64'
             )
-            self._timeseries = sc.DataArray(
-                values, coords={'time': self._start + times}
-            )
+            coords: dict[str, sc.Variable] = {'time': self._start + times}
+            if self._has_target:
+                coords['target'] = sc.zeros(
+                    dims=['time'], shape=[2], unit=self._unit, dtype='float64'
+                )
+            if self._has_settled:
+                # int32 (not bool) because da00 serialization rejects bool.
+                # The coord remains 0/1 valued.
+                coords['settled'] = sc.zeros(dims=['time'], shape=[2], dtype='int32')
+            self._timeseries = sc.DataArray(values, coords=coords)
         elif self._at_capacity():
             # Double capacity when full
             self._timeseries = sc.concat(
@@ -98,6 +116,14 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._timeseries.data.values[self._end] = data.value
         if data.variances is not None and self._timeseries.data.variances is not None:
             self._timeseries.data.variances[self._end] = data.variances
+        if self._has_target:
+            if data.target is None:
+                raise ValueError("Target expected but not provided")
+            self._timeseries.coords['target'].values[self._end] = data.target
+        if self._has_settled:
+            if data.settled is None:
+                raise ValueError("Settled expected but not provided")
+            self._timeseries.coords['settled'].values[self._end] = int(data.settled)
         self._end += 1
         self._last_time = data.time
         return True
