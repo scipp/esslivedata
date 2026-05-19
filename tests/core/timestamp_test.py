@@ -141,6 +141,35 @@ class TestTimestampFactory:
         ts = Timestamp.from_ms(1500)
         assert ts.to_ns() == 1_500_000_000
 
+    @pytest.mark.parametrize(
+        ("unit", "value", "expected_ns"),
+        [
+            ("ns", 42, 42),
+            ("us", 5, 5_000),
+            ("µs", 5, 5_000),
+            ("ms", 7, 7_000_000),
+            ("s", 3, 3_000_000_000),
+            # Long-form UDUNITS spellings flow through scipp's unit parser.
+            ("nanosecond", 42, 42),
+            ("second", 3, 3_000_000_000),
+        ],
+    )
+    def test_from_unit_supported(self, unit: str, value: int, expected_ns: int) -> None:
+        assert Timestamp.from_unit(value, unit=unit).to_ns() == expected_ns
+
+    def test_from_unit_handles_uint64_numpy_value(self) -> None:
+        import numpy as np
+
+        # scipp rejects uint64 dtype directly; ``from_unit`` must cast
+        # internally. ns-since-epoch in 2023 (~1.7e18) fits in int64.
+        ts = Timestamp.from_unit(np.uint64(1_700_000_000_000_000_000), unit='ns')
+        assert ts.to_datetime().year == 2023
+
+    @pytest.mark.parametrize("unit", [None, "", "counts", "datetime64[ns]"])
+    def test_from_unit_unsupported_raises(self, unit: str | None) -> None:
+        with pytest.raises(ValueError, match="Unsupported time unit"):
+            Timestamp.from_unit(1, unit=unit)
+
     def test_to_seconds(self):
         ts = Timestamp.from_ns(1_500_000_000)
         assert ts.to_seconds() == 1.5

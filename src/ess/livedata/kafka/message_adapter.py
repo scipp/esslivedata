@@ -168,15 +168,22 @@ def _extract_reference_time(
     Mirrors the ev44 convention of using ``reference_time[-1]`` as the message
     timestamp, providing data-derived timestamps for consistent batching.
 
-    Only int64 and uint64 arrays are accepted. Smaller integer types (e.g.,
-    int32) cannot represent nanosecond-epoch timestamps without overflow and
-    are silently ignored, falling back to the top-level ``timestamp_ns``.
+    Returns ``None`` to fall back to the top-level ``timestamp_ns`` if no usable
+    ``reference_time`` is present (empty array, or dtype too small to represent
+    a nanosecond-epoch value -- int32 wraps every ~2 seconds).
+
+    Delegates unit handling to :meth:`Timestamp.from_unit`, which raises
+    ``ValueError`` on unsupported units. The integer payload of
+    ``reference_time`` is unit-bearing, so silent reinterpretation must be
+    avoided -- treating microseconds as nanoseconds maps recent times into
+    early 1970.
     """
     for var in variables:
         if var.name == 'reference_time':
             data = np.asarray(var.data)
-            if data.size > 0 and data.dtype in (np.int64, np.uint64):
-                return Timestamp.from_ns(int(data[-1]))
+            if data.size == 0 or data.dtype not in (np.int64, np.uint64):
+                return None
+            return Timestamp.from_unit(data[-1], unit=var.unit)
     return None
 
 

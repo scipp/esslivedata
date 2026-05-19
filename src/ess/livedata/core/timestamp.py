@@ -166,6 +166,30 @@ class Timestamp:
         return cls(ns=ms * _NS_PER_MS)
 
     @classmethod
+    def from_unit(cls, value: int, *, unit: str | None) -> Timestamp:
+        """Create a timestamp from an integer count of ``unit`` since the epoch.
+
+        Delegates to scipp's unit machinery, accepting any UDUNITS-compatible
+        time unit (e.g., ``'ns'``, ``'us'``, ``'µs'``, ``'ms'``, ``'s'``, plus
+        the corresponding long forms). Raises ``ValueError`` for ``None``,
+        dimensionless, or non-time units, so wire-format misinterpretation --
+        microseconds treated as nanoseconds would silently map recent times
+        into early 1970 -- surfaces as a hard error.
+
+        Numpy ``uint64`` values are accepted: the internal ``int`` cast yields
+        a Python ``int`` that scipp can ingest as ``int64`` (which scipp does
+        support, unlike ``uint64``). Standard ns-epoch values fit comfortably
+        in ``int64`` (until ~year 2262).
+        """
+        import scipp as sc
+
+        try:
+            ns = sc.scalar(int(value), unit=unit).to(unit='ns').value
+        except sc.UnitError as e:
+            raise ValueError(f"Unsupported time unit {unit!r}: {e}") from None
+        return cls(ns=int(ns))
+
+    @classmethod
     def from_scipp(cls, var: Any) -> Timestamp:
         """Create a timestamp from a scipp scalar with a time unit."""
         return cls(ns=int(var.to(unit='ns', copy=False).value))
