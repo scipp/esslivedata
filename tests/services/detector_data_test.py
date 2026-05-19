@@ -73,13 +73,13 @@ def test_can_configure_and_stop_detector_workflow(
         # the synthesizer emits only after all three substreams (RBV, VAL,
         # DMOV) have been observed at least once.
         app.publish_log_message(
-            source_name='detector_carriage_target_value', time=1, value=5000.0
+            source_name='detector_carriage/target_value', time=1, value=5000.0
         )
         app.publish_log_message(
-            source_name='detector_carriage_idle_flag', time=1, value=1
+            source_name='detector_carriage/idle_flag', time=1, value=1
         )
         app.publish_log_message(
-            source_name='detector_carriage_value', time=1, value=5000.0
+            source_name='detector_carriage/value', time=1, value=5000.0
         )
     # Each workflow call returns 10 results by default: cumulative, current,
     # counts_total, counts_in_toa, counts_total_cumulative,

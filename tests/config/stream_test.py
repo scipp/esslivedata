@@ -18,25 +18,25 @@ class TestSuggestNames:
     def test_includes_value_leaf(self) -> None:
         names = suggest_names(['/entry/instrument/rotation_stage/value'])
         assert names == {
-            '/entry/instrument/rotation_stage/value': 'rotation_stage_value'
+            '/entry/instrument/rotation_stage/value': 'rotation_stage/value'
         }
 
     def test_includes_value_log_leaf(self) -> None:
         names = suggest_names(['/entry/sample/sample_environment/HTR1/value_log'])
         assert names == {
-            '/entry/sample/sample_environment/HTR1/value_log': 'HTR1_value_log'
+            '/entry/sample/sample_environment/HTR1/value_log': 'HTR1/value_log'
         }
 
     def test_includes_aux_leaf(self) -> None:
         names = suggest_names(['/entry/instrument/rotation_stage/idle_flag'])
         assert names == {
-            '/entry/instrument/rotation_stage/idle_flag': 'rotation_stage_idle_flag'
+            '/entry/instrument/rotation_stage/idle_flag': 'rotation_stage/idle_flag'
         }
 
     def test_filters_generic_containers(self) -> None:
         names = suggest_names(['/entry/instrument/wfm1/transformations/translation1'])
         assert names == {
-            '/entry/instrument/wfm1/transformations/translation1': 'wfm1_translation1'
+            '/entry/instrument/wfm1/transformations/translation1': 'wfm1/translation1'
         }
 
     def test_disambiguates_via_parent_when_leaf_collides(self) -> None:
@@ -48,10 +48,10 @@ class TestSuggestNames:
         )
         assert names == {
             '/entry/instrument/005_PulseShapingChopper/phase': (
-                '005_PulseShapingChopper_phase'
+                '005_PulseShapingChopper/phase'
             ),
             '/entry/instrument/006_FrameOverlapChopper/phase': (
-                '006_FrameOverlapChopper_phase'
+                '006_FrameOverlapChopper/phase'
             ),
         }
 
@@ -68,9 +68,9 @@ class TestSuggestNames:
             ]
         )
         assert names == {
-            '/entry/instrument/motor/value': 'motor_value',
-            '/entry/instrument/motor/idle_flag': 'motor_idle_flag',
-            '/entry/instrument/motor/target_value': 'motor_target_value',
+            '/entry/instrument/motor/value': 'motor/value',
+            '/entry/instrument/motor/idle_flag': 'motor/idle_flag',
+            '/entry/instrument/motor/target_value': 'motor/target_value',
         }
 
     def test_disambiguates_two_paths_collapsing_to_same_tail(self) -> None:
@@ -82,14 +82,14 @@ class TestSuggestNames:
             ]
         )
         assert names == {
-            '/entry/instrument/foo/temperature/value': 'foo_temperature_value',
-            '/entry/instrument/bar/temperature/value': 'bar_temperature_value',
+            '/entry/instrument/foo/temperature/value': 'foo/temperature/value',
+            '/entry/instrument/bar/temperature/value': 'bar/temperature/value',
         }
 
     def test_falls_back_to_unfiltered_path_when_only_generic_ancestors_differ(
         self,
     ) -> None:
-        # The filtered tails collide (``foo_value``); resolving requires
+        # The filtered tails collide (``foo/value``); resolving requires
         # putting a generic ancestor back to disambiguate.
         names = suggest_names(
             [
@@ -98,8 +98,8 @@ class TestSuggestNames:
             ]
         )
         assert names == {
-            '/entry/instrument/foo/value': 'instrument_foo_value',
-            '/entry/sample/foo/value': 'sample_foo_value',
+            '/entry/instrument/foo/value': 'instrument/foo/value',
+            '/entry/sample/foo/value': 'sample/foo/value',
         }
 
     def test_min_depth_one_returns_bare_unique_leaf(self) -> None:
@@ -112,7 +112,7 @@ class TestSuggestNames:
 
     def test_min_depth_one_collapses_doubled_prefix(self) -> None:
         # ``transformations`` filters out; depth=2 would emit
-        # ``detector_tank_angle_detector_tank_angle_r0``.
+        # ``detector_tank_angle/detector_tank_angle_r0``.
         names = suggest_names(
             [
                 '/entry/instrument/detector_tank_angle/transformations/'
@@ -134,8 +134,8 @@ class TestSuggestNames:
             min_depth=1,
         )
         assert names == {
-            '/entry/instrument/wfm1/translation1': 'wfm1_translation1',
-            '/entry/instrument/wfm2/translation1': 'wfm2_translation1',
+            '/entry/instrument/wfm1/translation1': 'wfm1/translation1',
+            '/entry/instrument/wfm2/translation1': 'wfm2/translation1',
         }
 
     def test_forbidden_extends_to_longer_tail(self) -> None:
@@ -145,7 +145,7 @@ class TestSuggestNames:
             forbidden={'rotation_stage'},
         )
         assert names == {
-            '/entry/instrument/parent/rotation_stage': 'parent_rotation_stage'
+            '/entry/instrument/parent/rotation_stage': 'parent/rotation_stage'
         }
 
 
@@ -155,8 +155,8 @@ class TestNameStreams:
             '/entry/instrument/motor/value': _parsed('/entry/instrument/motor/value')
         }
         result = name_streams(parsed)
-        assert list(result) == ['motor_value']
-        assert result['motor_value'].nexus_path == '/entry/instrument/motor/value'
+        assert list(result) == ['motor/value']
+        assert result['motor/value'].nexus_path == '/entry/instrument/motor/value'
 
     def test_rename_overrides_suggestion(self) -> None:
         path = '/entry/instrument/detector_arm/detector_rotation/value'
@@ -175,7 +175,7 @@ class TestNameStreams:
             '/entry/instrument/bar/value': _parsed('/entry/instrument/bar/value'),
         }
         with pytest.raises(ValueError, match='collides'):
-            name_streams(parsed, rename={'/entry/instrument/bar/value': 'foo_value'})
+            name_streams(parsed, rename={'/entry/instrument/bar/value': 'foo/value'})
 
     def test_sibling_leaves_get_distinct_names(self) -> None:
         # RBV alone is just an F144Stream; pair with an idle_flag to also
@@ -189,7 +189,7 @@ class TestNameStreams:
             ),
         }
         result = name_streams(parsed)
-        assert set(result) == {'motor_value', 'motor_idle_flag', 'motor'}
+        assert set(result) == {'motor/value', 'motor/idle_flag', 'motor'}
 
 
 class TestDeviceDetection:
@@ -208,9 +208,9 @@ class TestDeviceDetection:
         assert 'm' in result
         device = result['m']
         assert isinstance(device, Device)
-        assert device.value == 'm_value'
-        assert device.target == 'm_target_value'
-        assert device.settled == 'm_idle_flag'
+        assert device.value == 'm/value'
+        assert device.target == 'm/target_value'
+        assert device.settled == 'm/idle_flag'
         assert device.units == 'mm'
 
     def test_emits_device_for_rbv_plus_val_only(self) -> None:
@@ -221,7 +221,7 @@ class TestDeviceDetection:
         result = name_streams(parsed)
         device = result['m']
         assert isinstance(device, Device)
-        assert device.target == 'm_target_value'
+        assert device.target == 'm/target_value'
         assert device.settled is None
 
     def test_emits_device_for_rbv_plus_dmov_only(self) -> None:
@@ -235,7 +235,7 @@ class TestDeviceDetection:
         device = result['m']
         assert isinstance(device, Device)
         assert device.target is None
-        assert device.settled == 'm_idle_flag'
+        assert device.settled == 'm/idle_flag'
 
     def test_no_device_for_lone_rbv(self) -> None:
         parsed = {
@@ -259,8 +259,8 @@ class TestDeviceDetection:
         result = name_streams(parsed)
         device = result['m']
         assert isinstance(device, Device)
-        assert device.value == 'm_position_readback'
-        assert device.target == 'm_position_setpoint'
+        assert device.value == 'm/position_readback'
+        assert device.target == 'm/position_setpoint'
 
     def test_ignores_unclassifiable_source_suffix(self) -> None:
         # Piezo potentiometer readback (-PosReadback) sits alongside a real
@@ -276,9 +276,9 @@ class TestDeviceDetection:
         result = name_streams(parsed)
         device = result['blade']
         assert isinstance(device, Device)
-        assert device.value == 'blade_value'
-        assert device.target == 'blade_target_value'
-        assert isinstance(result['blade_potentiometer_value'], F144Stream)
+        assert device.value == 'blade/value'
+        assert device.target == 'blade/target_value'
+        assert isinstance(result['blade/potentiometer_value'], F144Stream)
 
     def test_ignores_substream_with_no_source(self) -> None:
         # Synthesised in-process F144Stream entries have source=None and are
@@ -320,7 +320,7 @@ class TestDeviceDetection:
         assert 'short' in result
         assert isinstance(result['short'], Device)
         # Substream pointers reference auto-suggested names.
-        assert result['short'].value == 'm_value'
+        assert result['short'].value == 'm/value'
 
     def test_invalid_rename_path_raises(self) -> None:
         parsed = {
@@ -360,5 +360,5 @@ class TestDeviceDetection:
             ),
         }
         result = name_streams(parsed)
-        assert isinstance(result['a_motor'], Device)
-        assert isinstance(result['b_motor'], Device)
+        assert isinstance(result['a/motor'], Device)
+        assert isinstance(result['b/motor'], Device)

@@ -100,7 +100,7 @@ class LogContextBinding:
 #: NeXus container groups that carry no entity-level meaning. Removed from the
 #: path before constructing an internal name so that e.g.
 #: ``entry/instrument/wfm1/transformations/translation1`` becomes
-#: ``wfm1_translation1`` and not ``transformations_translation1``.
+#: ``wfm1/translation1`` and not ``transformations/translation1``.
 _GENERIC_GROUPS: frozenset[str] = frozenset(
     {'entry', 'instrument', 'sample', 'sample_environment', 'transformations'}
 )
@@ -149,7 +149,7 @@ def suggest_names(
         depth = min_depth
         while pending and depth <= max(max_d, min_depth):
             candidates = {
-                p: '_'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
+                p: '/'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
             }
             counts: dict[str, int] = {}
             for name in candidates.values():
