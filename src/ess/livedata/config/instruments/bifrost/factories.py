@@ -68,6 +68,19 @@ def setup_factories(instrument: Instrument) -> None:
     # Configure detector
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
+    # Bifrost f144 streams that feed typed Sciline keys on the cut-workflow graph.
+    # Routed via context_keys; not NeXus components loaded by name.
+    instrument.add_log_context_binding(
+        stream_name='detector_tank_angle_r0_value',
+        workflow_key=InstrumentAngle[SampleRun],
+        dependent_sources=['unified_detector'],
+    )
+    instrument.add_log_context_binding(
+        stream_name='rotation_stage_value',
+        workflow_key=SampleAngle[SampleRun],
+        dependent_sources=['unified_detector'],
+    )
+
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
@@ -134,16 +147,10 @@ def setup_factories(instrument: Instrument) -> None:
     def _make_cut_stream_processor(
         workflow: sciline.Pipeline,
     ) -> StreamProcessorWorkflow:
-        # Bifrost aux sources (rotation angles) are raw f144 scalar values routed
-        # via context_keys, not NeXus components loaded by name. Unlike LOKI/DREAM
-        # factories, there is no NeXusName parameter to set from aux_source_names.
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-            context_keys={
-                'detector_rotation': InstrumentAngle[SampleRun],
-                'sample_rotation': SampleAngle[SampleRun],
-            },
+            context_keys=instrument.get_context_keys('unified_detector'),
             target_keys={'cut_data': CutData[SampleRun]},
             accumulators=(CutData[SampleRun],),
         )

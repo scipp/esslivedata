@@ -7,8 +7,12 @@ LOKI instrument stream mapping configuration.
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-from .specs import f144_log_streams
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
+from .specs import instrument
 
 detector_fakes = {
     'loki_detector_0': (1, 802816),
@@ -33,14 +37,6 @@ monitor_names = [
     'beam_monitor_m3',
     'beam_monitor_m4',
 ]
-
-
-def _make_loki_logs() -> StreamLUT:
-    """LOKI log data mapping (f144 streams)."""
-    return {
-        InputStreamKey(topic=info['topic'], source_name=info['source']): internal_name
-        for internal_name, info in f144_log_streams.items()
-    }
 
 
 def _make_loki_detectors() -> StreamLUT:
@@ -68,7 +64,9 @@ stream_mapping = {
         'loki',
         detector_names=list(detector_fakes),
         monitor_names=monitor_names,
-        log_names=list(f144_log_streams.keys()),
+        log_names=list(instrument.f144_streams),
     ),
-    StreamingEnv.PROD: StreamMapping(**_common_prod, logs=_make_loki_logs()),
+    StreamingEnv.PROD: StreamMapping(
+        **_common_prod, logs=make_f144_log_lut(instrument)
+    ),
 }

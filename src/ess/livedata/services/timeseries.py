@@ -3,8 +3,7 @@
 """Service that processes logdata into timeseries for plotting."""
 
 import logging
-from collections.abc import Mapping
-from typing import Any, NoReturn
+from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
@@ -22,7 +21,6 @@ def make_timeseries_service_builder(
     instrument: str,
     dev: bool = True,
     log_level: int = logging.INFO,
-    attribute_registry: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     instrument_obj = instrument_registry[instrument]
@@ -39,10 +37,7 @@ def make_timeseries_service_builder(
         .build()
     )
     service_name = 'timeseries'
-    preprocessor_factory = LogdataHandlerFactory(
-        instrument=instrument_obj,
-        attribute_registry=attribute_registry,
-    )
+    preprocessor_factory = LogdataHandlerFactory(instrument=instrument_obj)
     # The default batcher processes messages in batches, not emitting messages unless
     # the current batch is considered "complete", by the first message after the batch
     # interval arriving. This works for monitor and detector processing (including for

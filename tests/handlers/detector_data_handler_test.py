@@ -7,6 +7,7 @@ from ess.livedata import StreamKind
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.instruments import available_instruments, get_config
+from ess.livedata.config.stream import F144Stream
 from ess.livedata.core.handler import StreamId
 from ess.livedata.handlers.accumulators import LatestValueHandler
 from ess.livedata.handlers.detector_data_handler import (
@@ -147,18 +148,20 @@ class TestDetectorHandlerFactoryLogStreams:
 
     @pytest.fixture
     def instrument_with_logs(self):
-        instrument = Instrument(name='test_instrument', detector_names=['det1'])
+        streams = {
+            'position_sensor': F144Stream(
+                source='position_sensor',
+                topic='topic',
+                units='mm',
+            ),
+        }
+        instrument = Instrument(
+            name='test_instrument', detector_names=['det1'], streams=streams
+        )
         instrument.configure_detector(
             'det1',
             detector_number=sc.arange('detector_number', 0, 10, unit=None),
         )
-        instrument.f144_attribute_registry = {
-            'position_sensor': {
-                'value': {'shape': [], 'dtype': 'float'},
-                'timestamp': {'shape': [], 'dtype': 'uint64'},
-                'offset': 0.0,
-            },
-        }
         return instrument
 
     def test_log_configured_returns_to_nxlog(self, instrument_with_logs):

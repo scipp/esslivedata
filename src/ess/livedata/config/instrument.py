@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
+from .stream import F144Stream, LogContextBinding, Stream
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
@@ -102,7 +103,8 @@ class Instrument:
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
-    f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    streams: dict[str, Stream] = field(default_factory=dict)
+    log_context_bindings: list[LogContextBinding] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
@@ -121,10 +123,62 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
-        timeseries_names = list(self.f144_attribute_registry.keys())
+        for binding in self.log_context_bindings:
+            self._validate_binding_stream_name(binding)
+        timeseries_names = list(self.f144_streams)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=timeseries_names
         )
+
+    @property
+    def f144_streams(self) -> dict[str, F144Stream]:
+        """Subset of :attr:`streams` carrying f144 (NXlog) data."""
+        return {
+            name: stream
+            for name, stream in self.streams.items()
+            if isinstance(stream, F144Stream)
+        }
+
+    def _validate_binding_stream_name(self, binding: LogContextBinding) -> None:
+        if binding.stream_name not in self.streams:
+            raise ValueError(
+                f"LogContextBinding references unknown stream "
+                f"{binding.stream_name!r}; declared streams: "
+                f"{sorted(self.streams)}"
+            )
+
+    def add_log_context_binding(
+        self,
+        *,
+        stream_name: str,
+        workflow_key: Any,
+        dependent_sources: Iterable[str],
+    ) -> None:
+        """Register an f144 stream as a context input to one or more specs.
+
+        Use from ``setup_factories`` to keep heavy Sciline-key imports out of
+        ``specs.py``. Bindings declared at construction time go through the same
+        validation in ``__post_init__``.
+        """
+        binding = LogContextBinding(
+            stream_name=stream_name,
+            workflow_key=workflow_key,
+            dependent_sources=frozenset(dependent_sources),
+        )
+        self._validate_binding_stream_name(binding)
+        self.log_context_bindings.append(binding)
+
+    def get_context_keys(self, source_name: str) -> dict[str, Any]:
+        """Return the stream-name → workflow-key map for the given source.
+
+        Derives :attr:`StreamProcessorWorkflow.context_keys` for f144 streams
+        from :attr:`log_context_bindings`, filtered by ``dependent_sources``.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self.log_context_bindings
+            if source_name in binding.dependent_sources
+        }
 
     @property
     def nexus_file(self) -> str:
@@ -498,6 +552,8 @@ class Instrument:
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
 
+        self._validate_binding_dependent_sources()
+
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
                 try:
@@ -507,6 +563,22 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+
+    def _validate_binding_dependent_sources(self) -> None:
+        """Raise if any binding lists a source name no registered spec advertises."""
+        if not self.log_context_bindings:
+            return
+        known_sources: set[str] = set()
+        for spec in self.workflow_factory.values():
+            known_sources.update(spec.source_names)
+        for binding in self.log_context_bindings:
+            unknown = binding.dependent_sources - known_sources
+            if unknown:
+                raise ValueError(
+                    f"LogContextBinding for stream {binding.stream_name!r} lists "
+                    f"unknown dependent_sources {sorted(unknown)}; no registered "
+                    f"spec advertises these source_names"
+                )
 
 
 instrument_registry = InstrumentRegistry()

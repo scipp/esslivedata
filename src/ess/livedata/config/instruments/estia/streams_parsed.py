@@ -1,0 +1,386 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Auto-generated NeXus f144 stream declarations.
+
+Do not edit by hand. Regenerate with
+``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
+
+Source: coda_estia_999999_00027641.hdf
+"""
+
+from ess.livedata.config import F144Stream
+
+PARSED_STREAMS: dict[str, F144Stream] = {
+    '/entry/instrument/analyzer_stage/analyzer_adjustment/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_adjustment/idle_flag',
+        source='ESTIA-AnRot:MC-RotY01:Mtr.DMOV',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/analyzer_stage/analyzer_adjustment/target_value': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_adjustment/target_value',
+        source='ESTIA-AnRot:MC-RotY01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/analyzer_stage/analyzer_adjustment/value': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_adjustment/value',
+        source='ESTIA-AnRot:MC-RotY01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/analyzer_stage/analyzer_lift/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_lift/idle_flag',
+        source='ESTIA-AnLft:MC-LinZ01:Mtr.DMOV',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/analyzer_stage/analyzer_lift/target_value': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_lift/target_value',
+        source='ESTIA-AnLft:MC-LinZ01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/analyzer_stage/analyzer_lift/value': F144Stream(
+        nexus_path='/entry/instrument/analyzer_stage/analyzer_lift/value',
+        source='ESTIA-AnLft:MC-LinZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/bwc/delay': F144Stream(
+        nexus_path='/entry/instrument/bwc/delay',
+        source='ESTIA-ChpSy1:Chop-BWC-101:TotDly',
+        topic='estia_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/bwc/park_angle': F144Stream(
+        nexus_path='/entry/instrument/bwc/park_angle',
+        source='ESTIA-ChpSy1:Chop-BWC-101:Pos_R',
+        topic='estia_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc/park_control': F144Stream(
+        nexus_path='/entry/instrument/bwc/park_control',
+        source='ESTIA-ChpSy1:Chop-BWC-101:ParkPos_S',
+        topic='estia_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc/phase': F144Stream(
+        nexus_path='/entry/instrument/bwc/phase',
+        source='ESTIA-ChpSy1:Chop-BWC-101:InPhs_R',
+        topic='estia_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/bwc/rotation_speed': F144Stream(
+        nexus_path='/entry/instrument/bwc/rotation_speed',
+        source='ESTIA-ChpSy1:Chop-BWC-101:Spd_R',
+        topic='estia_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/bwc/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/bwc/rotation_speed_setpoint',
+        source='ESTIA-ChpSy1:Chop-BWC-101:Spd_S',
+        topic='estia_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/bwc/status': F144Stream(
+        nexus_path='/entry/instrument/bwc/status',
+        source='ESTIA-ChpSy1:Chop-BWC-101:ChopState_R',
+        topic='estia_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/detector_arm/detector_rotation/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/detector_arm/detector_rotation/idle_flag',
+        source='ESTIA-DtRot:MC-RotZ01:Mtr.DMOV',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/detector_arm/detector_rotation/target_value': F144Stream(
+        nexus_path='/entry/instrument/detector_arm/detector_rotation/target_value',
+        source='ESTIA-DtRot:MC-RotZ01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/detector_arm/detector_rotation/value': F144Stream(
+        nexus_path='/entry/instrument/detector_arm/detector_rotation/value',
+        source='ESTIA-DtRot:MC-RotZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/horizontal_adjustment/target_value': F144Stream(  # noqa: E501
+        nexus_path='/entry/instrument/middle_focus_changer/horizontal_adjustment/target_value',
+        source='ESTIA-Chg:MC-LinY01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/horizontal_adjustment/value': F144Stream(
+        nexus_path='/entry/instrument/middle_focus_changer/horizontal_adjustment/value',
+        source='ESTIA-Chg:MC-LinY01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/mask_changer/target_value': F144Stream(
+        nexus_path='/entry/instrument/middle_focus_changer/mask_changer/target_value',
+        source='ESTIA-Chg:MC-RotX01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/mask_changer/value': F144Stream(
+        nexus_path='/entry/instrument/middle_focus_changer/mask_changer/value',
+        source='ESTIA-Chg:MC-RotX01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/vertical_adjustment/target_value': F144Stream(  # noqa: E501
+        nexus_path='/entry/instrument/middle_focus_changer/vertical_adjustment/target_value',
+        source='ESTIA-Chg:MC-LinZ01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/middle_focus_changer/vertical_adjustment/value': F144Stream(
+        nexus_path='/entry/instrument/middle_focus_changer/vertical_adjustment/value',
+        source='ESTIA-Chg:MC-LinZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/multiblade_detector/transformations/detector_rotation': F144Stream(  # noqa: E501
+        nexus_path='/entry/instrument/multiblade_detector/transformations/detector_rotation',
+        source='ESTIA-DtRot:MC-RotZ01:Mtr',
+        topic='estia_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/polarizer_stage/angle_adjustment/target_value': F144Stream(
+        nexus_path='/entry/instrument/polarizer_stage/angle_adjustment/target_value',
+        source='ESTIA-PolChg:MC-RotZ01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/polarizer_stage/angle_adjustment/value': F144Stream(
+        nexus_path='/entry/instrument/polarizer_stage/angle_adjustment/value',
+        source='ESTIA-PolChg:MC-RotZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/polarizer_stage/in_beam_changer/target_value': F144Stream(
+        nexus_path='/entry/instrument/polarizer_stage/in_beam_changer/target_value',
+        source='ESTIA-PolChg:MC-LinY01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/polarizer_stage/in_beam_changer/value': F144Stream(
+        nexus_path='/entry/instrument/polarizer_stage/in_beam_changer/value',
+        source='ESTIA-PolChg:MC-LinY01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_bottom/target_value',
+        source='ESTIA-SpSl:MC-SlZm:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_bottom/value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_bottom/value',
+        source='ESTIA-SpSl:MC-SlZm:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_left/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_left/target_value',
+        source='ESTIA-SpSl:MC-SlYp:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_left/value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_left/value',
+        source='ESTIA-SpSl:MC-SlYp:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_right/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_right/target_value',
+        source='ESTIA-SpSl:MC-SlYm:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_right/value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_right/value',
+        source='ESTIA-SpSl:MC-SlYm:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_top/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_top/target_value',
+        source='ESTIA-SpSl:MC-SlZp:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_slit/blade_top/value': F144Stream(
+        nexus_path='/entry/instrument/sample_slit/blade_top/value',
+        source='ESTIA-SpSl:MC-SlZp:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_stage/goniometer/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/sample_stage/goniometer/idle_flag',
+        source='ESTIA-SpRot:MC-RotZ01:Mtr.DMOV',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/sample_stage/goniometer/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_stage/goniometer/target_value',
+        source='ESTIA-SpRot:MC-RotZ01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_stage/goniometer/value': F144Stream(
+        nexus_path='/entry/instrument/sample_stage/goniometer/value',
+        source='ESTIA-SpRot:MC-RotZ01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_y/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/sample_y/idle_flag',
+        source='ESTIA-SpSt:MC-LinY-01:Mtr.DMOV',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/sample_y/target_value': F144Stream(
+        nexus_path='/entry/instrument/sample_y/target_value',
+        source='ESTIA-SpSt:MC-LinY-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/sample_y/value': F144Stream(
+        nexus_path='/entry/instrument/sample_y/value',
+        source='ESTIA-SpSt:MC-LinY-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/spin_flipper_analyzer/value': F144Stream(
+        nexus_path='/entry/instrument/spin_flipper_analyzer/value',
+        source='tbd2',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/spin_flipper_polarizer/value': F144Stream(
+        nexus_path='/entry/instrument/spin_flipper_polarizer/value',
+        source='tbd1',
+        topic='estia_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_bottom/target_value',
+        source='ESTIA-VSSlN:MC-LinZ-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_bottom/value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_bottom/value',
+        source='ESTIA-VSSlN:MC-LinZ-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_left/target_value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_left/target_value',
+        source='ESTIA-VSSlN:MC-LinX-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_left/value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_left/value',
+        source='ESTIA-VSSlN:MC-LinX-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_right/target_value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_right/target_value',
+        source='ESTIA-VSSlP:MC-LinX-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_right/value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_right/value',
+        source='ESTIA-VSSlP:MC-LinX-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_top/target_value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_top/target_value',
+        source='ESTIA-VSSlP:MC-LinZ-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/blade_top/value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/blade_top/value',
+        source='ESTIA-VSSlP:MC-LinZ-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/rotation_stage/target_value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/rotation_stage/target_value',
+        source='ESTIA-VSRot:MC-RotZ-01:Mtr.VAL',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/instrument/virtual_source_slit/rotation_stage/value': F144Stream(
+        nexus_path='/entry/instrument/virtual_source_slit/rotation_stage/value',
+        source='ESTIA-VSRot:MC-RotZ-01:Mtr.RBV',
+        topic='estia_motion',
+        units='mm',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
+        source='CrS-CMS:Cryo-TT-82025:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82027_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
+        source='CrS-CMS:Cryo-TT-82027:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82029_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
+        source='CrS-CMS:Cryo-TT-82029:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82031_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
+        source='CrS-CMS:Cryo-TT-82031:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82033_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
+        source='CrS-CMS:Cryo-TT-82033:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/flat_top_current': F144Stream(
+        nexus_path='/entry/neutron_prod_info/flat_top_current',
+        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/neutron_prod_info/fsm_machine_active': F144Stream(
+        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
+        source='CrS-CMS:SC-FSM-007x:STS_Active',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/neutron_prod_info/pulse_charge': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_charge',
+        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/neutron_prod_info/pulse_width': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_width',
+        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
+        topic='tn_data_general',
+        units='ms',
+    ),
+}

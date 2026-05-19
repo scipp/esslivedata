@@ -12,8 +12,7 @@ from ess.livedata.nexus_helpers import (
     _decode_attr,
     extract_stream_info,
     filter_f144_streams,
-    generate_f144_log_streams_code,
-    suggest_internal_name,
+    generate_streams_parsed_module,
 )
 
 
@@ -401,50 +400,15 @@ class TestStreamInfo:
         assert info.units == 'degrees'
 
 
-class TestSuggestInternalName:
-    def test_extracts_name_before_value(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/rotation_stage/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'rotation_stage'
-
-    def test_extracts_name_before_idle_flag(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/rotation_stage/idle_flag',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'rotation_stage'
-
-    def test_preserves_r0_suffix(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/detector_tank_angle_r0/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'detector_tank_angle_r0'
-
-    def test_preserves_t0_suffix(self) -> None:
-        info = StreamInfo(
-            group_path='entry/instrument/sample_stage_t0/value',
-            topic='motion',
-            source='motor_1',
-            nx_class='NXlog',
-            parent_nx_class='NXpositioner',
-            writer_module='f144',
-        )
-        assert suggest_internal_name(info) == 'sample_stage_t0'
+def _info(path: str) -> StreamInfo:
+    return StreamInfo(
+        group_path=path,
+        topic='motion',
+        source='src',
+        nx_class='NXlog',
+        parent_nx_class='NXpositioner',
+        writer_module='f144',
+    )
 
 
 class TestFilterF144Streams:
@@ -495,80 +459,121 @@ class TestFilterF144Streams:
         assert result[0].source == 'motor_1'
 
 
-class TestGenerateF144LogStreamsCode:
-    def test_generates_valid_python_dict(self) -> None:
+def _f144_info(
+    *,
+    group_path: str,
+    source: str,
+    topic: str = 'motion',
+    units: str = '',
+) -> StreamInfo:
+    return StreamInfo(
+        group_path=group_path,
+        topic=topic,
+        source=source,
+        nx_class='NXlog',
+        parent_nx_class='NXpositioner',
+        writer_module='f144',
+        units=units,
+    )
+
+
+class TestGenerateStreamsParsedModule:
+    def test_emits_complete_importable_module(self) -> None:
         infos = [
-            StreamInfo(
+            _f144(
                 group_path='entry/motor/value',
-                topic='motion',
                 source='MOTOR:PV:RBV',
-                nx_class='NXlog',
-                parent_nx_class='NXpositioner',
-                writer_module='f144',
                 units='degrees',
-            ),
+            )
+            for _f144 in [_f144_info]
         ]
-        code = generate_f144_log_streams_code(infos, topic='motion')
-        assert "f144_log_streams: dict[str, dict[str, str]] = {" in code
-        assert (
-            "'motor': {'source': 'MOTOR:PV:RBV', 'units': 'degrees', 'topic': 'motion'}"
-            in code
-        )
+        code = generate_streams_parsed_module(infos)
+        # SPDX header + module docstring + import + dict literal
+        assert code.startswith('# SPDX-License-Identifier:')
+        assert 'Auto-generated' in code
+        assert 'from ess.livedata.config import F144Stream' in code
+        assert 'PARSED_STREAMS: dict[str, F144Stream] = {' in code
+        # Entry content
+        assert "'/entry/motor/value': F144Stream(" in code
+        assert "source='MOTOR:PV:RBV'" in code
+        assert "topic='motion'" in code
+        assert "units='degrees'" in code
+        assert "nexus_path='/entry/motor/value'" in code
+
+    def test_generated_module_is_executable(self, tmp_path) -> None:
+        infos = [
+            _f144_info(
+                group_path='entry/motor/value',
+                source='MOTOR:PV:RBV',
+                units='degrees',
+            )
+        ]
+        code = generate_streams_parsed_module(infos)
+        ns: dict = {}
+        exec(code, ns)  # noqa: S102 — controlled test input
+        parsed = ns['PARSED_STREAMS']
+        assert len(parsed) == 1
+        stream = parsed['/entry/motor/value']
+        assert stream.nexus_path == '/entry/motor/value'
+        assert stream.source == 'MOTOR:PV:RBV'
+        assert stream.units == 'degrees'
 
     def test_uses_dimensionless_for_empty_units(self) -> None:
-        infos = [
-            StreamInfo(
-                group_path='entry/switch/value',
-                topic='motion',
-                source='SWITCH:PV',
-                nx_class='NXlog',
-                parent_nx_class='NXpositioner',
-                writer_module='f144',
-                units='',
-            ),
-        ]
-        code = generate_f144_log_streams_code(infos, topic='motion')
-        assert "'units': 'dimensionless', 'topic': 'motion'" in code
+        infos = [_f144_info(group_path='entry/switch/value', source='SWITCH:PV')]
+        code = generate_streams_parsed_module(infos)
+        assert "units='dimensionless'" in code
 
-    def test_prefers_value_over_idle_flag(self) -> None:
+    def test_emits_both_value_and_idle_flag(self) -> None:
         infos = [
-            StreamInfo(
-                group_path='entry/motor/idle_flag',
-                topic='motion',
-                source='MOTOR:DMOV',
-                nx_class='NXlog',
-                parent_nx_class='NXpositioner',
-                writer_module='f144',
-                units='',
-            ),
-            StreamInfo(
+            _f144_info(group_path='entry/motor/idle_flag', source='MOTOR:DMOV'),
+            _f144_info(
                 group_path='entry/motor/value',
-                topic='motion',
                 source='MOTOR:RBV',
-                nx_class='NXlog',
-                parent_nx_class='NXpositioner',
-                writer_module='f144',
                 units='degrees',
             ),
         ]
-        code = generate_f144_log_streams_code(infos, topic='motion')
-        # Should use 'value' entry, not 'idle_flag'
+        code = generate_streams_parsed_module(infos)
         assert 'MOTOR:RBV' in code
-        assert 'MOTOR:DMOV' not in code
+        assert 'MOTOR:DMOV' in code
+        assert "'/entry/motor/value': F144Stream(" in code
+        assert "'/entry/motor/idle_flag': F144Stream(" in code
 
     def test_custom_variable_name(self) -> None:
+        infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]
+        code = generate_streams_parsed_module(infos, variable_name='MY_STREAMS')
+        assert 'MY_STREAMS: dict[str, F144Stream] = {' in code
+
+    def test_includes_source_filename_when_provided(self) -> None:
+        infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]
+        code = generate_streams_parsed_module(
+            infos, source_file='/some/abs/path/geometry-foo.nxs'
+        )
+        assert 'Source: geometry-foo.nxs' in code
+        # Absolute path is stripped
+        assert '/some/abs/path' not in code
+
+    def test_emits_both_entries_for_paths_with_same_filtered_tail(self) -> None:
+        # Generator keys by nexus_path, not by suggested name, so colliding
+        # leaves do not collapse entries.
         infos = [
-            StreamInfo(
-                group_path='entry/motor/value',
-                topic='motion',
-                source='MOTOR:RBV',
-                nx_class='NXlog',
-                parent_nx_class='NXpositioner',
-                writer_module='f144',
-                units='deg',
+            _f144_info(group_path='entry/instrument/foo/value', source='SRC_A'),
+            _f144_info(group_path='entry/sample/foo/value', source='SRC_B'),
+        ]
+        code = generate_streams_parsed_module(infos)
+        assert 'SRC_A' in code
+        assert 'SRC_B' in code
+        assert code.count('F144Stream(') == 2
+
+    def test_combines_multiple_topics(self) -> None:
+        infos = [
+            _f144_info(
+                group_path='entry/motor/value', source='MOTOR:RBV', topic='motion'
+            ),
+            _f144_info(
+                group_path='entry/temp/value', source='TEMP:RBV', topic='sample_env'
             ),
         ]
-        code = generate_f144_log_streams_code(
-            infos, topic='motion', variable_name='my_streams'
-        )
-        assert 'my_streams: dict[str, dict[str, str]] = {' in code
+        code = generate_streams_parsed_module(infos)
+        assert "topic='motion'" in code
+        assert "topic='sample_env'" in code
+        assert code.count('F144Stream(') == 2

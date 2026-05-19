@@ -6,11 +6,14 @@ Helpers for setting up the stream mapping for the ESS instruments.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ess.livedata import StreamKind
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 
 #: Generic monitor source names ``cbm0..cbm9`` for instruments without specific
 #: monitor information. The range starts at zero to absorb both 0- and 1-based
@@ -127,6 +130,19 @@ def make_dev_stream_mapping(
         logs=logs,
         **_make_livedata_topics(instrument),
     )
+
+
+def make_f144_log_lut(instrument: Instrument) -> StreamLUT:
+    """StreamLUT from f144 streams' (topic, source) to internal name.
+
+    Skips entries without a topic (synthesised streams, hand-coded entries
+    that have not been cross-referenced with a NeXus geometry file yet).
+    """
+    return {
+        InputStreamKey(topic=s.topic, source_name=s.source): name
+        for name, s in instrument.f144_streams.items()
+        if s.topic is not None
+    }
 
 
 def make_common_stream_mapping_inputs(

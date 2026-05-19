@@ -12,6 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
+from ess.livedata.config.stream import F144Stream, LogContextBinding
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -89,23 +90,25 @@ class TestInstrument:
 
         assert instrument.name == "test_instrument"
         assert isinstance(instrument.workflow_factory, WorkflowFactory)
-        assert instrument.f144_attribute_registry == {}
+        assert instrument.streams == {}
+        assert instrument.f144_streams == {}
         assert instrument.detector_names == []
 
     def test_instrument_creation_with_custom_values(self):
         """Test creating instrument with custom values."""
         custom_factory = WorkflowFactory()
-        f144_registry = {"attr1": {"key": "value"}}
+        stream = F144Stream(source='src', topic='topic', units='mm')
 
         instrument = Instrument(
             name="custom_instrument",
             workflow_factory=custom_factory,
-            f144_attribute_registry=f144_registry,
+            streams={'attr1': stream},
         )
 
         assert instrument.name == "custom_instrument"
         assert instrument.workflow_factory is custom_factory
-        assert instrument.f144_attribute_registry == f144_registry
+        assert instrument.streams == {'attr1': stream}
+        assert instrument.f144_streams == {'attr1': stream}
 
     def test_configure_detector_with_explicit_number(self):
         """Test configuring detector with explicit detector number."""
@@ -310,6 +313,92 @@ class TestInstrument:
 
         workflow_names = {spec.name for spec in specs.values()}
         assert workflow_names == {"workflow1", "workflow2"}
+
+
+class _Key:
+    """Sentinel Sciline-key stand-in for binding tests."""
+
+
+class _OtherKey:
+    pass
+
+
+def _f144(name: str) -> F144Stream:
+    return F144Stream(source=name, topic='topic', units='mm')
+
+
+class TestLogContextBindings:
+    def test_add_binding_records_entry(self):
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
+
+        instrument.add_log_context_binding(
+            stream_name='rot',
+            workflow_key=_Key,
+            dependent_sources=['det1'],
+        )
+
+        binding = instrument.log_context_bindings[0]
+        assert binding.stream_name == 'rot'
+        assert binding.workflow_key is _Key
+        assert binding.dependent_sources == frozenset({'det1'})
+
+    def test_add_binding_rejects_unknown_stream(self):
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
+
+        with pytest.raises(ValueError, match='unknown stream'):
+            instrument.add_log_context_binding(
+                stream_name='missing',
+                workflow_key=_Key,
+                dependent_sources=['det1'],
+            )
+
+    def test_constructor_validates_binding_stream_names(self):
+        bad = LogContextBinding(
+            stream_name='missing',
+            workflow_key=_Key,
+            dependent_sources=frozenset({'det1'}),
+        )
+        with pytest.raises(ValueError, match='unknown stream'):
+            Instrument(name='test', log_context_bindings=[bad])
+
+    def test_get_context_keys_filters_by_source(self):
+        instrument = Instrument(
+            name='test',
+            streams={'rot': _f144('rot'), 'temp': _f144('temp')},
+        )
+        instrument.add_log_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+        instrument.add_log_context_binding(
+            stream_name='temp',
+            workflow_key=_OtherKey,
+            dependent_sources=['det1', 'det2'],
+        )
+
+        assert instrument.get_context_keys('det1') == {
+            'rot': _Key,
+            'temp': _OtherKey,
+        }
+        assert instrument.get_context_keys('det2') == {'temp': _OtherKey}
+        assert instrument.get_context_keys('det3') == {}
+
+    def test_load_factories_rejects_binding_with_unknown_dependent_source(self):
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_log_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1', 'ghost']
+        )
+
+        with pytest.raises(ValueError, match='ghost'):
+            instrument._validate_binding_dependent_sources()
 
 
 class TestInstrumentRegisterSpec:
