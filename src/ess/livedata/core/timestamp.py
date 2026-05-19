@@ -176,9 +176,10 @@ class Timestamp:
         microseconds treated as nanoseconds would silently map recent times
         into early 1970 -- surfaces as a hard error.
 
-        Numpy ``uint64`` values must be cast to ``int`` by the caller since
-        scipp does not support unsigned integers; standard ns-epoch values
-        fit comfortably in ``int64`` (until ~year 2262).
+        Numpy ``uint64`` values are accepted: the internal ``int`` cast yields
+        a Python ``int`` that scipp can ingest as ``int64`` (which scipp does
+        support, unlike ``uint64``). Standard ns-epoch values fit comfortably
+        in ``int64`` (until ~year 2262).
         """
         import scipp as sc
 

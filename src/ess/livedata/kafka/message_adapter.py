@@ -183,7 +183,7 @@ def _extract_reference_time(
             data = np.asarray(var.data)
             if data.size == 0 or data.dtype not in (np.int64, np.uint64):
                 return None
-            return Timestamp.from_unit(int(data[-1]), unit=var.unit)
+            return Timestamp.from_unit(data[-1], unit=var.unit)
     return None
 
 

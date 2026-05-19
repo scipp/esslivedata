@@ -160,9 +160,9 @@ class TestTimestampFactory:
     def test_from_unit_handles_uint64_numpy_value(self) -> None:
         import numpy as np
 
-        # scipp rejects uint64 dtype; the caller-side ``int`` cast is what
-        # makes this work. ns-since-epoch in 2023 (~1.7e18) fits in int64.
-        ts = Timestamp.from_unit(int(np.uint64(1_700_000_000_000_000_000)), unit='ns')
+        # scipp rejects uint64 dtype directly; ``from_unit`` must cast
+        # internally. ns-since-epoch in 2023 (~1.7e18) fits in int64.
+        ts = Timestamp.from_unit(np.uint64(1_700_000_000_000_000_000), unit='ns')
         assert ts.to_datetime().year == 2023
 
     @pytest.mark.parametrize("unit", [None, "", "counts", "datetime64[ns]"])
