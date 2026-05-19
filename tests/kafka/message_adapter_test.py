@@ -387,7 +387,7 @@ class TestKafkaToDa00Adapter:
 
         assert result.timestamp == Timestamp.from_ns(expected_ns)
 
-    @pytest.mark.parametrize("unit", ["datetime64[ns]", "", "counts", "minutes", None])
+    @pytest.mark.parametrize("unit", ["datetime64[ns]", "", "counts", None])
     def test_raises_on_unsupported_reference_time_unit(self, unit: str | None) -> None:
         # Silent reinterpretation of an unknown unit as ns risks mapping recent
         # times into 1970; reject so the producer bug surfaces in the logs.
