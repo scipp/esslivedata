@@ -11,7 +11,6 @@ at ``add()``.
 
 from __future__ import annotations
 
-import numpy as np
 import scipp as sc
 import structlog
 
@@ -92,16 +91,13 @@ class ToDeviceLog(Accumulator[DeviceSample, sc.DataArray]):
         self._timeseries.coords['time'].values[self._end] = sample_time
         self._timeseries.data.values[self._end] = data.value
         if self._has_target:
-            # target may be None on a device whose VAL hasn't been observed yet
-            # (only possible before bootstrap completes — synthesizer should not
-            # emit before then). Fall back to NaN so the row is still appendable.
-            self._timeseries.coords['target'].values[self._end] = (
-                np.nan if data.target is None else data.target
-            )
+            if data.target is None:
+                raise ValueError("Target expected but not provided by synthesizer")
+            self._timeseries.coords['target'].values[self._end] = data.target
         if self._has_settled:
-            self._timeseries.coords['settled'].values[self._end] = int(
-                bool(data.settled)
-            )
+            if data.settled is None:
+                raise ValueError("Settled expected but not provided by synthesizer")
+            self._timeseries.coords['settled'].values[self._end] = int(data.settled)
         self._end += 1
         self._last_time = sample_time
         return True

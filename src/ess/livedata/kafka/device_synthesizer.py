@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 import structlog
 
@@ -32,6 +32,15 @@ from ..handlers.accumulators import DeviceSample, LogData
 logger = structlog.get_logger(__name__)
 
 _Role = Literal['value', 'target', 'settled']
+_V = TypeVar('_V', float, bool)
+
+
+@dataclass
+class _Substream(Generic[_V]):
+    """Last-seen value and timestamp for one device substream."""
+
+    value: _V
+    time: int
 
 
 @dataclass(slots=True)
@@ -41,27 +50,38 @@ class _DeviceState:
     device_name: str
     has_target: bool
     has_settled: bool
-    value: float | None = None
-    target: float | None = None
-    settled: bool | None = None
-    value_time: int | None = None
-    target_time: int | None = None
-    settled_time: int | None = None
+    value: _Substream[float] | None = None
+    target: _Substream[float] | None = None
+    settled: _Substream[bool] | None = None
 
-    def bootstrapped(self) -> bool:
-        if self.value_time is None:
-            return False
-        if self.has_target and self.target_time is None:
-            return False
-        if self.has_settled and self.settled_time is None:
-            return False
-        return True
-
-    def max_time(self) -> int:
-        return max(
-            t
-            for t in (self.value_time, self.target_time, self.settled_time)
-            if t is not None
+    def push(self, role: _Role, log: LogData) -> Message[DeviceSample] | None:
+        """Record a substream event and emit a sample if all substreams seen."""
+        time = int(log.time)
+        if role == 'value':
+            self.value = _Substream(value=float(log.value), time=time)
+        elif role == 'target':
+            self.target = _Substream(value=float(log.value), time=time)
+        else:  # settled / DMOV
+            self.settled = _Substream(value=bool(log.value), time=time)
+        if self.value is None:
+            return None
+        if self.has_target and self.target is None:
+            return None
+        if self.has_settled and self.settled is None:
+            return None
+        max_time = max(
+            s.time for s in (self.value, self.target, self.settled) if s is not None
+        )
+        sample_time = Timestamp.from_ns(max_time)
+        return Message(
+            timestamp=sample_time,
+            stream=StreamId(kind=StreamKind.DEVICE, name=self.device_name),
+            value=DeviceSample(
+                time=sample_time,
+                value=self.value.value,
+                target=self.target.value if self.target is not None else None,
+                settled=self.settled.value if self.settled is not None else None,
+            ),
         )
 
 
@@ -128,35 +148,6 @@ class DeviceSynthesizer(MessageSource[Message]):
                     value_type=type(msg.value).__name__,
                 )
                 continue
-            self._update_state(state, role, msg.value)
-            if state.bootstrapped():
-                out.append(self._make_sample_message(state))
+            if (sample := state.push(role, msg.value)) is not None:
+                out.append(sample)
         return out
-
-    @staticmethod
-    def _update_state(state: _DeviceState, role: _Role, log: LogData) -> None:
-        if role == 'value':
-            state.value = float(log.value)
-            state.value_time = int(log.time)
-        elif role == 'target':
-            state.target = float(log.value)
-            state.target_time = int(log.time)
-        else:  # settled / DMOV
-            state.settled = bool(log.value)
-            state.settled_time = int(log.time)
-
-    @staticmethod
-    def _make_sample_message(state: _DeviceState) -> Message[DeviceSample]:
-        sample_time_ns = state.max_time()
-        sample_time = Timestamp.from_ns(sample_time_ns)
-        sample = DeviceSample(
-            time=sample_time,
-            value=state.value,  # type: ignore[arg-type]
-            target=state.target,
-            settled=state.settled,
-        )
-        return Message(
-            timestamp=sample_time,
-            stream=StreamId(kind=StreamKind.DEVICE, name=state.device_name),
-            value=sample,
-        )
