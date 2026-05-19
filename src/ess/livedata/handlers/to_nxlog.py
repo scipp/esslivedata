@@ -4,6 +4,7 @@ import numpy as np
 import scipp as sc
 import structlog
 
+from ess.livedata.config.stream import Device, F144Stream, Stream
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.accumulators import LogData
@@ -139,3 +140,22 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._end = 0
         self._last_time = None
         # Keep the allocated array to avoid reallocations
+
+
+def nxlog_for_stream(stream: Stream | None) -> ToNXlog | None:
+    """ToNXlog preprocessor for a Device or F144Stream entry, or None.
+
+    Maps the two stream types that produce NXlog-shaped time series to a
+    correctly-parameterised :class:`ToNXlog`. Returns ``None`` for any other
+    stream type or ``None`` input so factories can fall through to their own
+    handling.
+    """
+    if isinstance(stream, Device):
+        return ToNXlog(
+            attrs={'units': stream.units},
+            has_target=stream.target is not None,
+            has_settled=stream.settled is not None,
+        )
+    if isinstance(stream, F144Stream):
+        return ToNXlog(attrs={'units': stream.units})
+    return None

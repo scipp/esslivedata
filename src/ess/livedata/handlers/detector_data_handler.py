@@ -8,13 +8,12 @@ import re
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.stream import Device, F144Stream
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, LatestValueHandler
 from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
-from .to_nxlog import ToNXlog
+from .to_nxlog import nxlog_for_stream
 
 _GEOMETRY_RELEASE_URL = (
     'https://github.com/scipp/esslivedata/releases/download/geometry-v0/'
@@ -53,20 +52,8 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
                 return LatestValueHandler()
-            case StreamKind.LOG:
-                stream = self._instrument.streams.get(key.name)
-                if not isinstance(stream, F144Stream):
-                    return None
-                return ToNXlog(attrs={'units': stream.units})
-            case StreamKind.DEVICE:
-                device = self._instrument.streams.get(key.name)
-                if not isinstance(device, Device):
-                    return None
-                return ToNXlog(
-                    attrs={'units': device.units},
-                    has_target=device.target is not None,
-                    has_settled=device.settled is not None,
-                )
+            case StreamKind.LOG | StreamKind.DEVICE:
+                return nxlog_for_stream(self._instrument.streams.get(key.name))
             case _:
                 return None
 
