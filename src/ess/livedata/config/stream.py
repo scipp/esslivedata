@@ -76,6 +76,13 @@ class Device(Stream):
     writer_module: str = 'device'
     nx_class: str = 'NXpositioner'
 
+    @property
+    def substream_names(self) -> tuple[str, ...]:
+        """Names of the RBV/VAL/DMOV substreams this device is synthesised from."""
+        return tuple(
+            s for s in (self.value, self.target, self.settled) if s is not None
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LogContextBinding:

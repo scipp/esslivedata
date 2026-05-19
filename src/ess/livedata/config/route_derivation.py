@@ -42,11 +42,7 @@ def gather_source_names(
         if device is None:
             continue
         names.discard(name)
-        names.add(device.value)
-        if device.target is not None:
-            names.add(device.target)
-        if device.settled is not None:
-            names.add(device.settled)
+        names.update(device.substream_names)
     return names
 
 

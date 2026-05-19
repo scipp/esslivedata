@@ -128,13 +128,7 @@ class Instrument:
         # Device substreams are suppressed by DeviceSynthesizer; expose the
         # merged Device stream instead of the per-PV substream plots.
         devices = self.devices
-        suppressed: set[str] = set()
-        for d in devices.values():
-            suppressed.add(d.value)
-            if d.target is not None:
-                suppressed.add(d.target)
-            if d.settled is not None:
-                suppressed.add(d.settled)
+        suppressed = {n for d in devices.values() for n in d.substream_names}
         timeseries_names = [
             name for name in self.f144_streams if name not in suppressed
         ]

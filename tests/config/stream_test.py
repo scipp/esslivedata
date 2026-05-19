@@ -345,6 +345,14 @@ class TestDeviceDetection:
         assert 'rotation_stage' in result
         assert isinstance(result['rotation_stage'], Device)
 
+    def test_substream_names_drops_unset_roles(self) -> None:
+        rbv_val_dmov = Device(value='m/v', target='m/t', settled='m/s')
+        assert rbv_val_dmov.substream_names == ('m/v', 'm/t', 'm/s')
+        rbv_only = Device(value='m/v')
+        assert rbv_only.substream_names == ('m/v',)
+        rbv_dmov = Device(value='m/v', settled='m/s')
+        assert rbv_dmov.substream_names == ('m/v', 'm/s')
+
     def test_device_name_collides_with_substream_extends(self) -> None:
         # Two sibling devices with the same parent-leaf name: substream pass
         # uses parent-prefixed names; device pass starts at depth=1, both
