@@ -18,6 +18,17 @@ from typing import Any
 _NS_PER_S = 1_000_000_000
 _NS_PER_MS = 1_000_000
 
+# Integer scale factors from each supported SI time unit to nanoseconds.
+# Both ASCII ``'us'`` and the Unicode ``'µs'`` are accepted for microseconds
+# since producers in the wild use either spelling.
+_NS_PER_UNIT: dict[str, int] = {
+    'ns': 1,
+    'us': 1_000,
+    'µs': 1_000,
+    'ms': _NS_PER_MS,
+    's': _NS_PER_S,
+}
+
 
 @total_ordering
 class Duration:
@@ -164,6 +175,23 @@ class Timestamp:
     def from_ms(cls, ms: int) -> Timestamp:
         """Create a timestamp from milliseconds since the epoch."""
         return cls(ns=ms * _NS_PER_MS)
+
+    @classmethod
+    def from_unit(cls, value: int, *, unit: str | None) -> Timestamp:
+        """Create a timestamp from an integer count of ``unit`` since the epoch.
+
+        Supports ``'ns'``, ``'us'``/``'µs'``, ``'ms'``, and ``'s'``. Raises
+        ``ValueError`` for any other ``unit`` (including ``None``). The strict
+        check prevents wire-format misinterpretation -- a microsecond value
+        treated as nanoseconds would silently map recent times into early 1970.
+        """
+        scale = _NS_PER_UNIT.get(unit)
+        if scale is None:
+            raise ValueError(
+                f"Unsupported time unit {unit!r}; expected one of "
+                f"{sorted(_NS_PER_UNIT)}"
+            )
+        return cls(ns=int(value) * scale)
 
     @classmethod
     def from_scipp(cls, var: Any) -> Timestamp:

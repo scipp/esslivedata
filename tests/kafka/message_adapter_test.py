@@ -355,6 +355,62 @@ class TestKafkaToDa00Adapter:
 
         assert result.timestamp == Timestamp.from_ns(5678)
 
+    @pytest.mark.parametrize(
+        ("unit", "expected_ns"),
+        [
+            ("ns", 3000),
+            ("us", 3000 * 1_000),
+            ("µs", 3000 * 1_000),
+            ("ms", 3000 * 1_000_000),
+            ("s", 3000 * 1_000_000_000),
+        ],
+    )
+    def test_converts_supported_units_to_ns(self, unit: str, expected_ns: int) -> None:
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=np.int64),
+                    axes=["frame"],
+                    unit=unit,
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+
+        assert result.timestamp == Timestamp.from_ns(expected_ns)
+
+    @pytest.mark.parametrize("unit", ["datetime64[ns]", "", "counts", "minutes", None])
+    def test_raises_on_unsupported_reference_time_unit(self, unit: str | None) -> None:
+        # Silent reinterpretation of an unknown unit as ns risks mapping recent
+        # times into 1970; reject so the producer bug surfaces in the logs.
+        da00_msg = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=5678,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                ),
+                dataarray_da00.Variable(
+                    name="reference_time",
+                    data=np.array([1000, 2000, 3000], dtype=np.int64),
+                    axes=["frame"],
+                    unit=unit,
+                ),
+            ],
+        )
+        message = FakeKafkaMessage(value=da00_msg, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        with pytest.raises(ValueError, match="Unsupported time unit"):
+            adapter.adapt(message)
+
     def test_adapter_with_stream_mapping(self) -> None:
         message = FakeKafkaMessage(value=make_serialized_da00(), topic="instrument")
         adapter = KafkaToDa00Adapter(
