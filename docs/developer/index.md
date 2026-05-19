@@ -20,4 +20,5 @@ design/dashboard-architecture
 design/orchestrator-flow
 design/rate-aware-batcher
 design/stream-registry
+adr/index
 ```
