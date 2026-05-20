@@ -291,17 +291,17 @@ class RateNormalizationParams(pydantic.BaseModel):
 
 _WINDOW_DESCRIPTION = (
     "The live reduction emits a new result roughly once per second "
-    "(longer for heavy workflows or when the system is under load). "
-    "This setting only controls how many of those results the dashboard "
-    "combines for display; it does not change what or how often the "
-    "reduction emits."
+    "(longer for heavy workflows or under heavy load). The window "
+    "duration sets how much recent history the dashboard aggregates "
+    "for display; it does not affect what or how often the reduction "
+    "emits."
     "<br><br>"
-    "The duration is a target, not a guarantee: when it does not align "
-    "with the reduction's current cadence the aggregated time range "
-    "will differ from the requested value, and a duration shorter than "
-    "one cadence interval collapses to just the latest result. To "
-    "compare values across different cadences or window lengths, enable "
-    "'Counts Per Second' in the 'Rate' tab."
+    "The window duration is a target, not a guarantee: the aggregation "
+    "time range always covers at least one cadence interval, and will "
+    "differ from the requested duration when it does not align with "
+    "the reduction's current cadence. To compare values across "
+    "different cadences or window durations, enable 'Counts Per Second' "
+    "in the 'Rate' tab."
 )
 
 
