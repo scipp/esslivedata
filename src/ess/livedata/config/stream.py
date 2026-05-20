@@ -56,6 +56,35 @@ class F144Stream(Stream):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Device(Stream):
+    """Synthesised stream merging RBV/VAL/DMOV substreams of a motorised device.
+
+    A ``Device`` is not transported over Kafka; it is materialised in-process
+    by :class:`DeviceSynthesizer` from the substreams referenced by
+    :attr:`value`, :attr:`target`, and :attr:`idle` (each is a key into
+    :attr:`Instrument.streams`).
+
+    :attr:`value` is the RBV substream and is required. :attr:`target` (VAL)
+    and :attr:`idle` (DMOV) are optional — a device may declare any subset.
+    Devices auto-detected by :func:`name_streams` always carry RBV plus at
+    least one of VAL / DMOV (see :func:`_detect_devices`); hand-constructed
+    Devices may differ.
+    """
+
+    value: str
+    target: str | None = None
+    idle: str | None = None
+    units: str | None = None
+    writer_module: str = 'device'
+    nx_class: str = 'NXpositioner'
+
+    @property
+    def substream_names(self) -> tuple[str, ...]:
+        """Names of the RBV/VAL/DMOV substreams this device is synthesised from."""
+        return tuple(s for s in (self.value, self.target, self.idle) if s is not None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class LogContextBinding:
     """One f144 stream feeding a Sciline workflow key, scoped to dependents.
 
@@ -78,21 +107,33 @@ class LogContextBinding:
 #: NeXus container groups that carry no entity-level meaning. Removed from the
 #: path before constructing an internal name so that e.g.
 #: ``entry/instrument/wfm1/transformations/translation1`` becomes
-#: ``wfm1_translation1`` and not ``transformations_translation1``.
+#: ``wfm1/translation1`` and not ``transformations/translation1``.
 _GENERIC_GROUPS: frozenset[str] = frozenset(
     {'entry', 'instrument', 'sample', 'sample_environment', 'transformations'}
 )
 
 
-def suggest_names(paths: Iterable[str]) -> dict[str, str]:
+def suggest_names(
+    paths: Iterable[str],
+    *,
+    min_depth: int = 2,
+    forbidden: Iterable[str] | None = None,
+) -> dict[str, str]:
     """Suggest a unique internal name for each NeXus group path.
 
     Generic NeXus container groups (``entry``, ``instrument``, ``sample``,
     ``sample_environment``, ``transformations``) are dropped — they add no
-    meaning and only inflate names. The name is then the shortest tail
-    (minimum two components, when available) of the remaining path that is
-    unique across the input set. Duplicates extend to the next-longer tail
-    until uniqueness is reached.
+    meaning and only inflate names. The name is then the shortest tail of
+    the remaining path (minimum ``min_depth`` components, when available)
+    that is unique across the input set and not in ``forbidden``. Duplicates
+    and forbidden names extend to the next-longer tail until uniqueness is
+    reached.
+
+    ``min_depth=2`` (the default) suits leaf-keyed paths where the leaf
+    alone (``value``, ``target_value``, …) is a generic role label. Callers
+    naming *parent* groups (where the leaf is itself an entity name) should
+    pass ``min_depth=1`` and supply already-assigned names as ``forbidden``
+    to keep the two namespaces disjoint by construction.
 
     Paths that still collide after exhausting the filtered tail (i.e. they
     differ only in filtered-out generic ancestors) fall back to the full
@@ -102,6 +143,7 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     each path produces at most one name, no two paths share a name.
     """
     paths = list(paths)
+    forbidden_set = frozenset() if forbidden is None else frozenset(forbidden)
     full: dict[str, list[str]] = {p: p.strip('/').split('/') for p in paths}
     filtered: dict[str, list[str]] = {
         p: [c for c in full[p] if c not in _GENERIC_GROUPS] or full[p] for p in paths
@@ -111,23 +153,119 @@ def suggest_names(paths: Iterable[str]) -> dict[str, str]:
     pending = set(paths)
     for parts in (filtered, full):
         max_d = max((len(parts[p]) for p in pending), default=1)
-        depth = 2
-        while pending and depth <= max(max_d, 2):
+        depth = min_depth
+        while pending and depth <= max(max_d, min_depth):
             candidates = {
-                p: '_'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
+                p: '/'.join(parts[p][-min(depth, len(parts[p])) :]) for p in pending
             }
             counts: dict[str, int] = {}
             for name in candidates.values():
                 counts[name] = counts.get(name, 0) + 1
             next_pending: set[str] = set()
             for path, name in candidates.items():
-                if counts[name] == 1:
+                if counts[name] == 1 and name not in forbidden_set:
                     result[path] = name
                 else:
                     next_pending.add(path)
             pending = next_pending
             depth += 1
     return result
+
+
+#: EPICS source-attribute suffix identifying each device-substream role.
+#: From the EPICS motor record: ``.RBV`` is the readback, ``.VAL`` the setpoint,
+#: ``.DMOV`` the "done moving" flag. These are fixed by the EPICS motor-record
+#: convention and stable across the facility, while NeXus child names
+#: (``value`` vs ``position_readback`` etc.) drift across instruments.
+_ROLE_BY_SUFFIX: dict[str, str] = {
+    '.RBV': 'value',
+    '.VAL': 'target',
+    '.DMOV': 'idle',
+}
+
+
+def _classify_source(source: str | None) -> str | None:
+    """Map an f144 ``source`` attribute to a device role, or ``None``."""
+    if source is None:
+        return None
+    for suffix, role in _ROLE_BY_SUFFIX.items():
+        if source.endswith(suffix):
+            return role
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class _DetectedDevice:
+    """Internal record for a detected device group during ``name_streams``."""
+
+    value: str
+    target: str | None
+    idle: str | None
+    units: str | None
+
+
+def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
+    """Detect device groups by EPICS source-suffix classification.
+
+    Each f144 substream is classified by the suffix of its ``source`` attribute
+    (``.RBV`` → value, ``.VAL`` → target, ``.DMOV`` → idle). Substreams
+    co-located under one NeXus parent group form a Device if classified RBV is
+    present and at least one of classified VAL / DMOV is present. Substreams
+    with ``source=None`` or an unrecognised suffix are not classifiable and
+    are ignored.
+
+    Returns a dict ``parent_path -> _DetectedDevice``. Raises
+    :class:`ValueError` if RBV and VAL units disagree, or if two children of
+    one parent classify as the same role.
+    """
+    by_parent: dict[str, dict[str, str]] = {}
+    for path, stream in parsed.items():
+        if not isinstance(stream, F144Stream):
+            continue
+        role = _classify_source(stream.source)
+        if role is None:
+            continue
+        parent, _, _ = path.rpartition('/')
+        roles = by_parent.setdefault(parent, {})
+        if role in roles:
+            raise ValueError(
+                f"Device at {parent!r}: two children classify as {role!r} "
+                f"({roles[role]!r} and {path!r}); only one expected per parent"
+            )
+        roles[role] = path
+
+    devices: dict[str, _DetectedDevice] = {}
+    for parent, roles in by_parent.items():
+        if 'value' not in roles:
+            continue
+        if 'target' not in roles and 'idle' not in roles:
+            continue
+        rbv = parsed[roles['value']]
+        if not isinstance(rbv, F144Stream):
+            raise ValueError(
+                f"Device at {parent!r}: RBV substream {roles['value']!r} "
+                f"is not an F144Stream (got {type(rbv).__name__})"
+            )
+        units = rbv.units
+        if 'target' in roles:
+            val = parsed[roles['target']]
+            if not isinstance(val, F144Stream):
+                raise ValueError(
+                    f"Device at {parent!r}: VAL substream {roles['target']!r} "
+                    f"is not an F144Stream (got {type(val).__name__})"
+                )
+            if val.units != units:
+                raise ValueError(
+                    f"Device at {parent!r}: RBV units {units!r} differ from "
+                    f"VAL units {val.units!r}; units must match"
+                )
+        devices[parent] = _DetectedDevice(
+            value=roles['value'],
+            target=roles.get('target'),
+            idle=roles.get('idle'),
+            units=units,
+        )
+    return devices
 
 
 def name_streams(
@@ -143,24 +281,58 @@ def name_streams(
     :func:`suggest_names`; entries in ``rename`` (keyed by ``nexus_path``)
     override those suggestions.
 
-    Raises ``ValueError`` if a rename key matches no parsed entry, or if
-    the resulting names are not unique.
+    Motorised devices are detected by structural child-name pattern (RBV +
+    at least one of VAL/DMOV) and emitted as :class:`Device` entries with
+    auto-populated substream-name pointers. Substreams and device parents
+    are named in two passes: substreams with ``min_depth=2`` (current
+    behaviour), then devices with ``min_depth=1`` and the substream names
+    as ``forbidden``. The two namespaces are disjoint by construction.
+
+    Raises ``ValueError`` if a rename key matches no parsed entry, if any
+    rename or device name collides, or if RBV/VAL units disagree on a
+    detected device.
     """
     rename = rename or {}
-    missing = set(rename) - set(parsed)
+    devices = _detect_devices(parsed)
+    valid_paths = set(parsed) | set(devices)
+    missing = set(rename) - valid_paths
     if missing:
         raise ValueError(
-            f"rename keys not in parsed: {sorted(missing)}; "
-            f"known nexus_paths: {sorted(parsed)}"
+            f"rename keys not in parsed or detected device parents: "
+            f"{sorted(missing)}; known nexus_paths: {sorted(parsed)}"
         )
-    suggested = suggest_names(parsed)
+    substream_names = suggest_names(parsed.keys())
+    device_names = suggest_names(
+        devices.keys(),
+        min_depth=1,
+        forbidden=substream_names.values(),
+    )
+    suggested = {**substream_names, **device_names}
+
+    def resolve(path: str) -> str:
+        return rename.get(path, suggested[path])
+
     result: dict[str, Stream] = {}
     for path, stream in parsed.items():
-        name = rename.get(path, suggested[path])
+        name = resolve(path)
         if name in result:
             raise ValueError(
                 f"name {name!r} produced for {path!r} collides with an "
                 f"earlier entry; check rename map"
             )
         result[name] = stream
+    for parent_path, info in devices.items():
+        device_name = resolve(parent_path)
+        if device_name in result:
+            raise ValueError(
+                f"device name {device_name!r} for parent {parent_path!r} "
+                f"collides with an existing stream; check rename map"
+            )
+        result[device_name] = Device(
+            nexus_path=parent_path,
+            value=resolve(info.value),
+            target=resolve(info.target) if info.target is not None else None,
+            idle=resolve(info.idle) if info.idle is not None else None,
+            units=info.units,
+        )
     return result

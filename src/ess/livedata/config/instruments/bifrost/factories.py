@@ -68,15 +68,16 @@ def setup_factories(instrument: Instrument) -> None:
     # Configure detector
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
-    # Bifrost f144 streams that feed typed Sciline keys on the cut-workflow graph.
-    # Routed via context_keys; not NeXus components loaded by name.
+    # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
+    # on the cut-workflow graph. Routed via context_keys; not NeXus components
+    # loaded by name.
     instrument.add_log_context_binding(
-        stream_name='detector_tank_angle_r0_value',
+        stream_name='detector_tank_angle_r0',
         workflow_key=InstrumentAngle[SampleRun],
         dependent_sources=['unified_detector'],
     )
     instrument.add_log_context_binding(
-        stream_name='rotation_stage_value',
+        stream_name='rotation_stage',
         workflow_key=SampleAngle[SampleRun],
         dependent_sources=['unified_detector'],
     )

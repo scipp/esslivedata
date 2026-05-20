@@ -12,7 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.stream import F144Stream, LogContextBinding
+from ess.livedata.config.stream import Device, F144Stream, LogContextBinding
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -381,6 +381,34 @@ class TestLogContextBindings:
         }
         assert instrument.get_context_keys('det2') == {'temp': _OtherKey}
         assert instrument.get_context_keys('det3') == {}
+
+    def test_add_binding_accepts_device_stream_target(self):
+        """A :class:`Device` entry in ``streams`` is a valid binding target.
+
+        Synthesised Device streams sit in ``streams`` alongside f144 entries
+        and are eligible binding targets via the same dict-membership check.
+        Bifrost relies on this to route ``InstrumentAngle``/``SampleAngle``
+        from merged device streams.
+        """
+        instrument = Instrument(
+            name='test',
+            streams={
+                'rot_rbv': _f144('rot_rbv'),
+                'rot_target': _f144('rot_target'),
+                'rot': Device(value='rot_rbv', target='rot_target', units='mm'),
+            },
+        )
+
+        instrument.add_log_context_binding(
+            stream_name='rot',
+            workflow_key=_Key,
+            dependent_sources=['det1'],
+        )
+
+        binding = instrument.log_context_bindings[0]
+        assert binding.stream_name == 'rot'
+        assert binding.workflow_key is _Key
+        assert instrument.get_context_keys('det1') == {'rot': _Key}
 
     def test_load_factories_rejects_binding_with_unknown_dependent_source(self):
         instrument = Instrument(

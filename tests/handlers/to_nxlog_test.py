@@ -536,3 +536,52 @@ def test_clear_resets_duplicate_tracking():
     accumulator.add(0, LogData(time=1000, value=42.0))
     result = accumulator.get()
     assert_identical(result.data, sc.array(dims=['time'], values=[42.0], unit='K'))
+
+
+def test_grows_with_target_and_idle_coords():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_idle=True)
+    accumulator.add(
+        Timestamp.from_ns(0),
+        LogData(time=1000, value=1.0, target=10.0, idle=False),
+    )
+    accumulator.add(
+        Timestamp.from_ns(0),
+        LogData(time=2000, value=2.0, target=10.0, idle=True),
+    )
+    result = accumulator.get()
+    assert_identical(result.data, sc.array(dims=['time'], values=[1.0, 2.0], unit='mm'))
+    assert_identical(
+        result.coords['target'],
+        sc.array(dims=['time'], values=[10.0, 10.0], unit='mm'),
+    )
+    assert_identical(
+        result.coords['idle'],
+        sc.array(dims=['time'], values=[0, 1], dtype='int32'),
+    )
+
+
+def test_target_coord_grows_past_initial_capacity():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_target=True)
+    for i in range(20):
+        accumulator.add(
+            Timestamp.from_ns(0),
+            LogData(time=(i + 1) * 1000, value=float(i), target=float(i + 1)),
+        )
+    result = accumulator.get()
+    assert result.sizes == {'time': 20}
+    assert_identical(
+        result.coords['target'],
+        sc.array(dims=['time'], values=[float(i + 1) for i in range(20)], unit='mm'),
+    )
+
+
+def test_missing_target_raises_when_has_target():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_target=True)
+    with pytest.raises(ValueError, match="Target expected"):
+        accumulator.add(Timestamp.from_ns(0), LogData(time=1000, value=1.0))
+
+
+def test_missing_idle_raises_when_has_idle():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_idle=True)
+    with pytest.raises(ValueError, match="Idle"):
+        accumulator.add(Timestamp.from_ns(0), LogData(time=1000, value=1.0))

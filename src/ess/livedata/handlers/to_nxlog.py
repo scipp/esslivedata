@@ -4,6 +4,7 @@ import numpy as np
 import scipp as sc
 import structlog
 
+from ess.livedata.config.stream import Device, F144Stream, Stream
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.accumulators import LogData
@@ -21,12 +22,21 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
 
     Timestamps must be monotonically increasing. Messages with duplicate or out-of-order
     timestamps are skipped to prevent unbounded buffer growth from upstream re-sends.
+
+    When ``has_target`` / ``has_idle`` are set, the per-sample ``target`` /
+    ``idle`` fields on :class:`LogData` are written as time-dim coords. This
+    is used by the device-synthesis path; plain f144 logs leave both flags off.
     """
 
     is_context = True
 
     def __init__(
-        self, *, attrs: dict[str, Any], data_dims: tuple[str, ...] = ()
+        self,
+        *,
+        attrs: dict[str, Any],
+        data_dims: tuple[str, ...] = (),
+        has_target: bool = False,
+        has_idle: bool = False,
     ) -> None:
         self._attrs = attrs
         # Values with no unit are ok
@@ -44,6 +54,8 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._end = 0
         self._last_time: int | None = None
         self._data_dims = data_dims
+        self._has_target = has_target
+        self._has_idle = has_idle
 
     @property
     def unit(self) -> sc.Unit | None:
@@ -52,7 +64,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     def _at_capacity(self) -> bool:
         return self._end >= self._timeseries.sizes['time']
 
-    def _ensure_capacity(self, data: sc.Variable) -> None:
+    def _ensure_capacity(self, data: LogData) -> None:
         if self._timeseries is None:
             # Initialize with initial capacity of 2
             arr = np.asarray(data.value)
@@ -66,9 +78,16 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
             times = sc.zeros(
                 dims=['time'], shape=[2], unit=self._time_unit, dtype='int64'
             )
-            self._timeseries = sc.DataArray(
-                values, coords={'time': self._start + times}
-            )
+            coords: dict[str, sc.Variable] = {'time': self._start + times}
+            if self._has_target:
+                coords['target'] = sc.zeros(
+                    dims=['time'], shape=[2], unit=self._unit, dtype='float64'
+                )
+            if self._has_idle:
+                # int32 (not bool) because the streaming_data_types da00
+                # flatbuffer schema has no bool dtype. Values stay 0/1.
+                coords['idle'] = sc.zeros(dims=['time'], shape=[2], dtype='int32')
+            self._timeseries = sc.DataArray(values, coords=coords)
         elif self._at_capacity():
             # Double capacity when full
             self._timeseries = sc.concat(
@@ -98,6 +117,14 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._timeseries.data.values[self._end] = data.value
         if data.variances is not None and self._timeseries.data.variances is not None:
             self._timeseries.data.variances[self._end] = data.variances
+        if self._has_target:
+            if data.target is None:
+                raise ValueError("Target expected but not provided")
+            self._timeseries.coords['target'].values[self._end] = data.target
+        if self._has_idle:
+            if data.idle is None:
+                raise ValueError("Idle flag expected but not provided")
+            self._timeseries.coords['idle'].values[self._end] = int(data.idle)
         self._end += 1
         self._last_time = data.time
         return True
@@ -113,3 +140,22 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._end = 0
         self._last_time = None
         # Keep the allocated array to avoid reallocations
+
+
+def nxlog_for_stream(stream: Stream | None) -> ToNXlog | None:
+    """ToNXlog preprocessor for a Device or F144Stream entry, or None.
+
+    Maps the two stream types that produce NXlog-shaped time series to a
+    correctly-parameterised :class:`ToNXlog`. Returns ``None`` for any other
+    stream type or ``None`` input so factories can fall through to their own
+    handling.
+    """
+    if isinstance(stream, Device):
+        return ToNXlog(
+            attrs={'units': stream.units},
+            has_target=stream.target is not None,
+            has_idle=stream.idle is not None,
+        )
+    if isinstance(stream, F144Stream):
+        return ToNXlog(attrs={'units': stream.units})
+    return None

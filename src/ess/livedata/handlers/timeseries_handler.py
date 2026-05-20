@@ -8,11 +8,10 @@ from typing import TYPE_CHECKING
 import scipp as sc
 import structlog
 
-from ..config.stream import F144Stream
-from ..core.handler import JobBasedPreprocessorFactoryBase
-from ..core.message import StreamId
+from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
+from ..core.message import StreamId, StreamKind
 from .accumulators import LogData
-from .to_nxlog import ToNXlog
+from .to_nxlog import ToNXlog, nxlog_for_stream
 from .wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 from .workflow_factory import Workflow
 
@@ -79,26 +78,21 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
     def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
 
-    def make_preprocessor(self, key: StreamId) -> ToNXlog | None:
-        source_name = key.name
-        stream = self._instrument.streams.get(source_name)
-        if isinstance(stream, F144Stream):
-            attrs: dict[str, str | None] = {'units': stream.units}
-        elif source_name in _SYNTHETIC_LOG_SOURCES:
-            attrs = {}
-        else:
-            logger.warning(
-                "No attributes found for source name '%s'. Messages will be dropped.",
-                source_name,
-            )
-            return None
-
-        try:
-            return ToNXlog(attrs=attrs)
-        except Exception:
-            logger.exception(
-                "Failed to create NXlog for source name '%s'. "
-                "Messages will be dropped.",
-                source_name,
-            )
-            return None
+    def make_preprocessor(self, key: StreamId) -> Accumulator | None:
+        match key.kind:
+            case StreamKind.DEVICE:
+                return nxlog_for_stream(self._instrument.streams.get(key.name))
+            case StreamKind.LOG:
+                accumulator = nxlog_for_stream(self._instrument.streams.get(key.name))
+                if accumulator is not None:
+                    return accumulator
+                if key.name in _SYNTHETIC_LOG_SOURCES:
+                    return ToNXlog(attrs={})
+                logger.warning(
+                    "No attributes found for source name '%s'. "
+                    "Messages will be dropped.",
+                    key.name,
+                )
+                return None
+            case _:
+                return None
