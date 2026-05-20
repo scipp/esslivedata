@@ -721,7 +721,7 @@ class TestResolveFieldName:
                 ),
                 OutputView(
                     name='total_counts',
-                    title='Total Counts',
+                    title='Total',
                     streams={'per_update': 'counts_total'},
                 ),
             )

@@ -160,7 +160,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
         OutputView(
             name='total_counts',
-            title='Total Counts',
+            title='Total',
             streams={'per_update': 'counts_total'},
             description='Total number of monitor events per update interval.',
         ),
@@ -205,7 +205,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Total Counts',
+        title='Total',
         description=(
             'Total number of monitor events for the latest update interval only. '
             'Resets each update interval.'

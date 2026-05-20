@@ -211,7 +211,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     ),
     OutputView(
         name='total_counts',
-        title='Total Counts',
+        title='Total',
         streams={
             'since_start': 'counts_total_cumulative',
             'per_update': 'counts_total',
@@ -252,14 +252,14 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         default_factory=_make_2d_template_with_time,
     )
     counts_total_cumulative: sc.DataArray = pydantic.Field(
-        title='Total Counts',
+        title='Total',
         description=(
             'Total number of detector events accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
     )
     counts_total: sc.DataArray = pydantic.Field(
-        title='Total Counts update',
+        title='Total (update)',
         description=(
             'Total number of detector events for the latest update interval only. '
             'Resets each update interval.'
@@ -275,7 +275,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         default_factory=_make_0d_template,
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
-        title='Total in range update',
+        title='Total in range (update)',
         description=(
             'Number of detector events within the configured range filter '
             'for the latest update interval only. Resets each update interval.'

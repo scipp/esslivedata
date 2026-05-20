@@ -28,7 +28,7 @@ StreamRole = Literal['since_start', 'per_update']
 class OutputView:
     """A user-facing output bundling one or more backend streams.
 
-    Each view represents a single quantity (e.g. "Histogram", "Total Counts")
+    Each view represents a single quantity (e.g. "Histogram", "Total")
     that may be observed over different time windows. The ``streams`` mapping
     binds time-window *roles* to the backend pydantic field names that carry
     that view of the data — ``since_start`` for run-cumulative streams and
