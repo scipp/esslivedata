@@ -677,7 +677,7 @@ class TestCreateExtractorsFromParams:
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
-    def test_latest_uses_latest_value_extractor(self) -> None:
+    def test_window_with_zero_duration_uses_latest_value_extractor(self) -> None:
         from ess.livedata.dashboard.extractors import LatestValueExtractor
         from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
         from ess.livedata.dashboard.plotting_controller import (
@@ -685,7 +685,7 @@ class TestCreateExtractorsFromParams:
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.latest)
+        params = WindowParams(mode=WindowMode.window, window_duration_seconds=0.0)
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 

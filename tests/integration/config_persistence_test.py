@@ -309,7 +309,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Add another cell in the same grid with different params
         params2 = PlotParams1d(
-            window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+            window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
         )
         plot_config2 = PlotConfig(
             data_sources={
@@ -538,7 +538,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
     )
 
     params2 = PlotParams1d(
-        window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+        window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
     )
     config2 = PlotConfig(
         data_sources={

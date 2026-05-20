@@ -303,20 +303,20 @@ def create_extractors_from_params(
         extractor_type = spec.data_requirements.required_extractor
         return {key: extractor_type() for key in keys}
 
-    # No fixed requirement - check if window params provided
-    if window is not None:
-        if window.mode is WindowMode.window:
-            return {
-                key: WindowAggregatingExtractor(
-                    window_duration_seconds=window.window_duration_seconds,
-                    aggregation=window.aggregation,
-                )
-                for key in keys
-            }
-        # Both `latest` and `since_start` modes take the most recent value of
-        # the subscribed stream. The choice of stream (per_update vs
-        # since_start) is encoded in the ResultKey at subscription time.
-        return {key: LatestValueExtractor() for key in keys}
-
-    # Fallback to latest value extractor
+    # No fixed requirement - check if window params provided.
+    # `since_start` and window mode with duration==0 both reduce to taking the
+    # most recent value of the subscribed stream (stream choice is encoded in
+    # the ResultKey). Only window mode with duration>0 needs aggregation.
+    if (
+        window is not None
+        and window.mode is WindowMode.window
+        and window.window_duration_seconds > 0
+    ):
+        return {
+            key: WindowAggregatingExtractor(
+                window_duration_seconds=window.window_duration_seconds,
+                aggregation=window.aggregation,
+            )
+            for key in keys
+        }
     return {key: LatestValueExtractor() for key in keys}

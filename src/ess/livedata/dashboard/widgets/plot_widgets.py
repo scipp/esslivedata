@@ -275,49 +275,22 @@ def get_workflow_display_info(
     return workflow_title, view_title
 
 
-def _format_window_info(params, *, supports_windowing: bool = True) -> str:
+def _format_window_info(params) -> str:
     """
     Format window parameters into a human-readable string.
 
-    Parameters
-    ----------
-    params:
-        Plotter params that may contain window settings.
-    supports_windowing:
-        Whether the output view exposes ``per_update``-derived windowing
-        modes. When ``False`` (cumulative-only views), returns
-        ``'since run start'`` if the mode is ``since_start``, else ''.
-
-    Returns
-    -------
-    :
-        Formatted string like ``'latest update'`` or ``'last 10s'``.
+    Only ``since_start`` produces a label here. For window mode the actual time
+    range comes from the data and is displayed by ``_compute_time_info`` at
+    render time; the configured ``window_duration_seconds`` is a target, not a
+    truth, so showing it in the static title would lie when backend cadence
+    exceeds the requested lookback.
     """
     window = getattr(params, 'window', None)
     if window is None:
         return ''
-
     if window.mode == WindowMode.since_start:
         return 'since run start'
-
-    if not supports_windowing:
-        return ''
-
-    if window.mode == WindowMode.latest:
-        return 'latest update'
-
-    # Window mode with duration
-    duration = window.window_duration_seconds
-    if duration == int(duration):
-        duration_str = f'{int(duration)}s'
-    else:
-        duration_str = f'{duration:.1f}s'
-
-    if window.aggregation != 'auto':
-        agg_display = window.aggregation.replace('nan', '')
-        return f'last {duration_str} ({agg_display})'
-
-    return f'last {duration_str}'
+    return ''
 
 
 def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
@@ -381,9 +354,7 @@ def get_plot_cell_display_info(
 
     # Build title: "Workflow → Output (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane
-    window_info = _format_window_info(
-        config.params, supports_windowing=config.supports_windowing
-    )
+    window_info = _format_window_info(config.params)
 
     # Helper to get display title for a source
     def _title(source_name: str) -> str:

@@ -15,13 +15,11 @@ class WindowMode(enum.StrEnum):
 
     - ``since_start``: latest cumulative value (subscribes to the
       ``since_start`` stream of the selected output view).
-    - ``latest``: the most recent per-update value (subscribes to the
-      ``per_update`` stream of the selected output view).
-    - ``window``: aggregate the per-update stream over a fixed time window.
+    - ``window``: the most recent per-update value, optionally with prior
+      updates aggregated over an additional lookback window.
     """
 
     since_start = 'since_start'
-    latest = 'latest'
     window = 'window'
 
 
@@ -201,19 +199,22 @@ class WindowParams(pydantic.BaseModel):
     """Parameters for windowing and aggregation."""
 
     mode: WindowMode = pydantic.Field(
-        default=WindowMode.latest,
+        default=WindowMode.window,
         description=(
             "Extraction mode: 'since_start' for the cumulative value since the "
-            "run started, 'latest' for the most recent update, 'window' for an "
-            "aggregation over multiple updates."
+            "run started, 'window' for the most recent update plus optional "
+            "lookback over prior updates."
         ),
         title="Mode",
     )
     window_duration_seconds: float = pydantic.Field(
-        default=1.0,
-        description="Time duration to aggregate in window mode (seconds).",
+        default=0.0,
+        description=(
+            "Additional history to aggregate alongside the latest update "
+            "(seconds). 0 means only the latest update."
+        ),
         title="Window Duration (s)",
-        ge=0.1,
+        ge=0.0,
         le=60.0,
     )
     aggregation: WindowAggregation = pydantic.Field(
