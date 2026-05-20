@@ -289,12 +289,28 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
+_WINDOW_DESCRIPTION = (
+    "The live reduction emits a new result roughly once per second "
+    "(longer for heavy workflows or when the system is under load). "
+    "This setting only controls how many of those results the dashboard "
+    "combines for display; it does not change what or how often the "
+    "reduction emits."
+    "<br><br>"
+    "The duration is a target, not a guarantee: when it does not align "
+    "with the reduction's current cadence the aggregated time range "
+    "will differ from the requested value, and a duration shorter than "
+    "one cadence interval collapses to just the latest result. To "
+    "compare values across different cadences or window lengths, enable "
+    "'Counts Per Second' in the 'Rate' tab."
+)
+
+
 class PlotParams1d(PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -307,7 +323,7 @@ class PlotParams2d(PlotDisplayParams2d):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -320,7 +336,7 @@ class PlotParams3d(PlotParamsBase):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
@@ -351,7 +367,7 @@ class PlotParamsBars(PlotParamsBase):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
