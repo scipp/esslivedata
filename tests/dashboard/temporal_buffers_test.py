@@ -382,9 +382,9 @@ class TestTemporalBuffer:
         """Coords carrying the ``time`` dim must be buffered, not treated as metadata.
 
         Regression test: device-configured ``ToNXlog`` emits ``target`` and
-        ``settled`` as time-dim coords. Earlier behaviour treated any
+        ``idle`` as time-dim coords. Earlier behaviour treated any
         non-``time`` coord as constant metadata and reset the buffer whenever
-        ``target`` or ``settled`` changed, so a Timeseries plot showed only
+        ``target`` or ``idle`` changed, so a Timeseries plot showed only
         the latest chunk.
         """
 

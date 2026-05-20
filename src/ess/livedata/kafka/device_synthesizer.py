@@ -5,7 +5,7 @@
 The synthesizer is a :class:`MessageSource` decorator: it wraps an
 already-adapted source (i.e. domain-level :class:`Message` objects) and
 emits synthetic :class:`LogData` messages on a new ``StreamKind.DEVICE``
-stream per device, carrying ``value`` plus optional ``target`` / ``settled``
+stream per device, carrying ``value`` plus optional ``target`` / ``idle``
 fields. Substream messages belonging to a configured device are suppressed
 from forwarding; other messages pass through unchanged.
 
@@ -31,7 +31,7 @@ from ..handlers.accumulators import LogData
 
 logger = structlog.get_logger(__name__)
 
-_Role = Literal['value', 'target', 'settled']
+_Role = Literal['value', 'target', 'idle']
 _V = TypeVar('_V', float, bool)
 
 
@@ -49,10 +49,10 @@ class _DeviceState:
 
     device_name: str
     has_target: bool
-    has_settled: bool
+    has_idle: bool
     value: _Substream[float] | None = None
     target: _Substream[float] | None = None
-    settled: _Substream[bool] | None = None
+    idle: _Substream[bool] | None = None
 
     def push(self, role: _Role, log: LogData) -> Message[LogData] | None:
         """Record a substream event and emit a sample if all substreams seen."""
@@ -61,16 +61,16 @@ class _DeviceState:
             self.value = _Substream(value=float(log.value), time=time)
         elif role == 'target':
             self.target = _Substream(value=float(log.value), time=time)
-        else:  # settled / DMOV
-            self.settled = _Substream(value=bool(log.value), time=time)
+        else:  # idle / DMOV
+            self.idle = _Substream(value=bool(log.value), time=time)
         if self.value is None:
             return None
         if self.has_target and self.target is None:
             return None
-        if self.has_settled and self.settled is None:
+        if self.has_idle and self.idle is None:
             return None
         sample_time = max(
-            s.time for s in (self.value, self.target, self.settled) if s is not None
+            s.time for s in (self.value, self.target, self.idle) if s is not None
         )
         return Message(
             timestamp=sample_time,
@@ -79,7 +79,7 @@ class _DeviceState:
                 time=sample_time.to_ns(),
                 value=self.value.value,
                 target=self.target.value if self.target is not None else None,
-                settled=self.settled.value if self.settled is not None else None,
+                idle=self.idle.value if self.idle is not None else None,
             ),
         )
 
@@ -94,7 +94,7 @@ class DeviceSynthesizer(MessageSource[Message]):
     devices:
         Mapping ``device_name -> Device``. Substreams referenced by these
         devices are suppressed from forwarding; a synthesized
-        :class:`LogData` (with ``target`` / ``settled`` populated as
+        :class:`LogData` (with ``target`` / ``idle`` populated as
         configured) is emitted in their place once bootstrapped.
     """
 
@@ -113,14 +113,14 @@ class DeviceSynthesizer(MessageSource[Message]):
             state = _DeviceState(
                 device_name=name,
                 has_target=device.target is not None,
-                has_settled=device.settled is not None,
+                has_idle=device.idle is not None,
             )
             self._states[name] = state
             self._register(state, device.value, 'value')
             if device.target is not None:
                 self._register(state, device.target, 'target')
-            if device.settled is not None:
-                self._register(state, device.settled, 'settled')
+            if device.idle is not None:
+                self._register(state, device.idle, 'idle')
 
     def _register(self, state: _DeviceState, substream: str, role: _Role) -> None:
         if substream in self._by_substream:

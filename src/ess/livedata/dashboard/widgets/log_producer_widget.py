@@ -29,10 +29,10 @@ class _DeviceMotion:
     machine then publishes:
 
     1. ``target_stream`` = new slider value (VAL update, immediate)
-    2. ``settled_stream`` = 0 (DMOV cleared, immediate)
+    2. ``idle_stream`` = 0 (DMOV cleared, immediate)
     3. ``ramp_steps`` ``value_stream`` updates linearly from the previous
        reading to the new target over ``ramp_seconds``
-    4. ``settled_stream`` = 1 on the final step (DMOV set, device settled)
+    4. ``idle_stream`` = 1 on the final step (DMOV set, device settled)
 
     The initial publish in :meth:`__init__` seeds all three substreams so the
     downstream :class:`DeviceSynthesizer` bootstraps immediately.
@@ -44,7 +44,7 @@ class _DeviceMotion:
         publish: PublishFn,
         value_stream: str,
         target_stream: str,
-        settled_stream: str | None,
+        idle_stream: str | None,
         initial: float,
         ramp_seconds: float = 2.0,
         ramp_steps: int = 10,
@@ -52,7 +52,7 @@ class _DeviceMotion:
         self._publish = publish
         self._value_stream = value_stream
         self._target_stream = target_stream
-        self._settled_stream = settled_stream
+        self._idle_stream = idle_stream
         self._ramp_seconds = ramp_seconds
         self._ramp_steps = max(ramp_steps, 1)
         self._current = float(initial)
@@ -63,8 +63,8 @@ class _DeviceMotion:
         # Seed all substreams so the device bootstraps and emits immediately.
         self._publish(self._target, self._target_stream)
         self._publish(self._current, self._value_stream)
-        if self._settled_stream is not None:
-            self._publish(1.0, self._settled_stream)
+        if self._idle_stream is not None:
+            self._publish(1.0, self._idle_stream)
 
     def on_change(self, new_target: float) -> None:
         self._cancel_pending()
@@ -74,8 +74,8 @@ class _DeviceMotion:
         # 1. New setpoint.
         self._publish(self._target, self._target_stream)
         # 2. Mark as moving.
-        if self._settled_stream is not None:
-            self._publish(0.0, self._settled_stream)
+        if self._idle_stream is not None:
+            self._publish(0.0, self._idle_stream)
         # 3. Schedule the ramp.
         period_ms = max(50, int(self._ramp_seconds * 1000 / self._ramp_steps))
         self._callback = pn.state.add_periodic_callback(
@@ -93,8 +93,8 @@ class _DeviceMotion:
             )
         self._publish(self._current, self._value_stream)
         if self._step_index >= self._ramp_steps:
-            if self._settled_stream is not None:
-                self._publish(1.0, self._settled_stream)
+            if self._idle_stream is not None:
+                self._publish(1.0, self._idle_stream)
             self._callback = None
 
     def _cancel_pending(self) -> None:
@@ -108,7 +108,7 @@ class LogProducerWidget:
 
     Each slider entry is either a simple log stream (single f144 publish per
     change, via ``stream_name``) or a synthesised device drive (``value_stream``
-    plus ``target_stream`` plus optional ``settled_stream``) where the slider
+    plus ``target_stream`` plus optional ``idle_stream``) where the slider
     represents the target setpoint and the widget animates a readback ramp
     plus DMOV transitions on each change.
     """
@@ -175,7 +175,7 @@ class LogProducerWidget:
                 publish=self._publish_value,
                 value_stream=config['value_stream'],
                 target_stream=config['target_stream'],
-                settled_stream=config.get('settled_stream'),
+                idle_stream=config.get('idle_stream'),
                 initial=config['initial'],
                 ramp_seconds=config.get('ramp_seconds', 2.0),
                 ramp_steps=config.get('ramp_steps', 10),

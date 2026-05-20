@@ -538,15 +538,15 @@ def test_clear_resets_duplicate_tracking():
     assert_identical(result.data, sc.array(dims=['time'], values=[42.0], unit='K'))
 
 
-def test_grows_with_target_and_settled_coords():
-    accumulator = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_settled=True)
+def test_grows_with_target_and_idle_coords():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_idle=True)
     accumulator.add(
         Timestamp.from_ns(0),
-        LogData(time=1000, value=1.0, target=10.0, settled=False),
+        LogData(time=1000, value=1.0, target=10.0, idle=False),
     )
     accumulator.add(
         Timestamp.from_ns(0),
-        LogData(time=2000, value=2.0, target=10.0, settled=True),
+        LogData(time=2000, value=2.0, target=10.0, idle=True),
     )
     result = accumulator.get()
     assert_identical(result.data, sc.array(dims=['time'], values=[1.0, 2.0], unit='mm'))
@@ -555,7 +555,7 @@ def test_grows_with_target_and_settled_coords():
         sc.array(dims=['time'], values=[10.0, 10.0], unit='mm'),
     )
     assert_identical(
-        result.coords['settled'],
+        result.coords['idle'],
         sc.array(dims=['time'], values=[0, 1], dtype='int32'),
     )
 
@@ -581,7 +581,7 @@ def test_missing_target_raises_when_has_target():
         accumulator.add(Timestamp.from_ns(0), LogData(time=1000, value=1.0))
 
 
-def test_missing_settled_raises_when_has_settled():
-    accumulator = ToNXlog(attrs={'units': 'mm'}, has_settled=True)
-    with pytest.raises(ValueError, match="Settled expected"):
+def test_missing_idle_raises_when_has_idle():
+    accumulator = ToNXlog(attrs={'units': 'mm'}, has_idle=True)
+    with pytest.raises(ValueError, match="Idle"):
         accumulator.add(Timestamp.from_ns(0), LogData(time=1000, value=1.0))

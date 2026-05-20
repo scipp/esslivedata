@@ -38,7 +38,7 @@ def _log(name: str, time: int, value: float) -> Message[LogData]:
 
 
 def test_synthesizer_plus_accumulator_produces_merged_dataarray() -> None:
-    device = Device(value='m_v', target='m_t', settled='m_s', units='mm')
+    device = Device(value='m_v', target='m_t', idle='m_s', units='mm')
     syn = DeviceSynthesizer(
         _Source(
             [
@@ -56,7 +56,7 @@ def test_synthesizer_plus_accumulator_produces_merged_dataarray() -> None:
         ),
         devices={'m': device},
     )
-    acc = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_settled=True)
+    acc = ToNXlog(attrs={'units': 'mm'}, has_target=True, has_idle=True)
     for msg in syn.get_messages():
         assert isinstance(msg.value, LogData)
         acc.add(Timestamp.from_ns(0), msg.value)
@@ -69,7 +69,7 @@ def test_synthesizer_plus_accumulator_produces_merged_dataarray() -> None:
         result.coords['target'].values, [5.0, 5.0, 5.0, 5.0, 5.0]
     )
     np.testing.assert_array_equal(
-        result.coords['settled'].values, [False, False, False, True, True]
+        result.coords['idle'].values, [False, False, False, True, True]
     )
     assert result.data.unit == sc.Unit('mm')
     assert result.coords['target'].unit == sc.Unit('mm')

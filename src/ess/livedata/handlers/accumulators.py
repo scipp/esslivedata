@@ -27,7 +27,7 @@ class LogData:
     Decouples our handlers from upstream schema changes. This also simplifies handler
     testing since tests do not have to construct a full logdata_f144.LogData object.
 
-    ``target`` and ``settled`` are populated only by the device-synthesis path
+    ``target`` and ``idle`` are populated only by the device-synthesis path
     (:class:`DeviceSynthesizer`) when a :class:`~..config.stream.Device` declares
     the corresponding substreams. They are ``None`` for plain f144 logs.
     """
@@ -36,7 +36,7 @@ class LogData:
     value: Any
     variances: Any | None = None
     target: float | None = None
-    settled: bool | None = None
+    idle: bool | None = None
 
     @staticmethod
     def from_f144(f144: logdata_f144.LogData) -> LogData:

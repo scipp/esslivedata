@@ -61,17 +61,19 @@ class Device(Stream):
 
     A ``Device`` is not transported over Kafka; it is materialised in-process
     by :class:`DeviceSynthesizer` from the substreams referenced by
-    :attr:`value`, :attr:`target`, and :attr:`settled` (each is a key into
+    :attr:`value`, :attr:`target`, and :attr:`idle` (each is a key into
     :attr:`Instrument.streams`).
 
-    ``value`` is required and points to the RBV substream. ``target`` and
-    ``settled`` are optional: only RBV is required for the synthesizer to
-    emit a sample.
+    :attr:`value` is the RBV substream and is required. :attr:`target` (VAL)
+    and :attr:`idle` (DMOV) are optional — a device may declare any subset.
+    Devices auto-detected by :func:`name_streams` always carry RBV plus at
+    least one of VAL / DMOV (see :func:`_detect_devices`); hand-constructed
+    Devices may differ.
     """
 
     value: str
     target: str | None = None
-    settled: str | None = None
+    idle: str | None = None
     units: str | None = None
     writer_module: str = 'device'
     nx_class: str = 'NXpositioner'
@@ -79,9 +81,7 @@ class Device(Stream):
     @property
     def substream_names(self) -> tuple[str, ...]:
         """Names of the RBV/VAL/DMOV substreams this device is synthesised from."""
-        return tuple(
-            s for s in (self.value, self.target, self.settled) if s is not None
-        )
+        return tuple(s for s in (self.value, self.target, self.idle) if s is not None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -180,7 +180,7 @@ def suggest_names(
 _ROLE_BY_SUFFIX: dict[str, str] = {
     '.RBV': 'value',
     '.VAL': 'target',
-    '.DMOV': 'settled',
+    '.DMOV': 'idle',
 }
 
 
@@ -200,7 +200,7 @@ class _DetectedDevice:
 
     value: str
     target: str | None
-    settled: str | None
+    idle: str | None
     units: str | None
 
 
@@ -208,7 +208,7 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
     """Detect device groups by EPICS source-suffix classification.
 
     Each f144 substream is classified by the suffix of its ``source`` attribute
-    (``.RBV`` → value, ``.VAL`` → target, ``.DMOV`` → settled). Substreams
+    (``.RBV`` → value, ``.VAL`` → target, ``.DMOV`` → idle). Substreams
     co-located under one NeXus parent group form a Device if classified RBV is
     present and at least one of classified VAL / DMOV is present. Substreams
     with ``source=None`` or an unrecognised suffix are not classifiable and
@@ -238,7 +238,7 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
     for parent, roles in by_parent.items():
         if 'value' not in roles:
             continue
-        if 'target' not in roles and 'settled' not in roles:
+        if 'target' not in roles and 'idle' not in roles:
             continue
         rbv = parsed[roles['value']]
         if not isinstance(rbv, F144Stream):
@@ -262,7 +262,7 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
         devices[parent] = _DetectedDevice(
             value=roles['value'],
             target=roles.get('target'),
-            settled=roles.get('settled'),
+            idle=roles.get('idle'),
             units=units,
         )
     return devices
@@ -332,7 +332,7 @@ def name_streams(
             nexus_path=parent_path,
             value=resolve(info.value),
             target=resolve(info.target) if info.target is not None else None,
-            settled=resolve(info.settled) if info.settled is not None else None,
+            idle=resolve(info.idle) if info.idle is not None else None,
             units=info.units,
         )
     return result

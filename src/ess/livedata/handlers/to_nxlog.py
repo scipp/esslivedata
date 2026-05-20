@@ -23,8 +23,8 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     Timestamps must be monotonically increasing. Messages with duplicate or out-of-order
     timestamps are skipped to prevent unbounded buffer growth from upstream re-sends.
 
-    When ``has_target`` / ``has_settled`` are set, the per-sample ``target`` /
-    ``settled`` fields on :class:`LogData` are written as time-dim coords. This
+    When ``has_target`` / ``has_idle`` are set, the per-sample ``target`` /
+    ``idle`` fields on :class:`LogData` are written as time-dim coords. This
     is used by the device-synthesis path; plain f144 logs leave both flags off.
     """
 
@@ -36,7 +36,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         attrs: dict[str, Any],
         data_dims: tuple[str, ...] = (),
         has_target: bool = False,
-        has_settled: bool = False,
+        has_idle: bool = False,
     ) -> None:
         self._attrs = attrs
         # Values with no unit are ok
@@ -55,7 +55,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         self._last_time: int | None = None
         self._data_dims = data_dims
         self._has_target = has_target
-        self._has_settled = has_settled
+        self._has_idle = has_idle
 
     @property
     def unit(self) -> sc.Unit | None:
@@ -83,10 +83,10 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
                 coords['target'] = sc.zeros(
                     dims=['time'], shape=[2], unit=self._unit, dtype='float64'
                 )
-            if self._has_settled:
-                # int32 (not bool) because da00 serialization rejects bool.
-                # The coord remains 0/1 valued.
-                coords['settled'] = sc.zeros(dims=['time'], shape=[2], dtype='int32')
+            if self._has_idle:
+                # int32 (not bool) because the streaming_data_types da00
+                # flatbuffer schema has no bool dtype. Values stay 0/1.
+                coords['idle'] = sc.zeros(dims=['time'], shape=[2], dtype='int32')
             self._timeseries = sc.DataArray(values, coords=coords)
         elif self._at_capacity():
             # Double capacity when full
@@ -121,10 +121,10 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
             if data.target is None:
                 raise ValueError("Target expected but not provided")
             self._timeseries.coords['target'].values[self._end] = data.target
-        if self._has_settled:
-            if data.settled is None:
-                raise ValueError("Settled expected but not provided")
-            self._timeseries.coords['settled'].values[self._end] = int(data.settled)
+        if self._has_idle:
+            if data.idle is None:
+                raise ValueError("Idle flag expected but not provided")
+            self._timeseries.coords['idle'].values[self._end] = int(data.idle)
         self._end += 1
         self._last_time = data.time
         return True
@@ -154,7 +154,7 @@ def nxlog_for_stream(stream: Stream | None) -> ToNXlog | None:
         return ToNXlog(
             attrs={'units': stream.units},
             has_target=stream.target is not None,
-            has_settled=stream.settled is not None,
+            has_idle=stream.idle is not None,
         )
     if isinstance(stream, F144Stream):
         return ToNXlog(attrs={'units': stream.units})

@@ -125,17 +125,19 @@ class Instrument:
 
         for binding in self.log_context_bindings:
             self._validate_binding_stream_name(binding)
-        # Device substreams are suppressed by DeviceSynthesizer; expose the
-        # merged Device stream instead of the per-PV substream plots.
-        devices = self.devices
-        suppressed = {n for d in devices.values() for n in d.substream_names}
-        timeseries_names = [
-            name for name in self.f144_streams if name not in suppressed
-        ]
-        timeseries_names.extend(devices)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
-            instrument=self, source_names=timeseries_names
+            instrument=self, source_names=self._timeseries_source_names()
         )
+
+    def _timeseries_source_names(self) -> list[str]:
+        """Plain f144 streams plus merged Device streams, minus device substreams.
+
+        Device substreams are suppressed by :class:`DeviceSynthesizer` and must
+        not appear as standalone timeseries entries; the merged Device stream
+        takes their place. Sorted alphabetically for stable UI ordering.
+        """
+        suppressed = {n for d in self.devices.values() for n in d.substream_names}
+        return sorted((set(self.f144_streams) - suppressed) | set(self.devices))
 
     @property
     def f144_streams(self) -> dict[str, F144Stream]:

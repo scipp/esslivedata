@@ -8,7 +8,7 @@
             "initial": 0.0,
             "value_stream": "detector_tank_angle_r0_value",
             "target_stream": "detector_tank_angle_r0_target_value",
-            "settled_stream": "detector_tank_angle_r0_idle_flag",
+            "idle_stream": "detector_tank_angle_r0_idle_flag",
             "ramp_seconds": 2.0
         },
         {
@@ -19,7 +19,7 @@
             "initial": 0.0,
             "value_stream": "rotation_stage_value",
             "target_stream": "rotation_stage_target_value",
-            "settled_stream": "rotation_stage_idle_flag",
+            "idle_stream": "rotation_stage_idle_flag",
             "ramp_seconds": 2.0
         }
     ]

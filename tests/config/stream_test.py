@@ -210,7 +210,7 @@ class TestDeviceDetection:
         assert isinstance(device, Device)
         assert device.value == 'm/value'
         assert device.target == 'm/target_value'
-        assert device.settled == 'm/idle_flag'
+        assert device.idle == 'm/idle_flag'
         assert device.units == 'mm'
 
     def test_emits_device_for_rbv_plus_val_only(self) -> None:
@@ -222,7 +222,7 @@ class TestDeviceDetection:
         device = result['m']
         assert isinstance(device, Device)
         assert device.target == 'm/target_value'
-        assert device.settled is None
+        assert device.idle is None
 
     def test_emits_device_for_rbv_plus_dmov_only(self) -> None:
         parsed = {
@@ -235,7 +235,7 @@ class TestDeviceDetection:
         device = result['m']
         assert isinstance(device, Device)
         assert device.target is None
-        assert device.settled == 'm/idle_flag'
+        assert device.idle == 'm/idle_flag'
 
     def test_no_device_for_lone_rbv(self) -> None:
         parsed = {
@@ -346,11 +346,11 @@ class TestDeviceDetection:
         assert isinstance(result['rotation_stage'], Device)
 
     def test_substream_names_drops_unset_roles(self) -> None:
-        rbv_val_dmov = Device(value='m/v', target='m/t', settled='m/s')
+        rbv_val_dmov = Device(value='m/v', target='m/t', idle='m/s')
         assert rbv_val_dmov.substream_names == ('m/v', 'm/t', 'm/s')
         rbv_only = Device(value='m/v')
         assert rbv_only.substream_names == ('m/v',)
-        rbv_dmov = Device(value='m/v', settled='m/s')
+        rbv_dmov = Device(value='m/v', idle='m/s')
         assert rbv_dmov.substream_names == ('m/v', 'm/s')
 
     def test_device_name_collides_with_substream_extends(self) -> None:

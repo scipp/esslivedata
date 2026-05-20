@@ -14,19 +14,19 @@ Motorised devices on ESS instruments publish three independent f144 substreams p
 
 Before this change only RBV was consumed anywhere in the stack — VAL and DMOV arrived from Kafka but no workflow or dashboard view used them. The system had no notion of a "device" as a unit, so a workflow that wanted, for example, to filter out readings taken while the motor was still moving had no way to access DMOV alongside RBV. The setpoint was similarly invisible to consumers.
 
-Goal: make each device available as one logical stream and one DataArray — RBV as data, target/settled attached as time-dim coords on a shared `time` axis — so that any consumer (timeseries plotting, Sciline-based science workflows) can opt into using the extra fields without re-implementing cross-stream alignment. This change does not by itself introduce any consumer that filters on `settled` or overlays `target`; it unblocks those developments.
+Goal: make each device available as one logical stream and one DataArray — RBV as data, target/idle attached as time-dim coords on a shared `time` axis — so that any consumer (timeseries plotting, Sciline-based science workflows) can opt into using the extra fields without re-implementing cross-stream alignment. This change does not by itself introduce any consumer that filters on `idle` or overlays `target`; it unblocks those developments.
 
 ## Decision
 
 Merge per-device substreams **in-process via a `MessageSource` decorator** (`DeviceSynthesizer`), matching the precedent of `ChopperSynthesizer`. The synthesizer:
 
 1. Maintains per-device state (last-seen value + time per substream).
-2. Emits `LogData` messages (with optional `target` / `settled` fields populated per device configuration) on a new `StreamKind.DEVICE` once bootstrap is complete (every configured substream observed at least once).
+2. Emits `LogData` messages (with optional `target` / `idle` fields populated per device configuration) on a new `StreamKind.DEVICE` once bootstrap is complete (every configured substream observed at least once).
 3. Suppresses configured substream messages from forwarding — for configured devices, raw VAL/DMOV/RBV no longer reach downstream handlers.
 4. Emits on **every** input event for a configured substream (union-anchored).
 5. Stamps each emit with `max(rbv_time, val_time, dmov_time)` across the synthesizer's last-seen substream times.
 
-A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by EPICS source-suffix classification. The existing `ToNXlog` preprocessor (dispatched on `StreamKind.DEVICE` with `has_target` / `has_settled` flags set per device) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `settled` coords.
+A new `Device(Stream)` record sits in `Instrument.streams` alongside its `F144Stream` substreams; `name_streams` auto-detects devices by EPICS source-suffix classification. The existing `ToNXlog` preprocessor (dispatched on `StreamKind.DEVICE` with `has_target` / `has_idle` flags set per device) grows a `time`-indexed `sc.DataArray` carrying RBV as data and optional `target` / `idle` coords.
 
 ## Alternatives considered
 
@@ -55,9 +55,9 @@ Edge case: a substream message older than the current max updates state correctl
 
 Suppress emits until every configured substream has been observed at least once. Worst-case latency is bounded by the f144 forwarder's ~10s republish cadence. Producing partial samples with `Optional`-padded fields would force every downstream consumer to defensively handle missingness.
 
-### `settled` is a coord, not a mask
+### `idle` is a coord, not a mask
 
-A mask would silently exclude moving samples from `sum`/`mean`/etc., biasing reductions — but in-motion readings are not invalid, they measure a different thing. Whether to filter on `settled` is a workflow-level analysis choice, not a data-quality verdict.
+A mask would silently exclude moving samples from `sum`/`mean`/etc., biasing reductions — but in-motion readings are not invalid, they measure a different thing. Whether to filter on `idle` is a workflow-level analysis choice, not a data-quality verdict.
 
 ### Substream suppression is unconditional
 
@@ -65,7 +65,7 @@ The synthesizer suppresses raw VAL/DMOV/RBV messages for configured devices, so 
 
 ### Auto-detection by EPICS source suffix
 
-`name_streams` classifies each f144 substream by the suffix of its `source` attribute (the PV name written by the f144 forwarder): `.RBV` → readback, `.VAL` → target, `.DMOV` → settled. Substreams co-located under one NeXus parent group are then bundled into a `Device` if classified RBV is present **and** at least one of classified VAL / DMOV is present. Parent `nx_class` is not consulted — conforming devices exist on `NXcollimator` and `NXlog` parents at ESS; restricting to `NXpositioner` would miss them.
+`name_streams` classifies each f144 substream by the suffix of its `source` attribute (the PV name written by the f144 forwarder): `.RBV` → readback, `.VAL` → target, `.DMOV` → idle. Substreams co-located under one NeXus parent group are then bundled into a `Device` if classified RBV is present **and** at least one of classified VAL / DMOV is present. Parent `nx_class` is not consulted — conforming devices exist on `NXcollimator` and `NXlog` parents at ESS; restricting to `NXpositioner` would miss them.
 
 EPICS suffixes are the primary signal rather than NeXus child names because they are fixed by the EPICS motor-record convention while NeXus child names drift across instruments (e.g. tbl uses `position_readback`/`position_setpoint` while bifrost/loki use `value`/`target_value`). The NeXus filewriter template is per-instrument and operator-editable; the source attribute is what the f144 forwarder publishes for the PV, and the IOC-side `.RBV` / `.VAL` / `.DMOV` suffixes are stable across the facility.
 
@@ -81,5 +81,5 @@ Run boundaries are file-writing markers, not physical events — a motor's posit
 
 - For configured devices, the dashboard exposes one merged per-device timeseries entry instead of an RBV-only stream entry; the underlying VAL and DMOV substreams remain inaccessible as standalone plots (they only ever surface as coords on the merged DataArray).
 - A `Device` entry in `Instrument.streams` is a valid `LogContextBinding` target via the same dict-membership check as `F144Stream` — this is the migration path Bifrost uses for `InstrumentAngle` / `SampleAngle`.
-- The extra `target` / `settled` coords ride along passively through `sc.lookup` and broadcasting; no downstream API changes were required.
+- The extra `target` / `idle` coords ride along passively through `sc.lookup` and broadcasting; no downstream API changes were required.
 - Detection is conservative: lone-RBV groups (no setpoint / no idle flag) are left as plain streams. Future need for setpoint-less sensor-style devices can relax the rule.

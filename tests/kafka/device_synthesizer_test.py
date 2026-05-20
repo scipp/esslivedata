@@ -38,10 +38,10 @@ def _device(
     *,
     value: str,
     target: str | None = None,
-    settled: str | None = None,
+    idle: str | None = None,
     units: str | None = 'mm',
 ) -> Device:
-    return Device(value=value, target=target, settled=settled, units=units)
+    return Device(value=value, target=target, idle=idle, units=units)
 
 
 def test_passes_through_unrelated_messages_unchanged() -> None:
@@ -57,7 +57,7 @@ def test_no_emit_before_bootstrap_completes() -> None:
     src = FakeSource()
     syn = DeviceSynthesizer(
         src,
-        devices={'m': _device(value='m_value', target='m_target', settled='m_settled')},
+        devices={'m': _device(value='m_value', target='m_target', idle='m_idle')},
     )
     src.queue([_log('m_value', time=1, value=5.0)])
     src.queue([_log('m_target', time=2, value=5.0)])
@@ -70,13 +70,13 @@ def test_emits_after_all_substreams_observed() -> None:
     src = FakeSource()
     syn = DeviceSynthesizer(
         src,
-        devices={'m': _device(value='m_value', target='m_target', settled='m_settled')},
+        devices={'m': _device(value='m_value', target='m_target', idle='m_idle')},
     )
     src.queue(
         [
             _log('m_value', time=1, value=5.0),
             _log('m_target', time=2, value=10.0),
-            _log('m_settled', time=3, value=1),
+            _log('m_idle', time=3, value=1),
         ]
     )
 
@@ -90,21 +90,21 @@ def test_emits_after_all_substreams_observed() -> None:
     assert sample.time == 3
     assert sample.value == 5.0
     assert sample.target == 10.0
-    assert sample.settled is True
+    assert sample.idle is True
 
 
 def test_suppresses_configured_substreams() -> None:
     src = FakeSource()
     syn = DeviceSynthesizer(
         src,
-        devices={'m': _device(value='m_value', target='m_target', settled='m_settled')},
+        devices={'m': _device(value='m_value', target='m_target', idle='m_idle')},
     )
     other = _log('other_pv', time=10, value=99.0)
     src.queue(
         [
             _log('m_value', time=1, value=5.0),
             _log('m_target', time=2, value=10.0),
-            _log('m_settled', time=3, value=1),
+            _log('m_idle', time=3, value=1),
             other,
         ]
     )
@@ -113,7 +113,7 @@ def test_suppresses_configured_substreams() -> None:
     assert other.stream in streams
     assert StreamId(kind=StreamKind.LOG, name='m_value') not in streams
     assert StreamId(kind=StreamKind.LOG, name='m_target') not in streams
-    assert StreamId(kind=StreamKind.LOG, name='m_settled') not in streams
+    assert StreamId(kind=StreamKind.LOG, name='m_idle') not in streams
 
 
 def test_max_time_policy_across_substreams() -> None:
@@ -140,7 +140,7 @@ def test_max_time_policy_across_substreams() -> None:
     assert out[0].value.target == 2.5
 
 
-def test_partial_device_without_settled() -> None:
+def test_partial_device_without_idle() -> None:
     src = FakeSource()
     syn = DeviceSynthesizer(
         src, devices={'m': _device(value='m_value', target='m_target')}
@@ -153,7 +153,7 @@ def test_partial_device_without_settled() -> None:
     )
     out = list(syn.get_messages())
     sample = out[0].value
-    assert sample.settled is None
+    assert sample.idle is None
 
 
 def test_union_anchored_emits_on_each_input_after_bootstrap() -> None:
