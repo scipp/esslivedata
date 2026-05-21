@@ -329,9 +329,9 @@ class TestCreateMonitorWorkflow:
             'monitor_1', toa_edges, context_keys=context_keys
         )
         assert isinstance(workflow, StreamProcessorWorkflow)
-        # Verify context_keys are stored on the workflow
-        assert 'position' in workflow.context_keys
-        assert workflow.context_keys['position'] is sc.Variable
+        # Verify context_keys are stored on the workflow (private state — the
+        # public protocol no longer surfaces this).
+        assert workflow._context_keys == context_keys
 
     def test_without_context_keys_still_works(self, toa_edges):
         """Test that omitting context_keys preserves existing behavior."""
@@ -341,7 +341,7 @@ class TestCreateMonitorWorkflow:
 
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
-        assert workflow.context_keys == {}
+        assert workflow._context_keys == {}
 
 
 class TestMonitorWorkflowIntegration:

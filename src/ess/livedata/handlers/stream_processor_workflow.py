@@ -66,7 +66,7 @@ class StreamProcessorWorkflow(Workflow):
             Additional arguments passed to StreamProcessor.
         """
         self._dynamic_keys = dynamic_keys
-        self._context_keys_map = context_keys if context_keys else {}
+        self._context_keys = context_keys if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
         self._current_start_time: Timestamp | None = None
@@ -74,7 +74,7 @@ class StreamProcessorWorkflow(Workflow):
         self._stream_processor = streaming.StreamProcessor(
             base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
-            context_keys=tuple(self._context_keys_map.values()),
+            context_keys=tuple(self._context_keys.values()),
             target_keys=tuple(self._target_keys.values()),
             **kwargs,
         )
@@ -97,7 +97,7 @@ class StreamProcessorWorkflow(Workflow):
         # receive its data.
         context = {
             sciline_key: data[key]
-            for key, sciline_key in self._context_keys_map.items()
+            for key, sciline_key in self._context_keys.items()
             if key in data
         }
         dynamic = {
@@ -137,10 +137,6 @@ class StreamProcessorWorkflow(Workflow):
         self._stream_processor.clear()
         self._current_start_time = None
         self._current_end_time = None
-
-    @property
-    def context_keys(self) -> dict[str, sciline.typing.Key]:
-        return self._context_keys_map
 
     def visualize(self, **kwargs: Any) -> graphviz.Digraph:
         """Visualize the streaming workflow graph.

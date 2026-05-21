@@ -42,6 +42,11 @@ class FakeProcessor(Workflow):
     """Fake implementation of Workflow for testing."""
 
     def __init__(self, context_keys: dict[str, Any] | None = None):
+        # ``context_keys`` is kept on the constructor (some tests pass it for
+        # behavioural symmetry with real workflows) but is no longer surfaced
+        # on the Workflow protocol — see ADR 0003 § "Workflow protocol stays
+        # pure". JobFactory derives the gate set from ContextInput records.
+        _ = context_keys
         self.data: dict[str, Any] = {}
         self.accumulate_calls = []
         self.finalize_calls = 0
@@ -49,11 +54,6 @@ class FakeProcessor(Workflow):
         self.should_fail_accumulate = False
         self.should_fail_finalize = False
         self.fail_finalize_when_empty = False
-        self._context_keys = context_keys or {}
-
-    @property
-    def context_keys(self) -> dict[str, Any]:
-        return self._context_keys
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int

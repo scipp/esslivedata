@@ -236,25 +236,6 @@ class AuxSources:
                     result[key] = selections[key]
         return result
 
-    def initial_context_messages(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> list[Message]:
-        """Initial messages to seed defaulted context accumulators.
-
-        Default implementation returns an empty list. Subclasses override
-        when one or more of their declared aux inputs is a context stream
-        with a meaningful "no message yet" steady state (currently only ROI).
-        Returned messages are routed through the preprocessor at
-        :meth:`JobManager.schedule_job` time so the accumulator exists and
-        carries the seed value before any external data arrives.
-
-        See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
-        """
-        _ = job_id, selections
-        return []
-
 
 class ResultKey(BaseModel, frozen=True):
     # Workflows produce one or more named outputs. Each output is serialized as a
