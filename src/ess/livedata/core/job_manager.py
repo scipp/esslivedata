@@ -206,7 +206,7 @@ class JobFactory:
             processor=stream_processor,
             source_names=[job_id.source_name],
             aux_source_names=rendered_aux_names,
-            context_aux_stream_names=context_stream_names,
+            context_stream_names=context_stream_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
         return job, seed_messages

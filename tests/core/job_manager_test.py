@@ -58,7 +58,7 @@ class FakeJobFactory(JobFactory):
             processor=processor,
             source_names=[job_id.source_name],
             aux_source_names=aux,
-            context_aux_stream_names=set(aux.values()),
+            context_stream_names=set(aux.values()),
         )
 
         self.created_jobs.append((job_id, config))
