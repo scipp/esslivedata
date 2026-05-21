@@ -45,7 +45,11 @@ class FakeJobFactory(JobFactory):
         return result
 
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
-        processor = FakeProcessor()
+        # For testing, treat every declared aux as a context input — the
+        # scenario most production workflows with aux expose. Tests that
+        # need a dynamic-aux scenario construct the Job directly.
+        aux = config.aux_source_names or {}
+        processor = FakeProcessor(context_keys=dict.fromkeys(aux, object))
         self.processors[job_id] = processor
 
         job = Job(
@@ -53,7 +57,8 @@ class FakeJobFactory(JobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=config.aux_source_names,
+            aux_source_names=aux,
+            context_aux_stream_names=set(aux.values()),
         )
 
         self.created_jobs.append((job_id, config))
@@ -1853,3 +1858,172 @@ class TestPeekPendingStreams:
         manager.schedule_job(config)
 
         assert manager.peek_pending_streams(start_time=100) == {"src"}
+
+    def test_excludes_active_jobs(self, fake_job_factory):
+        """Active jobs do not contribute streams.
+
+        The orchestrator does not refill cached context for active jobs — doing
+        so would re-fire ``set_context`` every tick and force eager downstream
+        recompute on unchanged values. The context gate (ADR 0002) tracks
+        per-job aux availability stickily in :class:`JobManager` instead.
+        """
+        manager = JobManager(fake_job_factory)
+        config = _make_config(
+            "src",
+            name="wf",
+            aux_source_names={"temp": "temperature"},
+        )
+        manager.schedule_job(config)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="temperature"): sc.scalar(20.0),
+                },
+            )
+        )
+        assert len(manager.active_jobs) == 1
+        # Active job's aux is intentionally absent from the needed-streams set
+        assert "temperature" not in manager.peek_pending_streams(start_time=300)
+
+
+class TestContextStreamGate:
+    """The JobManager skips active jobs whose aux context is not yet available.
+
+    See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+    """
+
+    def _config_with_aux(self, source: str, aux_stream: str) -> WorkflowConfig:
+        return _make_config(
+            source,
+            name=f"wf_{source}",
+            aux_source_names={"ctx": aux_stream},
+        )
+
+    def test_job_with_no_aux_is_never_gated(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job(_make_config("src"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_job_with_aux_present_processes_normally(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="ctx_stream"): sc.scalar(99.0),
+                },
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_missing_aux_gates_and_drops_primary(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        # Primary arrives, aux does not — job should activate (time-based) but
+        # be gated, and the primary batch must not reach the workflow.
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert replies == []  # gated job is not pushed
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is not None
+        assert "ctx_stream" in status.warning_message
+        # Primary was dropped — no accumulate call
+        assert fake_job_factory.processors[job_id].accumulate_calls == []
+
+    def test_gate_releases_when_aux_arrives(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        # Tick 1: primary only — gated, primary dropped
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        # Tick 2: aux arrives — gate opens
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(200),
+                end_time=Timestamp.from_ns(300),
+                data={
+                    StreamId(name="src"): sc.scalar(2.0),
+                    StreamId(name="ctx_stream"): sc.scalar(99.0),
+                },
+            )
+        )
+        assert len(replies) == 1
+        assert not replies[0].has_error
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        # Only the tick-2 batch processes; tick-1 primary was dropped
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_gate_independent_across_jobs(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        job_a = manager.schedule_job(self._config_with_aux("src_a", "ctx_a"))
+        job_b = manager.schedule_job(self._config_with_aux("src_b", "ctx_b"))
+        # Only job_a's aux is present
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src_a"): sc.scalar(1.0),
+                    StreamId(name="src_b"): sc.scalar(2.0),
+                    StreamId(name="ctx_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        assert manager.get_job_status(job_a).state == JobState.active
+        assert manager.get_job_status(job_b).state == JobState.pending_context
+
+    def test_warning_message_lists_all_missing_aux(self, fake_job_factory):
+        manager = JobManager(fake_job_factory)
+        config = _make_config(
+            "src",
+            name="multi_aux",
+            aux_source_names={"a": "stream_a", "b": "stream_b", "c": "stream_c"},
+        )
+        job_id = manager.schedule_job(config)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="stream_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert "stream_b" in status.warning_message
+        assert "stream_c" in status.warning_message
+        assert "stream_a" not in status.warning_message

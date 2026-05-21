@@ -97,6 +97,7 @@ class JobState(StrEnum):
     finishing = "finishing"
     error = "error"
     warning = "warning"
+    pending_context = "pending_context"
     stopped = "stopped"
 
 
@@ -207,6 +208,7 @@ class Job:
         processor: Workflow,
         source_names: list[str],
         aux_source_names: dict[str, str] | None = None,
+        context_aux_stream_names: set[str] | None = None,
         reset_on_run_transition: bool = True,
     ) -> None:
         """
@@ -225,6 +227,11 @@ class Job:
         aux_source_names:
             Mapping from field names to stream names for auxiliary data sources.
             None if no auxiliary sources are needed.
+        context_aux_stream_names:
+            Subset of ``aux_source_names`` values that the workflow consumes
+            as **context** inputs (as opposed to dynamic inputs that
+            accumulate). The :class:`JobManager` gates on these per ADR 0002.
+            Defaults to the empty set — no gating.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         """
@@ -236,6 +243,7 @@ class Job:
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
+        self._context_aux_stream_names: set[str] = context_aux_stream_names or set()
 
         # Create reverse mapping: stream_name -> list of field_names
         # This supports multiplexing where one stream maps to multiple fields. In most
@@ -277,6 +285,21 @@ class Job:
         should use to route incoming data to this job.
         """
         return list(self._aux_source_mapping.values())
+
+    def missing_context(self, available: set[str]) -> set[str]:
+        """
+        Context-aux stream names that have no value available yet.
+
+        The :class:`JobManager` consults this each tick (against the post-
+        ``get_context`` set of available stream names) to decide whether to
+        gate the job: any missing context-aux indicates a parametric input
+        whose accumulator has not produced a value, so running the workflow
+        would either crash or silently produce data attributed to an
+        uninitialised context. Dynamic aux (e.g. monitor streams that
+        accumulate over time) is not in this set and does not gate.
+        See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        return self._context_aux_stream_names - available
 
     @property
     def reset_on_run_transition(self) -> bool:

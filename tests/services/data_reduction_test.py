@@ -42,6 +42,7 @@ first_source_name = {
     'dummy': 'panel_0',
     'dream': 'mantle_detector',
     'loki': 'loki_detector_0',
+    'bifrost': 'unified_detector',
 }
 
 
@@ -212,6 +213,54 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     app.publish_events(size=1000, time=20)
     service.step()
     assert len(sink.messages) == 3 * n_target
+
+
+@pytest.mark.slow
+def test_bifrost_qmap_drops_events_until_rotation_arrives(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bifrost qmap drops events when rotation context has not arrived yet.
+
+    The cut workflow's ``group_by_rotation`` consumes the f144 rotation streams
+    inside the accumulate chain. Without the JobManager-level context gate
+    (ADR 0002), the first detector batch would crash with
+    ``'NoneType' object has no attribute 'ndim'``; instead the gate keeps the
+    job in ``pending_context`` until rotation values arrive, dropping the
+    primary detector batches in the meantime.
+
+    The steady-state recovery path (rotation arrives, workflow resumes producing
+    output) is not asserted here because the data-reduction service does not yet
+    subscribe to motion topics for log-context bindings.
+    """
+    caplog.set_level(logging.INFO)
+    app = make_reduction_app(instrument='bifrost')
+    sink = app.sink
+    service = app.service
+    workflow_id, spec = _get_workflow_from_registry('bifrost', 'qmap')
+
+    source_name = first_source_name['bifrost']
+    aux_source_names = (
+        spec.aux_sources.get_defaults() if spec.aux_sources is not None else {}
+    )
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id,
+        aux_source_names=aux_source_names,
+        job_id=_job_id(source_name),
+    )
+    app.publish_config_message(workflow_config)
+    service.step()
+    sink.messages.clear()
+
+    # Events arrive before any rotation context — gate drops them. No crash,
+    # no output.
+    app.publish_events(size=2000, time=2)
+    service.step()
+    assert len(sink.messages) == 0
+    # A second batch confirms the gate keeps firing rather than crashing on
+    # the second pass.
+    app.publish_events(size=2000, time=3)
+    service.step()
+    assert len(sink.messages) == 0
 
 
 def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None:

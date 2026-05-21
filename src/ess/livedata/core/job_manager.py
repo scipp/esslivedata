@@ -163,6 +163,15 @@ class JobFactory:
             config=config,
             aux_source_names=rendered_aux_names,
         )
+        # Subset of aux sources that act as context inputs in the workflow
+        # graph. The JobManager gates only on these (see ADR 0002): dynamic
+        # aux (e.g. monitors that accumulate over time) must not gate.
+        context_field_names = set(stream_processor.context_keys)
+        context_aux_stream_names = {
+            rendered_aux_names[field]
+            for field in context_field_names
+            if rendered_aux_names and field in rendered_aux_names
+        }
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
@@ -171,6 +180,7 @@ class JobFactory:
             # Pass rendered aux source names (field name -> stream name mapping)
             # Job will use values for routing and remap keys for workflow
             aux_source_names=rendered_aux_names,
+            context_aux_stream_names=context_aux_stream_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
 
@@ -190,6 +200,11 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
+        # Per-job set of context-aux stream names whose accumulator has
+        # produced a value at any prior tick. Used by the context gate
+        # (ADR 0002) so we don't have to refill cached context into
+        # ``WorkflowData.data`` every tick.
+        self._seen_context_streams: dict[JobId, set[str]] = {}
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
@@ -364,6 +379,12 @@ class JobManager:
 
         Includes both primary and auxiliary stream names. This is a read-only
         query with no side effects. It does not activate jobs or mutate any state.
+
+        Active jobs are not included — refilling their cached context into
+        ``WorkflowData.data`` every tick would cause ``set_context`` to fire
+        unnecessarily and trigger eager downstream recompute on unchanged
+        values. The context gate (see ADR 0002) tracks per-job aux
+        availability stickily in ``_seen_context_streams`` instead.
         """
         names: set[str] = set()
         for job_id, job in self._scheduled_jobs.items():
@@ -380,8 +401,11 @@ class JobManager:
         Callers are responsible for providing complete ``WorkflowData``.
         """
         self._advance_to_time(data.start_time, data.end_time)
+        gated = self._gate_pending_context({s.name for s in data.data})
         replies = []
         for job in self.active_jobs:
+            if job.job_id in gated:
+                continue
             job_data = _filter_data_for_job(job, data)
             if not job_data.is_empty():
                 reply = job.add(job_data)
@@ -413,10 +437,13 @@ class JobManager:
         finalization run as a single task, avoiding two fan-out/fan-in cycles.
         """
         self._advance_to_time(data.start_time, data.end_time)
+        gated = self._gate_pending_context({s.name for s in data.data})
 
         # Build work items (cheap, sequential)
         work_items: list[tuple[Job, JobData, bool]] = []
         for job in self.active_jobs:
+            if job.job_id in gated:
+                continue
             job_data = _filter_data_for_job(job, data)
             has_data = not job_data.is_empty()
             has_pending = job.job_id in self._jobs_with_primary_data
@@ -441,6 +468,35 @@ class JobManager:
 
         self._finish_jobs()
         return all_replies, all_results
+
+    def _gate_pending_context(self, available: set[str]) -> set[JobId]:
+        """Identify active jobs whose context aux streams are not yet available.
+
+        Updates ``_seen_context_streams`` from the current tick's ``available``
+        set, then checks each active job against its sticky availability set.
+        For each gated job, sets the warning message to a pending-context
+        notice and the state to :attr:`JobState.pending_context`. For jobs
+        previously in ``pending_context`` whose context aux is now available,
+        clears the warning so subsequent processing can transition the state
+        to active/warning based on its own outcome.
+
+        See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        gated: set[JobId] = set()
+        for job in self.active_jobs:
+            seen = self._seen_context_streams.setdefault(job.job_id, set())
+            seen.update(available & set(job.aux_source_names))
+            missing = job.missing_context(seen)
+            if missing:
+                self._job_warning_messages[job.job_id] = pending_context_warning(
+                    missing
+                )
+                self._job_states[job.job_id] = JobState.pending_context
+                gated.add(job.job_id)
+            elif self._job_states.get(job.job_id) == JobState.pending_context:
+                self._job_warning_messages.pop(job.job_id, None)
+                self._job_states[job.job_id] = JobState.active
+        return gated
 
     def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
         # Track primary data updates only after successful add, so that a
@@ -513,6 +569,7 @@ class JobManager:
         self._job_error_messages.pop(job_id, None)
         self._job_warning_messages.pop(job_id, None)
         self._jobs_with_primary_data.discard(job_id)
+        self._seen_context_streams.pop(job_id, None)
 
     def _finish_jobs(self):
         for job_id in self._finishing_jobs:
@@ -610,3 +667,8 @@ def _process_job(
     """
     job, job_data, has_pending_primary = item
     return job.process(job_data, finalize=has_pending_primary)
+
+
+def pending_context_warning(missing: set[str]) -> str:
+    """Human-readable warning message for a job gated on missing context streams."""
+    return f"Waiting for context streams: {', '.join(sorted(missing))}"
