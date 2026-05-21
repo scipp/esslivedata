@@ -2,12 +2,17 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import inspect
 import typing
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
+from ess.livedata.config.stream import ContextInput
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
 from ess.livedata.core.timestamp import Timestamp
+
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import JobId
+    from ess.livedata.core.message import Message
 
 
 class Workflow(Protocol):
@@ -56,6 +61,37 @@ class SpecHandle:
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
         """Decorator to attach factory implementation to this spec."""
         return self._factory.attach_factory(self.workflow_id)
+
+    def add_context_input(
+        self,
+        *,
+        stream_name: str,
+        workflow_key: Any,
+        dependent_sources: Iterable[str] | None = None,
+        stream_resolver: Callable[['JobId', str], str] | None = None,
+        seed_factory: Callable[['JobId'], 'Message'] | None = None,
+    ) -> None:
+        """Append a spec-level :class:`ContextInput` to this spec.
+
+        Late-bound from ``factories.py`` to keep workflow-key imports out of
+        ``specs.py``. When ``dependent_sources`` is None, defaults to the
+        spec's ``source_names`` — the binding applies uniformly across the
+        spec.
+        """
+        spec = self._factory[self.workflow_id]
+        if dependent_sources is None:
+            dependent_sources = frozenset(spec.source_names)
+        else:
+            dependent_sources = frozenset(dependent_sources)
+        spec.context_inputs.append(
+            ContextInput(
+                stream_name=stream_name,
+                workflow_key=workflow_key,
+                dependent_sources=dependent_sources,
+                stream_resolver=stream_resolver,
+                seed_factory=seed_factory,
+            )
+        )
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):

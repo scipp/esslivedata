@@ -10,13 +10,16 @@ import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
+
+if TYPE_CHECKING:
+    from ess.livedata.config.stream import ContextInput
 
 T = TypeVar('T')
 
@@ -298,6 +301,14 @@ class WorkflowSpec(BaseModel):
             "Auxiliary data source specification. Defines the available auxiliary "
             "data streams that a workflow can consume, with their choices, defaults, "
             "and UI metadata."
+        ),
+    )
+    context_inputs: list[ContextInput] = Field(
+        default_factory=list,
+        description=(
+            "Spec-level context-stream declarations (see ADR 0003). Populated "
+            "via :meth:`SpecHandle.add_context_input` from ``factories.py`` to "
+            "keep workflow-key imports out of ``specs.py``. Empty by default."
         ),
     )
     reset_on_run_transition: bool = Field(
@@ -623,3 +634,14 @@ def find_timeseries_outputs(
         )
 
     return results
+
+
+# Resolve the deferred ``ContextInput`` field annotation on ``WorkflowSpec``.
+# ``ContextInput`` is defined in ``stream.py`` to keep configuration records
+# co-located; its callable fields reference ``JobId`` and ``Message`` from this
+# module, so we feed both into ``model_rebuild`` to break the import cycle.
+from ess.livedata.config.stream import ContextInput  # noqa: E402
+
+WorkflowSpec.model_rebuild(
+    _types_namespace={'ContextInput': ContextInput, 'JobId': JobId, 'Message': Message}
+)

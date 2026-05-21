@@ -927,3 +927,87 @@ class TestTwoPhaseRegistration:
 
         # Verify params is still MyParams (not mutated)
         assert factory[workflow_id].params is MyParams
+
+
+class _CtxKey:
+    pass
+
+
+class _OtherCtxKey:
+    pass
+
+
+class TestSpecHandleAddContextInput:
+    """Cover :meth:`SpecHandle.add_context_input` defaults and append semantics."""
+
+    def _register(self, *, source_names: list[str]) -> tuple[WorkflowFactory, object]:
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument='test-instrument', name='test-workflow', version=1
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='test-workflow',
+            description='Test',
+            source_names=source_names,
+            params=None,
+            group=REDUCTION,
+        )
+        handle = factory.register_spec(spec)
+        return factory, handle
+
+    def test_default_dependent_sources_fall_back_to_spec_sources(self) -> None:
+        factory, handle = self._register(source_names=['det1', 'det2'])
+
+        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
+
+        [entry] = factory[handle.workflow_id].context_inputs
+        assert entry.stream_name == 'roi'
+        assert entry.workflow_key is _CtxKey
+        assert entry.dependent_sources == frozenset({'det1', 'det2'})
+        assert entry.stream_resolver is None
+        assert entry.seed_factory is None
+
+    def test_explicit_dependent_sources_override_default(self) -> None:
+        factory, handle = self._register(source_names=['det1', 'det2'])
+
+        handle.add_context_input(
+            stream_name='roi',
+            workflow_key=_CtxKey,
+            dependent_sources=['det1'],
+        )
+
+        [entry] = factory[handle.workflow_id].context_inputs
+        assert entry.dependent_sources == frozenset({'det1'})
+
+    def test_multiple_entries_are_appended(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_input(stream_name='polygon', workflow_key=_OtherCtxKey)
+
+        entries = factory[handle.workflow_id].context_inputs
+        assert [e.stream_name for e in entries] == ['roi', 'polygon']
+        assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
+
+    def test_passes_through_resolver_and_seed_factory(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        def resolver(job_id: JobId, name: str) -> str:
+            return f'{job_id}/{name}'
+
+        def seed(job_id: JobId) -> object:
+            return job_id
+
+        handle.add_context_input(
+            stream_name='roi',
+            workflow_key=_CtxKey,
+            stream_resolver=resolver,
+            seed_factory=seed,
+        )
+
+        [entry] = factory[handle.workflow_id].context_inputs
+        assert entry.stream_resolver is resolver
+        assert entry.seed_factory is seed
