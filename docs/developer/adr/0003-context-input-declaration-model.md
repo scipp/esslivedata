@@ -100,12 +100,12 @@ on_schedule_seed(seed_messages)
 
 Both declaration sites produce `ContextInput`. Instrument bindings filter by `dependent_sources` explicitly. Spec-level entries default `dependent_sources` to the spec's source names, so they apply uniformly across the spec. The two cover the natural axes:
 
-- *Motion is a property of the source.* Any workflow on `loki_detector_0` that needs absolute position needs the carriage value. Source-scoped — every spec consuming the source gates on it.
+- *Motion is a property of the source — but not every workflow on that source consumes it.* `loki_detector_0` feeds the absolute-position-dependent `xy_projection` view, the `i_of_q` reduction, AND the `tube_view` (a logical sum that does not use position) and `ratemeter`. The first two need carriage; the latter two would gate forever on a stream they never read. Same shape on bifrost's `unified_detector`: cuts need rotation, the detector view and ratemeter do not. The right scope is therefore *spec-level*, declared per-handle in `factories.py`, not instrument-level. Instrument-level scope remains the right choice only for streams genuinely consumed by every spec on the source (today: none).
 - *ROI is a property of the workflow.* Only detector-view workflows have ROI; reduction workflows on the same source do not. Spec-scoped.
 
 Whole-instrument streams that are needed by every workflow on every source (a hypothetical sample-temperature stream consumed everywhere) can be declared with `dependent_sources` covering all instrument source names; this gates every workflow on every source, which matches the intended semantics.
 
-`dependent_sources` may be a *strict subset* of a spec's `source_names`. LOKI's `loki_detector_0` is the only rear-bank source carrying the carriage stream, but the relevant specs (detector views, qmap) cover all LOKI detectors. The instrument-level binding declares `dependent_sources=frozenset({'loki_detector_0'})`; jobs on other detectors created from the same spec see an empty merged ContextInput set for that binding and do not gate on it.
+`dependent_sources` may be a *strict subset* of a spec's `source_names` — e.g. a multi-detector spec where only one source carries an f144 stream. Today no live case exercises this; the historical LOKI example was reframed as spec-scoped above.
 
 ### Instrument bindings are source-scoped, not spec-scoped
 
@@ -129,7 +129,7 @@ JobManager fires seeds at `schedule_job` via the existing `preprocess_messages` 
 
 ### LOKI `transform_name` carrier
 
-`ContextInput` declares `stream_name` and `workflow_key` but no graph-side label. LOKI's `add_dynamic_transform` needs the NeXus path (e.g. `/entry/instrument/detector_carriage/value`) that today lives in `TransformValueStream.transform_name`. The collapse of `LOKI_DYNAMIC_TRANSFORMS` into one `instrument.add_context_input(...)` call therefore loses one piece of information that the factory still needs.
+`ContextInput` declares `stream_name` and `workflow_key` but no graph-side label. LOKI's `add_dynamic_transform` needs the NeXus path (e.g. `/entry/instrument/detector_carriage/value`) that today lives in `TransformValueStream.transform_name`. The collapse of `LOKI_DYNAMIC_TRANSFORMS` into one `spec_handle.add_context_input(...)` call therefore loses one piece of information that the factory still needs.
 
 Resolution: keep a small per-source `dict[str, str]` (source_name → transform_name) local to `loki/factories.py`, consulted by the factory when it sees `TransformValueLog` in `context_keys`. The dict is one-line per LOKI source today, well-localised, and does not pollute the cross-instrument `ContextInput` shape. If a second instrument needs the same plumbing the right move is to extend `ContextInput` with an opaque `payload: Any` field; meanwhile YAGNI.
 
@@ -140,11 +140,11 @@ Resolution: keep a small per-source `dict[str, str]` (source_name → transform_
 ## Consequences
 
 - `LogContextBinding` renamed to `ContextInput` in `config/stream.py`. Two optional fields added (`stream_resolver`, `seed_factory`); existing instantiations unchanged.
-- `Instrument.log_context_bindings` → `Instrument.context_inputs`. `Instrument.add_log_context_binding` → `Instrument.add_context_input`. Mechanical rename across declarations and call sites (bifrost factories; future LOKI carriage).
+- `Instrument.log_context_bindings` → `Instrument.context_inputs`. `Instrument.add_log_context_binding` → `Instrument.add_context_input`. Mechanical rename across declarations and call sites. (Bifrost rotation and LOKI carriage both end up spec-scoped per the section above; the instrument-level API remains for streams genuinely consumed by every spec on a source.)
 - `Instrument.get_context_keys(source_name)` continues to work — its body iterates `context_inputs`, filters by `dependent_sources`, returns `{ci.stream_name: ci.workflow_key for ci in matching}`.
 - `DetectorROIAuxSources` is removed entirely. ROI declarations migrate to `spec_handle.add_context_input(...)` calls in `detector_view/factory.py` (or a colocated module).
 - `bifrost_aux_sources` and `aux_sources=bifrost_aux_sources` arguments in the qmap registrations go away. The existing instrument-binding calls in bifrost's `factories.py` cover both routing (via the `gather_source_names` extension) and gating.
-- LOKI's `LOKI_DYNAMIC_TRANSFORMS` dict and the dual declaration in `specs.py` + `factories.py` collapses into one `instrument.add_context_input(stream_name='detector_carriage', workflow_key=..., dependent_sources=frozenset({'loki_detector_0'}))` call in `factories.py`.
+- LOKI's `LOKI_DYNAMIC_TRANSFORMS` dict and the dual declaration in `specs.py` + `factories.py` collapses into a `spec_handle.add_context_input(stream_name='detector_carriage', workflow_key=...)` call on the position-dependent handle(s) in `factories.py`. The `transform_name` (NeXus path) lives in a small per-source dict local to `loki/factories.py` (see § "LOKI transform_name carrier").
 - `WorkflowSpec` grows a `context_inputs: list[ContextInput]` field (empty by default).
 - `SpecHandle` gains an `add_context_input(...)` method that appends to the underlying spec's list, defaulting `dependent_sources` to `frozenset(spec.source_names)`.
 - `JobFactory.create` learns to merge instrument + spec context inputs and pass the resulting `context_keys` to the factory. Factories that today receive `aux_source_names` and reach into a `dynamic_transforms` dict lose that branch — `context_keys` arrives ready-made.
