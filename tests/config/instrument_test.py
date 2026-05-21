@@ -403,6 +403,55 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='ghost'):
             instrument._validate_binding_dependent_sources()
 
+    def test_validates_wire_name_collision_between_instrument_and_spec(self):
+        """Instrument- and spec-level ContextInput entries must not name-collide.
+
+        Per ADR 0003 § "Validation": when both scopes apply to the same
+        (spec, source) pair and resolve to the same wire-stream name, the
+        ambiguity is a registration error.
+        """
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+        handle.add_context_input(stream_name='rot', workflow_key=_Key)
+
+        with pytest.raises(ValueError, match='collision'):
+            instrument._validate_context_input_wire_name_collisions()
+
+    def test_no_collision_when_dependent_sources_disjoint(self):
+        """Same stream name on instrument and spec scope is fine when the sources
+        do not overlap -- the (spec, source) pair never sees both bindings.
+        """
+        instrument = Instrument(
+            name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1', 'det2'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+        handle.add_context_input(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det2']
+        )
+
+        # No exception.
+        instrument._validate_context_input_wire_name_collisions()
+
 
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""

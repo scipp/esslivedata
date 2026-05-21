@@ -560,6 +560,7 @@ class Instrument:
             module.setup_factories(self)
 
         self._validate_binding_dependent_sources()
+        self._validate_context_input_wire_name_collisions()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -586,6 +587,40 @@ class Instrument:
                     f"unknown dependent_sources {sorted(unknown)}; no registered "
                     f"spec advertises these source_names"
                 )
+
+    def _validate_context_input_wire_name_collisions(self) -> None:
+        """Raise if instrument- and spec-level ContextInput entries collide.
+
+        For every (spec, source) pair where both instrument-level and
+        spec-level ContextInput entries apply, the resolved wire-stream names
+        must be unique. Resolvers are assumed to be name-suffixing of the
+        ``(job_id, stream_name)`` pair (see :class:`ContextInput` docstring);
+        we treat the unresolved ``stream_name`` as the collision key, which
+        is sound for the resolvers in use today (ROI's
+        ``f"{job_id}/{name}"``).
+        """
+        for spec in self.workflow_factory.values():
+            if not spec.context_inputs:
+                continue
+            for source in spec.source_names:
+                instrument_names: set[str] = {
+                    ci.stream_name
+                    for ci in self.context_inputs
+                    if source in ci.dependent_sources
+                }
+                spec_names: set[str] = {
+                    ci.stream_name
+                    for ci in spec.context_inputs
+                    if source in ci.dependent_sources
+                }
+                collisions = instrument_names & spec_names
+                if collisions:
+                    raise ValueError(
+                        f"ContextInput stream-name collision for spec "
+                        f"{spec.name!r} on source {source!r}: "
+                        f"{sorted(collisions)} declared at both instrument "
+                        f"and spec scope"
+                    )
 
 
 instrument_registry = InstrumentRegistry()
