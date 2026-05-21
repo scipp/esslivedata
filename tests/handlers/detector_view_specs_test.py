@@ -227,6 +227,123 @@ class TestRegisterDetectorViewSpecs:
         assert spec.aux_sources is custom_aux
 
 
+class TestRegisterDetectorViewSpecROIContextInputs:
+    """ROI ContextInput records registered by register_detector_view_spec()."""
+
+    def test_register_adds_roi_rectangle_and_polygon_context_inputs(self) -> None:
+        from ess.livedata.handlers.detector_view.types import (
+            ROIPolygonRequest,
+            ROIRectangleRequest,
+        )
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        source_names = ["detector1", "detector2"]
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=source_names,
+        )
+
+        spec = instrument.workflow_factory[handle.workflow_id]
+        by_stream = {ci.stream_name: ci for ci in spec.context_inputs}
+        assert set(by_stream) == {'roi_rectangle', 'roi_polygon'}
+        assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
+        assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
+        # Defaults to the spec's source_names.
+        assert by_stream['roi_rectangle'].dependent_sources == frozenset(source_names)
+        assert by_stream['roi_polygon'].dependent_sources == frozenset(source_names)
+
+    def test_roi_context_input_resolver_prefixes_with_job_id(self) -> None:
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        rect = next(
+            ci for ci in spec.context_inputs if ci.stream_name == 'roi_rectangle'
+        )
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        assert rect.stream_resolver is not None
+        assert (
+            rect.stream_resolver(job_id, rect.stream_name) == f"{job_id}/roi_rectangle"
+        )
+
+    def test_roi_context_input_seed_factory_yields_empty_geometry_message(
+        self,
+    ) -> None:
+        import scipp as sc
+
+        from ess.livedata.config import models
+        from ess.livedata.core.message import StreamKind
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=["detector1"],
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        seeds = {ci.stream_name: ci.seed_factory for ci in spec.context_inputs}
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+
+        rect_msg = seeds['roi_rectangle'](job_id)
+        assert rect_msg.stream.kind is StreamKind.LIVEDATA_ROI
+        assert rect_msg.stream.name == f"{job_id}/roi_rectangle"
+        assert sc.identical(
+            rect_msg.value, models.RectangleROI.to_concatenated_data_array({})
+        )
+
+        poly_msg = seeds['roi_polygon'](job_id)
+        assert poly_msg.stream.kind is StreamKind.LIVEDATA_ROI
+        assert poly_msg.stream.name == f"{job_id}/roi_polygon"
+        assert sc.identical(
+            poly_msg.value, models.PolygonROI.to_concatenated_data_array({})
+        )
+
+    def test_logical_view_with_roi_support_adds_context_inputs(self) -> None:
+        from ess.livedata.handlers.detector_view.types import (
+            ROIPolygonRequest,
+            ROIRectangleRequest,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        handle = instrument.add_logical_view(
+            name='custom_view',
+            title='Custom View',
+            description='',
+            source_names=['detector1'],
+            roi_support=True,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        by_stream = {ci.stream_name: ci for ci in spec.context_inputs}
+        assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
+        assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
+
+    def test_logical_view_without_roi_support_has_no_context_inputs(self) -> None:
+        instrument = Instrument(name="test_instrument")
+        handle = instrument.add_logical_view(
+            name='no_roi_view',
+            title='No ROI',
+            description='',
+            source_names=['detector1'],
+            roi_support=False,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.context_inputs == []
+
+
 class TestDetectorROIAuxSources:
     """Tests for DetectorROIAuxSources auxiliary source model."""
 

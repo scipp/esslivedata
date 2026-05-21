@@ -409,6 +409,7 @@ class Instrument:
         """
         from ess.livedata.handlers.detector_view_specs import (
             DetectorROIAuxSources,
+            add_roi_context_inputs,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -429,6 +430,8 @@ class Instrument:
             params=params,
             outputs=outputs,
         )
+        if roi_support:
+            add_roi_context_inputs(handle)
         self._logical_view_handles[name] = handle
         self._logical_views.append(
             LogicalViewConfig(

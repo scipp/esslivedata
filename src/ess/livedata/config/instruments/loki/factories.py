@@ -47,11 +47,21 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
+    from ess.livedata.handlers.detector_view.types import TransformValueLog
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
 
     from .specs import LOKI_DYNAMIC_TRANSFORMS
+
+    # Declare the LOKI rear-bank carriage f144 stream as a context input.
+    # Inert in B3 (JobFactory still reads the legacy AuxSources path); B4
+    # makes it the single source of truth and deletes LOKI_DYNAMIC_TRANSFORMS.
+    instrument.add_context_input(
+        stream_name='detector_carriage',
+        workflow_key=TransformValueLog,
+        dependent_sources=frozenset({'loki_detector_0'}),
+    )
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 

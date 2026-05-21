@@ -34,7 +34,7 @@ from ..config.workflow_spec import (
     OutputView,
     WorkflowOutputsBase,
 )
-from ..core.message import Message
+from ..core.message import Message, StreamId, StreamKind
 from ..core.timestamp import Timestamp
 from ..handlers.workflow_factory import SpecHandle
 
@@ -580,6 +580,51 @@ class DetectorROIAuxSources(AuxSources):
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
 
 
+def _roi_rectangle_seed(job_id: JobId) -> Message:
+    """Cold-start "no rectangle ROI selected" message for a job's ROI context.
+
+    Byte-identical to what the dashboard publishes when the user deletes the
+    last rectangle ROI; pre-seeded at ``schedule_job`` time so the gate opens
+    immediately. See ADR 0002.
+    """
+    return Message(
+        timestamp=Timestamp.from_ns(0),
+        stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{job_id}/roi_rectangle"),
+        value=models.RectangleROI.to_concatenated_data_array({}),
+    )
+
+
+def _roi_polygon_seed(job_id: JobId) -> Message:
+    """Cold-start "no polygon ROI selected" message for a job's ROI context."""
+    return Message(
+        timestamp=Timestamp.from_ns(0),
+        stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{job_id}/roi_polygon"),
+        value=models.PolygonROI.to_concatenated_data_array({}),
+    )
+
+
+def add_roi_context_inputs(handle: SpecHandle) -> None:
+    """Declare the rectangle/polygon ROI context inputs for a detector-view spec.
+
+    The wire-stream resolver prefixes the stream name with the JobId so each
+    job instance owns its ROI configuration stream.
+    """
+    from .detector_view.types import ROIPolygonRequest, ROIRectangleRequest
+
+    handle.add_context_input(
+        stream_name='roi_rectangle',
+        workflow_key=ROIRectangleRequest,
+        stream_resolver=lambda job_id, name: f"{job_id}/{name}",
+        seed_factory=_roi_rectangle_seed,
+    )
+    handle.add_context_input(
+        stream_name='roi_polygon',
+        workflow_key=ROIPolygonRequest,
+        stream_resolver=lambda job_id, name: f"{job_id}/{name}",
+        seed_factory=_roi_polygon_seed,
+    )
+
+
 def register_detector_view_spec(
     *,
     instrument: Instrument,
@@ -675,7 +720,7 @@ def register_detector_view_spec(
     else:
         raise ValueError(f"Unsupported projection: {projection}")
 
-    return instrument.register_spec(
+    handle = instrument.register_spec(
         group=DETECTORS,
         name=name,
         version=1,
@@ -688,3 +733,5 @@ def register_detector_view_spec(
             roi_support=True, spectrum_view=spectrum_view
         ),
     )
+    add_roi_context_inputs(handle)
+    return handle
