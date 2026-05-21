@@ -105,6 +105,8 @@ Both declaration sites produce `ContextInput`. Instrument bindings filter by `de
 
 Whole-instrument streams that are needed by every workflow on every source (a hypothetical sample-temperature stream consumed everywhere) can be declared with `dependent_sources` covering all instrument source names; this gates every workflow on every source, which matches the intended semantics.
 
+`dependent_sources` may be a *strict subset* of a spec's `source_names`. LOKI's `loki_detector_0` is the only rear-bank source carrying the carriage stream, but the relevant specs (detector views, qmap) cover all LOKI detectors. The instrument-level binding declares `dependent_sources=frozenset({'loki_detector_0'})`; jobs on other detectors created from the same spec see an empty merged ContextInput set for that binding and do not gate on it.
+
 ### Instrument bindings are source-scoped, not spec-scoped
 
 A binding scoped to `{'unified_detector'}` activates for *every* spec whose `source_names` includes `unified_detector` — detector_view, qmap, ratemeter all gate on it indiscriminately. **If a context stream applies to a source but only some workflows on that source should gate on it, declare per-spec via `spec_handle.add_context_input` rather than as an instrument binding.** Documented as the routing rule. Today nothing fits the "shared source, divergent context need" shape — if it ever does, the answer is `add_context_input` on the handle.
@@ -113,13 +115,23 @@ A binding scoped to `{'unified_detector'}` activates for *every* spec whose `sou
 
 Routing (Kafka subscription set) is decided per *namespace* at service startup, ahead of any specific job. It can over-subscribe — the bandwidth cost of an unused f144 stream is negligible. Gating is decided per *job* at `JobFactory.create`, using only the declarations that resolve for that specific (spec, source). Gating must be precise; routing only needs to be permissive.
 
-Routing pickup for instrument bindings is via `config/route_derivation.py:gather_source_names` per the planned LOKI/Bifrost infrastructure work. Spec-level `add_context_input` entries contribute to the subscription set through their declared stream names (resolver applied where present).
+Routing pickup for instrument bindings is via `config/route_derivation.py:gather_source_names`. Spec-level `add_context_input` entries contribute to the subscription set only when `stream_resolver is None` — entries with a resolver are job-scoped (today: ROI, which routes via a dedicated `StreamKind.LIVEDATA_ROI` topic registered at service startup) and `gather_source_names` cannot meaningfully resolve them at namespace-startup time.
+
+The routing-pickup extension is a co-requirement of this ADR, not a follow-up: without it, bifrost rotation and LOKI carriage streams are never subscribed by the `detector_data` namespace and the gate stays closed indefinitely. It must land in the same PR or in an explicit pre-merge dependency.
 
 ### Seeding
 
 Seeds live on the context-input record: `seed_factory(job_id)` returns the cold-start `Message`. The `Instrument` and `spec_handle` APIs both accept it, but instrument-property context streams (motion, temperature) have no meaningful "no message yet" steady state; if the producer is down, the gate stays closed and the workflow does not run, which is the correct behaviour per ADR 0002. In practice the seed is supplied only for spec-level ROI today.
 
 JobManager fires seeds at `schedule_job` via the existing `preprocess_messages` path (see ADR 0002). Reset does not re-seed: context accumulators live in `MessagePreprocessor` above the job and are not cleared by `Job.reset`, so the previously-seen value persists across the reset.
+
+`JobManager._seed_initial_context` is also responsible for marking the seeded wire-stream names in `_seen_context_streams[job_id]`, so the gate opens on the first tick without re-firing `set_context` from cached state. The seeds and the bookkeeping live together; `JobFactory.create` returns the seed list alongside the `Job` rather than carrying both responsibilities.
+
+### LOKI `transform_name` carrier
+
+`ContextInput` declares `stream_name` and `workflow_key` but no graph-side label. LOKI's `add_dynamic_transform` needs the NeXus path (e.g. `/entry/instrument/detector_carriage/value`) that today lives in `TransformValueStream.transform_name`. The collapse of `LOKI_DYNAMIC_TRANSFORMS` into one `instrument.add_context_input(...)` call therefore loses one piece of information that the factory still needs.
+
+Resolution: keep a small per-source `dict[str, str]` (source_name → transform_name) local to `loki/factories.py`, consulted by the factory when it sees `TransformValueLog` in `context_keys`. The dict is one-line per LOKI source today, well-localised, and does not pollute the cross-instrument `ContextInput` shape. If a second instrument needs the same plumbing the right move is to extend `ContextInput` with an opaque `payload: Any` field; meanwhile YAGNI.
 
 ### Workflow protocol stays pure
 
