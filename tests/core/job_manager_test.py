@@ -44,7 +44,7 @@ class FakeJobFactory(JobFactory):
         """Pass-through implementation for tests."""
         return result
 
-    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> tuple[Job, list]:
         # For testing, treat every declared aux as a context input — the
         # scenario most production workflows with aux expose. Tests that
         # need a dynamic-aux scenario construct the Job directly.
@@ -62,7 +62,7 @@ class FakeJobFactory(JobFactory):
         )
 
         self.created_jobs.append((job_id, config))
-        return job
+        return job, []
 
 
 @pytest.fixture
@@ -1364,7 +1364,7 @@ class TestJobFactoryRender:
         )
 
         # Create job
-        job = factory.create(job_id=job_id, config=config)
+        job, _ = factory.create(job_id=job_id, config=config)
 
         # Verify that render() was called and result was used
         # The job should have the rendered aux source names with source prefix
@@ -1415,7 +1415,7 @@ class TestJobFactoryRender:
         )
 
         # Create job
-        job = factory.create(job_id=job_id, config=config)
+        job, _ = factory.create(job_id=job_id, config=config)
 
         # Default render should preserve the original names
         assert set(job.aux_source_names) == {'monitor1', 'monitor2'}
@@ -1451,7 +1451,7 @@ class TestJobFactoryRender:
         config = WorkflowConfig(identifier=spec.get_id(), job_id=job_id)
 
         # Should not raise, should create job with empty aux sources
-        job = factory.create(job_id=job_id, config=config)
+        job, _ = factory.create(job_id=job_id, config=config)
         assert job.aux_source_names == []
 
     def test_job_factory_with_empty_aux_source_names(self) -> None:
@@ -1489,7 +1489,7 @@ class TestJobFactoryRender:
             identifier=spec.get_id(), aux_source_names={}, job_id=job_id
         )
 
-        job = factory.create(job_id=job_id, config=config)
+        job, _ = factory.create(job_id=job_id, config=config)
         # Empty dict triggers model defaults, so should use 'monitor1'
         assert job.aux_source_names == ['monitor1']
 
@@ -1543,13 +1543,13 @@ class TestJobFactoryRender:
             job_id=job_id_1,  # Will be overridden in factory.create call
         )
 
-        job1 = factory.create(job_id=job_id_1, config=config)
+        job1, _ = factory.create(job_id=job_id_1, config=config)
         config2 = WorkflowConfig(
             identifier=spec.get_id(),
             aux_source_names={'roi': 'roi_rectangle'},
             job_id=job_id_2,
         )
-        job2 = factory.create(job_id=job_id_2, config=config2)
+        job2, _ = factory.create(job_id=job_id_2, config=config2)
 
         # Each job should have source-specific stream name
         assert job1.aux_source_names == ['detector1/roi_rectangle']
@@ -1608,10 +1608,230 @@ class TestJobFactoryRender:
             identifier=spec.get_id(), aux_source_names={}, job_id=job_id
         )
 
-        job = factory.create(job_id=job_id, config=config)
+        job, _ = factory.create(job_id=job_id, config=config)
 
         # Should use default 'monitor1' and render it with source prefix
         assert job.aux_source_names == ['detector1/monitor1']
+
+
+class _CtxKeyA:
+    """Opaque workflow_key used by ContextInput tests."""
+
+
+class _CtxKeyB:
+    """Opaque workflow_key used by ContextInput tests."""
+
+
+def _build_instrument_with_streams():
+    """Build an instrument with the f144 streams used by the ContextInput tests."""
+    from ess.livedata.config.instrument import Instrument
+    from ess.livedata.config.stream import F144Stream
+
+    def _f(name: str) -> F144Stream:
+        return F144Stream(source=name, topic='topic', units='mm')
+
+    return Instrument(
+        name='test',
+        detector_names=['detector1'],
+        streams={
+            'rot': _f('rot'),
+            'temp': _f('temp'),
+            'roi_rectangle': _f('roi_rectangle'),
+        },
+    )
+
+
+class TestJobFactoryContextInput:
+    """ADR 0003: JobFactory.create merges instrument + spec ContextInput records.
+
+    Source of context_keys, wire-stream names, and cold-start seeds. The legacy
+    ``Workflow.context_keys`` / ``AuxSources.initial_context_messages`` paths
+    have been retired in B4.
+    """
+
+    def test_instrument_context_input_populates_context_keys(self) -> None:
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector1'],
+        )
+
+        captured: dict[str, dict[str, type]] = {}
+
+        @handle.attach_factory()
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
+            captured['ck'] = context_keys
+            return FakeProcessor(context_keys=context_keys)
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job, seeds = factory.create(job_id=job_id, config=config)
+
+        assert captured['ck'] == {'rot': _CtxKeyA}
+        # Wire stream (no resolver) is unchanged: missing with no available
+        # streams, satisfied as soon as 'rot' becomes available.
+        assert job.missing_context(set()) == {'rot'}
+        assert job.missing_context({'rot'}) == set()
+        # And spliced into aux_source_names so existing Job routing handles it.
+        assert 'rot' in job.aux_source_names
+        # No seed_factory declared → no cold-start messages.
+        assert seeds == []
+
+    def test_instrument_context_input_filters_by_source(self) -> None:
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1', 'detector2'],
+            outputs=SimpleTestOutputs,
+        )
+        # detector_names limited to 'detector1' so use streams not source_names.
+        instrument.add_context_input(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector2'],
+        )
+
+        @handle.attach_factory()
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
+            return FakeProcessor(context_keys=context_keys)
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        # Job on detector1: outside dependent_sources → no context.
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job, seeds = factory.create(job_id=job_id, config=config)
+
+        assert job.missing_context(set()) == set()
+        assert seeds == []
+
+    def test_spec_context_input_with_resolver_and_seed_opens_gate(self) -> None:
+        """Cold-start seed for a spec-level ContextInput opens the gate at tick 1.
+
+        Mirrors the ROI scenario: a job-scoped resolver materialises the wire
+        name and a ``seed_factory`` produces the cold-start message. The
+        JobManager's ``_seed_initial_context`` forwards the seeds AND marks the
+        wire-stream names as already-seen, so the first job tick is not gated
+        on them.
+        """
+        from ess.livedata.core.message import Message, StreamKind
+
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+
+        def _resolver(jid: JobId, name: str) -> str:
+            return f"{jid}/{name}"
+
+        def _seed(jid: JobId) -> Message:
+            return Message(
+                timestamp=Timestamp.from_ns(0),
+                stream=StreamId(
+                    kind=StreamKind.LIVEDATA_ROI, name=_resolver(jid, 'roi')
+                ),
+                value=sc.scalar(0.0),
+            )
+
+        handle.add_context_input(
+            stream_name='roi',
+            workflow_key=_CtxKeyA,
+            stream_resolver=_resolver,
+            seed_factory=_seed,
+        )
+
+        captured: dict[str, dict[str, type]] = {}
+
+        @handle.attach_factory()
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
+            captured['ck'] = context_keys
+            return FakeProcessor(context_keys=context_keys)
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job, seeds = factory.create(job_id=job_id, config=config)
+
+        # Workflow-facing key uses the unresolved stream_name.
+        assert captured['ck'] == {'roi': _CtxKeyA}
+        # Wire name carries the JobId prefix.
+        wire = f"{job_id}/roi"
+        assert job.missing_context(set()) == {wire}
+        assert job.missing_context({wire}) == set()
+        assert len(seeds) == 1
+        assert seeds[0].stream.name == wire
+
+    def test_schedule_job_seeds_and_marks_streams_seen(self) -> None:
+        """schedule_job fires the seed callback and marks streams in _seen.
+
+        End-to-end through JobManager: a spec-level ContextInput with a
+        seed_factory contributes its wire name to ``_seen_context_streams``
+        immediately, so a subsequent tick with no producer activity passes the
+        gate.
+        """
+        from ess.livedata.core.message import Message, StreamKind
+
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+
+        def _seed(jid: JobId) -> Message:
+            return Message(
+                timestamp=Timestamp.from_ns(0),
+                stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{jid}/roi"),
+                value=sc.scalar(0.0),
+            )
+
+        handle.add_context_input(
+            stream_name='roi',
+            workflow_key=_CtxKeyA,
+            stream_resolver=lambda jid, name: f"{jid}/{name}",
+            seed_factory=_seed,
+        )
+
+        @handle.attach_factory()
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
+            return FakeProcessor(context_keys=context_keys)
+
+        seeded: list[list[Message]] = []
+        factory = JobFactory(instrument, service_name='data_reduction')
+        manager = JobManager(factory, on_schedule_seed=seeded.append)
+
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+        manager.schedule_job(config)
+
+        assert len(seeded) == 1
+        wire = f"{job_id}/roi"
+        assert {m.stream.name for m in seeded[0]} == {wire}
+        # Internal bookkeeping: gate already considers the stream seen.
+        assert wire in manager._seen_context_streams[job_id]
 
 
 class ThreadTrackingProcessor(FakeProcessor):
@@ -1632,7 +1852,7 @@ class ThreadTrackingProcessor(FakeProcessor):
 
 
 class ThreadTrackingJobFactory(FakeJobFactory):
-    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> tuple[Job, list]:
         processor = ThreadTrackingProcessor()
         self.processors[job_id] = processor
         job = Job(
@@ -1643,7 +1863,7 @@ class ThreadTrackingJobFactory(FakeJobFactory):
             aux_source_names=config.aux_source_names,
         )
         self.created_jobs.append((job_id, config))
-        return job
+        return job, []
 
 
 def _make_workflow_config(source_name: str) -> WorkflowConfig:

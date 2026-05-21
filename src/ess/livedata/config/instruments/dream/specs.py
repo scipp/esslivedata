@@ -23,9 +23,9 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.handlers.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
+    add_roi_context_inputs,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
@@ -203,10 +203,10 @@ projection_handle = instrument.register_spec(
         'Uses the appropriate projection for each detector.'
     ),
     source_names=list(_projections.keys()),
-    aux_sources=DetectorROIAuxSources(),
     params=DreamDetectorViewParams,
     outputs=DetectorViewOutputs,
 )
+add_roi_context_inputs(projection_handle)
 
 
 dream_aux_sources = AuxSources(

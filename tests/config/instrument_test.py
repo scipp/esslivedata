@@ -319,10 +319,6 @@ class _Key:
     """Sentinel Sciline-key stand-in for binding tests."""
 
 
-class _OtherKey:
-    pass
-
-
 def _f144(name: str) -> F144Stream:
     return F144Stream(source=name, topic='topic', units='mm')
 
@@ -361,27 +357,6 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='unknown stream'):
             Instrument(name='test', context_inputs=[bad])
 
-    def test_get_context_keys_filters_by_source(self):
-        instrument = Instrument(
-            name='test',
-            streams={'rot': _f144('rot'), 'temp': _f144('temp')},
-        )
-        instrument.add_context_input(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
-        instrument.add_context_input(
-            stream_name='temp',
-            workflow_key=_OtherKey,
-            dependent_sources=['det1', 'det2'],
-        )
-
-        assert instrument.get_context_keys('det1') == {
-            'rot': _Key,
-            'temp': _OtherKey,
-        }
-        assert instrument.get_context_keys('det2') == {'temp': _OtherKey}
-        assert instrument.get_context_keys('det3') == {}
-
     def test_add_binding_accepts_device_stream_target(self):
         """A :class:`Device` entry in ``streams`` is a valid binding target.
 
@@ -408,7 +383,7 @@ class TestContextInputs:
         binding = instrument.context_inputs[0]
         assert binding.stream_name == 'rot'
         assert binding.workflow_key is _Key
-        assert instrument.get_context_keys('det1') == {'rot': _Key}
+        assert binding.dependent_sources == frozenset({'det1'})
 
     def test_load_factories_rejects_binding_with_unknown_dependent_source(self):
         instrument = Instrument(

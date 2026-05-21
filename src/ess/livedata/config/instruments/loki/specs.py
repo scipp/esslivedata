@@ -22,9 +22,7 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     WorkflowOutputsBase,
 )
-from ess.livedata.handlers.detector_view.types import TransformValueStream
 from ess.livedata.handlers.detector_view_specs import (
-    DetectorROIAuxSources,
     register_detector_view_spec,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -37,18 +35,6 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
-
-#: Per-source bindings of NeXus transformation entries to live f144 streams.
-#: Single source of truth shared between the spec (for routing via
-#: ``DetectorROIAuxSources``) and the factory (for graph wiring via
-#: ``DetectorViewFactory(dynamic_transforms=...)``). Only the rear bank has
-#: a live carriage readback; other banks have no dynamic geometry.
-LOKI_DYNAMIC_TRANSFORMS: dict[str, TransformValueStream] = {
-    'loki_detector_0': TransformValueStream(
-        transform_name='/entry/instrument/detector_carriage/value',
-        aux_stream='detector_carriage',
-    ),
-}
 
 
 class TransmissionMode(StrEnum):
@@ -274,7 +260,6 @@ xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS),
 )
 
 # Register tube view for all detector banks

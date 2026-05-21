@@ -12,6 +12,7 @@ from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
+    add_roi_context_inputs,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -67,6 +68,7 @@ panel_0_view_handle = instrument.register_spec(
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
 )
+add_roi_context_inputs(panel_0_view_handle)
 
 # Register area detector view spec
 area_panel_view_handle = instrument.register_spec(

@@ -186,18 +186,6 @@ class Instrument:
         self._validate_binding_stream_name(binding)
         self.context_inputs.append(binding)
 
-    def get_context_keys(self, source_name: str) -> dict[str, Any]:
-        """Return the stream-name → workflow-key map for the given source.
-
-        Derives :attr:`StreamProcessorWorkflow.context_keys` from
-        :attr:`context_inputs`, filtered by ``dependent_sources``.
-        """
-        return {
-            binding.stream_name: binding.workflow_key
-            for binding in self.context_inputs
-            if source_name in binding.dependent_sources
-        }
-
     @property
     def nexus_file(self) -> str:
         from ess.livedata.handlers.detector_data_handler import (
@@ -408,7 +396,6 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.handlers.detector_view_specs import (
-            DetectorROIAuxSources,
             add_roi_context_inputs,
             make_detector_view_outputs,
             make_detector_view_params,
@@ -426,7 +413,6 @@ class Instrument:
             title=title,
             description=description,
             source_names=list(source_names),
-            aux_sources=DetectorROIAuxSources() if roi_support else None,
             params=params,
             outputs=outputs,
         )

@@ -33,14 +33,11 @@ from .types import (
     GeometricViewConfig,
     LogicalViewConfig,
     ROIPolygonReadback,
-    ROIPolygonRequest,
     ROIRectangleReadback,
-    ROIRectangleRequest,
     ROISpectra,
     SpectrumView,
     SpectrumViewTransform,
     TransformValueLog,
-    TransformValueStream,
     UsePixelWeighting,
     ViewConfig,
 )
@@ -73,14 +70,14 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
-    dynamic_transforms:
-        Optional mapping ``source_name -> TransformValueStream`` binding a
-        NeXus transformation entry of the detector's chain to the f144
-        stream that supplies its live values. ``aux_stream`` is the
-        logical name of the auxiliary input delivering the NXlog
-        DataArray (must match the corresponding ``AuxSources`` entry).
-        ``transform_name`` is the entry of ``chain.transformations``
-        whose ``.value`` will be replaced with the latest sample.
+    transform_names:
+        Optional mapping ``source_name -> NeXus transform path`` for detectors
+        whose ``depends_on`` chain has an entry driven by a live f144 stream.
+        The wiring is activated per-call from ``make_workflow``'s
+        ``context_keys`` argument: when an entry's value is
+        :class:`TransformValueLog`, the path is looked up here. ADR 0003 §
+        "LOKI transform_name carrier" — the NeXus path does not fit
+        ``ContextInput`` and is kept as an instrument-local detail.
     """
 
     def __init__(
@@ -88,11 +85,11 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        dynamic_transforms: dict[str, TransformValueStream] | None = None,
+        transform_names: dict[str, str] | None = None,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
-        self._dynamic_transforms = dynamic_transforms or {}
+        self._transform_names = transform_names or {}
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -105,6 +102,7 @@ class DetectorViewFactory:
         source_name: str,
         params: DetectorViewParams,
         lookup_table_filename: str | None = None,
+        context_keys: dict[str, type] | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -119,12 +117,17 @@ class DetectorViewFactory:
             Path to lookup table file. Required for 'wavelength' coordinate mode.
             The caller (instrument factory) is responsible for resolving this
             from instrument-specific params.
+        context_keys:
+            Resolved ``ContextInput`` mapping (stream_name → workflow_key)
+            for this job. Wires ROI inputs and any
+            :class:`TransformValueLog`-driven dynamic geometry.
 
         Returns
         -------
         :
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
         """
+        context_keys = dict(context_keys or {})
         mode = params.coordinate_mode.mode
 
         # Validate wavelength mode requirements
@@ -227,7 +230,6 @@ class DetectorViewFactory:
             else:
                 workflow[SpectrumViewTransform] = raw_transform
             target_keys['spectrum_view'] = SpectrumView
-        context_keys: dict[str, type] = {}
         window_outputs = (
             'current',
             'counts_total',
@@ -244,12 +246,6 @@ class DetectorViewFactory:
                     'roi_polygon': ROIPolygonReadback,
                 }
             )
-            context_keys.update(
-                {
-                    'roi_rectangle': ROIRectangleRequest,
-                    'roi_polygon': ROIPolygonRequest,
-                }
-            )
             window_outputs = (
                 'current',
                 'counts_total',
@@ -257,12 +253,20 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic detector geometry (f144 NXlog stream) if configured for
-        # this source.
-        value_stream = self._dynamic_transforms.get(source_name)
-        if value_stream is not None:
-            add_dynamic_transform(workflow, transform_name=value_stream.transform_name)
-            context_keys[value_stream.aux_stream] = TransformValueLog
+        # Wire dynamic detector geometry: for every TransformValueLog context
+        # input on this source, look up the NeXus transform path and patch
+        # the workflow graph. The path-to-stream mapping is supplied at
+        # construction time (see ``transform_names``).
+        for stream_name, key in context_keys.items():
+            if key is TransformValueLog:
+                transform_name = self._transform_names.get(source_name)
+                if transform_name is None:
+                    raise ValueError(
+                        f"TransformValueLog declared for source {source_name!r} "
+                        f"(stream {stream_name!r}) but no transform_name is "
+                        f"registered with DetectorViewFactory"
+                    )
+                add_dynamic_transform(workflow, transform_name=transform_name)
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

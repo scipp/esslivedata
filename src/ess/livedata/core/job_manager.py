@@ -134,7 +134,17 @@ class JobFactory:
 
         return result
 
-    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
+    def create(
+        self, *, job_id: JobId, config: WorkflowConfig
+    ) -> tuple[Job, list[Message]]:
+        """Build a Job and its cold-start context seed messages.
+
+        Returns the constructed :class:`Job` together with the list of
+        :class:`Message` objects produced by the matching ``ContextInput``
+        ``seed_factory`` hooks. ``JobManager.schedule_job`` forwards the seeds
+        to the preprocessor and marks the corresponding wire stream names as
+        already-seen for the gate (see ADR 0002).
+        """
         workflow_id = config.identifier
         if workflow_id is None:
             raise ValueError("WorkflowConfig must have an identifier to create a Job")
@@ -148,41 +158,58 @@ class JobFactory:
         if workflow_spec is None:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
 
-        # Render aux source names using the spec's render() method if applicable
+        # Render dynamic aux source names using the spec's render() method.
         if workflow_spec.aux_sources is not None:
             rendered_aux_names = workflow_spec.aux_sources.render(
                 job_id=job_id,
                 selections=config.aux_source_names if config.aux_source_names else None,
             )
         else:
-            rendered_aux_names = config.aux_source_names
+            rendered_aux_names = dict(config.aux_source_names or {})
+
+        # Match ContextInput records (instrument + spec) by source membership.
+        matching = [
+            ci
+            for ci in (
+                *self._instrument.context_inputs,
+                *workflow_spec.context_inputs,
+            )
+            if job_id.source_name in ci.dependent_sources
+        ]
+        context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
+        wire_for = {
+            ci.stream_name: (
+                ci.stream_resolver(job_id, ci.stream_name)
+                if ci.stream_resolver is not None
+                else ci.stream_name
+            )
+            for ci in matching
+        }
+        # Splice context wire names into the field→wire aux mapping; the
+        # existing Job routing handles both kinds uniformly.
+        rendered_aux_names = {**rendered_aux_names, **wire_for}
+        context_stream_names = set(wire_for.values())
+        seed_messages = [
+            ci.seed_factory(job_id) for ci in matching if ci.seed_factory is not None
+        ]
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
             aux_source_names=rendered_aux_names,
+            context_keys=context_keys,
         )
-        # Subset of aux sources that act as context inputs in the workflow
-        # graph. The JobManager gates only on these (see ADR 0002): dynamic
-        # aux (e.g. monitors that accumulate over time) must not gate.
-        context_field_names = set(stream_processor.context_keys)
-        context_aux_stream_names = {
-            rendered_aux_names[field]
-            for field in context_field_names
-            if rendered_aux_names and field in rendered_aux_names
-        }
-        return Job(
+        job = Job(
             job_id=job_id,
             workflow_id=workflow_id,
             processor=stream_processor,
             source_names=[job_id.source_name],
-            # Pass rendered aux source names (field name -> stream name mapping)
-            # Job will use values for routing and remap keys for workflow
             aux_source_names=rendered_aux_names,
-            context_aux_stream_names=context_aux_stream_names,
+            context_aux_stream_names=context_stream_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
+        return job, seed_messages
 
 
 class JobManager:
@@ -216,9 +243,10 @@ class JobManager:
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
-        # See ADR 0002. Invoked from ``schedule_job`` with the initial context
-        # messages produced by ``workflow_spec.aux_sources.initial_context_messages``.
-        # The orchestrator wires this to ``MessagePreprocessor.seed_messages``.
+        # See ADR 0002 / ADR 0003. Invoked from ``schedule_job`` with the
+        # cold-start context messages produced by the matching ``ContextInput``
+        # ``seed_factory`` hooks. The orchestrator wires this to
+        # ``MessagePreprocessor.seed_messages``.
         self._on_schedule_seed = on_schedule_seed
 
     @property
@@ -274,7 +302,7 @@ class JobManager:
         Schedule a new job based on the provided configuration.
         """
         job_id = config.job_id
-        job = self._job_factory.create(job_id=job_id, config=config)
+        job, seed_messages = self._job_factory.create(job_id=job_id, config=config)
         self._job_schedules[job_id] = config.schedule
         self._job_states[job_id] = JobState.scheduled
         self._scheduled_jobs[job_id] = job
@@ -284,32 +312,22 @@ class JobManager:
             workflow_id=str(config.identifier),
             schedule=str(config.schedule),
         )
-        self._seed_initial_context(job_id, config)
+        self._seed_initial_context(job_id, seed_messages)
         return job_id
 
-    def _seed_initial_context(self, job_id: JobId, config: WorkflowConfig) -> None:
-        """Seed defaulted context accumulators for a freshly-scheduled job.
+    def _seed_initial_context(self, job_id: JobId, messages: list[Message]) -> None:
+        """Forward cold-start context seeds and mark their wire streams as seen.
 
-        See ADR 0002. Workflows whose context inputs include a "no message
-        yet is a valid steady state" stream (currently only ROI) declare
-        seed messages on their :class:`AuxSources` subclass. JobManager
-        forwards them to the preprocessor via ``on_schedule_seed``.
+        See ADR 0002. ``ContextInput`` declarations with a ``seed_factory``
+        produce messages that populate the preprocessor before any external
+        producer publishes; the gate then opens on tick one for those streams.
         """
-        if self._on_schedule_seed is None:
+        if self._on_schedule_seed is None or not messages:
             return
-        spec = self._job_factory.get_workflow_spec(config.identifier)
-        if spec is None or spec.aux_sources is None:
-            return
-        messages = spec.aux_sources.initial_context_messages(
-            job_id, selections=config.aux_source_names or None
+        self._on_schedule_seed(messages)
+        self._seen_context_streams.setdefault(job_id, set()).update(
+            msg.stream.name for msg in messages
         )
-        if messages:
-            self._on_schedule_seed(messages)
-            # Seeded streams are now populated in the preprocessor; mark them
-            # as seen so the gate does not block on the first tick.
-            self._seen_context_streams.setdefault(job_id, set()).update(
-                msg.stream.name for msg in messages
-            )
 
     def stop_job(self, job_id: JobId) -> None:
         """Stop a job and remove it from the system."""

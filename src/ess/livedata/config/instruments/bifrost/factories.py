@@ -70,17 +70,26 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
     # on the cut-workflow graph. Routed via context_keys; not NeXus components
-    # loaded by name.
-    instrument.add_context_input(
-        stream_name='detector_tank_angle_r0',
-        workflow_key=InstrumentAngle[SampleRun],
-        dependent_sources=['unified_detector'],
-    )
-    instrument.add_context_input(
-        stream_name='rotation_stage',
-        workflow_key=SampleAngle[SampleRun],
-        dependent_sources=['unified_detector'],
-    )
+    # loaded by name. Declared per qmap-family spec rather than at instrument
+    # scope because ``unified_detector`` is also the source of the
+    # detector-view and ratemeter specs, which do not consume rotation
+    # (ADR 0003 § "Instrument bindings are source-scoped").
+    def _add_qmap_rotation_context(handle):
+        handle.add_context_input(
+            stream_name='detector_tank_angle_r0',
+            workflow_key=InstrumentAngle[SampleRun],
+        )
+        handle.add_context_input(
+            stream_name='rotation_stage',
+            workflow_key=SampleAngle[SampleRun],
+        )
+
+    for handle in (
+        specs.qmap_handle,
+        specs.elastic_qmap_handle,
+        specs.elastic_qmap_custom_handle,
+    ):
+        _add_qmap_rotation_context(handle)
 
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
@@ -147,17 +156,20 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _make_cut_stream_processor(
         workflow: sciline.Pipeline,
+        context_keys: dict[str, type],
     ) -> StreamProcessorWorkflow:
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-            context_keys=instrument.get_context_keys('unified_detector'),
+            context_keys=context_keys,
             target_keys={'cut_data': CutData[SampleRun]},
             accumulators=(CutData[SampleRun],),
         )
 
     @specs.qmap_handle.attach_factory()
-    def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
+    def _qmap_workflow(
+        params: BifrostQMapParams, context_keys: dict[str, type]
+    ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         q_bins = params.q_edges.get_edges()
         q_cut = CutAxis(
@@ -175,11 +187,11 @@ def setup_factories(instrument: Instrument) -> None:
         )
         wf[CutAxis1] = q_cut
         wf[CutAxis2] = energy_cut
-        return _make_cut_stream_processor(wf)
+        return _make_cut_stream_processor(wf, context_keys)
 
     @specs.elastic_qmap_handle.attach_factory()
     def _elastic_qmap_workflow(
-        params: BifrostElasticQMapParams,
+        params: BifrostElasticQMapParams, context_keys: dict[str, type]
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         # Convert axis1 to CutAxis
@@ -194,11 +206,11 @@ def setup_factories(instrument: Instrument) -> None:
         axis2 = CutAxis.from_q_vector(output=dim2, vec=vec2, bins=edges2)
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
-        return _make_cut_stream_processor(wf)
+        return _make_cut_stream_processor(wf, context_keys)
 
     @specs.elastic_qmap_custom_handle.attach_factory()
     def _custom_elastic_qmap_workflow(
-        params: BifrostCustomElasticQMapParams,
+        params: BifrostCustomElasticQMapParams, context_keys: dict[str, type]
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         # Convert axis1 to CutAxis
@@ -215,7 +227,7 @@ def setup_factories(instrument: Instrument) -> None:
         axis2 = CutAxis.from_q_vector(output=name2, vec=vec2, bins=edges2)
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
-        return _make_cut_stream_processor(wf)
+        return _make_cut_stream_processor(wf, context_keys)
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:

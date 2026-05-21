@@ -151,7 +151,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     job_factory = JobFactory(instrument, service_name=service_name)
 
     # This should not raise - it validates params and aux_sources internally
-    job = job_factory.create(job_id=job_id, config=workflow_config)
+    job, _ = job_factory.create(job_id=job_id, config=workflow_config)
 
     # Verify job was created successfully
     assert job is not None

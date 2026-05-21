@@ -201,6 +201,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         source_name: str,
         config: WorkflowConfig,
         aux_source_names: dict[str, str] | None = None,
+        context_keys: dict[str, Any] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -213,6 +214,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Configuration for the workflow, including the identifier and parameters.
         aux_source_names:
             Rendered auxiliary source names (already resolved by JobFactory).
+        context_keys:
+            Resolved ``ContextInput`` mapping (stream_name → workflow_key).
+            Forwarded to factories that opt in by declaring ``context_keys``
+            in their signature.
         """
         workflow_id = config.identifier
         if workflow_id not in self._workflow_specs:
@@ -260,6 +265,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['params'] = workflow_params
         if 'aux_source_names' in sig.parameters:
             kwargs['aux_source_names'] = aux_source_names or {}
+        if 'context_keys' in sig.parameters:
+            kwargs['context_keys'] = context_keys or {}
 
         # Call factory with appropriate arguments
         if kwargs:
