@@ -10,6 +10,37 @@ first-class `ContextInput` declarations as specified in ADR 0003.
 Reviewed by senior-engineer-review (decisions baked in below; risk register
 trimmed to what remains open).
 
+## What changed during implementation
+
+The plan below is the *pre-implementation* document. Three conceptual shifts
+emerged while running the code:
+
+1. **B3/B4 split.** The original B3 deleted legacy AuxSources while
+   `JobFactory` still consumed them. Split into B3 (purely additive: declare
+   new records) and B4 (atomic swap + cleanup). This split is reflected in
+   the revised B3/B4 sections below.
+2. **Spec-scope for motion context.** The ADR (and this plan) initially placed
+   bifrost rotation and LOKI carriage at instrument scope. Implementation
+   showed that "every workflow on this source" is the wrong filter — some
+   specs on the same source legitimately do not consume motion (LOKI
+   `tube_view`, bifrost detector view / ratemeter). Both moved to spec scope.
+   ADR 0003 updated to match in a later commit.
+3. **Routing-pickup folded into B4.** B7's `gather_source_names` extension was
+   originally sequenced after B4. Implementation showed that leaves LOKI tests
+   red in the interim (the old `aux_input.choices` pickup goes away in B4).
+   The extension landed inside B4. Final commit count: 7, not 8.
+
+A few smaller drops worth knowing: `Instrument.get_context_keys` had no
+production callers after the bifrost migration and was deleted;
+`SpecRequirements.requires_aux_sources` was YAGNI'd; `WorkflowFactory.create`
+gained `context_keys` as a fourth opt-in kwarg (a fifth would warrant
+rethinking the pattern itself).
+
+Two follow-ups noted for separate PRs:
+- Document `ContextInput`'s resolver-purity assumption (name-suffixing) in
+  its docstring — B8's collision check depends on it.
+- Revisit the `WorkflowFactory.create` opt-in pattern if a fifth kwarg appears.
+
 ## Final-state target (post-Block B)
 
 - `LogContextBinding` renamed to `ContextInput` (`config/stream.py`),
