@@ -100,6 +100,10 @@ class AreaDetectorView(Workflow):
         self._previous = None
         self._current_start_time = None
 
+    @property
+    def context_keys(self) -> dict[str, Any]:
+        return {}
+
     @staticmethod
     def view_factory(
         *,

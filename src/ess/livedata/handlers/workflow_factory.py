@@ -14,8 +14,8 @@ class Workflow(Protocol):
     """
     A workflow that can process streams of data. Instances are run by a :py:class:`Job`.
 
-    This protocol matches ess.reduce.streaming.StreamProcessor. There are other
-    implementations, in particular for non-data-reduction jobs.
+    Wraps ess.reduce.streaming.StreamProcessor for data-reduction jobs;
+    other implementations exist for non-data-reduction jobs.
     """
 
     def accumulate(
@@ -23,6 +23,19 @@ class Workflow(Protocol):
     ) -> None: ...
     def finalize(self) -> dict[str, Any]: ...
     def clear(self) -> None: ...
+
+    @property
+    def context_keys(self) -> dict[str, Any]:
+        """Mapping from context-input field names to their workflow-side keys.
+
+        Reported by workflows whose graph reads parametric context inputs
+        (positions, ROIs, choppers). The JobManager uses the *keys* of this
+        mapping to determine which entries of ``Job.aux_source_names``
+        require gating before the workflow can run safely
+        (see :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`).
+        Workflows without context inputs return an empty mapping.
+        """
+        ...
 
 
 @dataclass(frozen=True)

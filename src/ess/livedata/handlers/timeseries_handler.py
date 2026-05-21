@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import scipp as sc
 import structlog
@@ -64,6 +64,10 @@ class TimeseriesStreamProcessor(Workflow):
     def clear(self) -> None:
         self._data = None
         self._last_returned_index = 0
+
+    @property
+    def context_keys(self) -> dict[str, Any]:
+        return {}
 
 
 class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]):
