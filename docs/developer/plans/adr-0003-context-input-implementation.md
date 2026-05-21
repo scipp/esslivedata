@@ -109,104 +109,74 @@ Files:
 
 Validation: `pytest -n auto -q`.
 
-### B3 — Migrate ROI, LOKI dynamic_transforms, bifrost_aux_sources (single shot)
+### B3 — Add ContextInput record declarations (additive only)
 
-This is the largest commit by far. It introduces the new declarations
-everywhere they need to land. The old consumption (`Workflow.context_keys`
-piggy-back, `AuxSources.initial_context_messages`) stays live until B4 — so
-ROI/bifrost/LOKI workflows continue to work via the legacy path through this
-commit.
+**Revised after the first implementation attempt.** The previous draft of B3
+deleted `DetectorROIAuxSources` and `bifrost_aux_sources` while leaving
+`JobFactory.create` on the legacy `Workflow.context_keys ∩ aux_source_names`
+path. That path produces an empty gate set once the AuxSources subclasses are
+removed, so bifrost crashes immediately. The fix is to split "add new
+declarations" from "switch consumption + delete legacy" into two commits:
 
-Files:
+- **B3 (this commit):** Add the new ContextInput records everywhere they need
+  to land. NOTHING is deleted; the legacy AuxSources subclasses, kwargs, and
+  factory parameters stay in place. The new records are inert because
+  `JobFactory.create` still reads `Workflow.context_keys` and
+  `AuxSources.initial_context_messages`. Behaviour is unchanged.
+- **B4 (next commit):** Atomic swap. `JobFactory.create` consumes the new
+  records, the legacy consumption paths are removed, and the now-unused
+  AuxSources subclasses + kwargs + factory parameters are deleted.
 
-ROI migration:
-- `src/ess/livedata/handlers/detector_view/factory.py` — drop the
-  `dynamic_transforms` parameter from `DetectorViewFactory.__init__`; the
-  factory gains a `context_keys: dict[str, type]` kwarg (consumed via the
-  `WorkflowFactory.create` opt-in pattern at line 213-230). Pass `context_keys`
-  through to `StreamProcessorWorkflow`. Replace the inline
-  `_dynamic_transforms.get(source_name)` lookup at lines 262-265 with: read
-  `context_keys` for entries whose value is `TransformValueLog`; for each,
-  resolve the `transform_name` from the LOKI-local per-source dict (see
-  below) and call `add_dynamic_transform(workflow, transform_name=…)`.
-- `src/ess/livedata/handlers/detector_view_specs.py` —
-  - delete the entire `DetectorROIAuxSources` class (lines 485-577);
-  - in `register_detector_view_spec` (line 583+), drop the `aux_sources`
-    keyword argument and the `aux_sources if aux_sources is not None else
-    DetectorROIAuxSources()` default (line 685). When `roi_support` is true
-    (the existing predicate), call
-    `handle.add_context_input(stream_name='roi_rectangle',
-    workflow_key=ROIRectangleRequest,
-    stream_resolver=lambda jid, name: f"{jid}/{name}",
-    seed_factory=_roi_rectangle_seed)` (and the polygon equivalent).
-    `_roi_*_seed` builds the same `Message` produced today by
-    `DetectorROIAuxSources.initial_context_messages` at lines 562-577.
-  - Reword the docstring at lines 609-612 — no longer mentions subclassing
-    `DetectorROIAuxSources`.
-- `src/ess/livedata/config/instruments/dream/specs.py:26,206` — drop the
-  `DetectorROIAuxSources` import and the `aux_sources=DetectorROIAuxSources()`
-  kwarg.
-- `src/ess/livedata/config/instruments/loki/specs.py:27,277` — drop the
-  `DetectorROIAuxSources` import and the kwarg. `LOKI_DYNAMIC_TRANSFORMS`
-  itself is moved (see LOKI section below).
-- `src/ess/livedata/config/instrument.py:411-428` — drop the
-  `DetectorROIAuxSources()` instantiation in the `_register_detector_views`
-  helper.
+Files (B3, purely additive):
 
-LOKI dynamic_transforms migration (consolidated here per senior review):
+ROI declarations:
+- `src/ess/livedata/handlers/detector_view_specs.py` (around
+  `register_detector_view_spec`, line 583+) — when `roi_support` is true,
+  call `handle.add_context_input(stream_name='roi_rectangle',
+  workflow_key=ROIRectangleRequest,
+  stream_resolver=lambda jid, name: f"{jid}/{name}",
+  seed_factory=_roi_rectangle_seed)` and the polygon equivalent. Add
+  `_roi_rectangle_seed` / `_roi_polygon_seed` module-level helpers that
+  build the same `Message` produced today by
+  `DetectorROIAuxSources.initial_context_messages` at lines 562-577.
+- Do NOT delete `DetectorROIAuxSources` or the `aux_sources=...` kwarg yet.
+  Do NOT change `DetectorViewFactory`'s signature yet. Both stay live; both
+  are deleted in B4.
+
+LOKI carriage declaration:
 - `src/ess/livedata/config/instruments/loki/factories.py` — add
   `instrument.add_context_input(stream_name='detector_carriage',
   workflow_key=TransformValueLog,
   dependent_sources=frozenset({'loki_detector_0'}))`.
-  Move `LOKI_DYNAMIC_TRANSFORMS` from `specs.py` to a stripped-down
-  per-source `dict[str, str]` here (source_name → transform_name);
-  the `aux_stream` field of `TransformValueStream` is no longer needed
-  (its old role is taken by the `ContextInput.stream_name`). Pass this
-  dict to `DetectorViewFactory` via a new constructor kwarg
-  `transform_names: dict[str, str]` so the factory can look up the NeXus
-  path when wiring `add_dynamic_transform`.
-- `src/ess/livedata/config/instruments/loki/specs.py:43-51` — delete
-  `LOKI_DYNAMIC_TRANSFORMS` and the import. The spec no longer references it.
+- Do NOT yet delete `LOKI_DYNAMIC_TRANSFORMS` or change `DetectorViewFactory`.
+  The new instrument-level record sits alongside the existing dual
+  declaration; B4 removes the duplication.
 
-bifrost_aux_sources cleanup:
-- `src/ess/livedata/config/instruments/bifrost/specs.py:183-198` — delete
-  `bifrost_aux_sources`.
-- `src/ess/livedata/config/instruments/bifrost/specs.py:317,328,339` — drop
-  `aux_sources=bifrost_aux_sources` from the three qmap-family `register_spec`
-  calls.
+Bifrost declarations:
+- Already in place from B1 (the `add_log_context_binding` → `add_context_input`
+  rename). Bifrost's `instrument.add_context_input(...)` calls in
+  `bifrost/factories.py:74,79` now contribute to `instrument.context_inputs`,
+  ready for B4 to consume.
 
 Tests:
-- `tests/handlers/detector_view_specs_test.py` — delete `TestDetectorROIAuxSources`
-  (line 230+) and the four `DetectorROIAuxSources()` direct-construction sites
-  (lines 102, 162, 198, 210). Behaviour under test (ROI seeding) moves to
-  per-spec coverage in the JobFactory-level tests added in B4.
-- `tests/dashboard/plotting_controller_test.py:140-205` — delete the four
-  `SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])` test cases.
-  These are dead test machinery (no production `register_plotter` call uses
-  `requires_aux_sources`). Also delete
-  `SpecRequirements.requires_aux_sources` from
-  `src/ess/livedata/dashboard/plotter_registry.py:89-120` as YAGNI — flag
-  in commit message that this is removed because no production caller used
-  it.
-- `tests/services/data_reduction_test.py:218-263`
-  (`test_bifrost_qmap_drops_events_until_rotation_arrives`) — at line 247
-  the test passes `spec.aux_sources.get_defaults()` into
-  `WorkflowConfig.aux_source_names`. After `bifrost_aux_sources` deletion,
-  `spec.aux_sources` is `None` and `aux_source_names = {}`. The test should
-  pass `aux_source_names={}` directly and rely on the instrument-level
-  `add_context_input` (already in place via bifrost's `factories.py`) for
-  the gate to fire.
+- Add focused unit tests asserting the new records are present on the
+  relevant specs/instruments after registration. Light tests only —
+  behavioural coverage stays on the existing AuxSources tests until B4
+  rewires consumption.
 
-Validation: full fast suite + `pytest tests/services/data_reduction_test.py::test_bifrost_qmap_drops_events_until_rotation_arrives -v`.
-At the END of B3 ROI still works because the AuxSources path is still live
-for the seed and `Workflow.context_keys` is still consulted for the gate set.
+Validation: full fast suite (no behaviour changes) + bifrost slow test
+(passes via the legacy `Workflow.context_keys ∩ aux_source_names` path).
 
-### B4 — JobFactory consumes ContextInput records
+### B4 — Atomic swap: JobFactory consumes ContextInput; delete legacy
 
-Switches the source of the gate set + seed messages. Stop using
-`Workflow.context_keys` and `AuxSources.initial_context_messages`.
+Switches the source of the gate set + seed messages AND removes the legacy
+declarations + factory parameters whose roles are now covered by ContextInput.
+This is the largest commit and the one that requires the most care, but it
+remains a single coherent change: "the system now uses ContextInput".
 
 Files:
+
+JobFactory + JobManager swap:
 - `src/ess/livedata/core/job_manager.py` (`JobFactory.create`) —
   - build `matching` as the union of `instrument.context_inputs` and
     `spec.context_inputs` filtered by `job_id.source_name in ci.dependent_sources`;
@@ -241,10 +211,81 @@ Files:
 - `src/ess/livedata/handlers/workflow_factory.py` — extend the opt-in kwargs
   in `WorkflowFactory.create` to pass `context_keys` when the factory declares
   it. The receiving side already exists in `monitor_workflow.create_monitor_workflow`
-  (line 176) and the detector_view factory after B3.
+  (line 176) and the detector_view factory once its signature changes (below).
+
+Detector view factory refactor:
+- `src/ess/livedata/handlers/detector_view/factory.py` — drop the
+  `dynamic_transforms` parameter from `DetectorViewFactory.__init__`; the
+  factory gains a `context_keys: dict[str, type]` kwarg consumed via the
+  `WorkflowFactory.create` opt-in pattern. Pass `context_keys` through to
+  `StreamProcessorWorkflow`. Replace the inline `_dynamic_transforms.get`
+  branch (lines 262-265) with: read `context_keys` for entries whose value
+  is `TransformValueLog`; for each, resolve the `transform_name` from the
+  LOKI-local per-source `dict[str, str]` and call
+  `add_dynamic_transform(workflow, transform_name=…)`. Drop the inline ROI
+  context_keys assembly (lines 247-252) — those now arrive in the
+  `context_keys` kwarg.
+
+LOKI transform_name carrier:
+- `src/ess/livedata/config/instruments/loki/factories.py` — replace
+  `LOKI_DYNAMIC_TRANSFORMS` (the old `TransformValueStream` dict) with a
+  stripped-down `dict[str, str]` (source_name → transform_name). Pass it to
+  `DetectorViewFactory` via a new constructor kwarg `transform_names:
+  dict[str, str]`. The `aux_stream` field of `TransformValueStream` is no
+  longer needed (its role is taken by `ContextInput.stream_name`).
+- `src/ess/livedata/config/instruments/loki/specs.py:43-51,27,277` — delete
+  `LOKI_DYNAMIC_TRANSFORMS`, the `DetectorROIAuxSources` import, and the
+  `aux_sources=DetectorROIAuxSources(dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS)`
+  kwarg.
+
+Legacy deletions (now safe because the new path is live):
+- `src/ess/livedata/handlers/detector_view_specs.py` — delete the entire
+  `DetectorROIAuxSources` class (lines 485-577). In `register_detector_view_spec`
+  (line 583+), drop the `aux_sources` keyword argument and the default
+  `aux_sources if aux_sources is not None else DetectorROIAuxSources()`
+  (line 685). Reword the docstring at lines 609-612.
+- `src/ess/livedata/config/instruments/dream/specs.py:26,206` — drop the
+  `DetectorROIAuxSources` import and the `aux_sources=DetectorROIAuxSources()`
+  kwarg.
+- `src/ess/livedata/config/instrument.py:411-428` — drop the
+  `DetectorROIAuxSources()` instantiation in the `_register_detector_views`
+  helper.
+- `src/ess/livedata/config/instruments/bifrost/specs.py:183-198` — delete
+  `bifrost_aux_sources`.
+- `src/ess/livedata/config/instruments/bifrost/specs.py:317,328,339` — drop
+  `aux_sources=bifrost_aux_sources` from the three qmap-family `register_spec`
+  calls.
+
+YAGNI cleanup:
+- `src/ess/livedata/dashboard/plotter_registry.py:89-120` — delete
+  `SpecRequirements.requires_aux_sources`. No production `register_plotter`
+  call uses it; the only references are in the test cases deleted below.
+  Flag in the commit message.
+
+Test updates:
+- `tests/handlers/detector_view_specs_test.py` — delete `TestDetectorROIAuxSources`
+  (line 230+) and the four `DetectorROIAuxSources()` direct-construction sites
+  (lines 102, 162, 198, 210). Behavioural coverage of ROI seeding lands in
+  the new JobFactory-level tests in this commit.
+- `tests/dashboard/plotting_controller_test.py:140-205` — delete the four
+  `SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])` test cases.
+- `tests/services/data_reduction_test.py:218-263`
+  (`test_bifrost_qmap_drops_events_until_rotation_arrives`) — at line 247
+  the test passes `spec.aux_sources.get_defaults()` into
+  `WorkflowConfig.aux_source_names`. After `bifrost_aux_sources` deletion,
+  `spec.aux_sources is None` and the test should pass `aux_source_names={}`.
+  The rotation streams now flow into the gate via
+  `instrument.context_inputs` (in place since B1).
+- New tests in `tests/core/job_manager_test.py` (or a dedicated file)
+  covering: `JobFactory.create` building `context_keys` from instrument +
+  spec ContextInput; seed_factory firing through `on_schedule_seed`; the
+  ROI cold-start case opening the gate at tick 1.
 
 Validation: full fast suite + `test_bifrost_qmap_drops_events_until_rotation_arrives`
-slow test + ROI/detector-view tests.
+slow test + ROI/detector-view tests. This commit is large by design; the
+plan keeps it as one atomic change to avoid an intermediate state where
+ContextInput is consumed AND legacy AuxSources still fires (which would
+cause double-seeding for ROI).
 
 ### B5 — Rename Job.context_aux_stream_names → Job.context_stream_names
 
@@ -350,18 +391,21 @@ Validation: `pytest -n auto -q`.
 ## Sequencing rationale
 
 - B1-B2 are additive and risk-free. Each is safe to land alone.
-- B3 introduces all the new declarations and removes the deprecated aux-sources
-  classes that overlap with them, but does NOT yet swap the gate-set source.
-  ROI/bifrost continue to work via the legacy path. The diff is large but
-  the bulk is mechanical deletions.
-- B4 is the one behavioural swap: gate set + seeds now come from ContextInput.
-  Tests still pass because B3 already declared every entry through the new
-  path.
-- B5 renames the field — moved earlier than the previous draft so B6's
-  cleanup uses the final name.
-- B6 deletes the dead carriers.
-- B7 unblocks routing for non-ROI ContextInput (this is the bifrost/LOKI
-  production-readiness blocker — flagged in ADR 0003 as a hard co-requirement,
+- B3 is purely additive: new ContextInput records are added alongside the
+  legacy AuxSources subclasses. JobFactory still consumes the legacy path; the
+  new records are inert. Behaviour is unchanged.
+- B4 is the atomic swap. JobFactory switches to consume ContextInput records,
+  the legacy `Workflow.context_keys` / `AuxSources.initial_context_messages`
+  consumption is removed, and the now-unused AuxSources subclasses + kwargs +
+  factory parameters are deleted in one commit. Splitting "switch" from
+  "delete" would create a state where legacy seeding still fires alongside
+  the new path, causing double-seeded ROI accumulators.
+- B5 renames the field — done after B4 so the renamed code lands once,
+  cleanly.
+- B6 deletes the dead protocol/method stubs (`Workflow.context_keys`,
+  `AuxSources.initial_context_messages`) that nothing consumes after B4.
+- B7 unblocks routing for non-ROI ContextInput (the bifrost/LOKI
+  production-readiness blocker, flagged in ADR 0003 as a hard co-requirement,
   not a follow-up).
 - B8 adds the validation backstop.
 
