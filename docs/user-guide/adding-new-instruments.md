@@ -292,6 +292,56 @@ To enable development without real detector data, define pixel ID ranges in the 
 - Use these when running services with the `--dev` flag
 - This configuration is optional and only needed if you plan to use fake data generators
 
+## f144 Log Streams
+
+f144 streams carry NXlog metadata (motor positions, temperatures, idle flags, ...) that the instrument publishes alongside detector and monitor data. They are declared as a path-keyed `dict[str, F144Stream]` named `PARSED_STREAMS` in an auto-generated module `streams_parsed.py`, and attached to the `Instrument` via the `streams=` argument.
+
+### Generating `streams_parsed.py`
+
+`streams_parsed.py` is generated from a coda HDF5 file (a snapshot of the upstream instrument configuration). Run:
+
+```sh
+python -m ess.livedata.nexus_helpers <coda.hdf> --generate \
+    --output src/ess/livedata/config/instruments/<instrument>/streams_parsed.py
+```
+
+The file is committed to the repo and treated as source. Coda HDF5 files are not checked in (they are large and lag upstream), so this is a manual step — regenerate and commit whenever the upstream geometry/configuration changes meaningfully.
+
+The generator can also restrict the output to a single Kafka topic (`--topic <name>`) and skip paths matching a regex (`--exclude <pattern>`, repeatable). The header records the source file and a `do not edit by hand` warning.
+
+### Wiring into `specs.py`
+
+Import `PARSED_STREAMS`, convert to a name-keyed dict with `name_streams`, and pass to `Instrument`:
+
+```python
+from ess.livedata.config import Instrument, instrument_registry, name_streams
+from .streams_parsed import PARSED_STREAMS
+
+streams = name_streams(PARSED_STREAMS)
+
+instrument = Instrument(
+    name='instrument_name',
+    detector_names=[...],
+    monitors=[...],
+    streams=streams,
+)
+```
+
+`name_streams` derives short, unique names from the NeXus paths (e.g. `/entry/instrument/.../value` -> `..._value`). When the auto-suggested name is unsuitable, override it via `rename`, keyed by `nexus_path`:
+
+```python
+streams = name_streams(
+    PARSED_STREAMS,
+    rename={
+        '/entry/instrument/detector_carriage/value': 'detector_carriage',
+    },
+)
+```
+
+A `ValueError` is raised if a rename key doesn't match any parsed entry or if the resulting names are not unique — both indicate the coda file changed and the rename map needs updating.
+
+A standard time-series histogram workflow is auto-registered for every f144 stream via `Instrument.__post_init__`, so no additional spec registration is needed for these to appear in the dashboard.
+
 ## Detector Configuration in Factories
 
 In `factories.py`, configure detectors with `detector_number` arrays.

@@ -3,8 +3,7 @@
 """Service that processes logdata into timeseries for plotting."""
 
 import logging
-from collections.abc import Mapping
-from typing import Any, NoReturn
+from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
@@ -12,6 +11,7 @@ from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
 from ess.livedata.kafka.chopper_synthesizer import ChopperSynthesizer
+from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
@@ -22,7 +22,6 @@ def make_timeseries_service_builder(
     instrument: str,
     dev: bool = True,
     log_level: int = logging.INFO,
-    attribute_registry: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     instrument_obj = instrument_registry[instrument]
@@ -39,10 +38,7 @@ def make_timeseries_service_builder(
         .build()
     )
     service_name = 'timeseries'
-    preprocessor_factory = LogdataHandlerFactory(
-        instrument=instrument_obj,
-        attribute_registry=attribute_registry,
-    )
+    preprocessor_factory = LogdataHandlerFactory(instrument=instrument_obj)
     # The default batcher processes messages in batches, not emitting messages unless
     # the current batch is considered "complete", by the first message after the batch
     # interval arriving. This works for monitor and detector processing (including for
@@ -50,6 +46,7 @@ def make_timeseries_service_builder(
     # service). However, this service processes only logs, where that logic would
     # indefinitely withhold the last log message. We use the NaiveMessageBatcher here,
     # which emits messages as soon as they arrive.
+    devices = instrument_obj.devices
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -63,7 +60,9 @@ def make_timeseries_service_builder(
         # scaffolding for an upstream-side gap (the producer does not yet
         # publish a ``chopper_cascade_reached`` f144); when it does, drop
         # the wrapper and the workflow becomes a plain f144 consumer.
-        outer_source_wrapper=ChopperSynthesizer,
+        outer_source_wrapper=lambda src: DeviceSynthesizer(
+            ChopperSynthesizer(src), devices=devices
+        ),
     )
 
 

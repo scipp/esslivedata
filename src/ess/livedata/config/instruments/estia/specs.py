@@ -8,7 +8,12 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
+from ess.livedata.config import (
+    Instrument,
+    SourceMetadata,
+    instrument_registry,
+    name_streams,
+)
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -16,6 +21,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
+from .streams_parsed import PARSED_STREAMS
 from .views import get_multiblade_view
 
 detector_names = ['multiblade_detector']
@@ -179,31 +185,15 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
     )
 
 
-# f144 log streams for ESTIA. The detector rotation is the only time-dependent
-# transformation in the multiblade detector's depends_on chain; sample-detector
-# distance is invariant under this rotation, so the value is currently exposed
-# only for plotting, not for geometry. The PV channel ``.RBV`` (readback) is
-# taken from ``coda_estia_999999_00027641.hdf`` under
-# ``/entry/instrument/detector_arm/detector_rotation/value`` (NXpositioner).
-# The same positioner also publishes ``.VAL`` (setpoint) and ``.DMOV``
-# (done-moving) on the same topic; not exposed here.
-f144_log_streams = {
-    'detector_rotation': {
-        'source': 'ESTIA-DtRot:MC-RotZ01:Mtr.RBV',
-        'topic': 'estia_motion',
-        'units': 'deg',
-    },
-}
+streams = name_streams(PARSED_STREAMS)
 
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=['cbm1'],
-    f144_attribute_registry={
-        name: {'units': info['units']} for name, info in f144_log_streams.items()
-    },
+    streams=streams,
     source_metadata={
-        'detector_rotation': SourceMetadata(
+        'detector_rotation/value': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),

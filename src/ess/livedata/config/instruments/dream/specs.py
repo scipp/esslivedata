@@ -10,7 +10,12 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
+from ess.livedata.config import (
+    Instrument,
+    SourceMetadata,
+    instrument_registry,
+    name_streams,
+)
 from ess.livedata.config.workflow_spec import (
     DETECTORS,
     AuxInput,
@@ -27,8 +32,17 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
-from .streams import detector_names, monitor_names
+from .streams_parsed import PARSED_STREAMS
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
+
+monitor_names = ['monitor_bunker', 'monitor_cave']
+detector_names = [
+    'mantle_detector',
+    'endcap_backward_detector',
+    'endcap_forward_detector',
+    'high_resolution_detector',
+    'sans_detector',
+]
 
 
 # Pydantic models for DREAM instrument configuration
@@ -89,6 +103,7 @@ instrument = Instrument(
     name='dream',
     detector_names=detector_names,
     monitors=monitor_names,
+    streams=name_streams(PARSED_STREAMS),
     source_metadata={
         'mantle_detector': SourceMetadata(
             title='Mantle',

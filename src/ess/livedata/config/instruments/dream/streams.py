@@ -7,10 +7,12 @@ DREAM instrument stream mapping configuration.
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-
-# Source names matching NeXus group names (single source of truth)
-monitor_names = ['monitor_bunker', 'monitor_cave']
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
+from .specs import detector_names, instrument, monitor_names
 
 detector_fakes = {
     'mantle_detector': (229377, 720896),
@@ -19,7 +21,6 @@ detector_fakes = {
     'high_resolution_detector': (1122337, 1523680),  # Note: Not consecutive!
     'sans_detector': (720929, 1122272),
 }
-detector_names = list(detector_fakes)
 
 
 def _make_dream_detectors() -> StreamLUT:
@@ -46,12 +47,16 @@ def _make_dream_detectors() -> StreamLUT:
 
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'dream', detector_names=detector_names, monitor_names=monitor_names
+        'dream',
+        detector_names=detector_names,
+        monitor_names=monitor_names,
+        log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(
             instrument='dream', monitor_names=monitor_names
         ),
         detectors=_make_dream_detectors(),
+        logs=make_f144_log_lut(instrument),
     ),
 }

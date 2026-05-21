@@ -17,6 +17,10 @@ def gather_source_names(
 ) -> set[str]:
     """Collect internal stream names that specs in ``namespace`` depend on.
 
+    :class:`Device` references are expanded into the underlying substream
+    names, since devices are synthesised in-process from those substreams
+    and the Kafka subscription needs the substream topics.
+
     Parameters
     ----------
     instrument:
@@ -32,6 +36,13 @@ def gather_source_names(
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
+    devices = instrument.devices
+    for name in list(names):
+        device = devices.get(name)
+        if device is None:
+            continue
+        names.discard(name)
+        names.update(device.substream_names)
     return names
 
 

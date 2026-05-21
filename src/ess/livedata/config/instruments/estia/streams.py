@@ -2,13 +2,15 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """ESTIA instrument stream mapping configuration."""
 
-from ess.livedata import StreamKind
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from .._ess import _make_livedata_topics, make_dev_stream_mapping
-from .specs import f144_log_streams, instrument
+from .._ess import (
+    make_common_stream_mapping_inputs,
+    make_dev_stream_mapping,
+    make_f144_log_lut,
+)
+from .specs import instrument
 
 # Fake detector configuration: detector_name -> (first_id, last_id)
 # ESTIA multiblade detector has 98,304 pixels with IDs 98305-196608
@@ -24,33 +26,20 @@ def _make_estia_detectors() -> StreamLUT:
     }
 
 
-def _make_estia_logs() -> StreamLUT:
-    """ESTIA log data mapping (f144 streams)."""
-    return {
-        InputStreamKey(topic=info['topic'], source_name=info['source']): internal_name
-        for internal_name, info in f144_log_streams.items()
-    }
-
-
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'estia',
         detector_names=list(detector_fakes),
         monitor_names=instrument.monitors,
-        log_names=list(instrument.f144_attribute_registry.keys()),
+        log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
-        monitors={
-            InputStreamKey(
-                topic=stream_kind_to_topic(
-                    instrument='estia', kind=StreamKind.MONITOR_EVENTS
-                ),
-                source_name='cbm1',
-            ): 'cbm1'
-        },
-        instrument='estia',
+        **make_common_stream_mapping_inputs(
+            instrument='estia',
+            monitor_names=instrument.monitors,
+            cbm_start=1,
+        ),
         detectors=_make_estia_detectors(),
-        logs=_make_estia_logs(),
-        **_make_livedata_topics('estia'),
+        logs=make_f144_log_lut(instrument),
     ),
 }

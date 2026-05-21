@@ -1,0 +1,398 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Auto-generated NeXus f144 stream declarations.
+
+Do not edit by hand. Regenerate with
+``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
+
+Source: coda_nmx_999999_00002449.hdf
+"""
+
+from ess.livedata.config import F144Stream
+
+PARSED_STREAMS: dict[str, F144Stream] = {
+    '/entry/instrument/WLS-1_chopper/delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/delay',
+        source='NMX-ChpSy1:Chop-WLS-101:TotDly',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-1_chopper/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/experiment_delay',
+        source='NMX-ChpSy1:Chop-WLS-101:ChopDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-1_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/mechanical_delay',
+        source='NMX-ChpSy1:Chop-WLS-101:MechDly-S',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-1_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/park_angle',
+        source='NMX-ChpSy1:Chop-WLS-101:Pos_R',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-1_chopper/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/pulse_delay',
+        source='NMX-ChpSy1:Chop-WLS-101:BeamPosDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-1_chopper/rotation_speed': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/rotation_speed',
+        source='NMX-ChpSy1:Chop-WLS-101:Spd_R',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/WLS-1_chopper/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/WLS-1_chopper/rotation_speed_setpoint',
+        source='NMX-ChpSy1:Chop-WLS-101:Spd_S',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/WLS-2A_chopper/delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/delay',
+        source='NMX-ChpSy1:Chop-WLS-201:TotDly',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2A_chopper/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/experiment_delay',
+        source='NMX-ChpSy1:Chop-WLS-201:ChopDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2A_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/mechanical_delay',
+        source='NMX-ChpSy1:Chop-WLS-201:MechDly-S',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-2A_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/park_angle',
+        source='NMX-ChpSy1:Chop-WLS-201:Pos_R',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-2A_chopper/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/pulse_delay',
+        source='NMX-ChpSy1:Chop-WLS-201:BeamPosDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2A_chopper/rotation_speed': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/rotation_speed',
+        source='NMX-ChpSy1:Chop-WLS-201:Spd_R',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/WLS-2A_chopper/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/WLS-2A_chopper/rotation_speed_setpoint',
+        source='NMX-ChpSy1:Chop-WLS-201:Spd_S',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/WLS-2B_chopper/delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/delay',
+        source='NMX-ChpSy1:Chop-WLS-202:TotDly',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2B_chopper/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/experiment_delay',
+        source='NMX-ChpSy1:Chop-WLS-202:ChopDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2B_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/mechanical_delay',
+        source='NMX-ChpSy1:Chop-WLS-202:MechDly-S',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-2B_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/park_angle',
+        source='NMX-ChpSy1:Chop-WLS-202:Pos_R',
+        topic='nmx_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/WLS-2B_chopper/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/pulse_delay',
+        source='NMX-ChpSy1:Chop-WLS-202:BeamPosDly-S',
+        topic='nmx_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/WLS-2B_chopper/rotation_speed': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/rotation_speed',
+        source='NMX-ChpSy1:Chop-WLS-202:Spd_R',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/WLS-2B_chopper/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/WLS-2B_chopper/rotation_speed_setpoint',
+        source='NMX-ChpSy1:Chop-WLS-202:Spd_S',
+        topic='nmx_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis1': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis1',
+        source='SIM_nmx:detector_panel_0:transformations:axis1',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis2': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis2',
+        source='SIM_nmx:detector_panel_0:transformations:axis2',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis3': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis3',
+        source='SIM_nmx:detector_panel_0:transformations:axis3',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis4': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis4',
+        source='SIM_nmx:detector_panel_0:transformations:axis4',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis5': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis5',
+        source='SIM_nmx:detector_panel_0:transformations:axis5',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/axis6': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/axis6',
+        source='SIM_nmx:detector_panel_0:transformations:axis6',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_0/transformations/stageZ': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_0/transformations/stageZ',
+        source='SIM_nmx:detector_panel_0:transformations:stageZ',
+        topic='nmx_motion',
+        units='m',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis1': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis1',
+        source='SIM_nmx:detector_panel_1:transformations:axis1',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis2': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis2',
+        source='SIM_nmx:detector_panel_1:transformations:axis2',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis3': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis3',
+        source='SIM_nmx:detector_panel_1:transformations:axis3',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis4': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis4',
+        source='SIM_nmx:detector_panel_1:transformations:axis4',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis5': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis5',
+        source='SIM_nmx:detector_panel_1:transformations:axis5',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/axis6': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/axis6',
+        source='SIM_nmx:detector_panel_1:transformations:axis6',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_1/transformations/stageZ': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_1/transformations/stageZ',
+        source='SIM_nmx:detector_panel_1:transformations:stageZ',
+        topic='nmx_motion',
+        units='m',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis1': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis1',
+        source='SIM_nmx:detector_panel_2:transformations:axis1',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis2': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis2',
+        source='SIM_nmx:detector_panel_2:transformations:axis2',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis3': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis3',
+        source='SIM_nmx:detector_panel_2:transformations:axis3',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis4': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis4',
+        source='SIM_nmx:detector_panel_2:transformations:axis4',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis5': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis5',
+        source='SIM_nmx:detector_panel_2:transformations:axis5',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/axis6': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/axis6',
+        source='SIM_nmx:detector_panel_2:transformations:axis6',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/instrument/detector_panel_2/transformations/stageZ': F144Stream(
+        nexus_path='/entry/instrument/detector_panel_2/transformations/stageZ',
+        source='SIM_nmx:detector_panel_2:transformations:stageZ',
+        topic='nmx_motion',
+        units='m',
+    ),
+    '/entry/instrument/pinhole_exchanger/transformations/translation_x': F144Stream(
+        nexus_path='/entry/instrument/pinhole_exchanger/transformations/translation_x',
+        source='SIM_nmx:pinhole_exchanger:transformations:translation_x',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/instrument/pinhole_exchanger/transformations/translation_y': F144Stream(
+        nexus_path='/entry/instrument/pinhole_exchanger/transformations/translation_y',
+        source='SIM_nmx:pinhole_exchanger:transformations:translation_y',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/instrument/slit_1/x_gap': F144Stream(
+        nexus_path='/entry/instrument/slit_1/x_gap',
+        source='SIM_nmx:instrument:slit_1:x_gap',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/instrument/slit_1/y_gap': F144Stream(
+        nexus_path='/entry/instrument/slit_1/y_gap',
+        source='SIM_nmx:instrument:slit_1:y_gap',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/instrument/slit_2/x_gap': F144Stream(
+        nexus_path='/entry/instrument/slit_2/x_gap',
+        source='SIM_nmx:instrument:slit_2:x_gap',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/instrument/slit_2/y_gap': F144Stream(
+        nexus_path='/entry/instrument/slit_2/y_gap',
+        source='SIM_nmx:instrument:slit_2:y_gap',
+        topic='nmx_motion',
+        units='mm',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
+        source='CrS-CMS:Cryo-TT-82025:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82027_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
+        source='CrS-CMS:Cryo-TT-82027:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82029_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
+        source='CrS-CMS:Cryo-TT-82029:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82031_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
+        source='CrS-CMS:Cryo-TT-82031:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/cryo_tt_82033_temperature': F144Stream(
+        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
+        source='CrS-CMS:Cryo-TT-82033:MeasValue',
+        topic='tn_data_general',
+        units='K',
+    ),
+    '/entry/neutron_prod_info/flat_top_current': F144Stream(
+        nexus_path='/entry/neutron_prod_info/flat_top_current',
+        source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/neutron_prod_info/fsm_machine_active': F144Stream(
+        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
+        source='CrS-CMS:SC-FSM-007x:STS_Active',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/neutron_prod_info/pulse_charge': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_charge',
+        source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/neutron_prod_info/pulse_width': F144Stream(
+        nexus_path='/entry/neutron_prod_info/pulse_width',
+        source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
+        topic='tn_data_general',
+        units='ms',
+    ),
+    '/entry/sample/temperature': F144Stream(
+        nexus_path='/entry/sample/temperature',
+        source='SIM_nmx:entry:sample:temperature',
+        topic='nmx_sample_env',
+        units='K',
+    ),
+    '/entry/sample/transformations/axis1': F144Stream(
+        nexus_path='/entry/sample/transformations/axis1',
+        source='SIM_nmx:sample:transformations:axis1',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/axis2': F144Stream(
+        nexus_path='/entry/sample/transformations/axis2',
+        source='SIM_nmx:sample:transformations:axis2',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/axis3': F144Stream(
+        nexus_path='/entry/sample/transformations/axis3',
+        source='SIM_nmx:sample:transformations:axis3',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/axis4': F144Stream(
+        nexus_path='/entry/sample/transformations/axis4',
+        source='SIM_nmx:sample:transformations:axis4',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/axis5': F144Stream(
+        nexus_path='/entry/sample/transformations/axis5',
+        source='SIM_nmx:sample:transformations:axis5',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+    '/entry/sample/transformations/axis6': F144Stream(
+        nexus_path='/entry/sample/transformations/axis6',
+        source='SIM_nmx:sample:transformations:axis6',
+        topic='nmx_motion',
+        units='degrees',
+    ),
+}

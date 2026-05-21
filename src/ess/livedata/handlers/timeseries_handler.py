@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import scipp as sc
 import structlog
 
-from ..core.handler import JobBasedPreprocessorFactoryBase
-from ..core.message import StreamId
+from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
+from ..core.message import StreamId, StreamKind
 from .accumulators import LogData
-from .to_nxlog import ToNXlog
+from .to_nxlog import ToNXlog, nxlog_for_stream
 from .wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 from .workflow_factory import Workflow
 
@@ -20,16 +20,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-#: Attributes used by ``ToNXlog`` for synthetic LOG streams that are not real
-#: upstream f144s and therefore not in :attr:`Instrument.f144_attribute_registry`
-#: (registering them there would also register unwanted timeseries workflows).
-#: The ``chopper_cascade`` tick from :class:`ChopperSynthesizer` is the only
-#: such stream today; its value is a boolean "at setpoint" indicator and
-#: carries no unit (distinct from ``'dimensionless'``, which a number with
-#: cancelled units would have).
-_SYNTHETIC_LOG_ATTRS: dict[str, dict[str, Any]] = {
-    CHOPPER_CASCADE_SOURCE: {},
-}
+#: Source names for synthetic LOG streams that are not real upstream f144s and
+#: are therefore not declared in :attr:`Instrument.streams`. The
+#: ``chopper_cascade`` tick from :class:`ChopperSynthesizer` is the only such
+#: stream today; its value is a boolean "at setpoint" indicator and carries no
+#: unit (distinct from ``'dimensionless'``, which a number with cancelled units
+#: would have).
+_SYNTHETIC_LOG_SOURCES: frozenset[str] = frozenset({CHOPPER_CASCADE_SOURCE})
 
 
 class TimeseriesStreamProcessor(Workflow):
@@ -73,55 +70,29 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
     """
     Factory for creating handlers for log data.
 
-    This factory creates a handler that accumulates log data and returns it as a
-    DataArray.
+    Stream metadata (units etc.) is read from :attr:`Instrument.streams`. Sources
+    in :data:`_SYNTHETIC_LOG_SOURCES` are accepted as unit-less streams without a
+    corresponding stream record.
     """
 
-    def __init__(
-        self,
-        *,
-        instrument: Instrument,
-        attribute_registry: dict[str, dict[str, Any]] | None = None,
-    ) -> None:
-        """
-        Initialize the LogdataHandlerFactory.
-
-        Parameters
-        ----------
-        instrument:
-            The name of the instrument.
-        attribute_registry:
-            A dictionary mapping source names to attributes. This provides essential
-            attributes for the values and timestamps in the log data. Log messages do
-            not contain this information, so it must be provided externally.
-            The keys of the dictionary are source names, and the values are dictionaries
-            containing the attributes as they would be found in the fields of an NXlog
-            class in a NeXus file.
-        """
+    def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
-        if attribute_registry is None:
-            self._attribute_registry = instrument.f144_attribute_registry
-        else:
-            self._attribute_registry = attribute_registry
 
-    def make_preprocessor(self, key: StreamId) -> ToNXlog | None:
-        source_name = key.name
-        attrs = self._attribute_registry.get(source_name)
-        if attrs is None:
-            attrs = _SYNTHETIC_LOG_ATTRS.get(source_name)
-        if attrs is None:
-            logger.warning(
-                "No attributes found for source name '%s'. Messages will be dropped.",
-                source_name,
-            )
-            return None
-
-        try:
-            return ToNXlog(attrs=attrs)
-        except Exception:
-            logger.exception(
-                "Failed to create NXlog for source name '%s'. "
-                "Messages will be dropped.",
-                source_name,
-            )
-            return None
+    def make_preprocessor(self, key: StreamId) -> Accumulator | None:
+        match key.kind:
+            case StreamKind.DEVICE:
+                return nxlog_for_stream(self._instrument.streams.get(key.name))
+            case StreamKind.LOG:
+                accumulator = nxlog_for_stream(self._instrument.streams.get(key.name))
+                if accumulator is not None:
+                    return accumulator
+                if key.name in _SYNTHETIC_LOG_SOURCES:
+                    return ToNXlog(attrs={})
+                logger.warning(
+                    "No attributes found for source name '%s'. "
+                    "Messages will be dropped.",
+                    key.name,
+                )
+                return None
+            case _:
+                return None

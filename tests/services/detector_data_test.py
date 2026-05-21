@@ -69,9 +69,18 @@ def test_can_configure_and_stop_detector_workflow(
     assert len(sink.messages) == 0
 
     if instrument == 'loki':
-        # LOKI rear bank consumes the f144 detector_carriage position;
-        # the workflow refuses to produce output until a value is seen.
-        app.publish_log_message(source_name='detector_carriage', time=1, value=5000.0)
+        # LOKI rear bank consumes the merged detector_carriage device stream;
+        # the synthesizer emits only after all three substreams (RBV, VAL,
+        # DMOV) have been observed at least once.
+        app.publish_log_message(
+            source_name='detector_carriage/target_value', time=1, value=5000.0
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/idle_flag', time=1, value=1
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/value', time=1, value=5000.0
+        )
     # Each workflow call returns 10 results by default: cumulative, current,
     # counts_total, counts_in_toa, counts_total_cumulative,
     # counts_in_toa_range_cumulative, roi_spectra_cumulative,
