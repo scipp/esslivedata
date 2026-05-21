@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
+from typing import ClassVar
 
 import pytest
 import scipp as sc
@@ -12,6 +13,7 @@ from ess.livedata.config.workflow_spec import (
     AuxInput,
     AuxSources,
     JobId,
+    OutputView,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -224,110 +226,6 @@ class TestWorkflowSpecOutputs:
 
         # Should be different instances (not the same mutable object)
         assert template1 is not template2
-
-
-class TestGetOutputTitle:
-    """Tests for WorkflowSpec.get_output_title()."""
-
-    def test_returns_title_when_defined(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='I(d)')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('result') == 'I(d)'
-
-    def test_falls_back_to_field_name_when_no_title(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='No title set')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('result') == 'result'
-
-    def test_falls_back_to_output_name_for_missing_field(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='Result')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_title('nonexistent') == 'nonexistent'
-
-
-class TestGetOutputDescription:
-    """Tests for WorkflowSpec.get_output_description()."""
-
-    def test_returns_description_when_defined(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='A detailed description.')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('result') == 'A detailed description.'
-
-    def test_returns_none_when_no_description(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(title='Result')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('result') is None
-
-    def test_returns_none_for_missing_field(self) -> None:
-        class TestOutputs(WorkflowOutputsBase):
-            result: sc.DataArray = Field(description='Exists')
-
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-            outputs=TestOutputs,
-            group=REDUCTION,
-        )
-        assert spec.get_output_description('nonexistent') is None
 
 
 class TestWorkflowConfigAuxSourceNames:
@@ -840,3 +738,156 @@ class TestFindTimeseriesOutputs:
         # Only workflow_id_1 has timeseries outputs
         assert len(results) == 1
         assert (workflow_id_1, 'src1', 'delta') in results
+
+
+class TestOutputViews:
+    """Tests for OutputView declaration and resolution."""
+
+    def test_default_fallback_one_view_per_field(self) -> None:
+        """Outputs without ``output_views`` get one view per pydantic field."""
+
+        class Outputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(title='I(Q)')
+            transmission: sc.DataArray = Field(title='Transmission')
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        views = spec.get_output_views()
+        assert [v.name for v in views] == ['result', 'transmission']
+        assert [v.title for v in views] == ['I(Q)', 'Transmission']
+        # Default fallback maps the field via `since_start`.
+        assert views[0].streams == {'since_start': 'result'}
+
+    def test_declared_views_take_precedence(self) -> None:
+        """When ``output_views`` is declared, it overrides the fallback."""
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='histogram',
+                    title='Histogram',
+                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                ),
+            )
+            cumulative: sc.DataArray = Field(title='cumulative-field')
+            current: sc.DataArray = Field(title='current-field')
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        views = spec.get_output_views()
+        assert [v.name for v in views] == ['histogram']
+        assert views[0].title == 'Histogram'
+
+    def test_get_output_view_returns_none_for_unknown(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field()
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        assert spec.get_output_view('nonexistent') is None
+
+    def test_get_output_template_via_view(self) -> None:
+        """``get_output_template`` resolves a view name to its backing field."""
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='histogram',
+                    title='Histogram',
+                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                ),
+            )
+            cumulative: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[3], unit='counts')
+                )
+            )
+            current: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[3], unit='counts')
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        template = spec.get_output_template('histogram')
+        assert template is not None
+        assert template.dims == ('x',)
+
+    def test_validator_rejects_duplicate_view_titles(self) -> None:
+        """Two views sharing the same title fail validation."""
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='a', title='Same', streams={'since_start': 'field_a'}),
+                OutputView(name='b', title='Same', streams={'since_start': 'field_b'}),
+            )
+            field_a: sc.DataArray = Field()
+            field_b: sc.DataArray = Field()
+
+        with pytest.raises(ValueError, match='unique'):
+            WorkflowSpec(
+                instrument='test',
+                name='wf',
+                version=1,
+                title='T',
+                description='D',
+                outputs=Outputs,
+                params=None,
+                group=REDUCTION,
+            )
+
+    def test_validator_accepts_unique_view_titles(self) -> None:
+        """Two views with distinct titles are accepted."""
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='a', title='A', streams={'since_start': 'field_a'}),
+                OutputView(name='b', title='B', streams={'since_start': 'field_b'}),
+            )
+            field_a: sc.DataArray = Field()
+            field_b: sc.DataArray = Field()
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        assert [v.title for v in spec.get_output_views()] == ['A', 'B']

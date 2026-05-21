@@ -56,15 +56,15 @@ class PlottingController:
         self._roi_publisher = roi_publisher
 
     def get_available_plotters_from_spec(
-        self, workflow_spec: WorkflowSpec, output_name: str
+        self, workflow_spec: WorkflowSpec, view_name: str
     ) -> tuple[dict[str, PlotterSpec], bool]:
         """
         Get available plotters based on workflow spec template (before data exists).
 
-        Uses the output template DataArray from the workflow specification to
-        determine compatible plotters. The template is an "empty" DataArray with
-        the expected structure (dims, coords, units) that allows full validation
-        including custom validators.
+        Uses the view's backing template DataArray from the workflow
+        specification to determine compatible plotters. The template is an
+        "empty" DataArray with the expected structure (dims, coords, units)
+        that allows full validation including custom validators.
 
         Also checks spec requirements (e.g., aux_sources for ROI support) to filter
         out plotters that require features not supported by the workflow spec.
@@ -76,8 +76,8 @@ class PlottingController:
         ----------
         workflow_spec:
             WorkflowSpec object containing output templates.
-        output_name:
-            The name of the output to get plotters for.
+        view_name:
+            The name of the output view to get plotters for.
 
         Returns
         -------
@@ -86,12 +86,12 @@ class PlottingController:
             all registered plotters are returned as a fallback, and the caller
             should warn the user that some plotters may not work with the data.
         """
-        template = workflow_spec.get_output_template(output_name)
+        template = workflow_spec.get_output_template(view_name)
         if template is None:
             return plotter_registry.get_specs(), False
         return (
             plotter_registry.get_compatible_plotters_with_spec(
-                {output_name: template}, workflow_spec.aux_sources
+                {view_name: template}, workflow_spec.aux_sources
             ),
             True,
         )
@@ -261,27 +261,17 @@ class PlottingController:
         return plotter
 
 
-def output_has_time_coord(workflow_spec: WorkflowSpec, output_name: str) -> bool:
-    """Check whether a workflow output includes a ``time`` coordinate.
+def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
+    """Return whether a window-mode choice (latest/window) is meaningful.
 
-    Parameters
-    ----------
-    workflow_spec:
-        Workflow specification to inspect.
-    output_name:
-        Name of the output field.
-
-    Returns
-    -------
-    :
-        ``True`` if the output template contains a ``time`` coordinate or if
-        no template is available (assume windowing is supported). ``False``
-        for cumulative outputs that lack a ``time`` coordinate.
+    Windowing is meaningful when the view exposes a ``per_update`` stream.
+    Views that are cumulative-only (e.g. ``I(Q)``) lock the mode to
+    ``since_start``.
     """
-    template = workflow_spec.get_output_template(output_name)
-    if template is None:
+    view = workflow_spec.get_output_view(view_name)
+    if view is None:
         return True
-    return 'time' in template.coords
+    return 'per_update' in view.streams
 
 
 def create_extractors_from_params(
@@ -313,18 +303,20 @@ def create_extractors_from_params(
         extractor_type = spec.data_requirements.required_extractor
         return {key: extractor_type() for key in keys}
 
-    # No fixed requirement - check if window params provided
-    if window is not None:
-        if window.mode == WindowMode.latest:
-            return {key: LatestValueExtractor() for key in keys}
-        else:  # mode == WindowMode.window
-            return {
-                key: WindowAggregatingExtractor(
-                    window_duration_seconds=window.window_duration_seconds,
-                    aggregation=window.aggregation,
-                )
-                for key in keys
-            }
-
-    # Fallback to latest value extractor
+    # No fixed requirement - check if window params provided.
+    # `since_start` and window mode with duration==0 both reduce to taking the
+    # most recent value of the subscribed stream (stream choice is encoded in
+    # the ResultKey). Only window mode with duration>0 needs aggregation.
+    if (
+        window is not None
+        and window.mode is WindowMode.window
+        and window.window_duration_seconds > 0
+    ):
+        return {
+            key: WindowAggregatingExtractor(
+                window_duration_seconds=window.window_duration_seconds,
+                aggregation=window.aggregation,
+            )
+            for key in keys
+        }
     return {key: LatestValueExtractor() for key in keys}

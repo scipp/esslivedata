@@ -32,10 +32,20 @@ class TestCreateExtractorsFromParams:
         assert all(isinstance(ext, LatestValueExtractor) for ext in extractors.values())
         assert set(extractors.keys()) == {'key1', 'key2'}
 
-    def test_create_latest_value_extractors_with_window_mode_latest(self):
-        """Test creation of LatestValueExtractor when window mode is 'latest'."""
+    def test_create_latest_value_extractors_when_window_duration_zero(self):
+        """Window mode with duration=0 reduces to LatestValueExtractor."""
         keys = ['key1']
-        window = WindowParams(mode=WindowMode.latest)
+        window = WindowParams(mode=WindowMode.window, window_duration_seconds=0.0)
+
+        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+
+        assert len(extractors) == 1
+        assert isinstance(extractors['key1'], LatestValueExtractor)
+
+    def test_create_latest_value_extractors_with_since_start_mode(self):
+        """since_start mode uses LatestValueExtractor on the cumulative stream."""
+        keys = ['key1']
+        window = WindowParams(mode=WindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -65,7 +75,7 @@ class TestCreateExtractorsFromParams:
     def test_spec_required_extractor_overrides_window_params(self):
         """Test that plotter spec's required extractor overrides window params."""
         keys = ['key1', 'key2']
-        window = WindowParams(mode=WindowMode.latest)
+        window = WindowParams(mode=WindowMode.since_start)
 
         # Create mock spec with required extractor
         spec = Mock()
@@ -94,7 +104,7 @@ class TestCreateExtractorsFromParams:
     def test_creates_extractors_for_all_keys(self):
         """Test that extractors are created for all provided keys."""
         keys = ['result1', 'result2', 'result3']
-        window = WindowParams(mode=WindowMode.latest)
+        window = WindowParams(mode=WindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -105,7 +115,7 @@ class TestCreateExtractorsFromParams:
     def test_empty_keys_returns_empty_dict(self):
         """Test that empty keys list returns empty extractors dict."""
         keys = []
-        window = WindowParams(mode=WindowMode.latest)
+        window = WindowParams(mode=WindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 

@@ -821,7 +821,7 @@ class TestEditMode:
                 'primary': DataSourceConfig(
                     workflow_id=workflow_id,
                     source_names=['source1'],
-                    output_name='result',
+                    view_name='result',
                 )
             },
             plot_name='lines',

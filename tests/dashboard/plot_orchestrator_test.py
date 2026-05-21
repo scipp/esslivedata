@@ -276,7 +276,7 @@ def make_plot_config(
     data_source = DataSourceConfig(
         workflow_id=workflow_id,
         source_names=source_names,
-        output_name=output_name,
+        view_name=output_name,
     )
     return PlotConfig(
         data_sources={PRIMARY: data_source},
@@ -571,7 +571,7 @@ class TestCellManagement:
 
         retrieved_config = plot_orchestrator.get_layer_config(new_layer_id)
         assert retrieved_config == new_config
-        assert retrieved_config.output_name == 'new_output'
+        assert retrieved_config.view_name == 'new_output'
 
     def test_add_multiple_cells_to_same_grid(self, plot_orchestrator, workflow_id):
         """Add multiple cells to same grid."""
@@ -661,7 +661,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
+                output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -697,7 +697,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
+                output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -753,7 +753,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                     source_name=config.source_names[0],
                     job_number=job_number,
                 ),
-                output_name=config.output_name,
+                output_name=config.view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -937,7 +937,7 @@ class TestLifecycleEventNotifications:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
+                output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1310,7 +1310,7 @@ class TestCellRetrieval:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
+                output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1476,7 +1476,7 @@ class TestCellRetrieval:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number1),
-                output_name=config.output_name,
+                output_name=config.view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1541,7 +1541,7 @@ class TestCellRetrieval:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
+                output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1766,7 +1766,7 @@ class TestPlotConfigIsStatic:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],  # Empty source_names = static
-            output_name='My Custom Overlay',
+            view_name='My Custom Overlay',
         )
         config = PlotConfig(
             data_sources={PRIMARY: data_source},
@@ -1784,7 +1784,7 @@ class TestPlotConfigIsStatic:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['source1'],
-            output_name='result',
+            view_name='result',
         )
         config = PlotConfig(
             data_sources={PRIMARY: data_source},
@@ -1809,12 +1809,12 @@ class TestPlotConfigIsStatic:
         data_source1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],
-            output_name='output1',
+            view_name='output1',
         )
         data_source2 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],
-            output_name='output2',
+            view_name='output2',
         )
         config = PlotConfig(
             data_sources={PRIMARY: data_source1, X_AXIS: data_source2},
@@ -1830,14 +1830,14 @@ class TestPlotConfigIsStatic:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],
-            output_name='My Rectangles',
+            view_name='My Rectangles',
         )
         config = PlotConfig(
             data_sources={PRIMARY: data_source},
             plot_name='rectangles',
             params=FakePlotParams(),
         )
-        assert config.output_name == 'My Rectangles'
+        assert config.view_name == 'My Rectangles'
 
 
 class TestDataSubscriptionCleanup:
@@ -1927,7 +1927,7 @@ class TestPlotAfterWorkflowStopped:
             key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=config.output_name,
+                output_name=config.view_name,
             )
             fake_data_service[key] = sc.scalar(1.0)
 

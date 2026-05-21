@@ -293,7 +293,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             data_sources={
                 PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
-                    output_name='histogram',
+                    view_name='histogram',
                     source_names=['monitor1', 'monitor2'],
                 )
             },
@@ -309,13 +309,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Add another cell in the same grid with different params
         params2 = PlotParams1d(
-            window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+            window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
         )
         plot_config2 = PlotConfig(
             data_sources={
                 PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
-                    output_name='spectrum',
+                    view_name='spectrum',
                     source_names=['monitor1'],
                 )
             },
@@ -336,7 +336,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             data_sources={
                 PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
-                    output_name='output3',
+                    view_name='output3',
                     source_names=['monitor2'],
                 )
             },
@@ -389,7 +389,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell1_restored.geometry.row_span == 1
         assert cell1_restored.geometry.col_span == 1
         assert cell1_restored.layers[0].config.workflow_id == workflow_id
-        assert cell1_restored.layers[0].config.output_name == 'histogram'
+        assert cell1_restored.layers[0].config.view_name == 'histogram'
         assert cell1_restored.layers[0].config.source_names == ['monitor1', 'monitor2']
         assert cell1_restored.layers[0].config.plot_name == 'lines'
         # Params are validated and restored as model
@@ -398,7 +398,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         # Verify second cell configuration
         assert cell2_restored.geometry.row == 0
         assert cell2_restored.geometry.col == 1
-        assert cell2_restored.layers[0].config.output_name == 'spectrum'
+        assert cell2_restored.layers[0].config.view_name == 'spectrum'
         assert cell2_restored.layers[0].config.source_names == ['monitor1']
         assert cell2_restored.layers[0].config.params == params2
 
@@ -410,7 +410,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Verify third cell configuration
         cell3_restored = next(iter(grid2_restored.cells.values()))
-        assert cell3_restored.layers[0].config.output_name == 'output3'
+        assert cell3_restored.layers[0].config.view_name == 'output3'
         assert cell3_restored.layers[0].config.source_names == ['monitor2']
         assert cell3_restored.layers[0].config.params == params3
 
@@ -465,7 +465,7 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
             data_sources={
                 PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
-                    output_name='image',
+                    view_name='image',
                     source_names=['monitor1'],
                 )
             },
@@ -529,7 +529,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         data_sources={
             PRIMARY: DataSourceConfig(
                 workflow_id=workflow_id,
-                output_name='histogram',
+                view_name='histogram',
                 source_names=['monitor1'],
             )
         },
@@ -538,13 +538,13 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
     )
 
     params2 = PlotParams1d(
-        window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+        window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
     )
     config2 = PlotConfig(
         data_sources={
             PRIMARY: DataSourceConfig(
                 workflow_id=workflow_id,
-                output_name='spectrum',
+                view_name='spectrum',
                 source_names=['monitor2'],
             )
         },
@@ -600,10 +600,10 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         restored_layer1 = restored_cell.layers[0]
         restored_layer2 = restored_cell.layers[1]
 
-        assert restored_layer1.config.output_name == 'histogram'
+        assert restored_layer1.config.view_name == 'histogram'
         assert restored_layer1.config.source_names == ['monitor1']
         assert restored_layer1.config.params == params1
 
-        assert restored_layer2.config.output_name == 'spectrum'
+        assert restored_layer2.config.view_name == 'spectrum'
         assert restored_layer2.config.source_names == ['monitor2']
         assert restored_layer2.config.params == params2

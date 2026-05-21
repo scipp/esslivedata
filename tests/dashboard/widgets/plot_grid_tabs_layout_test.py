@@ -158,7 +158,7 @@ def _inject_layer(
             'primary': DataSourceConfig(
                 workflow_id=WorkflowId(instrument='test', name='wf', version=1),
                 source_names=['src'],
-                output_name='result',
+                view_name='result',
             )
         },
         plot_name='image',

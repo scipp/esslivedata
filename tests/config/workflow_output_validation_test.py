@@ -187,7 +187,12 @@ def test_workflow_outputs_match_declared_model(
     # Validate each declared output
     validation_errors = []
     for output_name in output_names:
-        template = spec.get_output_template(output_name)
+        field_info = spec.outputs.model_fields.get(output_name)
+        template = (
+            field_info.default_factory()
+            if field_info is not None and field_info.default_factory
+            else None
+        )
         if template is None:
             validation_errors.append(f"'{output_name}': no template defined")
             continue

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 if TYPE_CHECKING:
     from .detector_view.types import TransformValueStream
@@ -31,6 +31,7 @@ from ..config.workflow_spec import (
     AuxInput,
     AuxSources,
     JobId,
+    OutputView,
     WorkflowOutputsBase,
 )
 from ..handlers.workflow_factory import SpecHandle
@@ -198,19 +199,52 @@ def _make_0d_template_with_time() -> sc.DataArray:
     return _make_nd_template(0, with_time_coord=True)
 
 
+_BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
+    OutputView(
+        name='image',
+        title='Image',
+        streams={'since_start': 'cumulative', 'per_update': 'current'},
+        description=(
+            'Detector image. With "since run start" shows accumulated counts; '
+            'with "latest update" or a window, shows recent counts.'
+        ),
+    ),
+    OutputView(
+        name='total_counts',
+        title='Total',
+        streams={
+            'since_start': 'counts_total_cumulative',
+            'per_update': 'counts_total',
+        },
+        description='Total number of detector events.',
+    ),
+    OutputView(
+        name='total_in_range',
+        title='Total in range',
+        streams={
+            'since_start': 'counts_in_toa_range_cumulative',
+            'per_update': 'counts_in_toa_range',
+        },
+        description=('Number of detector events within the configured range filter.'),
+    ),
+)
+
+
 class DetectorViewOutputsBase(WorkflowOutputsBase):
     """Base outputs for detector view workflows (without ROI support)."""
 
-    # Field names are legacy identifiers kept for compatibility with existing
-    # workflow templates and serialized configs. Titles are user-facing names.
+    output_views: ClassVar[tuple[OutputView, ...]] = _BASE_DETECTOR_VIEWS
+
+    # Field names are kept stable as wire-format identifiers (ResultKey, da00
+    # serialisation) and are referenced by ``output_views``.
 
     cumulative: sc.DataArray = pydantic.Field(
-        title='Image (cumulative)',
+        title='Image',
         description='Detector image accumulated since the start of the run.',
         default_factory=_make_2d_template,
     )
     current: sc.DataArray = pydantic.Field(
-        title='Image (current)',
+        title='Image update',
         description=(
             'Detector image for the latest update interval only. '
             'Resets each update interval.'
@@ -218,14 +252,14 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         default_factory=_make_2d_template_with_time,
     )
     counts_total_cumulative: sc.DataArray = pydantic.Field(
-        title='Total (cumulative)',
+        title='Total',
         description=(
             'Total number of detector events accumulated since the start of the run.'
         ),
         default_factory=_make_0d_template,
     )
     counts_total: sc.DataArray = pydantic.Field(
-        title='Total (current)',
+        title='Total (update)',
         description=(
             'Total number of detector events for the latest update interval only. '
             'Resets each update interval.'
@@ -233,7 +267,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         default_factory=_make_0d_template_with_time,
     )
     counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
-        title='Total in interval (cumulative)',
+        title='Total in range',
         description=(
             'Number of detector events within the configured range filter '
             'accumulated since the start of the run.'
@@ -241,7 +275,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         default_factory=_make_0d_template,
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
-        title='Total in interval (current)',
+        title='Total in range (update)',
         description=(
             'Number of detector events within the configured range filter '
             'for the latest update interval only. Resets each update interval.'
@@ -253,9 +287,34 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
 class DetectorViewOutputs(DetectorViewOutputsBase):
     """Outputs for detector view workflows with ROI support."""
 
+    output_views: ClassVar[tuple[OutputView, ...]] = (
+        *_BASE_DETECTOR_VIEWS,
+        OutputView(
+            name='roi_spectra',
+            title='ROI spectra',
+            streams={
+                'since_start': 'roi_spectra_cumulative',
+                'per_update': 'roi_spectra_current',
+            },
+            description='Histogram for each active ROI region.',
+        ),
+        OutputView(
+            name='roi_rectangle',
+            title='ROI Rectangles (readback)',
+            streams={'since_start': 'roi_rectangle'},
+            description='Current rectangle ROI geometries confirmed by backend.',
+        ),
+        OutputView(
+            name='roi_polygon',
+            title='ROI Polygons (readback)',
+            streams={'since_start': 'roi_polygon'},
+            description='Current polygon ROI geometries confirmed by backend.',
+        ),
+    )
+
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
     roi_spectra_cumulative: sc.DataArray = pydantic.Field(
-        title='ROI spectra (cumulative)',
+        title='ROI spectra',
         description=(
             'Histogram for each active ROI region '
             'accumulated since the start of the run.'
@@ -266,7 +325,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         ),
     )
     roi_spectra_current: sc.DataArray = pydantic.Field(
-        title='ROI spectra (current)',
+        title='ROI spectra update',
         description=(
             'Histogram for each active ROI region '
             'for the latest update interval only. Resets each update interval.'
@@ -369,8 +428,19 @@ def make_detector_view_outputs(
 
         title = spectrum_view.output_title
         description = spectrum_view.output_description
+        base_views = tuple(base_class.output_views)
 
         class _WithSpectrum(base_class):  # type: ignore[valid-type,misc]
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                *base_views,
+                OutputView(
+                    name='spectrum_view',
+                    title=title,
+                    streams={'since_start': 'spectrum_view'},
+                    description=description,
+                ),
+            )
+
             spectrum_view: sc.DataArray = pydantic.Field(
                 title=title,
                 description=description,

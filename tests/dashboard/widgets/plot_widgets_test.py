@@ -23,32 +23,28 @@ class _FakeParams(pydantic.BaseModel):
 
 
 class TestFormatWindowInfo:
-    def test_returns_empty_when_supports_windowing_false(self) -> None:
-        params = _FakeParams()
-        assert _format_window_info(params, supports_windowing=False) == ''
+    def test_returns_since_run_start_for_since_start_mode(self) -> None:
+        params = _FakeParams(window=WindowParams(mode=WindowMode.since_start))
+        assert _format_window_info(params) == 'since run start'
 
-    def test_returns_latest_for_latest_mode(self) -> None:
-        params = _FakeParams(window=WindowParams(mode=WindowMode.latest))
-        assert _format_window_info(params) == 'latest'
-
-    def test_returns_window_info_for_window_mode(self) -> None:
+    def test_returns_empty_for_window_mode(self) -> None:
+        """Window mode shows no static label; data range comes from the plot."""
         params = _FakeParams(
             window=WindowParams(mode=WindowMode.window, window_duration_seconds=10)
         )
-        assert _format_window_info(params) == '10s window'
+        assert _format_window_info(params) == ''
+
+    def test_returns_empty_for_window_mode_zero_duration(self) -> None:
+        params = _FakeParams(
+            window=WindowParams(mode=WindowMode.window, window_duration_seconds=0)
+        )
+        assert _format_window_info(params) == ''
 
     def test_returns_empty_when_no_window_attr(self) -> None:
         class NoWindowParams(pydantic.BaseModel):
             pass
 
         assert _format_window_info(NoWindowParams()) == ''
-
-    def test_supports_windowing_false_overrides_window_mode(self) -> None:
-        """Even with window mode set, supports_windowing=False returns empty."""
-        params = _FakeParams(
-            window=WindowParams(mode=WindowMode.window, window_duration_seconds=5)
-        )
-        assert _format_window_info(params, supports_windowing=False) == ''
 
 
 class TestGetPlotCellDisplayInfo:
@@ -83,7 +79,7 @@ class TestGetPlotCellDisplayInfo:
                 PRIMARY: DataSourceConfig(
                     workflow_id=wf_id,
                     source_names=['src1'],
-                    output_name='cumulative',
+                    view_name='cumulative',
                 )
             },
             plot_name='lines',
@@ -95,8 +91,8 @@ class TestGetPlotCellDisplayInfo:
         assert 'latest' not in title
         assert 'window' not in title
 
-    def test_current_output_shows_window_info(self) -> None:
-        """Toolbar title should show window mode for outputs with time coord."""
+    def test_since_start_mode_shows_label_in_title(self) -> None:
+        """Toolbar title should show 'since run start' label for since_start mode."""
 
         class CurrentOutputs(WorkflowOutputsBase):
             current: sc.DataArray = pydantic.Field(
@@ -129,12 +125,12 @@ class TestGetPlotCellDisplayInfo:
                 PRIMARY: DataSourceConfig(
                     workflow_id=wf_id,
                     source_names=['src1'],
-                    output_name='current',
+                    view_name='current',
                 )
             },
             plot_name='lines',
-            params=_FakeParams(),
+            params=_FakeParams(window=WindowParams(mode=WindowMode.since_start)),
         )
 
         title, _ = get_plot_cell_display_info(config, registry)
-        assert 'latest' in title
+        assert 'since run start' in title

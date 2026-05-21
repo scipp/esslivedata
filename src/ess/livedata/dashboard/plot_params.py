@@ -11,9 +11,15 @@ import pydantic
 
 
 class WindowMode(enum.StrEnum):
-    """Enumeration of extraction modes."""
+    """Enumeration of extraction modes.
 
-    latest = 'latest'
+    - ``since_start``: latest cumulative value (subscribes to the
+      ``since_start`` stream of the selected output view).
+    - ``window``: the most recent per-update value, optionally with prior
+      updates aggregated over an additional lookback window.
+    """
+
+    since_start = 'since_start'
     window = 'window'
 
 
@@ -193,16 +199,22 @@ class WindowParams(pydantic.BaseModel):
     """Parameters for windowing and aggregation."""
 
     mode: WindowMode = pydantic.Field(
-        default=WindowMode.latest,
-        description="Extraction mode: 'latest' for single frame (typically accumulated "
-        "for 1 second), 'window' for aggregation over multiple frames.",
+        default=WindowMode.window,
+        description=(
+            "Extraction mode: 'since_start' for the cumulative value since the "
+            "run started, 'window' for the most recent update plus optional "
+            "lookback over prior updates."
+        ),
         title="Mode",
     )
     window_duration_seconds: float = pydantic.Field(
-        default=1.0,
-        description="Time duration to aggregate in window mode (seconds).",
+        default=0.0,
+        description=(
+            "Additional history to aggregate alongside the latest update "
+            "(seconds). 0 means only the latest update."
+        ),
         title="Window Duration (s)",
-        ge=0.1,
+        ge=0.0,
         le=60.0,
     )
     aggregation: WindowAggregation = pydantic.Field(
@@ -277,12 +289,28 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
+_WINDOW_DESCRIPTION = (
+    "The live reduction emits a new result roughly once per second "
+    "(longer for heavy workflows or under heavy load). The window "
+    "duration sets how much recent history the dashboard aggregates "
+    "for display; it does not affect what or how often the reduction "
+    "emits."
+    "<br><br>"
+    "The window duration is a target, not a guarantee: the aggregation "
+    "time range always covers at least one cadence interval, and will "
+    "differ from the requested duration when it does not align with "
+    "the reduction's current cadence. To compare values across "
+    "different cadences or window durations, enable 'Counts Per Second' "
+    "in the 'Rate' tab."
+)
+
+
 class PlotParams1d(PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -295,7 +323,7 @@ class PlotParams2d(PlotDisplayParams2d):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -308,7 +336,7 @@ class PlotParams3d(PlotParamsBase):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
@@ -339,7 +367,7 @@ class PlotParamsBars(PlotParamsBase):
 
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+        description=_WINDOW_DESCRIPTION,
     )
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,

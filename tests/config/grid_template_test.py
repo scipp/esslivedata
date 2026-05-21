@@ -32,7 +32,7 @@ def _make_plot_cell(
         data_sources={
             PRIMARY: DataSourceConfig(
                 workflow_id=WorkflowId.from_string('test/wf/1'),
-                output_name='output',
+                view_name='output',
                 source_names=['source1'],
             )
         },

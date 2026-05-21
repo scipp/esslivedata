@@ -13,7 +13,7 @@ cells:
   - data_sources:
       primary:
         workflow_id: bifrost/detector_data/unified_detector_view/1
-        output_name: spectrum_view
+        view_name: spectrum_view
         source_names:
         - unified_detector
     plot_name: slicer

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, TypeVar
+from typing import Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -21,15 +21,51 @@ T = TypeVar('T')
 
 JobNumber = uuid.UUID
 
+StreamRole = Literal['since_start', 'per_update']
+
+
+@dataclass(frozen=True)
+class OutputView:
+    """A user-facing output bundling one or more backend streams.
+
+    Each view represents a single quantity (e.g. "Histogram", "Total")
+    that may be observed over different time windows. The ``streams`` mapping
+    binds time-window *roles* to the backend pydantic field names that carry
+    that view of the data — ``since_start`` for run-cumulative streams and
+    ``per_update`` for per-update streams. Window mode (selected by the user)
+    determines which role is subscribed to.
+    """
+
+    name: str
+    title: str
+    streams: Mapping[StreamRole, str]
+    description: str | None = None
+
+    def field_for(self, role: StreamRole) -> str:
+        """Return the backend field name for the requested role.
+
+        Falls back to the other declared role when the requested role is
+        absent — handles views that only expose one role (e.g. cumulative-
+        only quantities).
+        """
+        if (field_name := self.streams.get(role)) is not None:
+            return field_name
+        other: StreamRole = 'per_update' if role == 'since_start' else 'since_start'
+        return self.streams[other]
+
 
 class WorkflowOutputsBase(BaseModel):
     """Base class for all workflow output models.
 
     Provides common configuration for output models, including support for
-    arbitrary types like scipp.DataArray.
+    arbitrary types like scipp.DataArray. Subclasses may declare
+    ``output_views`` as a ``ClassVar`` to bundle pydantic fields into
+    user-facing views. When absent, a single view is derived per field.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    output_views: ClassVar[tuple[OutputView, ...]] = ()
 
 
 class DefaultOutputs(WorkflowOutputsBase):
@@ -281,23 +317,22 @@ class WorkflowSpec(BaseModel):
     @field_validator('outputs', mode='after')
     @classmethod
     def validate_unique_output_titles(cls, outputs: type[BaseModel]) -> type[BaseModel]:
-        """Validate that output titles are unique within the workflow."""
+        """Validate that user-facing view titles are unique within the workflow."""
+        views = _resolve_output_views(outputs)
         title_counts: dict[str, list[str]] = defaultdict(list)
-        for field_name, field_info in outputs.model_fields.items():
-            title = field_info.title if field_info.title is not None else field_name
-            title_counts[title].append(field_name)
+        for view in views:
+            title_counts[view.title].append(view.name)
 
         duplicates = {
-            title: fields for title, fields in title_counts.items() if len(fields) > 1
+            title: names for title, names in title_counts.items() if len(names) > 1
         }
-
         if duplicates:
             dup_str = ", ".join(
-                f"'{title}' (fields: {', '.join(fields)})"
-                for title, fields in duplicates.items()
+                f"'{title}' (views: {', '.join(names)})"
+                for title, names in duplicates.items()
             )
             raise ValueError(
-                f"Output titles must be unique within a workflow. "
+                f"Output view titles must be unique within a workflow. "
                 f"Duplicate titles found: {dup_str}"
             )
 
@@ -315,72 +350,40 @@ class WorkflowSpec(BaseModel):
             version=self.version,
         )
 
-    def get_output_title(self, output_name: str) -> str:
-        """Get human-readable title for an output field name.
+    def get_output_views(self) -> Sequence[OutputView]:
+        """Return the user-facing output views for this workflow.
 
-        Parameters
-        ----------
-        output_name:
-            Name of the output field.
-
-        Returns
-        -------
-        :
-            The field's title if defined, otherwise the raw output_name.
+        Falls back to one view per pydantic field (with ``since_start`` role)
+        when the outputs class does not declare ``output_views``.
         """
-        if self.outputs is not None:
-            field_info = self.outputs.model_fields.get(output_name)
-            if field_info is not None and field_info.title is not None:
-                return field_info.title
-        return output_name
+        return _resolve_output_views(self.outputs)
 
-    def get_output_description(self, output_name: str) -> str | None:
-        """Get description for an output field.
-
-        Parameters
-        ----------
-        output_name:
-            Name of the output field.
-
-        Returns
-        -------
-        :
-            The field's description if defined, otherwise None.
-        """
-        if self.outputs is not None:
-            field_info = self.outputs.model_fields.get(output_name)
-            if field_info is not None:
-                return field_info.description
+    def get_output_view(self, view_name: str) -> OutputView | None:
+        """Return the named output view, or None if not found."""
+        for view in self.get_output_views():
+            if view.name == view_name:
+                return view
         return None
 
-    def get_output_template(self, output_name: str) -> sc.DataArray | None:
+    def get_output_template(self, view_name: str) -> sc.DataArray | None:
+        """Get a template DataArray for the specified output view.
+
+        Returns the ``default_factory`` template of the view's canonical
+        backing field (``since_start`` if present, else ``per_update``).
+        Templates are empty DataArrays demonstrating the expected structure
+        (dims, coords, units), used by the dashboard for plotter selection
+        before any data has arrived.
+
+        Returns None if the view is unknown or its canonical field has no
+        ``default_factory``.
         """
-        Get a template DataArray for the specified output.
-
-        Returns a DataArray created by the field's default_factory. By convention,
-        this should be an empty DataArray (shape=0) that demonstrates the expected
-        structure (dims, coords, units) of the workflow output.
-
-        Parameters
-        ----------
-        output_name:
-            Name of the output field.
-
-        Returns
-        -------
-        :
-            DataArray created by the field's default_factory, or None if the field
-            is not found or has no default_factory defined.
-        """
-        field_info = self.outputs.model_fields.get(output_name)
-        if field_info is None:
+        view = self.get_output_view(view_name)
+        if view is None:
             return None
-
-        # Call the factory to get a fresh template
-        if field_info.default_factory:
-            return field_info.default_factory()
-
-        return None
+        field_info = self.outputs.model_fields.get(view.field_for('since_start'))
+        if field_info is None or not field_info.default_factory:
+            return None
+        return field_info.default_factory()
 
 
 @dataclass
@@ -529,15 +532,38 @@ def _is_timeseries_output(da: sc.DataArray) -> bool:
     return da.ndim == 0 and 'time' in da.coords
 
 
+def _resolve_output_views(outputs: type[BaseModel]) -> tuple[OutputView, ...]:
+    """Return the declared ``output_views`` or a default one-view-per-field set.
+
+    When an outputs class does not declare ``output_views``, each pydantic
+    field becomes its own view: the bare field name is used as both the
+    view name and (via ``since_start``) the backing field. This keeps
+    reduction-style Outputs classes working without annotation.
+    """
+    declared = getattr(outputs, 'output_views', ())
+    if declared:
+        return tuple(declared)
+    return tuple(
+        OutputView(
+            name=field_name,
+            title=(field_info.title or field_name),
+            streams={'since_start': field_name},
+            description=field_info.description,
+        )
+        for field_name, field_info in outputs.model_fields.items()
+    )
+
+
 def find_timeseries_outputs(
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
 ) -> list[tuple[WorkflowId, str, str]]:
     """
-    Find all timeseries outputs in the workflow registry.
+    Find all timeseries output views in the workflow registry.
 
-    A timeseries output is a 0-D DataArray with a 'time' coordinate.
-    This is determined by checking the default_factory template of each
-    output field in the workflow spec.
+    A timeseries output is a 0-D DataArray with a 'time' coordinate. The
+    backing field for each ``per_update`` (or ``since_start``) stream of an
+    output view is inspected; views whose backing field templates match are
+    reported by view name.
 
     Parameters
     ----------
@@ -547,9 +573,9 @@ def find_timeseries_outputs(
     Returns
     -------
     :
-        List of (workflow_id, source_name, output_name) tuples for all
-        timeseries outputs found. Each source_name from the workflow's
-        source_names list is paired with each timeseries output_name.
+        List of (workflow_id, source_name, view_name) tuples for all
+        timeseries views found. Each source_name from the workflow's
+        source_names list is paired with each timeseries view name.
     """
     results: list[tuple[WorkflowId, str, str]] = []
 
@@ -557,23 +583,20 @@ def find_timeseries_outputs(
         if spec.outputs is None:
             continue
 
-        # Find timeseries output fields
-        timeseries_outputs: list[str] = []
-        for field_name, field_info in spec.outputs.model_fields.items():
-            if not field_info.default_factory:
-                continue
-            try:
-                template = field_info.default_factory()
-                if _is_timeseries_output(template):
-                    timeseries_outputs.append(field_name)
-            except Exception:  # noqa: S112
-                continue
+        timeseries_views: list[str] = []
+        for view in spec.get_output_views():
+            for field_name in view.streams.values():
+                field_info = spec.outputs.model_fields.get(field_name)
+                if field_info is None or not field_info.default_factory:
+                    continue
+                if _is_timeseries_output(field_info.default_factory()):
+                    timeseries_views.append(view.name)
+                    break
 
-        # Create entries for each source_name x output combination
         results.extend(
-            (workflow_id, source_name, output_name)
+            (workflow_id, source_name, view_name)
             for source_name in spec.source_names
-            for output_name in timeseries_outputs
+            for view_name in timeseries_views
         )
 
     return results

@@ -76,8 +76,8 @@ def _resolve_axis_source_titles(
     instrument_config:
         Instrument config to resolve source names to titles.
     workflow_registry:
-        Optional registry used to look up output titles. When provided and the
-        workflow has multiple outputs, the output title is appended to the source
+        Optional registry used to look up view titles. When provided and the
+        workflow has multiple views, the view title is appended to the source
         title to disambiguate (e.g. "Cave Monitor (wavelength)").
 
     Returns
@@ -94,13 +94,10 @@ def _resolve_axis_source_titles(
             title = instrument_config.get_source_title(source_name)
             if workflow_registry is not None:
                 spec = workflow_registry.get(ds.workflow_id)
-                if (
-                    spec is not None
-                    and spec.outputs is not None
-                    and len(spec.outputs.model_fields) > 1
-                ):
-                    output_title = spec.get_output_title(ds.output_name)
-                    title = f"{title} ({output_title})"
+                if spec is not None and len(spec.get_output_views()) > 1:
+                    view = spec.get_output_view(ds.view_name)
+                    view_title = view.title if view is not None else ds.view_name
+                    title = f"{title} ({view_title})"
             result[field_name] = title
     return result
 
@@ -121,22 +118,22 @@ def _resolve_output_display_hints(
     *,
     is_static: bool,
     workflow_spec: WorkflowSpec | None,
-    output_name: str,
+    view_name: str,
 ) -> OutputDisplayHints:
-    """Derive UI hints from the workflow output template.
+    """Derive UI hints from the workflow output view.
 
-    Inspects the output template once and returns all decisions that depend
-    on its properties (dimensionality, coordinates, etc.).
+    Inspects the view's backing template once and returns all decisions
+    that depend on its properties (dimensionality, declared stream roles).
 
     Parameters
     ----------
     is_static:
         Whether the plot uses a static overlay workflow.
     workflow_spec:
-        Workflow specification for the selected output. May be ``None``
+        Workflow specification for the selected view. May be ``None``
         for static overlays.
-    output_name:
-        Name of the output field.
+    view_name:
+        Name of the selected output view.
 
     Returns
     -------
@@ -145,13 +142,15 @@ def _resolve_output_display_hints(
     """
     if is_static:
         return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
-    from ess.livedata.dashboard.plotting_controller import output_has_time_coord
+    from ess.livedata.dashboard.plotting_controller import (
+        output_view_supports_windowing,
+    )
 
-    supports_windowing = output_has_time_coord(workflow_spec, output_name)
+    supports_windowing = output_view_supports_windowing(workflow_spec, view_name)
     hidden = frozenset({'window'}) if not supports_windowing else frozenset()
 
     template = (
-        workflow_spec.get_output_template(output_name)
+        workflow_spec.get_output_template(view_name)
         if workflow_spec is not None
         else None
     )
@@ -199,7 +198,7 @@ def _build_timeseries_options(
     Parameters
     ----------
     available_timeseries:
-        (workflow_id, source_name, output_name) tuples.
+        (workflow_id, source_name, view_name) tuples.
     workflow_registry:
         Registry to look up workflow specs.
     instrument_config:
@@ -208,10 +207,10 @@ def _build_timeseries_options(
     Returns
     -------
     :
-        Mapping of display name to (workflow_id, source_name, output_name).
+        Mapping of display name to (workflow_id, source_name, view_name).
     """
     options: dict[str, tuple[WorkflowId, str, str]] = {}
-    for workflow_id, source_name, output_name in available_timeseries:
+    for workflow_id, source_name, view_name in available_timeseries:
         spec = workflow_registry.get(workflow_id)
         workflow_title = spec.title if spec else workflow_id.name
         if instrument_config is not None:
@@ -219,22 +218,13 @@ def _build_timeseries_options(
         else:
             source_title = source_name
         display_name = f"{workflow_title}: {source_title}"
-        # Append output name only when the workflow has multiple outputs,
-        # to disambiguate which output is being selected.
-        has_multiple_outputs = (
-            spec is not None
-            and spec.outputs is not None
-            and len(spec.outputs.model_fields) > 1
-        )
-        if has_multiple_outputs:
-            output_field = spec.outputs.model_fields.get(output_name) if spec else None
-            output_title = (
-                output_field.title
-                if output_field is not None and output_field.title
-                else output_name
-            )
-            display_name = f"{display_name} ({output_title})"
-        options[display_name] = (workflow_id, source_name, output_name)
+        # Append view title only when the workflow has multiple views,
+        # to disambiguate which view is being selected.
+        if spec is not None and len(spec.get_output_views()) > 1:
+            view = spec.get_output_view(view_name)
+            view_title = view.title if view is not None else view_name
+            display_name = f"{display_name} ({view_title})"
+        options[display_name] = (workflow_id, source_name, view_name)
     return options
 
 
@@ -247,13 +237,13 @@ def _find_initial_axis_value(
     if role not in initial_axis_sources:
         return None
     initial_ds = initial_axis_sources[role]
-    for wf_id, src_name, out_name in options.values():
+    for wf_id, src_name, view_name in options.values():
         if (
             wf_id == initial_ds.workflow_id
             and src_name in initial_ds.source_names
-            and out_name == initial_ds.output_name
+            and view_name == initial_ds.view_name
         ):
-            return (wf_id, src_name, out_name)
+            return (wf_id, src_name, view_name)
     return None
 
 
@@ -262,7 +252,7 @@ class OutputSelection:
     """Output from output selection step."""
 
     workflow_id: WorkflowId
-    output_name: str
+    view_name: str
 
 
 @dataclass
@@ -270,7 +260,7 @@ class PlotterSelection:
     """Output from plotter selection step."""
 
     workflow_id: WorkflowId
-    output_name: str
+    view_name: str
     plot_name: str
     axis_sources: dict[str, DataSourceConfig] | None = None
 
@@ -298,7 +288,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._initial_config = initial_config
         self._selected_group: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
-        self._selected_output: str | None = None
+        self._selected_view: str | None = None
 
         # Initialize containers
         self._content_container = pn.Column(sizing_mode='stretch_width')
@@ -365,12 +355,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._selected_workflow_id = initial_config.workflow_id
                 self._workflow_buttons.value = initial_config.workflow_id
                 self._update_output_options()
-                self._selected_output = initial_config.output_name
+                self._selected_view = initial_config.view_name
                 # Set the appropriate widget value based on whether static overlay
                 if initial_config.is_static():
-                    self._name_input.value = initial_config.output_name
+                    self._name_input.value = initial_config.view_name
                 else:
-                    self._output_buttons.value = initial_config.output_name
+                    self._output_buttons.value = initial_config.view_name
             elif self._group_buttons.options:
                 # New mode: select first available option
                 group_value = next(iter(self._group_buttons.options.values()))
@@ -388,7 +378,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                             output_value = next(
                                 iter(self._output_buttons.options.values())
                             )
-                            self._selected_output = output_value
+                            self._selected_view = output_value
                             self._output_buttons.value = output_value
 
         # Bind handlers after initial values are set
@@ -462,7 +452,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             if event.new is not None:
                 self._selected_group = event.new
                 self._selected_workflow_id = None
-                self._selected_output = None
+                self._selected_view = None
                 self._update_workflow_options()
                 # Select first workflow and trigger output update
                 if self._workflow_buttons.options:
@@ -476,12 +466,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                         and self._output_buttons.options
                     ):
                         first_output = next(iter(self._output_buttons.options.values()))
-                        self._selected_output = first_output
+                        self._selected_view = first_output
                         self._output_buttons.value = first_output
             else:
                 self._selected_group = None
                 self._selected_workflow_id = None
-                self._selected_output = None
+                self._selected_view = None
         self._update_workflow_description()
         self._validate()
 
@@ -491,7 +481,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         with pn.io.hold():
             if event.new is not None:
                 self._selected_workflow_id = event.new
-                self._selected_output = None
+                self._selected_view = None
                 self._update_output_options()
                 # Skip auto-selection for static overlays (user must enter name)
                 if (
@@ -499,20 +489,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                     and self._output_buttons.options
                 ):
                     first_output = next(iter(self._output_buttons.options.values()))
-                    self._selected_output = first_output
+                    self._selected_view = first_output
                     self._output_buttons.value = first_output
             else:
                 self._selected_workflow_id = None
-                self._selected_output = None
+                self._selected_view = None
         self._update_workflow_description()
         self._validate()
 
     def _on_output_change(self, event) -> None:
         """Handle output selection change."""
         if event.new is not None:
-            self._selected_output = event.new
+            self._selected_view = event.new
         else:
-            self._selected_output = None
+            self._selected_view = None
         self._update_output_description()
         self._validate()
 
@@ -533,10 +523,13 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def _update_output_description(self) -> None:
         """Update the output description pane for the selected output."""
         desc = None
-        if self._selected_workflow_id is not None and self._selected_output is not None:
+        if self._selected_workflow_id is not None and self._selected_view is not None:
             spec = self._workflow_registry.get(self._selected_workflow_id)
-            if spec is not None:
-                desc = spec.get_output_description(self._selected_output)
+            view = (
+                spec.get_output_view(self._selected_view) if spec is not None else None
+            )
+            if view is not None:
+                desc = view.description
         if desc:
             self._output_description.object = desc
             self._output_description.visible = True
@@ -548,7 +541,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         """Handle static overlay name input change."""
         name = event.new.strip() if event.new else ''
         # Store non-empty name, or None if empty/whitespace
-        self._selected_output = name if name else None
+        self._selected_view = name if name else None
         self._validate()
 
     def _update_workflow_options(self) -> None:
@@ -601,15 +594,14 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._output_buttons.options = {}
             return
 
-        output_fields = workflow_spec.outputs.model_fields
-        if not output_fields:
+        views = workflow_spec.get_output_views()
+        if not views:
             self._output_buttons.options = {}
             return
 
-        # Field definition order is intentional: spec authors put the primary output
-        # first, as it will be auto-selected when the wizard opens.
-        options = {workflow_spec.get_output_title(name): name for name in output_fields}
-        self._output_buttons.options = options
+        # View declaration order is intentional: spec authors put the primary
+        # view first, as it will be auto-selected when the wizard opens.
+        self._output_buttons.options = {view.title: view.name for view in views}
 
     def _update_content(self) -> None:
         """Update content with group selector above workflow/output columns."""
@@ -645,25 +637,25 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         is_valid = (
             self._selected_group is not None
             and self._selected_workflow_id is not None
-            and self._selected_output is not None
+            and self._selected_view is not None
         )
         self._notify_ready_changed(is_valid)
 
     def is_valid(self) -> bool:
-        """Whether group, workflow, and output have all been selected."""
+        """Whether group, workflow, and view have all been selected."""
         return (
             self._selected_group is not None
             and self._selected_workflow_id is not None
-            and self._selected_output is not None
+            and self._selected_view is not None
         )
 
     def commit(self) -> OutputSelection | None:
         """Commit the workflow and output selection."""
-        if self._selected_workflow_id is None or self._selected_output is None:
+        if self._selected_workflow_id is None or self._selected_view is None:
             return None
         return OutputSelection(
             workflow_id=self._selected_workflow_id,
-            output_name=self._selected_output,
+            view_name=self._selected_view,
         )
 
     def render_content(self) -> pn.Column:
@@ -747,7 +739,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         return []
 
     def commit(self) -> PlotterSelection | None:
-        """Commit the workflow, output, and selected plotter."""
+        """Commit the workflow, view, and selected plotter."""
         if self._output_selection is None or self._selected_plot_name is None:
             return None
         # Include axis sources for correlation histogram plotters
@@ -758,7 +750,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         )
         return PlotterSelection(
             workflow_id=self._output_selection.workflow_id,
-            output_name=self._output_selection.output_name,
+            view_name=self._output_selection.view_name,
             plot_name=self._selected_plot_name,
             axis_sources=axis_sources,
         )
@@ -775,7 +767,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             # Fall back to initial config when jumping to this step
             self._output_selection = OutputSelection(
                 workflow_id=self._initial_config.workflow_id,
-                output_name=self._initial_config.output_name,
+                view_name=self._initial_config.view_name,
             )
         self._update_plotter_selection()
 
@@ -815,7 +807,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         available_plots, has_metadata = (
             self._plotting_controller.get_available_plotters_from_spec(
                 workflow_spec=workflow_spec,
-                output_name=self._output_selection.output_name,
+                view_name=self._output_selection.view_name,
             )
         )
 
@@ -973,11 +965,11 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._axis_selectors_container.append(selector)
 
             if initial_value is not None:
-                workflow_id, source_name, output_name = initial_value
+                workflow_id, source_name, view_name = initial_value
                 self._selected_axis_sources[role] = DataSourceConfig(
                     workflow_id=workflow_id,
                     source_names=[source_name],
-                    output_name=output_name,
+                    view_name=view_name,
                 )
 
         # Add the container to the content if not already there
@@ -994,11 +986,11 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         """Handle axis selection change."""
         value = event.new
         if value is not None and isinstance(value, tuple):
-            workflow_id, source_name, output_name = value
+            workflow_id, source_name, view_name = value
             self._selected_axis_sources[role] = DataSourceConfig(
                 workflow_id=workflow_id,
                 source_names=[source_name],
-                output_name=output_name,
+                view_name=view_name,
             )
         elif role in self._selected_axis_sources:
             del self._selected_axis_sources[role]
@@ -1039,7 +1031,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._plotter_selection: PlotterSelection | None = None
         # Track last configuration to detect when panel needs recreation
         self._last_workflow_id: WorkflowId | None = None
-        self._last_output: str | None = None
+        self._last_view: str | None = None
         self._last_plot_name: str | None = None
         self._last_axis_sources: dict[str, DataSourceConfig] | None = None
         # Store result from callback
@@ -1103,7 +1095,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             }
             self._plotter_selection = PlotterSelection(
                 workflow_id=self._initial_config.workflow_id,
-                output_name=self._initial_config.output_name,
+                view_name=self._initial_config.view_name,
                 plot_name=self._initial_config.plot_name,
                 axis_sources=axis_sources if axis_sources else None,
             )
@@ -1114,7 +1106,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         # Check if the configuration has changed
         if (
             self._plotter_selection.workflow_id != self._last_workflow_id
-            or self._plotter_selection.output_name != self._last_output
+            or self._plotter_selection.view_name != self._last_view
             or self._plotter_selection.plot_name != self._last_plot_name
             or self._plotter_selection.axis_sources != self._last_axis_sources
         ):
@@ -1122,7 +1114,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             self._create_config_panel()
             # Track new values
             self._last_workflow_id = self._plotter_selection.workflow_id
-            self._last_output = self._plotter_selection.output_name
+            self._last_view = self._plotter_selection.view_name
             self._last_plot_name = self._plotter_selection.plot_name
             self._last_axis_sources = self._plotter_selection.axis_sources
 
@@ -1194,7 +1186,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         hints = _resolve_output_display_hints(
             is_static=is_static,
             workflow_spec=workflow_spec if not is_static else None,
-            output_name=self._plotter_selection.output_name,
+            view_name=self._plotter_selection.view_name,
         )
         self._supports_windowing = 'window' not in hints.hidden_fields
 
@@ -1206,7 +1198,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         output_template_dims: tuple[str, ...] | None = None
         if not is_static:
             template = workflow_spec.get_output_template(
-                self._plotter_selection.output_name
+                self._plotter_selection.view_name
             )
             if template is not None:
                 output_template_dims = tuple(template.dims)
@@ -1241,7 +1233,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         primary_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
             source_names=selected_sources,
-            output_name=self._plotter_selection.output_name,
+            view_name=self._plotter_selection.view_name,
         )
 
         # Build data_sources dict with primary and optional axis sources

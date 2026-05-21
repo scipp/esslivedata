@@ -159,7 +159,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1', 'detector2'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -188,7 +188,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -221,7 +221,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1', 'detector2'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -258,7 +258,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1', 'detector2'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -298,7 +298,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -322,7 +322,7 @@ class TestLayerSubscriptionSingleSource:
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1'],
-            output_name='result',
+            view_name='result',
         )
 
         subscription = LayerSubscription(
@@ -364,12 +364,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['detector1'],
-            output_name='data_result',
+            view_name='data_result',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temperature'],
-            output_name='axis_result',
+            view_name='axis_result',
         )
 
         subscription = LayerSubscription(
@@ -408,12 +408,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1', 'det2'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temp'],
-            output_name='axis',
+            view_name='axis',
         )
 
         subscription = LayerSubscription(
@@ -451,12 +451,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1', 'det2'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temp'],
-            output_name='axis',
+            view_name='axis',
         )
 
         subscription = LayerSubscription(
@@ -504,12 +504,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temp'],
-            output_name='axis',
+            view_name='axis',
         )
 
         subscription = LayerSubscription(
@@ -544,12 +544,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temp'],
-            output_name='axis',
+            view_name='axis',
         )
 
         subscription = LayerSubscription(
@@ -594,12 +594,12 @@ class TestLayerSubscriptionMultiSource:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id_2,
             source_names=['temp'],
-            output_name='axis',
+            view_name='axis',
         )
 
         subscription = LayerSubscription(
@@ -645,12 +645,12 @@ class TestLayerSubscriptionDuplicateWorkflows:
         data_source_1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det1'],
-            output_name='data',
+            view_name='data',
         )
         data_source_2 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['det2'],
-            output_name='other_data',
+            view_name='other_data',
         )
 
         subscription = LayerSubscription(
