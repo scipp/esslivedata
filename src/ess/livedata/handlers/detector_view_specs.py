@@ -34,6 +34,8 @@ from ..config.workflow_spec import (
     OutputView,
     WorkflowOutputsBase,
 )
+from ..core.message import Message
+from ..core.timestamp import Timestamp
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
@@ -542,6 +544,37 @@ class DetectorROIAuxSources(AuxSources):
         if binding is not None:
             rendered[binding.aux_stream] = binding.aux_stream
         return rendered
+
+    def initial_context_messages(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> list[Message]:
+        """Seed messages so the ROI context streams are populated from
+        scheduling time onwards with the "no ROI selected" steady state —
+        byte-identical to what the dashboard publishes when the user deletes
+        the last ROI. See ADR 0002.
+        """
+        from ..core.message import StreamId, StreamKind
+
+        rendered = self.render(job_id, selections)
+        timestamp = Timestamp.from_ns(0)
+        return [
+            Message(
+                timestamp=timestamp,
+                stream=StreamId(
+                    kind=StreamKind.LIVEDATA_ROI, name=rendered['roi_rectangle']
+                ),
+                value=models.RectangleROI.to_concatenated_data_array({}),
+            ),
+            Message(
+                timestamp=timestamp,
+                stream=StreamId(
+                    kind=StreamKind.LIVEDATA_ROI, name=rendered['roi_polygon']
+                ),
+                value=models.PolygonROI.to_concatenated_data_array({}),
+            ),
+        ]
 
 
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]

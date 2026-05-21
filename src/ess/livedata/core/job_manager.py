@@ -23,7 +23,7 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import RunStart, RunStop, StreamId
+from .message import Message, RunStart, RunStop, StreamId
 from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -186,7 +186,13 @@ class JobFactory:
 
 
 class JobManager:
-    def __init__(self, job_factory: JobFactory, job_threads: int = 1) -> None:
+    def __init__(
+        self,
+        job_factory: JobFactory,
+        job_threads: int = 1,
+        *,
+        on_schedule_seed: Callable[[list[Message]], None] | None = None,
+    ) -> None:
         self.service_name = 'data_reduction'
         self._last_update: int = 0
         self._job_factory = job_factory
@@ -201,15 +207,19 @@ class JobManager:
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
         # Per-job set of context-aux stream names whose accumulator has
-        # produced a value at any prior tick. Used by the context gate
-        # (ADR 0002) so we don't have to refill cached context into
-        # ``WorkflowData.data`` every tick.
+        # produced a value at any prior tick (or via initial seed). Used by
+        # the context gate (ADR 0002) so we don't have to refill cached
+        # context into ``WorkflowData.data`` every tick.
         self._seen_context_streams: dict[JobId, set[str]] = {}
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
+        # See ADR 0002. Invoked from ``schedule_job`` with the initial context
+        # messages produced by ``workflow_spec.aux_sources.initial_context_messages``.
+        # The orchestrator wires this to ``MessagePreprocessor.seed_messages``.
+        self._on_schedule_seed = on_schedule_seed
 
     @property
     def all_jobs(self) -> list[Job]:
@@ -274,7 +284,32 @@ class JobManager:
             workflow_id=str(config.identifier),
             schedule=str(config.schedule),
         )
+        self._seed_initial_context(job_id, config)
         return job_id
+
+    def _seed_initial_context(self, job_id: JobId, config: WorkflowConfig) -> None:
+        """Seed defaulted context accumulators for a freshly-scheduled job.
+
+        See ADR 0002. Workflows whose context inputs include a "no message
+        yet is a valid steady state" stream (currently only ROI) declare
+        seed messages on their :class:`AuxSources` subclass. JobManager
+        forwards them to the preprocessor via ``on_schedule_seed``.
+        """
+        if self._on_schedule_seed is None:
+            return
+        spec = self._job_factory.get_workflow_spec(config.identifier)
+        if spec is None or spec.aux_sources is None:
+            return
+        messages = spec.aux_sources.initial_context_messages(
+            job_id, selections=config.aux_source_names or None
+        )
+        if messages:
+            self._on_schedule_seed(messages)
+            # Seeded streams are now populated in the preprocessor; mark them
+            # as seen so the gate does not block on the first tick.
+            self._seen_context_streams.setdefault(job_id, set()).update(
+                msg.stream.name for msg in messages
+            )
 
     def stop_job(self, job_id: JobId) -> None:
         """Stop a job and remove it from the system."""

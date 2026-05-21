@@ -116,6 +116,23 @@ class MessagePreprocessor(Generic[Tin, Tout]):
                     )
         return result
 
+    def seed_messages(self, messages: list[Message]) -> None:
+        """Ingest messages and discard the result.
+
+        Used by :meth:`JobManager.schedule_job` to seed defaulted context
+        accumulators (see ADR 0002) so they exist with the seed value before
+        any external data arrives.
+        """
+        for msg in messages:
+            accumulator = self._get_accumulator(msg.stream)
+            if accumulator is None:
+                logger.debug('no_preprocessor_for_seed', stream_id=str(msg.stream))
+                continue
+            try:
+                accumulator.add(msg.timestamp, msg.value)
+            except Exception:
+                logger.exception('seed_message_error', stream_id=str(msg.stream))
+
     def preprocess_messages(self, batch: MessageBatch) -> WorkflowData:
         """
         Preprocess messages before they are sent to the accumulators.
@@ -160,6 +177,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._job_manager = JobManager(
             job_factory=JobFactory(instrument=instrument, service_name=service_name),
             job_threads=job_threads,
+            on_schedule_seed=self._message_preprocessor.seed_messages,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
