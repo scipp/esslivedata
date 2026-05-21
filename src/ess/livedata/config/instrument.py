@@ -16,7 +16,7 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .stream import Device, F144Stream, LogContextBinding, Stream
+from .stream import ContextInput, Device, F144Stream, Stream
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
@@ -104,7 +104,7 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
-    log_context_bindings: list[LogContextBinding] = field(default_factory=list)
+    context_inputs: list[ContextInput] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
@@ -123,7 +123,7 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
-        for binding in self.log_context_bindings:
+        for binding in self.context_inputs:
             self._validate_binding_stream_name(binding)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=self._timeseries_source_names()
@@ -157,44 +157,44 @@ class Instrument:
             if isinstance(stream, Device)
         }
 
-    def _validate_binding_stream_name(self, binding: LogContextBinding) -> None:
+    def _validate_binding_stream_name(self, binding: ContextInput) -> None:
         if binding.stream_name not in self.streams:
             raise ValueError(
-                f"LogContextBinding references unknown stream "
+                f"ContextInput references unknown stream "
                 f"{binding.stream_name!r}; declared streams: "
                 f"{sorted(self.streams)}"
             )
 
-    def add_log_context_binding(
+    def add_context_input(
         self,
         *,
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str],
     ) -> None:
-        """Register an f144 stream as a context input to one or more specs.
+        """Register a stream as a context input to one or more specs.
 
         Use from ``setup_factories`` to keep heavy Sciline-key imports out of
-        ``specs.py``. Bindings declared at construction time go through the same
+        ``specs.py``. Inputs declared at construction time go through the same
         validation in ``__post_init__``.
         """
-        binding = LogContextBinding(
+        binding = ContextInput(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=frozenset(dependent_sources),
         )
         self._validate_binding_stream_name(binding)
-        self.log_context_bindings.append(binding)
+        self.context_inputs.append(binding)
 
     def get_context_keys(self, source_name: str) -> dict[str, Any]:
         """Return the stream-name → workflow-key map for the given source.
 
-        Derives :attr:`StreamProcessorWorkflow.context_keys` for f144 streams
-        from :attr:`log_context_bindings`, filtered by ``dependent_sources``.
+        Derives :attr:`StreamProcessorWorkflow.context_keys` from
+        :attr:`context_inputs`, filtered by ``dependent_sources``.
         """
         return {
             binding.stream_name: binding.workflow_key
-            for binding in self.log_context_bindings
+            for binding in self.context_inputs
             if source_name in binding.dependent_sources
         }
 
@@ -584,16 +584,16 @@ class Instrument:
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""
-        if not self.log_context_bindings:
+        if not self.context_inputs:
             return
         known_sources: set[str] = set()
         for spec in self.workflow_factory.values():
             known_sources.update(spec.source_names)
-        for binding in self.log_context_bindings:
+        for binding in self.context_inputs:
             unknown = binding.dependent_sources - known_sources
             if unknown:
                 raise ValueError(
-                    f"LogContextBinding for stream {binding.stream_name!r} lists "
+                    f"ContextInput for stream {binding.stream_name!r} lists "
                     f"unknown dependent_sources {sorted(unknown)}; no registered "
                     f"spec advertises these source_names"
                 )

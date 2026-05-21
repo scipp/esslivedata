@@ -2,13 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
-from .stream import Device, F144Stream, LogContextBinding, Stream, name_streams
+from .stream import ContextInput, Device, F144Stream, Stream, name_streams
 
 __all__ = [
+    'ContextInput',
     'Device',
     'F144Stream',
     'Instrument',
-    'LogContextBinding',
     'SourceMetadata',
     'Stream',
     'instrument_registry',

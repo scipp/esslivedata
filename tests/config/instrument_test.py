@@ -12,7 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.stream import Device, F144Stream, LogContextBinding
+from ess.livedata.config.stream import ContextInput, Device, F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -327,17 +327,17 @@ def _f144(name: str) -> F144Stream:
     return F144Stream(source=name, topic='topic', units='mm')
 
 
-class TestLogContextBindings:
+class TestContextInputs:
     def test_add_binding_records_entry(self):
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
-        instrument.add_log_context_binding(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
         )
 
-        binding = instrument.log_context_bindings[0]
+        binding = instrument.context_inputs[0]
         assert binding.stream_name == 'rot'
         assert binding.workflow_key is _Key
         assert binding.dependent_sources == frozenset({'det1'})
@@ -346,30 +346,30 @@ class TestLogContextBindings:
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
         with pytest.raises(ValueError, match='unknown stream'):
-            instrument.add_log_context_binding(
+            instrument.add_context_input(
                 stream_name='missing',
                 workflow_key=_Key,
                 dependent_sources=['det1'],
             )
 
     def test_constructor_validates_binding_stream_names(self):
-        bad = LogContextBinding(
+        bad = ContextInput(
             stream_name='missing',
             workflow_key=_Key,
             dependent_sources=frozenset({'det1'}),
         )
         with pytest.raises(ValueError, match='unknown stream'):
-            Instrument(name='test', log_context_bindings=[bad])
+            Instrument(name='test', context_inputs=[bad])
 
     def test_get_context_keys_filters_by_source(self):
         instrument = Instrument(
             name='test',
             streams={'rot': _f144('rot'), 'temp': _f144('temp')},
         )
-        instrument.add_log_context_binding(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        instrument.add_log_context_binding(
+        instrument.add_context_input(
             stream_name='temp',
             workflow_key=_OtherKey,
             dependent_sources=['det1', 'det2'],
@@ -399,13 +399,13 @@ class TestLogContextBindings:
             },
         )
 
-        instrument.add_log_context_binding(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
         )
 
-        binding = instrument.log_context_bindings[0]
+        binding = instrument.context_inputs[0]
         assert binding.stream_name == 'rot'
         assert binding.workflow_key is _Key
         assert instrument.get_context_keys('det1') == {'rot': _Key}
@@ -421,7 +421,7 @@ class TestLogContextBindings:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_log_context_binding(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1', 'ghost']
         )
 

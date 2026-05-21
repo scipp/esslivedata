@@ -10,9 +10,13 @@ instrument chooses to call it. The instrument-facing name is the key into
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import JobId
+    from ess.livedata.core.message import Message
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -85,23 +89,35 @@ class Device(Stream):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class LogContextBinding:
-    """One f144 stream feeding a Sciline workflow key, scoped to dependents.
+class ContextInput:
+    """Declaration of one context-stream input to a workflow.
 
-    The binding declares that the value of an f144 stream
-    (:attr:`stream_name`, an entry in :attr:`Instrument.streams`) should be
-    routed to a Sciline pipeline as the value of ``workflow_key``, but only
-    when wiring workflows for the spec source names listed in
-    :attr:`dependent_sources`.
+    Declares that the value of a stream (:attr:`stream_name`) should be routed
+    to a Sciline pipeline as the value of ``workflow_key``, but only when
+    wiring workflows for the source names listed in :attr:`dependent_sources`.
 
     ``workflow_key`` is typed as :class:`Any` because Sciline keys are
     parameterised generics (e.g. ``InstrumentAngle[SampleRun]``) and Python's
     type system cannot describe "type of any Sciline key" precisely.
+
+    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to the
+    wire stream name used by routing and the gate. Resolvers are assumed to
+    be pure name-suffixing operations on ``stream_name``; the registration-time
+    collision check relies on this purity. Leaving it unset (default) means
+    the wire name equals :attr:`stream_name` — used for instrument-property
+    context such as motion.
+
+    :attr:`seed_factory`, when set, produces the cold-start :class:`Message`
+    fired at ``schedule_job`` time so the accumulator exists before any
+    external producer publishes. Used for spec-level inputs with a meaningful
+    "no message yet" default (currently ROI).
     """
 
     stream_name: str
     workflow_key: Any
     dependent_sources: frozenset[str]
+    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
+    seed_factory: Callable[[JobId], Message] | None = field(default=None)
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the
