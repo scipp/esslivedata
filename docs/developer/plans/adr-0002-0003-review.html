@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ADR 0002 + 0003 review — jobmanager-context-gate</title>
+<style>
+  :root {
+    --bg: #14171c;
+    --bg-elev: #1b1f26;
+    --bg-elev-2: #232831;
+    --border: #2c333e;
+    --text: #d8dee9;
+    --text-dim: #8d97a5;
+    --text-faint: #5d6776;
+    --accent: #e0a458;        /* amber */
+    --accent-dim: #8a6535;
+    --regress: #c4636b;       /* muted red — only for the dashboard regression */
+    --regress-dim: #6e3a3f;
+    --link: #88b1d8;
+    --code: #c8d3e1;
+    --code-bg: #11141a;
+    --code-key: #c794a8;      /* keyword */
+    --code-str: #a3be8c;      /* string */
+    --code-com: #4a5566;      /* comment */
+    --code-typ: #d8c382;      /* type / class */
+    --good: #7fb389;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 36px 28px 96px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+  code { color: var(--code); background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    color: var(--code);
+    padding: 14px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre .k { color: var(--code-key); }
+  pre .s { color: var(--code-str); }
+  pre .c { color: var(--code-com); font-style: italic; }
+  pre .t { color: var(--code-typ); }
+  h1, h2, h3, h4 { color: #f0f4f8; font-weight: 600; line-height: 1.25; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 {
+    font-size: 22px;
+    margin: 56px 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .num { color: var(--accent); margin-right: 10px; font-weight: 500; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #e6ebf2; }
+  h4 { font-size: 14px; margin: 18px 0 6px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  p { margin: 8px 0 12px; }
+  ul, ol { margin: 8px 0 12px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  /* ---- header ---- */
+  header {
+    background: linear-gradient(180deg, #1b2027 0%, var(--bg) 100%);
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  .meta {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 8px 0 18px;
+  }
+  .meta span { color: var(--text); }
+  .meta b { color: var(--accent); font-weight: 500; }
+  .red-thread {
+    background: var(--bg-elev);
+    border-left: 3px solid var(--accent);
+    padding: 16px 20px;
+    margin: 18px 0 4px;
+    font-size: 15.5px;
+  }
+  .red-thread em { color: var(--accent); font-style: normal; font-weight: 500; }
+  /* ---- TOC ---- */
+  nav.toc {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 20px;
+    margin: 24px 0;
+    columns: 2;
+    column-gap: 32px;
+  }
+  nav.toc ol { margin: 0; padding-left: 22px; }
+  nav.toc li { break-inside: avoid; }
+  nav.toc a { color: var(--text); }
+  /* ---- cards ---- */
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .card.regress {
+    border-color: var(--regress-dim);
+    background: linear-gradient(180deg, #25171a 0%, var(--bg-elev) 60%);
+  }
+  .card.regress h4 { color: var(--regress); }
+  .card.callout {
+    border-color: var(--accent-dim);
+    background: linear-gradient(180deg, #221c14 0%, var(--bg-elev) 60%);
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 16px 0;
+  }
+  /* ---- file refs ---- */
+  .ref {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    border: 1px solid var(--border);
+  }
+  /* ---- tables ---- */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--accent); font-weight: 500; font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:last-child td { border-bottom: none; }
+  td .mono, td code { font-size: 12.5px; }
+  td.del { color: var(--regress); text-decoration: line-through; text-decoration-color: var(--regress-dim); }
+  td.add { color: var(--good); }
+  /* ---- collapsibles ---- */
+  details {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 8px 0;
+  }
+  details summary {
+    padding: 10px 16px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: '▸';
+    color: var(--text-faint);
+    transition: transform 0.15s ease;
+    display: inline-block;
+    width: 12px;
+  }
+  details[open] summary::before { transform: rotate(90deg); color: var(--accent); }
+  details summary .tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg-elev-2);
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-right: 6px;
+  }
+  details .body { padding: 4px 18px 14px 34px; border-top: 1px solid var(--border); margin-top: 6px; }
+  details .body > *:first-child { margin-top: 10px; }
+  /* ---- flow diagrams ---- */
+  .flow {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 14px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .flow .lbl { color: var(--accent); }
+  .flow .dim { color: var(--text-faint); }
+  /* ---- decision tree ---- */
+  .tree { margin: 14px 0; }
+  .branch {
+    border-left: 2px solid var(--border);
+    padding: 6px 0 6px 18px;
+    margin: 0 0 0 8px;
+  }
+  .branch .q { color: var(--text-dim); font-style: italic; font-size: 14px; }
+  .branch .a { color: var(--accent); font-weight: 500; margin-left: 12px; }
+  /* ---- discussion list ---- */
+  .disc { counter-reset: disc; }
+  .disc-item {
+    counter-increment: disc;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px 14px 56px;
+    margin: 10px 0;
+    position: relative;
+  }
+  .disc-item::before {
+    content: counter(disc);
+    position: absolute;
+    left: 18px;
+    top: 14px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg-elev-2);
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    text-align: center;
+    line-height: 26px;
+    font-weight: 600;
+  }
+  .disc-item.priority { border-color: var(--regress-dim); }
+  .disc-item.priority::before { background: var(--regress-dim); color: #fff; }
+  .disc-item h4 { margin: 0 0 6px; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 15px; font-weight: 600; }
+  .disc-item.priority h4 { color: var(--regress); }
+  /* misc */
+  .kbd { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--bg-elev-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-family: 'JetBrains Mono', monospace; background: var(--bg-elev-2); color: var(--text-dim); border: 1px solid var(--border); margin-right: 4px; }
+  .pill.add { color: var(--good); border-color: #364a3b; }
+  .pill.del { color: var(--regress); border-color: var(--regress-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ADR 0002 + ADR 0003 — branch review</h1>
+  <div class="meta">
+    <span><b>branch</b> jobmanager-context-gate</span>
+    <span><b>vs</b> main</span>
+    <span><b>commits</b> 19</span>
+    <span><b>diff</b> +2112 / −519 across 39 files</span>
+  </div>
+  <div class="red-thread">
+    Stream-to-Sciline-graph wiring keeps expanding — f144/NXlog integration just landed,
+    bifrost rotation and LOKI carriage bind motion streams from the NeXus <code>depends_on</code>
+    chain, ROI is already wired per-job, and <em>chopper setpoint / phase streams are coming next</em>.
+    Each case had been shoehorned through whichever carrier was nearest:
+    <code>LogContextBinding</code>, <code>AuxSources</code> doing double duty, ad-hoc factory
+    parameters. <em>ADR 0003</em> replaces that with one declaration record (<code>ContextInput</code>)
+    and two scopes, so the same pattern covers motion, ROIs, and future chopper context uniformly.
+    <em>ADR 0002</em> is a smaller runtime cleanup riding along: the prior implicit behaviour was
+    "let the workflow crash if context hasn't arrived" — now the JobManager gates explicitly.
+  </div>
+</header>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#scope">What this is for</a></li>
+    <li><a href="#mess">The mess being cleaned up</a></li>
+    <li><a href="#model">The declaration model (ADR 0003)</a></li>
+    <li><a href="#runtime">The runtime invariant (ADR 0002)</a></li>
+    <li><a href="#authors">For authors of new specs / factories</a></li>
+    <li><a href="#edges">Edge cases &amp; workarounds</a></li>
+    <li><a href="#discussion">Discussion</a></li>
+    <li><a href="#files">File map</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="scope"><span class="num">1</span>What this is for</h2>
+
+<p>
+The broad picture: more and more streams need to feed values into Sciline workflow graphs as
+<em>parameters</em> (not as accumulating data). Each of the following cases has the same shape —
+a stream's latest value parametrises a workflow graph for one or more sources — but historically
+each used different plumbing.
+</p>
+
+<table>
+  <thead><tr><th>Case</th><th>Stream value drives</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>f144 / NXlog integration</b></td>
+      <td>Generic <code>F144Stream</code> + device synthesis</td>
+      <td>Recently landed on main</td>
+    </tr>
+    <tr>
+      <td><b>Bifrost rotation</b></td>
+      <td><code>InstrumentAngle[SampleRun]</code>, <code>SampleAngle[SampleRun]</code> on cut workflows</td>
+      <td>In this branch (spec-scoped on qmap handles)</td>
+    </tr>
+    <tr>
+      <td><b>LOKI rear-bank carriage</b></td>
+      <td>NeXus <code>depends_on</code> transformation patched via <code>add_dynamic_transform</code></td>
+      <td>In this branch (spec-scoped on xy_projection)</td>
+    </tr>
+    <tr>
+      <td><b>ROI (rectangle / polygon)</b></td>
+      <td>Per-job context input from the dashboard</td>
+      <td>In this branch (spec-scoped with resolver + seed)</td>
+    </tr>
+    <tr>
+      <td><b>Chopper setpoint / phase</b></td>
+      <td>Wavelength frame, TOA → λ lookup</td>
+      <td><em>Coming next</em> — this infrastructure is its prerequisite</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+The branch lands one mechanism that covers the first four uniformly and unblocks the fifth.
+The runtime-behaviour cleanup (ADR 0002) is a side effect of taking these wirings seriously:
+once "context inputs" are first-class, gating on their availability is a small predicate.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="mess"><span class="num">2</span>The mess being cleaned up</h2>
+
+<p>Three structural problems on <code>main</code>, each from a different attempt to bolt a new wiring onto existing carriers:</p>
+
+<div class="card">
+  <h4>1. AuxSources carrying two unrelated concerns</h4>
+  <p>
+    <code>AuxSources</code> was built for user-facing <em>dynamic-aux selection</em> (LOKI's incident /
+    transmission monitor choices). Context streams started piggy-backing on it for routing — declared
+    as plain-string aux entries that the UI happens to ignore. ROI did this via
+    <code>DetectorROIAuxSources</code>; bifrost rotation did it via <code>bifrost_aux_sources</code>.
+    A routing primitive ended up doubling as a workflow-execution primitive.
+  </p>
+</div>
+
+<div class="card">
+  <h4>2. The same stream declared in multiple places</h4>
+  <p>
+    For LOKI's <code>detector_carriage</code>: one dict
+    (<code>LOKI_DYNAMIC_TRANSFORMS</code> in <code>specs.py</code>) passed to two consumers —
+    <code>DetectorROIAuxSources(dynamic_transforms=…)</code> for routing <em>and</em>
+    <code>DetectorViewFactory(dynamic_transforms=…)</code> for graph wiring. Names must agree
+    across the call sites; nothing enforces it.
+  </p>
+  <p>
+    For ROI: <code>'roi_rectangle'</code> and <code>'roi_polygon'</code> appear independently in
+    <code>DetectorROIAuxSources.inputs</code> (routing) and
+    <code>detector_view/factory.py</code>'s <code>context_keys</code> (graph wiring). Two places,
+    manual sync.
+  </p>
+</div>
+
+<div class="card">
+  <h4>3. No spec-scope declaration site for context inputs</h4>
+  <p>
+    <code>LogContextBinding</code> on <code>Instrument</code> was the only first-class context-binding
+    type, source-scoped and f144-specific in name. Bifrost rotation used it. Anything spec-scoped —
+    ROI, LOKI carriage — had no comparable home and reached for <code>AuxSources</code> subclasses,
+    propagating the structural problems in #1 and #2.
+  </p>
+  <p style="color: var(--text-dim); font-size: 13.5px;">
+    Adding chopper setpoint / phase streams next would have meant either another
+    <code>AuxSources</code> subclass or inventing a third carrier. ADR 0003 makes that unnecessary.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="model"><span class="num">3</span>The declaration model (ADR 0003)</h2>
+
+<p>One record. Two declaration sites. One JobFactory merge.</p>
+
+<h3>The record</h3>
+
+<div class="card">
+  <pre><span class="k">@dataclass</span>(frozen=<span class="k">True</span>, slots=<span class="k">True</span>, kw_only=<span class="k">True</span>)
+<span class="k">class</span> <span class="t">ContextInput</span>:
+    stream_name:        <span class="t">str</span>                                       <span class="c"># workflow-facing</span>
+    workflow_key:       <span class="t">Any</span>                                       <span class="c"># opaque Sciline key</span>
+    dependent_sources:  <span class="t">frozenset</span>[<span class="t">str</span>]
+    stream_resolver:    <span class="t">Callable</span>[[<span class="t">JobId</span>, <span class="t">str</span>], <span class="t">str</span>] | <span class="k">None</span>    <span class="c"># default: identity</span>
+    seed_factory:       <span class="t">Callable</span>[[<span class="t">JobId</span>], <span class="t">Message</span>]   | <span class="k">None</span>    <span class="c"># default: no seed</span></pre>
+  <p style="margin-top: 12px; font-size: 13.5px; color: var(--text-dim);">
+    Renamed from <code>LogContextBinding</code> (the f144-specific predecessor). The two new optional
+    fields are the entire delta from the previous record.
+    <span class="ref">src/ess/livedata/config/stream.py:91</span>
+  </p>
+</div>
+
+<h3>Two scopes</h3>
+
+<div class="card-grid">
+  <div class="card" style="margin: 0;">
+    <h4>Instrument scope</h4>
+    <p><code>Instrument.add_context_input(...)</code> in <code>factories.py</code>.</p>
+    <p style="font-size: 13.5px;">
+      Activates for every spec whose source set overlaps <code>dependent_sources</code>.
+      No resolver, no seed. Use only for streams genuinely consumed by every spec on the source.
+    </p>
+    <p style="font-size: 13px; color: var(--text-dim);">
+      <b>Today:</b> no live case. Bifrost rotation and LOKI carriage were originally drafted at
+      this scope and moved to spec scope during implementation because their sources also feed
+      specs that don't consume the stream.
+    </p>
+  </div>
+  <div class="card" style="margin: 0;">
+    <h4>Spec scope</h4>
+    <p><code>SpecHandle.add_context_input(...)</code> in <code>factories.py</code>.</p>
+    <p style="font-size: 13.5px;">
+      Defaults <code>dependent_sources</code> to <code>frozenset(spec.source_names)</code>.
+      Supports <code>stream_resolver</code> (for per-job wire names) and <code>seed_factory</code>
+      (for cold-start defaults).
+    </p>
+    <p style="font-size: 13px; color: var(--text-dim);">
+      <b>Today:</b> ROI (resolver + seed), bifrost qmap rotation (×3 handles, no resolver),
+      LOKI carriage (no resolver, no seed).
+    </p>
+  </div>
+</div>
+
+<p>
+Late-binding from <code>factories.py</code> keeps workflow-key imports out of <code>specs.py</code>.
+That invariant exists because the dashboard imports <code>specs.py</code> to render the UI and
+must not pull in instrument-specific Sciline pipelines.
+</p>
+
+<h3>How JobFactory merges them</h3>
+
+<div class="card">
+  <pre><span class="k">def</span> <span class="t">create</span>(<span class="k">self</span>, *, job_id, config) -&gt; <span class="t">tuple</span>[Job, <span class="t">list</span>[Message]]:
+    matching = [ci <span class="k">for</span> ci <span class="k">in</span> (*instrument.context_inputs, *spec.context_inputs)
+                <span class="k">if</span> job_id.source_name <span class="k">in</span> ci.dependent_sources]
+
+    context_keys         = {ci.stream_name: ci.workflow_key <span class="k">for</span> ci <span class="k">in</span> matching}
+    wire_for             = {ci.stream_name: (ci.stream_resolver(job_id, ci.stream_name)
+                                             <span class="k">if</span> ci.stream_resolver <span class="k">else</span> ci.stream_name)
+                            <span class="k">for</span> ci <span class="k">in</span> matching}
+    rendered_aux_names   = {**rendered_aux_names, **wire_for}      <span class="c"># splice into aux</span>
+    context_stream_names = <span class="t">set</span>(wire_for.values())                <span class="c"># strict subset of aux</span>
+    seed_messages        = [ci.seed_factory(job_id) <span class="k">for</span> ci <span class="k">in</span> matching
+                            <span class="k">if</span> ci.seed_factory <span class="k">is</span> <span class="k">not</span> <span class="k">None</span>]
+
+    <span class="c"># context_keys is delivered to the factory via the WorkflowFactory.create opt-in pattern.</span>
+    <span class="c"># Seed messages are forwarded by JobManager.schedule_job to the preprocessor.</span></pre>
+  <p style="margin-top: 12px; font-size: 13.5px; color: var(--text-dim);">
+    Context wire names splice into <code>aux_source_names</code>, so existing
+    <code>Job._filter_data_for_job</code> and <code>_stream_to_fields</code> routing handles both
+    dynamic and context inputs uniformly. The gate set lives in its own field.
+    <span class="ref">src/ess/livedata/core/job_manager.py:137</span>
+  </p>
+</div>
+
+<h3>Routing pickup (a hard co-requirement)</h3>
+
+<p>
+<code>gather_source_names</code> learns to include context-input streams in the per-namespace
+Kafka subscription set:
+</p>
+
+<ul>
+  <li><b>Instrument-level entries</b> — picked up when any spec in the namespace shares a source with the binding's <code>dependent_sources</code>.</li>
+  <li><b>Spec-level entries</b> — picked up <em>only when <code>stream_resolver is None</code></em>. Job-scoped entries (ROI) materialise per-job wire names that can't be resolved at namespace-startup time; they route via a dedicated topic instead (today <code>StreamKind.LIVEDATA_ROI</code>).</li>
+</ul>
+
+<p style="font-size: 13.5px; color: var(--text-dim);">
+Without this extension the bifrost rotation and LOKI carriage f144 streams would never be
+subscribed and the gate would stay closed indefinitely.
+<span class="ref">src/ess/livedata/config/route_derivation.py:29</span>
+</p>
+
+<h3>Deletions vs main</h3>
+
+<p style="font-size: 13.5px; color: var(--text-dim);">
+The branch lands in two steps: <em>Block A</em> implements the gate with transitional carriers
+(<code>Workflow.context_keys</code> on the protocol, <code>AuxSources.initial_context_messages</code>);
+<em>Block B</em> replaces them with <code>ContextInput</code> and deletes the carriers. A few rows
+below are therefore net no-ops vs main — they existed only inside this branch.
+</p>
+
+<table>
+  <thead><tr><th>Removed</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="del mono">LogContextBinding</td><td>Renamed to <code>ContextInput</code></td></tr>
+    <tr><td class="del mono">Instrument.get_context_keys</td><td>No production callers after bifrost migration</td></tr>
+    <tr><td class="del mono">DetectorROIAuxSources</td><td>ROI now per-spec via <code>add_context_input</code></td></tr>
+    <tr><td class="del mono">bifrost_aux_sources</td><td>Rotation now per-spec on qmap handles</td></tr>
+    <tr><td class="del mono">LOKI_DYNAMIC_TRANSFORMS</td><td>Replaced by tiny <code>dict[str, str]</code> in <code>loki/factories.py</code></td></tr>
+    <tr><td class="del mono">Workflow.context_keys (protocol)</td><td>Transitional carrier within this branch — net no-op vs main. SPW keeps the ctor arg.</td></tr>
+    <tr><td class="del mono">AuxSources.initial_context_messages</td><td>Transitional carrier introduced and removed within this branch — net no-op vs main. Seeding lives on <code>ContextInput.seed_factory</code>.</td></tr>
+    <tr><td class="del mono">DetectorViewFactory.dynamic_transforms</td><td>Replaced by <code>transform_names: dict[str, str]</code></td></tr>
+    <tr><td class="del mono">SpecRequirements.requires_aux_sources</td><td>YAGNI — only deleted tests referenced it</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="runtime"><span class="num">4</span>The runtime invariant (ADR 0002)</h2>
+
+<p>
+A small, orthogonal piece. Once context inputs are first-class declarations, gating their
+availability at the JobManager becomes a single predicate.
+</p>
+
+<div class="flow">
+push_data(WorkflowData) <span class="dim">┐</span>
+                        │
+                        ▼
+        ┌─────────────────────────────────┐
+        │  <span class="lbl">_gate_pending_context</span>(available)│
+        │                                 │
+        │   <span class="dim">for each active job:</span>          │
+        │     seen ∪= available ∩ aux     │
+        │     missing = job.missing_context(seen)
+        │     if missing:                 │
+        │       state = pending_context   │
+        │       gated.add(job_id)         │
+        └─────────────────────────────────┘
+                        │
+                        ▼
+        <span class="dim">for job in active_jobs:</span>
+            <span class="k">if</span> job in gated:  <span class="lbl">skip</span>  <span class="dim"># primary dropped, not buffered</span>
+            <span class="k">else</span>:             <span class="lbl">process</span>
+</div>
+
+<h4>Key pieces</h4>
+
+<ul>
+  <li><code>Job.context_stream_names: set[str]</code> — strict subset of <code>aux_source_names.values()</code>. Populated by <code>JobFactory.create</code> from the matched <code>ContextInput</code> records.</li>
+  <li><code>Job.missing_context(available) → set[str]</code> — the predicate.</li>
+  <li><code>JobManager._seen_context_streams: dict[JobId, set[str]]</code> — sticky per-job seen-set. Once a context value arrives it stays seen; the gate doesn't need cached context refilled every tick.</li>
+  <li><code>JobState.pending_context</code> — new state. Distinct from <code>warning</code> (which means "last run produced an error") so a healthy-but-waiting job isn't confused with one that failed.</li>
+  <li><b>Seed-at-schedule</b>: <code>JobFactory.create</code> returns <code>(Job, list[Message])</code>; <code>JobManager.schedule_job</code> forwards seeds to <code>MessagePreprocessor.seed_messages</code> and marks their wire names as already-seen.</li>
+</ul>
+
+<h4>Prior behaviour</h4>
+
+<p style="font-size: 13.5px; color: var(--text-dim);">
+Without a gate, the bifrost cut workflow's <code>process_chunk_workflow</code> reads rotation
+inside <code>accumulate</code> and crashes with
+<code class="mono">'NoneType' object has no attribute 'ndim'</code>. Other workflows silently
+attribute detector data to a default geometry. The gate replaces these with
+<code>JobState.pending_context</code> plus a warning message — the workflow is not invoked until
+every context input has a value.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="authors"><span class="num">5</span>For authors of new specs / factories</h2>
+
+<h3>Decision tree: which scope?</h3>
+
+<div class="tree">
+  <div class="branch">
+    <span class="q">Is this stream genuinely consumed by <b>every</b> spec on the source?</span>
+    <div class="branch">
+      <span class="q">→ Yes</span>
+      <span class="a">Instrument scope.</span>
+      <span style="color: var(--text-faint); font-size: 13px;">No live case today.</span>
+    </div>
+    <div class="branch">
+      <span class="q">→ No, only some workflows on this source consume it</span>
+      <span class="a">Spec scope.</span>
+      <span style="color: var(--text-faint); font-size: 13px;">e.g. bifrost qmap rotation, LOKI xy_projection carriage.</span>
+    </div>
+    <div class="branch">
+      <span class="q">→ It's a property of the workflow, not the source</span>
+      <span class="a">Spec scope.</span>
+      <span style="color: var(--text-faint); font-size: 13px;">e.g. ROI (only detector views have it).</span>
+    </div>
+  </div>
+</div>
+
+<p>
+<b>Anti-pattern:</b> instrument-level binding on a source whose specs don't all consume the
+stream — the gate closes forever for any spec that doesn't actually receive the value.
+</p>
+
+<h3>The factory opt-in</h3>
+
+<p>Factories that need <code>context_keys</code> declare the kwarg; <code>WorkflowFactory.create</code> introspects and passes it only when present.</p>
+
+<div class="card">
+  <pre><span class="k">@</span>handle.attach_factory()
+<span class="k">def</span> <span class="t">_factory</span>(params: MyParams, context_keys: <span class="t">dict</span>[<span class="t">str</span>, <span class="t">type</span>]) -&gt; Workflow:
+    ...
+    <span class="k">return</span> StreamProcessorWorkflow(wf, ..., context_keys=context_keys)</pre>
+</div>
+
+<p style="font-size: 13.5px; color: var(--text-dim);">
+Fourth such opt-in kwarg (<code>source_name</code>, <code>params</code>, <code>aux_source_names</code>,
+<code>context_keys</code>). Adding a fifth would warrant rethinking the dispatch.
+</p>
+
+<h3>Patterns by case</h3>
+
+<table>
+  <thead><tr><th>Use case</th><th>Where</th><th>Resolver?</th><th>Seed?</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Motion / geometry stream (per-source)</td>
+      <td><code>handle.add_context_input(...)</code> in factories.py</td>
+      <td>No</td>
+      <td>No <span class="pill">producer must be healthy</span></td>
+    </tr>
+    <tr>
+      <td>ROI-like (per-job, default known)</td>
+      <td><code>add_roi_context_inputs(handle)</code> helper</td>
+      <td><code>lambda jid, n: f"{jid}/{n}"</code></td>
+      <td><code>seed_factory</code> with byte-identical "no selection" message</td>
+    </tr>
+    <tr>
+      <td>Whole-instrument stream (every workflow)</td>
+      <td><code>instrument.add_context_input(...)</code></td>
+      <td>No</td>
+      <td>No</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="edges"><span class="num">6</span>Edge cases &amp; workarounds</h2>
+
+<p>Collapsed by default. Each is a small thing worth knowing but not central to the design.</p>
+
+<details>
+  <summary><span class="tag">workaround</span>LOKI <code>transform_name</code> carrier — accepted small leak</summary>
+  <div class="body">
+    <p>
+    <code>ContextInput</code> declares <code>stream_name</code> and <code>workflow_key</code> but
+    no graph-side label. LOKI's <code>add_dynamic_transform</code> needs the NeXus path
+    <code>/entry/instrument/detector_carriage/value</code> — that one piece doesn't fit the
+    cross-instrument shape.
+    </p>
+    <p>
+    Compromise: a small per-source <code>dict[str, str]</code> local to <code>loki/factories.py</code>,
+    passed to <code>DetectorViewFactory</code> via <code>transform_names</code>. The factory consults
+    it only when a <code>TransformValueLog</code> entry appears in <code>context_keys</code>;
+    declared-but-missing raises <code>ValueError</code> at job creation.
+    </p>
+    <p style="color: var(--text-dim);">
+    If a second instrument needs the same plumbing, the right move is to extend
+    <code>ContextInput</code> with an opaque <code>payload: Any</code> field. YAGNI today.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">routing</span>Job-scoped streams route via a dedicated topic, with no central registry</summary>
+  <div class="body">
+    <p>
+    <code>gather_source_names</code> can't resolve <code>f"{job_id}/{name}"</code> at startup,
+    so spec-level entries with a resolver are skipped by the route-pickup. They route via a
+    dedicated topic — today only <code>StreamKind.LIVEDATA_ROI</code>.
+    </p>
+    <p>The plumbing is hardcoded in three places per kind:</p>
+    <ol>
+      <li><code>StreamKind.LIVEDATA_ROI</code> in <code>core/message.py</code></li>
+      <li><code>.with_livedata_roi_route()</code> on <code>RoutingAdapterBuilder</code>, called unconditionally by <code>services/detector_data.py:36</code></li>
+      <li><code>case StreamKind.LIVEDATA_ROI: return LatestValueHandler()</code> in <code>handlers/detector_data_handler.py:53</code></li>
+    </ol>
+    <p style="color: var(--text-dim);">
+    A second job-scoped context kind would need all three additions. No central registry of
+    context-stream kinds — contrast with <code>AuxSources.inputs</code> for dynamic aux.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">validation</span>Registration-time collision check assumes resolver purity</summary>
+  <div class="body">
+    <p>
+    <code>Instrument._validate_context_input_wire_name_collisions</code> guards against the case
+    where an instrument-level and a spec-level <code>ContextInput</code> resolve to the same wire
+    name for the same (spec, source) pair. Raises <code>ValueError</code> at registration.
+    </p>
+    <p>
+    Implementation uses the unresolved <code>stream_name</code> as the collision key — sound only
+    because resolvers are assumed to be pure name-suffixing operations. Documented in
+    <code>ContextInput</code>'s docstring; not enforced. A resolver that hashes or pulls from
+    JobId metadata would make the check unsound. ROI's
+    <code>f"{job_id}/{name}"</code> is the only resolver today.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">optimisation</span>Sticky <code>_seen_context_streams</code> instead of refilling each tick</summary>
+  <div class="body">
+    <p>
+    <code>peek_pending_streams</code> deliberately excludes active jobs' aux from the
+    "what do I need next" set — the orchestrator does <em>not</em> refill cached context into
+    <code>WorkflowData.data</code> every tick. Doing so would re-fire <code>set_context</code> on
+    unchanged values and trigger eager downstream recompute.
+    </p>
+    <p>
+    Instead, <code>_seen_context_streams[job_id]</code> is sticky: once a context value arrives
+    it stays seen. The seen-set widens on <em>any</em> aux for the job (not just context aux);
+    that's harmless because <code>missing_context</code> only checks the strict subset, but it's
+    slightly more than strictly needed.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">state</span><code>JobState.pending_context</code> chosen over overloading <code>warning</code></summary>
+  <div class="body">
+    <p>
+    A time-active but context-gated job is conceptually different from one whose last run
+    errored. The new state preserves that distinction. The dashboard widget hasn't been updated
+    to handle the new state — see <a href="#discussion">Discussion item 1</a>.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">pattern</span><code>WorkflowFactory.create</code> opt-in kwarg drift</summary>
+  <div class="body">
+    <p>
+    <code>context_keys</code> is the fourth opt-in kwarg
+    (<code>source_name</code>, <code>params</code>, <code>aux_source_names</code>,
+    <code>context_keys</code>). The pattern works on today's signatures. A fifth would warrant
+    rethinking — possibly a single context-aware factory hook with everything bundled.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">data</span>ROI seed message details</summary>
+  <div class="body">
+    <p>
+    <code>_roi_rectangle_seed</code> and <code>_roi_polygon_seed</code> build messages
+    byte-identical to what the dashboard publishes when the user deletes the last ROI:
+    </p>
+    <pre>Message(
+    timestamp=Timestamp.from_ns(0),
+    stream=StreamId(kind=StreamKind.LIVEDATA_ROI,
+                    name=<span class="s">f"</span>{job_id}<span class="s">/roi_rectangle"</span>),
+    value=models.RectangleROI.to_concatenated_data_array({}),
+)</pre>
+    <p>
+    Reset does <em>not</em> re-seed: context accumulators live in <code>MessagePreprocessor</code>
+    above the job and are not cleared by <code>Job.reset</code>. The previously-seen value
+    persists across reset.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">test</span>Bifrost slow test asserts the drop path only</summary>
+  <div class="body">
+    <p>
+    <code>test_bifrost_qmap_drops_events_until_rotation_arrives</code> covers gate-closes-and-drops.
+    It does <em>not</em> cover gate-opens-and-emits (the recovery path) because the
+    data-reduction test harness doesn't subscribe to motion topics for log-context bindings yet.
+    Follow-up after the routing pickup is exercised end-to-end.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">storage</span>Pydantic <code>model_rebuild</code> at the bottom of <code>workflow_spec.py</code></summary>
+  <div class="body">
+    <p>
+    <code>WorkflowSpec.context_inputs: list[ContextInput]</code> uses a forward-ref;
+    <code>ContextInput</code> lives in <code>stream.py</code> and references <code>JobId</code>
+    + <code>Message</code> from <code>workflow_spec.py</code> / <code>message.py</code>. To break
+    the cycle, <code>workflow_spec.py</code> imports <code>ContextInput</code> at the bottom and
+    calls <code>model_rebuild(_types_namespace={…})</code>. Slightly awkward but localised.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">composition</span>Aux merge in <code>JobFactory.create</code></summary>
+  <div class="body">
+    <p>
+    Context wire names splice into <code>rendered_aux_names</code> (<code>{**aux, **wire_for}</code>)
+    so existing Job routing handles both kinds uniformly. The gate discriminates via
+    <code>context_stream_names</code>.
+    </p>
+    <p>
+    Implication: <code>Job.aux_source_names</code> now mixes routing semantics for dynamic aux
+    (user-selectable) and context aux (declared). Worth a comment in the Job docstring for
+    cold readers — currently absent.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">scope</span>Param-dependent gating — explicit non-goal</summary>
+  <div class="body">
+    <p>
+    Today's detector-view factory wires position-context unconditionally if the source has a
+    motion binding, regardless of <code>coordinate_mode</code> (TOA vs wavelength). Over-gating
+    accepted: TOA mode doesn't consume position but still gates. YAGNI today. If "raw detector
+    with broken motion controller" becomes operational, the answer is to split the spec
+    (TOA-only + wavelength variant), not to add param-dependent gating logic.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">scope</span><code>AuxSources</code> slimmed but still alive</summary>
+  <div class="body">
+    <p>
+    Back to its original "user-facing dynamic-aux selection" role.
+    <code>initial_context_messages</code> and <code>DetectorROIAuxSources</code> are gone.
+    Bifrost qmap, LOKI xy_projection, DREAM projection no longer set <code>aux_sources</code>.
+    Live usage remains for LOKI incident/transmission monitor selection.
+    </p>
+  </div>
+</details>
+
+<details>
+  <summary><span class="tag">style</span>No backwards-compat shims left behind</summary>
+  <div class="body">
+    <p>
+    <code>LogContextBinding</code>, <code>add_log_context_binding</code>,
+    <code>get_context_keys</code>, <code>DetectorROIAuxSources</code>,
+    <code>bifrost_aux_sources</code>, <code>LOKI_DYNAMIC_TRANSFORMS</code>,
+    <code>Workflow.context_keys</code>, <code>AuxSources.initial_context_messages</code>,
+    <code>dynamic_transforms</code> kwarg, <code>SpecRequirements.requires_aux_sources</code> —
+    all deleted. External code on these will hard-break.
+    </p>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<h2 id="discussion"><span class="num">7</span>Discussion</h2>
+
+<div class="disc">
+
+<div class="disc-item priority">
+  <h4>Dashboard <code>pending_context</code> signal is wrong, not just missing</h4>
+  <p>
+    The only thing in this branch that <em>regresses</em> user-visible behaviour vs main. Before:
+    workflows with missing context would crash visibly (red status, error message). After:
+  </p>
+  <ul>
+    <li><code>STATUS_COLORS</code> in <code>workflow_status_widget.py:45-52</code> doesn't include <code>pending_context</code>. <code>.get(state, default)</code> falls back to <em>active green</em>. Blocked jobs render as healthy.</li>
+    <li><code>worst_state</code> reduction (lines 784-792) walks error → warning → stopped → active. <code>pending_context</code> matches none of the arms; aggregation never escalates past active.</li>
+    <li>NICOS status export (<code>kafka/x5f2_compat.py:103-116</code>) falls through to <code>NicosStatus.UNKNOWN</code> (999) via <code>case _</code>. Safe but uninformative.</li>
+  </ul>
+  <p>The warning <em>message</em> is set and visible in per-job detail — but the at-a-glance signal lies. Should land alongside the ADR PR or as immediate follow-up.</p>
+</div>
+
+<div class="disc-item">
+  <h4>Resolver purity assumption in the collision check</h4>
+  <p>
+    Documented in <code>ContextInput</code>'s docstring; not enforced. Acceptable today (only ROI
+    has a resolver, and it's pure name-suffixing). Consider an explicit assertion or a typed
+    resolver protocol if more resolvers appear.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4>Sticky seen-set widens on <em>all</em> aux, not just context</h4>
+  <p>
+    Functionally fine — <code>missing_context</code> queries the strict subset. Slightly confusing
+    to a cold reader of <code>_gate_pending_context</code>. Could narrow with
+    <code>available &amp; job.context_stream_names</code>, or just add a comment.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4>Opt-in kwarg drift in <code>WorkflowFactory.create</code></h4>
+  <p>
+    Four kwargs today, all opt-in. The pattern still reads cleanly. A fifth (e.g. chopper context)
+    would warrant rethinking — possibly a single context-aware factory hook bundling all the
+    per-job state.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4>Recovery-path coverage for the bifrost slow test</h4>
+  <p>
+    Currently only asserts the drop path. Adding the rotation-arrives-and-flows assertion needs
+    the test harness to publish motion topics; the routing-pickup extension is in place so the
+    blocker is the harness, not the production code.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4>LOKI <code>transform_name</code> dict — first or only?</h4>
+  <p>
+    Reasonable today as a per-source <code>dict[str, str]</code> local to LOKI factories.
+    Worth deciding now whether to elevate it to a first-class <code>ContextInput.payload</code>
+    field, in case chopper or future instrument wirings need similar graph-side labels.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4>Job-scoped routing extensibility</h4>
+  <p>
+    A second job-scoped context kind requires: a <code>StreamKind</code> enum value, a
+    <code>RoutingAdapterBuilder.with_*_route()</code> method called from
+    <code>services/detector_data.py</code>, and a <code>case</code> branch in
+    <code>detector_data_handler.py:53</code>. <code>ContextInput</code> and the gate are generic;
+    the per-kind plumbing is not. Decide now whether to factor a registry, or grow per-kind if a
+    second appears.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4><code>pending_context</code> after <code>reset_job</code></h4>
+  <p>
+    Reset clears the warning and sets state to <code>active</code>; if context is still missing,
+    the next tick re-enters <code>pending_context</code>. Correct but the brief blip is
+    observable. Not a bug; cosmetic.
+  </p>
+</div>
+
+<div class="disc-item">
+  <h4><code>Job.aux_source_names</code> is now overloaded</h4>
+  <p>
+    Carries both dynamic-aux and context wire names. Gate discriminates via
+    <code>context_stream_names</code>. Slightly more mental-model overhead for someone reading
+    <code>Job</code> cold; a comment in the Job docstring would help.
+  </p>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<h2 id="files"><span class="num">8</span>File map</h2>
+
+<p>Quick jump-points for reading along.</p>
+
+<table>
+  <thead><tr><th>Layer</th><th>Files</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ADRs</td>
+      <td>
+        <span class="ref">docs/developer/adr/0002-context-stream-gating-at-jobmanager.md</span><br>
+        <span class="ref">docs/developer/adr/0003-context-input-declaration-model.md</span>
+      </td>
+    </tr>
+    <tr>
+      <td>The record</td>
+      <td><span class="ref">src/ess/livedata/config/stream.py:91</span> <code>ContextInput</code></td>
+    </tr>
+    <tr>
+      <td>Two scopes</td>
+      <td>
+        <span class="ref">src/ess/livedata/config/instrument.py:160</span> <code>Instrument.add_context_input</code><br>
+        <span class="ref">src/ess/livedata/handlers/workflow_factory.py:52</span> <code>SpecHandle.add_context_input</code><br>
+        <span class="ref">src/ess/livedata/config/workflow_spec.py:284</span> <code>WorkflowSpec.context_inputs</code>
+      </td>
+    </tr>
+    <tr>
+      <td>JobFactory merge</td>
+      <td><span class="ref">src/ess/livedata/core/job_manager.py:137</span> <code>JobFactory.create</code></td>
+    </tr>
+    <tr>
+      <td>Gate</td>
+      <td>
+        <span class="ref">src/ess/livedata/core/job.py:285</span> <code>Job.missing_context</code><br>
+        <span class="ref">src/ess/livedata/core/job_manager.py:525</span> <code>_gate_pending_context</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Seed plumbing</td>
+      <td>
+        <span class="ref">src/ess/livedata/core/orchestrating_processor.py:119</span> <code>seed_messages</code><br>
+        <span class="ref">src/ess/livedata/core/job_manager.py:317</span> <code>_seed_initial_context</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Routing pickup</td>
+      <td><span class="ref">src/ess/livedata/config/route_derivation.py:29</span> <code>gather_source_names</code></td>
+    </tr>
+    <tr>
+      <td>Per-instrument declarations</td>
+      <td>
+        <span class="ref">src/ess/livedata/config/instruments/bifrost/factories.py:70</span><br>
+        <span class="ref">src/ess/livedata/config/instruments/loki/factories.py:47</span><br>
+        <span class="ref">src/ess/livedata/handlers/detector_view_specs.py:483</span> <code>add_roi_context_inputs</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Collision validation</td>
+      <td><span class="ref">src/ess/livedata/config/instrument.py:584</span> <code>_validate_context_input_wire_name_collisions</code></td>
+    </tr>
+    <tr>
+      <td>Dashboard gap (discussion #1)</td>
+      <td>
+        <span class="ref">src/ess/livedata/dashboard/widgets/workflow_status_widget.py:45-52, 784-792</span><br>
+        <span class="ref">src/ess/livedata/kafka/x5f2_compat.py:103-116</span>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+</body>
+</html>
