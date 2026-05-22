@@ -12,7 +12,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/detector_data/unified_detector_view/1
+        workflow_id: bifrost/unified_detector_view/1
         view_name: image
         source_names:
         - unified_detector
@@ -24,7 +24,7 @@ cells:
         mode: latest
   - data_sources:
       primary:
-        workflow_id: static/static_overlay/geometric/1
+        workflow_id: static/geometric/1
         view_name: Triplet bounds
         source_names: []
     plot_name: rectangles
@@ -44,7 +44,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/data_reduction/detector_ratemeter/1
+        workflow_id: bifrost/detector_ratemeter/1
         view_name: detector_region_counts
         source_names:
         - unified_detector
@@ -62,7 +62,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/data_reduction/detector_ratemeter/1
+        workflow_id: bifrost/detector_ratemeter/1
         view_name: detector_region_counts
         source_names:
         - unified_detector

@@ -188,3 +188,20 @@ class TestLoadRawGridTemplates:
         assert 'col' in geometry
         assert 'row_span' in geometry
         assert 'col_span' in geometry
+
+    @pytest.mark.parametrize('instrument', ['bifrost', 'dummy'])
+    def test_shipped_template_workflow_ids_parse(self, instrument):
+        """Every workflow_id in a shipped template parses as a WorkflowId.
+
+        Guards against the templates drifting out of sync with the
+        WorkflowId string format and silently disappearing from the
+        UI dropdown when ``_parse_single_spec`` catches the resulting
+        ``ValueError``.
+        """
+        templates = load_raw_grid_templates(instrument)
+        assert templates, f'no templates shipped for instrument {instrument!r}'
+        for template in templates:
+            for cell in template['cells']:
+                for layer in cell['layers']:
+                    for ds in layer['data_sources'].values():
+                        WorkflowId.from_string(ds['workflow_id'])
