@@ -13,7 +13,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: dummy/detector_data/area_panel_xy/1
+        workflow_id: dummy/area_panel_xy/1
         view_name: image
         source_names:
         - area_panel
@@ -45,7 +45,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: dummy/detector_data/panel_0_xy/1
+        workflow_id: dummy/panel_0_xy/1
         view_name: image
         source_names:
         - panel_0

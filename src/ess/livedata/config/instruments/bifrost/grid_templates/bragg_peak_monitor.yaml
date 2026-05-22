@@ -12,7 +12,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        workflow_id: bifrost/monitor_histogram/1
         view_name: total_in_range
         source_names:
         - bragg_peak_monitor
@@ -28,7 +28,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        workflow_id: bifrost/monitor_histogram/1
         view_name: histogram
         source_names:
         - bragg_peak_monitor
@@ -46,7 +46,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        workflow_id: bifrost/monitor_histogram/1
         view_name: total_counts
         source_names:
         - bragg_peak_monitor
@@ -62,7 +62,7 @@ cells:
   layers:
   - data_sources:
       primary:
-        workflow_id: bifrost/monitor_data/monitor_histogram/1
+        workflow_id: bifrost/monitor_histogram/1
         view_name: histogram
         source_names:
         - bragg_peak_monitor
