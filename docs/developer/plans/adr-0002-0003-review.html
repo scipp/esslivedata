@@ -414,15 +414,14 @@ once "context inputs" are first-class, gating on their availability is a small p
     <p style="font-size: 13.5px;">
       Activates for every spec whose source set overlaps <code>dependent_sources</code>.
       No resolver, no seed. Specs that consume the source but not the value opt out via
-      <code>SpecHandle.skip_motion()</code> (a single boolean — coarse but simple).
+      <code>SpecHandle.skip_motion()</code> — a single boolean, coarse but simple. The
+      instrument-scope default makes silent omission impossible: a new consuming spec picks
+      up the binding by default, and forgetting to <code>skip_motion</code> on a non-consumer
+      produces a noisy gate-on-unused-stream rather than silently-wrong output.
     </p>
     <p style="font-size: 13px; color: var(--text-dim);">
       <b>Today:</b> LOKI carriage (chain-patch via <code>transform_path</code>) and bifrost's two
-      rotation streams (direct-bind). Originally drafted here, briefly moved to spec scope, then
-      moved back once <code>skip_motion</code> let non-consumers opt out. The instrument-scope
-      default closes the silent-omission failure mode (forgetting to declare on a new consuming
-      spec); forgetting to <code>skip_motion</code> on a non-consumer produces a noisy
-      gate-on-unused-stream instead of silently-wrong output.
+      rotation streams (direct-bind).
     </p>
   </div>
   <div class="card" style="margin: 0;">
@@ -435,8 +434,7 @@ once "context inputs" are first-class, gating on their availability is a small p
       it, the spec wants it.
     </p>
     <p style="font-size: 13px; color: var(--text-dim);">
-      <b>Today:</b> ROI (resolver + seed). Bifrost rotation and LOKI carriage moved out of
-      spec scope to instrument scope; ROI remains spec-scoped because it is genuinely per-spec.
+      <b>Today:</b> ROI (resolver + seed).
     </p>
   </div>
 </div>
@@ -511,13 +509,12 @@ below are therefore net no-ops vs main — they existed only inside this branch.
     <tr><td class="del mono">LogContextBinding</td><td>Renamed to <code>ContextInput</code></td></tr>
     <tr><td class="del mono">Instrument.get_context_keys</td><td>No production callers after bifrost migration</td></tr>
     <tr><td class="del mono">DetectorROIAuxSources</td><td>ROI now per-spec via <code>add_context_input</code></td></tr>
-    <tr><td class="del mono">bifrost_aux_sources</td><td>Rotation now per-spec on qmap handles</td></tr>
+    <tr><td class="del mono">bifrost_aux_sources</td><td>Rotation now at instrument scope on <code>unified_detector</code></td></tr>
     <tr><td class="del mono">LOKI_DYNAMIC_TRANSFORMS</td><td>Replaced by tiny <code>dict[str, str]</code> in <code>loki/factories.py</code></td></tr>
     <tr><td class="del mono">Workflow.context_keys (protocol)</td><td>Transitional carrier within this branch — net no-op vs main. SPW keeps the ctor arg.</td></tr>
     <tr><td class="del mono">AuxSources.initial_context_messages</td><td>Transitional carrier introduced and removed within this branch — net no-op vs main. Seeding lives on <code>ContextInput.seed_factory</code>.</td></tr>
-    <tr><td class="del mono">DetectorViewFactory.dynamic_transforms</td><td>Replaced (transiently) by <code>transform_names: dict[str, str]</code>, then removed in favour of <code>ContextInput.transform_path</code> + a framework-supplied <code>transform_paths</code> kwarg.</td></tr>
-    <tr><td class="del mono">DetectorViewFactory.transform_names</td><td>Replaced by <code>ContextInput.transform_path</code>; the factory iterates <code>transform_paths</code> directly. The <code>key is TransformValueLog</code> sentinel branch is gone.</td></tr>
-    <tr><td class="del mono">_LOKI_TRANSFORM_NAMES (in loki/factories.py)</td><td>NeXus path now lives on the <code>ContextInput</code> declaration.</td></tr>
+    <tr><td class="del mono">DetectorViewFactory.dynamic_transforms</td><td>Chain-patch path now lives on <code>ContextInput.transform_path</code>; the factory receives a <code>transform_paths</code> kwarg from the framework.</td></tr>
+    <tr><td class="del mono">_LOKI_TRANSFORM_NAMES (loki/factories.py)</td><td>Path lives on the <code>ContextInput</code> declaration.</td></tr>
     <tr><td class="del mono">SpecRequirements.requires_aux_sources</td><td>YAGNI — only deleted tests referenced it</td></tr>
   </tbody>
 </table>
@@ -661,19 +658,18 @@ all the per-job state.
 <p>Collapsed by default. Each is a small thing worth knowing but not central to the design.</p>
 
 <details>
-  <summary><span class="tag">resolved</span>LOKI <code>transform_name</code> carrier — lifted onto <code>ContextInput</code></summary>
+  <summary><span class="tag">design</span>Chain-patch wiring: <code>transform_path</code> on <code>ContextInput</code></summary>
   <div class="body">
     <p>
-    Initially the NeXus chain-patch path lived in a per-instrument <code>dict[str, str]</code>
-    passed to <code>DetectorViewFactory</code>. That dict has been removed; the path now lives on
+    For chain-patch motion bindings, the NeXus path of the dynamic transformation lives on
     <code>ContextInput.transform_path</code>. <code>JobFactory.create</code> builds a
     <code>transform_paths</code> dict from matching records and dispatches it to factories that
-    declare the kwarg. <code>DetectorViewFactory</code> iterates it directly to call
-    <code>add_dynamic_transform</code>; the <code>key is TransformValueLog</code> sentinel branch
-    is gone.
+    declare the kwarg. <code>DetectorViewFactory</code> iterates it to call
+    <code>add_dynamic_transform</code>. <code>workflow_key</code> is inferred as
+    <code>TransformValueLog</code> when <code>transform_path</code> is set.
     </p>
     <p style="color: var(--text-dim);">
-    The path is still hand-typed against the NeXus file. Validating it against the actual NeXus
+    The path is hand-typed against the NeXus file. Validating it against the actual NeXus
     geometry at <code>Instrument.__post_init__</code> would catch typos at registration — open
     follow-up.
     </p>
@@ -917,12 +913,11 @@ all the per-job state.
 </div>
 
 <div class="disc-item">
-  <h4>LOKI <code>transform_name</code> dict — resolved</h4>
+  <h4>NeXus path validation</h4>
   <p>
-    Lifted onto <code>ContextInput.transform_path</code>; the per-instrument dict is gone.
-    <code>DetectorViewFactory</code> receives the path through a new <code>transform_paths</code>
-    factory kwarg dispatched by <code>WorkflowFactory.create</code>. Remaining open: validating the
-    path against the NeXus geometry at registration to catch typos before runtime.
+    <code>ContextInput.transform_path</code> is hand-typed. Validating it against the actual
+    NeXus geometry at <code>Instrument.__post_init__</code> would catch typos at registration
+    instead of runtime. Cheap to add — open follow-up.
   </p>
 </div>
 
