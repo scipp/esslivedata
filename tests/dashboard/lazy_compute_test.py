@@ -59,21 +59,10 @@ def line_input() -> dict:
     return {PRIMARY: {_make_key(): _make_1d()}}
 
 
-class TestUnmanagedDefault:
-    """Plotters built directly (e.g. by tests/scripts) compute eagerly."""
+class TestLazyCompute:
+    """Compute is gated on active tokens; no token = stash only."""
 
-    def test_compute_builds_immediately_without_set_active(
-        self, line_plotter, line_input
-    ):
-        line_plotter.compute(line_input)
-        assert line_plotter.has_cached_state()
-
-
-class TestManagedMode:
-    """After the first set_active call, compute is gated on active tokens."""
-
-    def test_first_set_active_enables_managed_mode(self, line_plotter, line_input):
-        line_plotter.set_active(object(), False)
+    def test_compute_without_active_token_stashes(self, line_plotter, line_input):
         line_plotter.compute(line_input)
         assert not line_plotter.has_cached_state()
 

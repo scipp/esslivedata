@@ -617,6 +617,7 @@ class TestFlattenPlotterCompute:
     def test_compute_caches_state(self, data_abc, data_key) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data_abc}})
         assert plotter.has_cached_state()
 
@@ -628,6 +629,7 @@ class TestFlattenPlotterCompute:
         # than crashing.
         params = FlattenParams(flatten={'axis_x_dims': {2}})
         plotter = FlattenPlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_2d = sc.DataArray(sc.zeros(dims=['x', 'y'], shape=[2, 2]))
         plotter.compute({'primary': {data_key: data_2d}})
         assert plotter.get_cached_state() is not None

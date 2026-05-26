@@ -310,7 +310,9 @@ class TestLinePlotter:
         """Create a LinePlotter instance."""
         from ess.livedata.dashboard.plot_params import PlotParams1d
 
-        return plots.LinePlotter.from_params(PlotParams1d())
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
+        return plotter
 
     def test_plot_without_dimension_coord(self, line_plotter, data_key):
         """Test that LinePlotter handles data without dimension coordinate."""
@@ -671,7 +673,9 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         # Use linear scale to avoid NaN masking of zeros in tests
         params.plot_scale.color_scale = PlotScale.linear
-        return SlicerPlotter.from_params(params)
+        plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
+        return plotter
 
     @pytest.fixture
     def slicer_presenter(self, slicer_plotter):
@@ -703,6 +707,7 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
         plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
@@ -718,6 +723,7 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.log
         plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
@@ -820,6 +826,7 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.log
         plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
@@ -1015,6 +1022,7 @@ class TestPlotterLabelChanges:
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
         """Test that plot label includes output_name."""
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         data_dict = {data_key_with_output_name: simple_data}
 
         plotter.compute({'primary': data_dict})
@@ -1078,6 +1086,7 @@ class TestPlotterOverlayMode:
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_dict = {data_key_1: simple_data_1}
 
         plotter.compute({'primary': data_dict})
@@ -1096,6 +1105,7 @@ class TestPlotterOverlayMode:
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
         plotter.compute({'primary': data_dict})
@@ -1114,6 +1124,7 @@ class TestPlotterOverlayMode:
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_dict = {data_key_1: simple_data_1}
 
         plotter.compute({'primary': data_dict})
@@ -1128,6 +1139,7 @@ class TestPlotterOverlayMode:
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_dict = {}
 
         plotter.compute(data_dict)
@@ -1147,6 +1159,7 @@ class TestPlotterOverlayMode:
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data_dict = {}
 
         plotter.compute(data_dict)
@@ -1165,16 +1178,20 @@ class TestBarsPlotter:
         """Create a BarsPlotter instance with default settings."""
         from ess.livedata.dashboard.plot_params import PlotParamsBars
 
-        return plots.BarsPlotter.from_params(PlotParamsBars())
+        plotter = plots.BarsPlotter.from_params(PlotParamsBars())
+        plotter.set_active(object(), True)
+        return plotter
 
     @pytest.fixture
     def horizontal_bars_plotter(self):
         """Create a BarsPlotter instance with horizontal bars."""
         from ess.livedata.dashboard.plot_params import BarOrientation, PlotParamsBars
 
-        return plots.BarsPlotter.from_params(
+        plotter = plots.BarsPlotter.from_params(
             PlotParamsBars(orientation=BarOrientation(horizontal=True))
         )
+        plotter.set_active(object(), True)
+        return plotter
 
     @pytest.fixture
     def scalar_data(self):
@@ -1267,6 +1284,7 @@ class TestBarsPlotter:
         plotter = plots.BarsPlotter.from_params(
             PlotParamsBars(layout=LayoutParams(combine_mode='layout'))
         )
+        plotter.set_active(object(), True)
 
         workflow_id = WorkflowId(
             instrument='test',
@@ -1307,7 +1325,9 @@ class TestOverlay1DPlotter:
     @pytest.fixture
     def overlay_plotter(self):
         """Create an Overlay1DPlotter instance."""
-        return plots.Overlay1DPlotter.from_params(PlotParams1d())
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
+        return plotter
 
     @pytest.fixture
     def data_2d_with_roi_coord(self):
@@ -1684,6 +1704,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data}})
         result = plotter.get_cached_state()
 
@@ -1705,6 +1726,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data}})
         result = plotter.get_cached_state()
 
@@ -1755,6 +1777,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key1: data1, data_key2: data2}})
         result = plotter.get_cached_state()
 
@@ -1803,6 +1826,7 @@ class TestTwoStageArchitecture:
     def test_presenter_creates_dynamic_map(self, simple_data, data_key):
         """Test that Presenter.present() creates a DynamicMap."""
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         data_dict = {data_key: simple_data}
         # With new architecture, pipe receives pre-computed elements
         plotter.compute({'primary': data_dict})
@@ -1818,6 +1842,7 @@ class TestTwoStageArchitecture:
         """Test that SlicerPresenter creates kdims from SlicerState."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
 
         # Create 3D data
         data_3d = sc.DataArray(
@@ -1853,6 +1878,7 @@ class TestTwoStageArchitecture:
     ):
         """Test that DefaultPresenter passes through pre-computed elements."""
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         data_dict = {data_key: simple_data}
         # With new architecture, compute() is called once and result is passed to pipe
         plotter.compute({'primary': data_dict})
@@ -1908,6 +1934,7 @@ class TestSaveFilenameHookOnDynamicMap:
     def test_hooks_on_dmap_single_element(self):
         """Hooks on a DynamicMap with a single element work."""
         plotter = plots.ImagePlotter.from_params(PlotParams2d())
+        plotter.set_active(object(), True)
         key = self._make_key('rear')
         plotter.compute({'primary': {key: self._make_2d_data()}})
 
@@ -1925,6 +1952,7 @@ class TestSaveFilenameHookOnDynamicMap:
 
         params = PlotParams2d(layout=LayoutParams(combine_mode=CombineMode.overlay))
         plotter = plots.ImagePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data = {
             self._make_key('rear'): self._make_2d_data(),
             self._make_key('front'): self._make_2d_data(),
@@ -1950,6 +1978,7 @@ class TestSaveFilenameHookOnDynamicMap:
 
         params = PlotParams2d(layout=LayoutParams(combine_mode=CombineMode.layout))
         plotter = plots.ImagePlotter.from_params(params)
+        plotter.set_active(object(), True)
         data = {
             self._make_key('rear'): self._make_2d_data(),
             self._make_key('front'): self._make_2d_data(),
@@ -2156,6 +2185,7 @@ class TestRateNormalizationIntegration:
             rate=RateNormalizationParams(normalize_to_rate=True),
         )
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: counts_1d}})
         result = plotter.get_cached_state()
         # Should render without error
@@ -2165,6 +2195,7 @@ class TestRateNormalizationIntegration:
         """LinePlotter with default params does not normalize."""
         params = PlotParams1d()
         plotter = plots.LinePlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: counts_1d}})
         result = plotter.get_cached_state()
         assert result is not None
@@ -2177,6 +2208,7 @@ class TestRateNormalizationIntegration:
             rate=RateNormalizationParams(normalize_to_rate=True),
         )
         plotter = plots.ImagePlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: counts_2d}})
         result = plotter.get_cached_state()
         assert result is not None
@@ -2199,6 +2231,7 @@ class TestRateNormalizationIntegration:
             rate=RateNormalizationParams(normalize_to_rate=True),
         )
         plotter = SlicerPlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data_3d}})
         state = plotter.get_cached_state()
         assert isinstance(state, SlicerState)
@@ -2221,6 +2254,7 @@ class TestRateNormalizationIntegration:
         )
         params = PlotParamsBars(rate=RateNormalizationParams(normalize_to_rate=True))
         plotter = plots.BarsPlotter.from_params(params)
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data_0d}})
         result = plotter.get_cached_state()
         # get_cached_state wraps in an Overlay even for single bars

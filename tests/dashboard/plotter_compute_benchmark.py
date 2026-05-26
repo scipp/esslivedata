@@ -61,19 +61,23 @@ def _make_2d_overlay_data(n_curves: int = 5, n_points: int = 100) -> sc.DataArra
 
 @pytest.fixture
 def line_plotter() -> LinePlotter:
-    return LinePlotter.from_params(PlotParams1d())
+    plotter = LinePlotter.from_params(PlotParams1d())
+    plotter.set_active(object(), True)
+    return plotter
 
 
 @pytest.fixture
 def image_plotter() -> ImagePlotter:
-    return ImagePlotter.from_params(PlotParams2d())
+    plotter = ImagePlotter.from_params(PlotParams2d())
+    plotter.set_active(object(), True)
+    return plotter
 
 
 @pytest.fixture
 def overlay_plotter() -> Overlay1DPlotter:
-    from ess.livedata.dashboard.plot_params import PlotParams3d
-
-    return Overlay1DPlotter.from_params(PlotParams3d())
+    plotter = Overlay1DPlotter.from_params(PlotParams1d())
+    plotter.set_active(object(), True)
+    return plotter
 
 
 def test_line_plotter_compute(benchmark, line_plotter):

@@ -107,6 +107,7 @@ class TestTimeseriesTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: extracted_data}})
         result = plotter.get_cached_state()
 
@@ -147,6 +148,7 @@ class TestTimeseriesTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: extracted_data}})
         result = plotter.get_cached_state()
 
@@ -192,6 +194,7 @@ class TestWindowedTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: extracted_data}})
         result = plotter.get_cached_state()
 
@@ -222,6 +225,7 @@ class TestTimeInfoBaseline:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data}})
         result = plotter.get_cached_state()
 
@@ -242,6 +246,7 @@ class TestTimeInfoEdgeCases:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({data_key: data})
         result = plotter.get_cached_state()
 
@@ -262,6 +267,7 @@ class TestTimeInfoEdgeCases:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.set_active(object(), True)
         plotter.compute({'primary': {data_key: data}})  # Should not raise
         result = plotter.get_cached_state()
         assert isinstance(_extract_title(result), str)

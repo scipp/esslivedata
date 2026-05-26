@@ -61,12 +61,6 @@ class TestSyncPlotterInterest:
         assert sl.active_plotter is None
         assert plotter.calls == [(sl, True), (sl, False)]
 
-    def test_plotter_without_set_active_is_tolerated(self):
-        sl = _make_session_layer()
-        sentinel = object()  # no set_active method
-        PlotGridTabs._sync_plotter_interest(sl, sentinel, True)
-        assert sl.active_plotter is sentinel
-
 
 class TestReleasePlotterInterest:
     def test_release_clears_active_plotter(self):

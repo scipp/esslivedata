@@ -1125,21 +1125,22 @@ class PlotGridTabs:
         old plotter releases its token before the new plotter acquires one,
         so the old plotter can be garbage-collected.
 
-        Tolerates plotters that lack ``set_active`` (duck-typed plotters that
-        haven't opted into managed mode) — they're treated as always-eager.
+        Per-layer plotter identity: ``_create_and_register_plotter`` mints a
+        fresh plotter per layer, so the same plotter never appears under two
+        grids — the per-grid ``is_active`` cannot fight itself.
         """
         prev = session_layer.active_plotter
         if prev is not plotter:
-            if prev is not None and hasattr(prev, 'set_active'):
+            if prev is not None:
                 prev.set_active(session_layer, False)
             session_layer.active_plotter = plotter
-        if plotter is not None and hasattr(plotter, 'set_active'):
+        if plotter is not None:
             plotter.set_active(session_layer, is_active)
 
     @staticmethod
     def _release_plotter_interest(session_layer: SessionLayer) -> None:
         plotter = session_layer.active_plotter
-        if plotter is not None and hasattr(plotter, 'set_active'):
+        if plotter is not None:
             plotter.set_active(session_layer, False)
         session_layer.active_plotter = None
 

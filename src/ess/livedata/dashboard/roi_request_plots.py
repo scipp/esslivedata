@@ -590,9 +590,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     def create_presenter(self) -> PresenterBase:
         """Create a presenter for this plotter."""
 
-    def _build(
-        self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs
-    ) -> dict[ResultKey, sc.DataArray]:
+    def _build(self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs) -> None:
         """
         Extract data-dependent info and forward data to presenter.
 
@@ -605,17 +603,11 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             Role-grouped data; the ``primary`` role contains the ROI readback.
         **kwargs:
             Unused.
-
-        Returns
-        -------
-        :
-            The primary-role data, forwarded for potential future use by presenter.
         """
         del kwargs
         primary = data.get(PRIMARY, {})
         data_key, da = next(iter(primary.items()))
 
-        # Store data-dependent info for edit handler
         self._data_key = data_key
         self._x_unit = (
             str(da.coords['x'].unit)
@@ -628,9 +620,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             else None
         )
 
-        # Forward data (presenter may use in future)
         self._set_cached_state(primary)
-        return primary
 
     def _create_edit_handler(self) -> Callable[[dict], None]:
         """

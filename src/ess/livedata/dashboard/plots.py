@@ -13,6 +13,7 @@ from typing import Any, cast
 import holoviews as hv
 import numpy as np
 import scipp as sc
+import structlog
 
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.timestamp import Timestamp
@@ -33,6 +34,8 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
+
+_logger = structlog.get_logger()
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
@@ -264,12 +267,6 @@ class Plotter:
         self._pending: tuple[Any, TitleResolver | None, dict[str, Any]] | None = None
         self._dirty: bool = False
         self._active_tokens: set[int] = set()
-        # When False the plotter builds eagerly on every compute() call. The
-        # first set_active() call switches into managed mode, where build is
-        # gated on at least one active token. This keeps unit tests that just
-        # call compute() working without explicit interest setup; the dashboard
-        # tabs widget calls set_active() to opt into gating.
-        self._managed: bool = False
         self._build_lock = threading.Lock()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
@@ -437,41 +434,39 @@ class Plotter:
     ) -> None:
         """Submit input; build now if any consumer is active, else stash.
 
-        In *unmanaged* mode (the default until ``set_active`` is called once),
-        every call builds immediately — preserves the contract for callers
-        that construct plotters directly (unit tests, scripts).
+        The heavy ``_build`` step only runs while at least one consumer has
+        called ``set_active(token, True)``. When no consumer is watching, the
+        latest input is stashed and a dirty flag is set; the next acquisition
+        of interest builds from that stash. Multiple input arrivals while
+        inactive collapse to the latest — intermediate updates are dropped,
+        which matches the contract of ``compute`` (last-writer-wins on
+        ``_cached_state``).
 
-        In *managed* mode, the heavy ``_build`` step only runs while at least
-        one consumer has called ``set_active(token, True)``. When no consumer
-        is watching, the latest input is stashed and a dirty flag is set; the
-        next acquisition of interest builds from that stash. Multiple input
-        arrivals while inactive collapse to the latest — intermediate updates
-        are dropped, which matches the contract of ``compute``
-        (last-writer-wins on ``_cached_state``).
+        Tests construct plotters directly and must acquire an interest token
+        before ``compute`` to observe results — see fixtures in
+        ``tests/dashboard``.
         """
-        self._pending = (data, title_resolver, kwargs)
-        self._dirty = True
-        if not self._managed or self._active_tokens:
+        with self._build_lock:
+            self._pending = (data, title_resolver, kwargs)
+            self._dirty = True
+            should_build = bool(self._active_tokens)
+        if should_build:
             self._build_pending()
 
     def set_active(self, token: object, active: bool) -> None:
         """Mark this plotter active or inactive for one consumer.
 
-        The first call switches the plotter into managed mode: subsequent
-        ``compute`` calls become lazy and only build while at least one token
-        is active. On the 0→1 transition, a dirty pending input triggers
-        ``_build`` synchronously so that ``has_cached_state()`` becomes true
-        before the same polling pass tries to create a presenter.
+        On the 0→1 transition a dirty pending input triggers ``_build``
+        synchronously so that ``has_cached_state()`` becomes true before the
+        same polling pass tries to create a presenter.
         """
-        self._managed = True
         key = id(token)
         was_active = bool(self._active_tokens)
         if active:
             self._active_tokens.add(key)
         else:
             self._active_tokens.discard(key)
-        is_active_now = bool(self._active_tokens)
-        if is_active_now and not was_active and self._dirty:
+        if self._active_tokens and not was_active:
             self._build_pending()
 
     @property
@@ -522,6 +517,7 @@ class Plotter:
                 )
                 plots.append(plot_element)
         except Exception as e:
+            _logger.exception("Plotter._build failed", plotter_type=type(self).__name__)
             plots = [
                 hv.Text(0.5, 0.5, f"Error: {e}").opts(
                     text_align='center', text_baseline='middle'

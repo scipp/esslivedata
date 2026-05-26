@@ -26,6 +26,7 @@ class TestPlotterComputeSignature:
         entry = plotter_registry[plotter_name]
         default_params = entry.spec.params()
         plotter = entry.factory(default_params)
+        plotter.set_active(object(), True)
 
         try:
             plotter.compute({}, title_resolver=TitleResolver())

@@ -29,7 +29,9 @@ hv.extension('bokeh')
 
 def _make_line_renderer() -> LinePlotter:
     """Create a LinePlotter for testing."""
-    return LinePlotter(scale_opts=PlotScaleParams(), mode='histogram')
+    plotter = LinePlotter(scale_opts=PlotScaleParams(), mode='histogram')
+    plotter.set_active(object(), True)
+    return plotter
 
 
 def _make_result_key(source_name: str) -> ResultKey:
@@ -322,6 +324,7 @@ class TestCorrelationHistogram1dPlotter:
             bins=Bin1dParams(x_axis_source=title, x_bins=10)
         )
         plotter = CorrelationHistogram1dPlotter(params)
+        plotter._renderer.set_active(object(), True)
 
         axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
         source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
