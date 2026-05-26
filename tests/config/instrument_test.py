@@ -443,6 +443,149 @@ class TestContextInputs:
         with pytest.raises(ValueError, match=r'log_key.*shared'):
             instrument._validate_context_input_log_key_uniqueness()
 
+    def test_validates_chain_patch_stream_consistency_on_transform_path(self):
+        """Two chain-patch entries for one stream must agree on
+        ``transform_path``.
+
+        :meth:`apply_dynamic_transforms` indexes bindings by ``stream_name``
+        per component type; conflicting paths would silently collapse with
+        last-write-wins semantics.
+        """
+        from ess.livedata.config.value_log import ValueLog
+
+        class _LogA(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1', 'det2'],
+            streams={'shared': _f144('shared')},
+        )
+        instrument.add_context_input(
+            stream_name='shared',
+            dependent_sources=['det1'],
+            transform_path='/a/value',
+            log_key=_LogA,
+        )
+        instrument.add_context_input(
+            stream_name='shared',
+            dependent_sources=['det2'],
+            transform_path='/b/value',
+            log_key=_LogA,
+        )
+        with pytest.raises(ValueError, match='conflicting chain-patch'):
+            instrument._validate_chain_patch_stream_consistency()
+
+    def test_validates_chain_patch_stream_consistency_on_log_key(self):
+        """Two chain-patch entries for one stream must agree on ``log_key``."""
+        from ess.livedata.config.value_log import ValueLog
+
+        class _LogA(ValueLog):
+            pass
+
+        class _LogB(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1', 'det2'],
+            streams={'shared': _f144('shared')},
+        )
+        instrument.add_context_input(
+            stream_name='shared',
+            dependent_sources=['det1'],
+            transform_path='/v/value',
+            log_key=_LogA,
+        )
+        instrument.add_context_input(
+            stream_name='shared',
+            dependent_sources=['det2'],
+            transform_path='/v/value',
+            log_key=_LogB,
+        )
+        with pytest.raises(ValueError, match='conflicting chain-patch'):
+            instrument._validate_chain_patch_stream_consistency()
+
+    def test_chain_patch_stream_consistency_allows_exact_duplicates(self):
+        """Repeated identical chain-patch declarations are not a conflict.
+
+        ``load_factories`` may be called multiple times in a long-lived
+        process or across tests; redundant ``add_context_input`` calls
+        with matching ``(transform_path, log_key)`` describe the same
+        binding and must pass.
+        """
+        from ess.livedata.config.value_log import ValueLog
+
+        class _Log(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'s': _f144('s')}
+        )
+        for _ in range(2):
+            instrument.add_context_input(
+                stream_name='s',
+                dependent_sources=['det1'],
+                transform_path='/v/value',
+                log_key=_Log,
+            )
+        instrument._validate_chain_patch_stream_consistency()
+
+    def test_validates_context_vs_aux_field_collision(self):
+        """A context stream_name must not match any aux_sources field name.
+
+        At ``JobFactory.create``, context wire names and rendered aux names
+        are merged into a single field→wire dict; a clashing key would
+        silently overwrite the aux entry. The validator must catch the
+        collision at registration.
+        """
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
+
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+            aux_sources=AuxSources(
+                {'rot': AuxInput(choices=('other',), default='other')}
+            ),
+        )
+        instrument.add_context_input(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+
+        with pytest.raises(ValueError, match='aux_sources field'):
+            instrument._validate_context_input_wire_name_collisions()
+
+    def test_skip_motion_suppresses_context_vs_aux_collision_for_instrument(self):
+        """``skip_motion`` removes instrument-scope context for the spec, so
+        a matching aux field name does not collide for that spec."""
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
+
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+            aux_sources=AuxSources(
+                {'rot': AuxInput(choices=('other',), default='other')}
+            ),
+        )
+        instrument.add_context_input(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+        handle.skip_motion()
+
+        instrument._validate_context_input_wire_name_collisions()
+
     def test_validates_wire_name_collision_between_instrument_and_spec(self):
         """Instrument- and spec-level ContextInput entries must not name-collide.
 

@@ -641,6 +641,7 @@ class Instrument:
         self._validate_binding_dependent_sources()
         self._validate_context_input_wire_name_collisions()
         self._validate_context_input_log_key_uniqueness()
+        self._validate_chain_patch_stream_consistency()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -699,24 +700,62 @@ class Instrument:
                 )
             seen[ci.log_key] = ci.stream_name
 
-    def _validate_context_input_wire_name_collisions(self) -> None:
-        """Raise if instrument- and spec-level ContextInput entries collide.
+    def _validate_chain_patch_stream_consistency(self) -> None:
+        """Raise if two chain-patch entries for one stream disagree.
 
-        For every (spec, source) pair where both instrument-level and
-        spec-level ContextInput entries apply, the resolved wire-stream names
-        must be unique. Resolvers are assumed to be name-suffixing of the
-        ``(job_id, stream_name)`` pair (see :class:`ContextInput` docstring);
-        we treat the unresolved ``stream_name`` as the collision key, which
-        is sound for the resolvers in use today (ROI's
-        ``f"{job_id}/{name}"``).
+        :meth:`apply_dynamic_transforms` indexes bindings by ``stream_name``
+        within each component type, so two :class:`ChainPatchContextInput`
+        entries declaring the same ``stream_name`` but different
+        ``transform_path`` or ``log_key`` would silently collapse into a
+        single (last-write-wins) provider parameter. The contract is that
+        ``stream_name`` is a wire identifier with a single canonical
+        ``(transform_path, log_key)`` mapping; conflicting declarations
+        are a registration error.
+        """
+        seen: dict[str, tuple[str, type]] = {}
+        for ci in self.context_inputs:
+            if not isinstance(ci, ChainPatchContextInput):
+                continue
+            current = (ci.transform_path, ci.log_key)
+            previous = seen.get(ci.stream_name)
+            if previous is not None and previous != current:
+                raise ValueError(
+                    f"ContextInput stream {ci.stream_name!r} has conflicting "
+                    f"chain-patch declarations: "
+                    f"(transform_path={previous[0]!r}, "
+                    f"log_key={previous[1].__name__!r}) vs "
+                    f"(transform_path={current[0]!r}, "
+                    f"log_key={current[1].__name__!r})"
+                )
+            seen[ci.stream_name] = current
+
+    def _validate_context_input_wire_name_collisions(self) -> None:
+        """Raise if context-stream wire names collide.
+
+        Two collisions are detected:
+
+        - **Instrument-vs-spec.** For every (spec, source) pair where both
+          instrument-level and spec-level :class:`ContextInput` entries
+          apply, the resolved wire-stream names must be unique. Resolvers
+          are assumed to be name-suffixing of the ``(job_id, stream_name)``
+          pair (see :class:`ContextInput` docstring); we treat the
+          unresolved ``stream_name`` as the collision key, which is sound
+          for the resolvers in use today (ROI's ``f"{job_id}/{name}"``).
+        - **Context-vs-aux.** A context wire name must not match any
+          ``aux_sources`` field name on the spec: at ``JobFactory.create``
+          time the context and aux mappings are merged into a single
+          field→wire dict, and a key clash would silently overwrite the
+          aux entry.
         """
         for spec in self.workflow_factory.values():
-            if not spec.context_inputs:
-                continue
+            aux_field_names: set[str] = (
+                set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
+            )
+            instrument_inputs = [] if spec.skip_motion else self.context_inputs
             for source in spec.source_names:
                 instrument_names: set[str] = {
                     ci.stream_name
-                    for ci in self.context_inputs
+                    for ci in instrument_inputs
                     if source in ci.dependent_sources
                 }
                 spec_names: set[str] = {
@@ -724,13 +763,23 @@ class Instrument:
                     for ci in spec.context_inputs
                     if source in ci.dependent_sources
                 }
-                collisions = instrument_names & spec_names
-                if collisions:
+                scope_collisions = instrument_names & spec_names
+                if scope_collisions:
                     raise ValueError(
                         f"ContextInput stream-name collision for spec "
                         f"{spec.name!r} on source {source!r}: "
-                        f"{sorted(collisions)} declared at both instrument "
-                        f"and spec scope"
+                        f"{sorted(scope_collisions)} declared at both "
+                        f"instrument and spec scope"
+                    )
+                aux_collisions = (instrument_names | spec_names) & aux_field_names
+                if aux_collisions:
+                    raise ValueError(
+                        f"ContextInput stream-name collision with aux field "
+                        f"for spec {spec.name!r} on source {source!r}: "
+                        f"{sorted(aux_collisions)} declared as both a "
+                        f"context stream and an aux_sources field; the merged "
+                        f"field→wire mapping at JobFactory.create would "
+                        f"silently overwrite the aux entry"
                     )
 
 
