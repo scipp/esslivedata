@@ -26,6 +26,7 @@ class FakePlotter:
         self.scale = scale
         self._cached_state = None
         self._presenters: weakref.WeakSet = weakref.WeakSet()
+        self.set_active_calls: list[tuple[object, bool]] = []
 
     def compute(self, data):
         result = FakePlot()
@@ -47,6 +48,9 @@ class FakePlotter:
         """Mark all registered presenters as having pending updates."""
         for presenter in self._presenters:
             presenter._mark_dirty()
+
+    def set_active(self, token: object, active: bool) -> None:
+        self.set_active_calls.append((token, active))
 
 
 class FakePresenter(PresenterBase):
@@ -338,3 +342,57 @@ class TestSessionLayerWithStoppedState:
         assert result is True
         assert session_layer.components is not None
         assert isinstance(session_layer.dmap, hv.DynamicMap)
+
+
+class TestSessionLayerSyncActivePlotter:
+    """Tests for SessionLayer.sync_active_plotter and release_active_plotter."""
+
+    def test_first_call_records_active_plotter(self):
+        plotter = FakePlotter()
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(plotter, True)
+        assert sl.active_plotter is plotter
+        assert plotter.set_active_calls == [(sl, True)]
+
+    def test_inactive_call_still_records_plotter(self):
+        plotter = FakePlotter()
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(plotter, False)
+        assert sl.active_plotter is plotter
+        assert plotter.set_active_calls == [(sl, False)]
+
+    def test_plotter_replacement_releases_old_acquires_new(self):
+        old = FakePlotter()
+        new = FakePlotter()
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(old, True)
+        sl.sync_active_plotter(new, True)
+        assert sl.active_plotter is new
+        assert old.set_active_calls == [(sl, True), (sl, False)]
+        assert new.set_active_calls == [(sl, True)]
+
+    def test_none_plotter_does_not_call_set_active(self):
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(None, True)
+        assert sl.active_plotter is None
+
+    def test_none_plotter_after_real_plotter_releases(self):
+        plotter = FakePlotter()
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(plotter, True)
+        sl.sync_active_plotter(None, True)
+        assert sl.active_plotter is None
+        assert plotter.set_active_calls == [(sl, True), (sl, False)]
+
+    def test_release_clears_active_plotter(self):
+        plotter = FakePlotter()
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.sync_active_plotter(plotter, True)
+        sl.release_active_plotter()
+        assert sl.active_plotter is None
+        assert plotter.set_active_calls == [(sl, True), (sl, False)]
+
+    def test_release_when_no_plotter_is_noop(self):
+        sl = SessionLayer(layer_id=LayerId(uuid4()), last_seen_version=0)
+        sl.release_active_plotter()
+        assert sl.active_plotter is None

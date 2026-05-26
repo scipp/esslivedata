@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
-from typing import Any
 
 import holoviews as hv
 import panel as pn
@@ -1070,12 +1069,12 @@ class PlotGridTabs:
                     # interest. On 0→1 the plotter rebuilds from stashed data
                     # synchronously, so the cell rebuild below sees the fresh
                     # cached state on the same pass.
-                    self._sync_plotter_interest(session_layer, state.plotter, is_active)
+                    session_layer.sync_active_plotter(state.plotter, is_active)
 
         # Clean up orphaned session layers (removed from orchestrator)
         for layer_id in list(self._session_layers.keys()):
             if layer_id not in seen_layer_ids:
-                self._release_plotter_interest(self._session_layers[layer_id])
+                self._session_layers[layer_id].release_active_plotter()
                 del self._session_layers[layer_id]
 
         # Rebuild affected cells.
@@ -1105,42 +1104,9 @@ class PlotGridTabs:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
         for session_layer in self._session_layers.values():
-            self._release_plotter_interest(session_layer)
+            session_layer.release_active_plotter()
         self._session_layers.clear()
         self._grid_manager.shutdown()
-
-    @staticmethod
-    def _sync_plotter_interest(
-        session_layer: SessionLayer, plotter: Any | None, is_active: bool
-    ) -> None:
-        """Keep ``session_layer.active_plotter`` and ``plotter`` interest in sync.
-
-        Called once per (grid, layer) per polling pass, before the cell rebuild
-        block runs ``ensure_components``. The ordering matters: on the 0→1
-        transition the plotter rebuilds from stashed data synchronously, so
-        ``has_cached_state`` is true when ``ensure_components`` then asks
-        whether a presenter can be created.
-
-        On plotter replacement (workflow restart bumps the state version) the
-        old plotter releases its token before the new plotter acquires one,
-        so the old plotter can be garbage-collected.
-
-        Per-layer plotter identity: ``_create_and_register_plotter`` mints a
-        fresh plotter per layer, so the same plotter never appears under two
-        grids — the per-grid ``is_active`` cannot fight itself.
-        """
-        if session_layer.active_plotter is not plotter:
-            PlotGridTabs._release_plotter_interest(session_layer)
-            session_layer.active_plotter = plotter
-        if plotter is not None:
-            plotter.set_active(session_layer, is_active)
-
-    @staticmethod
-    def _release_plotter_interest(session_layer: SessionLayer) -> None:
-        plotter = session_layer.active_plotter
-        if plotter is not None:
-            plotter.set_active(session_layer, False)
-        session_layer.active_plotter = None
 
     @property
     def panel(self) -> pn.Column:

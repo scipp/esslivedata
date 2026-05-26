@@ -162,3 +162,28 @@ class SessionLayer:
         # Try to create components
         self.components = SessionComponents.create(state)
         return self.components is not None
+
+    def sync_active_plotter(self, plotter: object | None, is_active: bool) -> None:
+        """Update which plotter holds this layer's interest token.
+
+        Releases the previous plotter's token (if any) when the plotter
+        identity changes, then sets the new plotter's active state. Used by
+        the polling loop once per (grid, layer) pass: on a 0→1 transition the
+        new plotter rebuilds from stashed data synchronously, so the same
+        pass's ``ensure_components`` call sees fresh ``has_cached_state``.
+
+        Per-layer plotter identity: the orchestrator mints a fresh plotter
+        per layer, so the same plotter cannot appear under two grids — the
+        per-grid ``is_active`` cannot fight itself.
+        """
+        if self.active_plotter is not plotter:
+            self.release_active_plotter()
+            self.active_plotter = plotter
+        if plotter is not None:
+            plotter.set_active(self, is_active)
+
+    def release_active_plotter(self) -> None:
+        """Release any interest token held on the current ``active_plotter``."""
+        if self.active_plotter is not None:
+            self.active_plotter.set_active(self, False)
+        self.active_plotter = None
