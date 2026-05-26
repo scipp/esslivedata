@@ -1129,10 +1129,8 @@ class PlotGridTabs:
         fresh plotter per layer, so the same plotter never appears under two
         grids — the per-grid ``is_active`` cannot fight itself.
         """
-        prev = session_layer.active_plotter
-        if prev is not plotter:
-            if prev is not None:
-                prev.set_active(session_layer, False)
+        if session_layer.active_plotter is not plotter:
+            PlotGridTabs._release_plotter_interest(session_layer)
             session_layer.active_plotter = plotter
         if plotter is not None:
             plotter.set_active(session_layer, is_active)
