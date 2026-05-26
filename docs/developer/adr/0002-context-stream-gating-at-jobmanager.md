@@ -1,6 +1,6 @@
 # ADR 0002: Gate workflow execution at the JobManager on context-stream readiness
 
-- Status: proposed
+- Status: accepted
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -86,4 +86,4 @@ A job that is time-active but context-gated is conceptually distinct from one wh
 - Dynamic aux (LOKI monitors) flows through unchanged — the gate does not see it.
 - Warning emission for context-pending jobs is consolidated inside `JobManager`. There is no warning-message channel between the workflow execution unit and the job layer.
 - Tests at JobManager level cover: dynamic aux not gated; context aux with seed (ROI) ready from tick 1; context aux without seed (rotation) blocks then unblocks; primary dropped while gated.
-- The preprocessor → orchestrator → JobManager data path is unchanged. JobManager reads `aux_source_names` (already on `Job`) and the new `context_stream_names`. Seeding goes through the existing `preprocess_messages` entry point.
+- The preprocessor → orchestrator → JobManager data path is unchanged. JobManager reads `input_stream_names` (the routing-combined view over user-selected aux and framework-injected context, see ADR 0003 "Job carries aux and context as separate maps") and `context_stream_names` for gating. Seeding goes through the existing `preprocess_messages` entry point.

@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context inputs
 
-- Status: proposed
+- Status: accepted
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -154,3 +154,68 @@ Resolution: keep a small per-source `dict[str, str]` (source_name → transform_
 - Routing-pickup extension (inventory item 2) is a prerequisite of this ADR for the bifrost/LOKI motion case. Spec-level `add_context_input` entries need the equivalent routing-pickup treatment so the namespace subscribes to their resolved wire stream names.
 - Validation: a spec-level `add_context_input` whose materialised wire-stream name collides with an instrument binding's wire-stream name in the merged set is a registration error. Test coverage required.
 - The `Workflow` protocol becomes minimal: `accumulate`, `finalize`, `clear`. Any context handling is an SPW-internal concern, opaque to `Job` and `JobManager`.
+
+## Addendum: changes during implementation
+
+The decision text above captures the design as proposed. The following amendments were made during implementation. They preserve the core decision (one declaration model, two scopes, JobManager-level gate) but refine several points the original draft underweighted.
+
+### Two record shapes via subclass split
+
+The proposal had one `ContextInput` dataclass covering both direct-bind (workflow_key) and chain-patch (transform_path) cases via mutually-exclusive optional fields. As `transform_path` and `log_key` were added (see next item), the runtime `__post_init__` discriminator and the three downstream `transform_path is not None` checks became a sum-type-pretending-to-be-product-type smell. Final shape:
+
+```python
+class ContextInput:                            # abstract base, not instantiable
+    stream_name: str
+    dependent_sources: frozenset[str]
+    stream_resolver: Callable | None
+    seed_factory: Callable | None
+
+class DirectBindContextInput(ContextInput):
+    workflow_key: Any                          # Sciline key
+
+class ChainPatchContextInput(ContextInput):
+    transform_path: str                        # NeXus depends_on chain entry
+    log_key: type[ValueLog]                    # per-binding Sciline key
+```
+
+Discrimination at consumer sites is `isinstance`-based. `Instrument.add_context_input` dispatches on its kwargs to the matching subclass; `SpecHandle.add_context_input` accepts direct-bind kwargs only (chain-patch fields are absent from its signature).
+
+### Chain-patch fields on the record, not a separate dict
+
+The proposal's "LOKI transform_name carrier" section kept a per-source dict (`_LOKI_TRANSFORM_NAMES`) local to `loki/factories.py`. That section is superseded: the NeXus path lives on `ChainPatchContextInput.transform_path`, and `Instrument.apply_dynamic_transforms(workflow, components)` reads the registry, groups bindings by component type, and patches the workflow's `NeXusTransformationChain[T, SampleRun]` provider in place. The same seam works for the original detector-view factory and for `_i_of_q_factory` (which receives a pre-built `LokiWorkflow()`), closing the originally-deferred #922 motivation.
+
+### Per-binding ValueLog subclasses for multi-transform chains
+
+The proposal's `workflow_key: Any` field treated the Sciline key as opaque. For chain-patch this is too coarse: a single Sciline key (`TransformValueLog`) shared across bindings would collapse multiple dynamic transforms into one node. `ChainPatchContextInput.log_key: type[ValueLog]` is a per-binding subclass (e.g. `class DetectorCarriageLog(ValueLog): ...`), giving each binding a distinct Sciline parameter. A new validator (`_validate_context_input_log_key_uniqueness`) rejects shared keys across different streams; another (`_validate_chain_patch_stream_consistency`) rejects same-stream entries that disagree on `(transform_path, log_key)`.
+
+### Instrument scope as default for motion, with `skip_motion` opt-out
+
+The "Instrument bindings are source-scoped, not spec-scoped" section recommended *spec scope* for motion. Implementation flipped this:
+
+> Motion-context declarations live at *instrument* scope; specs that consume a source but not the geometry value (e.g. LOKI `tube_view`, bifrost `detector_ratemeter`) opt out via `SpecHandle.skip_motion()`.
+
+Rationale: the spec-scope-by-default model makes "added a new spec consuming the source, forgot to declare carriage" a silent-wrong failure (the workflow runs with stale geometry). Instrument scope plus opt-out makes the symmetric mistake noisy: a forgotten `skip_motion()` produces a gate-on-unused-stream, not silently-wrong output. See `docs/developer/plans/motion-context-wiring.md` for the full discussion.
+
+The validator now suppresses instrument-scope bindings for specs that have opted out, and rejects context-stream names that collide with `aux_sources` field names on the same spec (a context wire-name would silently overwrite the aux entry in the merged field→wire mapping at `JobFactory.create`).
+
+### Job carries aux and context as separate maps
+
+The proposal's "splice context wire names into `aux_source_names`" worked but conflated semantics: `Job.aux_source_names` returned both user-selected aux and framework-injected context wire names. Final shape carries them as separate maps:
+
+- `Job.aux_source_names` — user-selected aux only (workflow `AuxSources`).
+- `Job.context_wire_names` — framework-routed context wire names.
+- `Job.input_stream_names` — combined, used by routing call sites in `JobManager`.
+
+`JobFactory.create` still passes a single merged dict to the factory (the workflow boundary doesn't distinguish), but `Job` keeps them split for accounting.
+
+### CI validator for `transform_path`
+
+The original "Validation" bullet covered wire-name collisions only. Implementation adds `tests/config/motion_binding_test.py`, which walks every chain-patch binding's `transform_path` against the registered NeXus geometry artifact and fails if the path doesn't appear on the declared consumer's `depends_on` chain. Closes wrong-path as a silent failure mode without putting NeXus introspection on the construction hot path.
+
+### `synthesise_provider` parameter-name validation
+
+`synthesise_provider` (used by `apply_dynamic_transforms` to build per-component fused providers) validates that the synthesised function name and every parameter name match `^[a-zA-Z_][a-zA-Z0-9_]*$` before splicing into the `exec` template. Closes a latent code-injection risk if a caller ever derived a parameter name from external input.
+
+### Module placement: `ValueLog` lives in `config/`
+
+`ValueLog` was initially placed in `handlers/value_log.py`. Because `WorkflowSpec.context_inputs: list[DirectBindContextInput]` requires pydantic forward-ref resolution to know about `ValueLog`, the placement created a `config/` → `handlers/` import. Final placement is `config/value_log.py` next to `ContextInput`. `synthesise_provider` lives in `handlers/dynamic_transforms.py` (its only caller).
