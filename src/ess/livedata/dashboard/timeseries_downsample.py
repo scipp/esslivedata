@@ -33,32 +33,6 @@ def _bucket_last_indices(times_ns: np.ndarray, period_ns: int) -> np.ndarray:
     return np.flatnonzero(keep)
 
 
-def _select_indices(data: sc.DataArray, dim: str, indices: np.ndarray) -> sc.DataArray:
-    """Return ``data`` reduced to the given positional indices along ``dim``."""
-    new_coords = {}
-    for name, coord in data.coords.items():
-        if dim in coord.dims:
-            new_coords[name] = sc.array(
-                dims=coord.dims,
-                values=coord.values[indices],
-                unit=coord.unit,
-                dtype=coord.dtype,
-            )
-        else:
-            new_coords[name] = coord
-    variances = None if data.variances is None else data.variances[indices]
-    return sc.DataArray(
-        data=sc.array(
-            dims=data.dims,
-            values=data.values[indices],
-            variances=variances,
-            unit=data.unit,
-            dtype=data.dtype,
-        ),
-        coords=new_coords,
-    )
-
-
 def downsample_timeseries(
     data: sc.DataArray,
     *,
@@ -128,9 +102,9 @@ def downsample_timeseries(
         parts.append(recent_indices[local])
 
     if not parts:
-        return _select_indices(data, concat_dim, np.array([n - 1], dtype=np.int64))
+        return data[concat_dim, np.array([n - 1], dtype=np.int64)]
 
     keep = np.concatenate(parts)
     if keep.size == n:
         return data
-    return _select_indices(data, concat_dim, keep)
+    return data[concat_dim, keep]
