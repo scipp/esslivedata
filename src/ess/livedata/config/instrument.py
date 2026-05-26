@@ -18,7 +18,14 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .stream import ContextInput, Device, F144Stream, Stream
+from .stream import (
+    ChainPatchContextInput,
+    ContextInput,
+    Device,
+    F144Stream,
+    Stream,
+    _build_context_input,
+)
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
@@ -178,20 +185,23 @@ class Instrument:
     ) -> None:
         """Register a stream as a context input to one or more specs.
 
-        Use from ``setup_factories`` to keep heavy Sciline-key imports out of
-        ``specs.py``. Inputs declared at construction time go through the same
-        validation in ``__post_init__``.
+        Use from ``setup_factories`` to keep heavy Sciline-key imports out
+        of ``specs.py``. Inputs declared at construction time go through
+        the same validation in ``__post_init__``.
 
-        For chain-patch motion bindings, supply ``transform_path`` (the NeXus
-        path of the dynamic transformation to patch) and ``log_key`` (a
-        :class:`ValueLog` subclass that becomes this binding's Sciline node).
-        For direct-bind bindings, supply ``workflow_key`` (the Sciline key on
-        the target pipeline) and omit ``transform_path`` / ``log_key``.
+        Dispatches on which fields are set:
+
+        - ``transform_path`` + ``log_key``: produces a
+          :class:`ChainPatchContextInput` for chain-patch motion bindings.
+        - ``workflow_key``: produces a :class:`DirectBindContextInput`
+          that binds the stream value to a Sciline key directly.
+
+        Setting both or neither raises ``ValueError``.
         """
-        binding = ContextInput(
+        binding = _build_context_input(
             stream_name=stream_name,
-            workflow_key=workflow_key,
             dependent_sources=frozenset(dependent_sources),
+            workflow_key=workflow_key,
             transform_path=transform_path,
             log_key=log_key,
         )
@@ -233,13 +243,13 @@ class Instrument:
 
         # Dedup by stream_name: repeat ``add_context_input`` calls (e.g. when
         # ``load_factories`` runs twice in a long-lived process or across tests)
-        # leave duplicate :class:`ContextInput` entries in ``context_inputs``;
-        # passing the same binding twice would create a provider with
-        # duplicate-typed parameters and Sciline rejects that.
+        # leave duplicate :class:`ChainPatchContextInput` entries in
+        # ``context_inputs``; passing the same binding twice would create a
+        # provider with duplicate-typed parameters and Sciline rejects that.
         by_type: dict[type, dict[str, tuple[str, type]]] = {}
         for source_name, component_type in components.items():
             for ci in self.context_inputs:
-                if ci.transform_path is None:
+                if not isinstance(ci, ChainPatchContextInput):
                     continue
                 if source_name not in ci.dependent_sources:
                     continue
@@ -677,7 +687,7 @@ class Instrument:
         for spec in self.workflow_factory.values():
             all_inputs.extend(spec.context_inputs)
         for ci in all_inputs:
-            if ci.log_key is None:
+            if not isinstance(ci, ChainPatchContextInput):
                 continue
             previous = seen.get(ci.log_key)
             if previous is not None and previous != ci.stream_name:

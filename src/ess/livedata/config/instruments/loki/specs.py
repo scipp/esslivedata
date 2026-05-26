@@ -16,6 +16,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     AuxInput,
@@ -29,7 +30,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.handlers.value_log import ValueLog
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     register_wavelength_lut_workflow_spec,
 )

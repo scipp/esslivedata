@@ -19,6 +19,8 @@ which derives the binding list from the instrument's
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
@@ -26,7 +28,47 @@ import sciline
 from ess.reduce.nexus.types import NeXusComponent, NeXusTransformationChain, SampleRun
 from ess.reduce.nexus.workflow import get_transformation_chain
 
-from .value_log import ValueLog, synthesise_provider
+from ess.livedata.config.value_log import ValueLog
+
+_PY_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def synthesise_provider(
+    name: str,
+    impl: Callable[..., Any],
+    annotations: dict[str, Any],
+) -> Any:
+    """Synthesise a Sciline provider with explicit named positional parameters.
+
+    Returns a function ``name(p1, p2, ...)`` whose ``__annotations__`` come
+    from ``annotations`` (with ``'return'`` consumed as the return type) and
+    whose body delegates to ``impl(p1, p2, ...)``.
+
+    Sciline introspects providers via ``inspect.getfullargspec``, which
+    reads the underlying ``__code__`` and ignores ``__signature__``;
+    producing N named typed positional parameters therefore requires
+    building a real function via ``exec``/``compile``. Same technique
+    ``dataclasses`` and ``namedtuple`` use to generate ``__init__``.
+
+    ``name`` and every parameter name (annotation keys other than
+    ``'return'``) must be valid Python identifiers; raises
+    :class:`ValueError` otherwise. This guards the ``exec`` template
+    against injection from caller-supplied strings.
+    """
+    params = [n for n in annotations if n != 'return']
+    for ident in (name, *params):
+        if not _PY_IDENTIFIER.fullmatch(ident):
+            raise ValueError(
+                f"synthesise_provider: {ident!r} is not a valid Python "
+                "identifier; refusing to splice into exec template"
+            )
+    arg_list = ', '.join(params)
+    src = f"def {name}({arg_list}):\n    return _impl({arg_list})\n"
+    ns: dict[str, Any] = {'_impl': impl}
+    exec(src, ns)  # noqa: S102
+    fn = ns[name]
+    fn.__annotations__ = dict(annotations)
+    return fn
 
 
 def build_patched_chain_provider(

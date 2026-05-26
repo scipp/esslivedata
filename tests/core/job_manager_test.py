@@ -1877,7 +1877,7 @@ class TestJobFactoryContextInput:
         factory's ``context_keys``; the path itself is consumed by
         :meth:`Instrument.apply_dynamic_transforms` and is not threaded as a
         separate kwarg."""
-        from ess.livedata.handlers.value_log import ValueLog
+        from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
             pass

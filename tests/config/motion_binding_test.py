@@ -22,12 +22,14 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.stream import ContextInput
+from ess.livedata.config.stream import ChainPatchContextInput
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
 
-def _chain_patch_inputs(instrument: Instrument) -> list[ContextInput]:
-    return [b for b in instrument.context_inputs if b.transform_path is not None]
+def _chain_patch_inputs(instrument: Instrument) -> list[ChainPatchContextInput]:
+    return [
+        b for b in instrument.context_inputs if isinstance(b, ChainPatchContextInput)
+    ]
 
 
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:

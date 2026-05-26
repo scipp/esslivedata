@@ -349,7 +349,9 @@ class TestContextInputs:
             )
 
     def test_constructor_validates_binding_stream_names(self):
-        bad = ContextInput(
+        from ess.livedata.config.stream import DirectBindContextInput
+
+        bad = DirectBindContextInput(
             stream_name='missing',
             workflow_key=_Key,
             dependent_sources=frozenset({'det1'}),
@@ -408,7 +410,7 @@ class TestContextInputs:
         not share a ``log_key`` -- Sciline keys identify parameters by
         class, so a shared key would silently merge two streams into one
         Sciline node."""
-        from ess.livedata.handlers.value_log import ValueLog
+        from ess.livedata.config.value_log import ValueLog
 
         class _SharedLog(ValueLog):
             pass
@@ -466,60 +468,56 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='collision'):
             instrument._validate_context_input_wire_name_collisions()
 
-    def test_direct_bind_requires_workflow_key(self):
-        with pytest.raises(ValueError, match='workflow_key'):
+    def test_abstract_base_cannot_be_instantiated(self):
+        with pytest.raises(TypeError, match='abstract base'):
             ContextInput(stream_name='rot', dependent_sources=frozenset({'det1'}))
 
-    def test_chain_patch_requires_log_key(self):
-        with pytest.raises(ValueError, match='log_key'):
-            ContextInput(
+    def test_add_context_input_requires_workflow_key_or_chain_patch_pair(self):
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
+        with pytest.raises(ValueError, match='workflow_key'):
+            instrument.add_context_input(stream_name='rot', dependent_sources=['det1'])
+
+    def test_add_context_input_chain_patch_requires_log_key(self):
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
+        with pytest.raises(ValueError, match=r'transform_path.*log_key'):
+            instrument.add_context_input(
                 stream_name='rot',
-                dependent_sources=frozenset({'det1'}),
+                dependent_sources=['det1'],
                 transform_path='/entry/instrument/rot/value',
             )
 
-    def test_chain_patch_rejects_workflow_key(self):
-        from ess.livedata.handlers.value_log import ValueLog
+    def test_add_context_input_rejects_mixing_chain_patch_and_workflow_key(self):
+        from ess.livedata.config.value_log import ValueLog
 
         class _Log(ValueLog):
             pass
 
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
         with pytest.raises(ValueError, match='must not set'):
-            ContextInput(
+            instrument.add_context_input(
                 stream_name='rot',
-                dependent_sources=frozenset({'det1'}),
+                dependent_sources=['det1'],
                 transform_path='/entry/instrument/rot/value',
                 log_key=_Log,
                 workflow_key=_Key,
             )
 
-    def test_direct_bind_rejects_log_key(self):
-        from ess.livedata.handlers.value_log import ValueLog
+    def test_add_context_input_constructs_chain_patch_subclass(self):
+        from ess.livedata.config.stream import ChainPatchContextInput
+        from ess.livedata.config.value_log import ValueLog
 
         class _Log(ValueLog):
             pass
 
-        with pytest.raises(ValueError, match='only valid for chain-patch'):
-            ContextInput(
-                stream_name='rot',
-                dependent_sources=frozenset({'det1'}),
-                workflow_key=_Key,
-                log_key=_Log,
-            )
-
-    def test_chain_patch_accepts_transform_path_and_log_key(self):
-        from ess.livedata.handlers.value_log import ValueLog
-
-        class _Log(ValueLog):
-            pass
-
-        ci = ContextInput(
+        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
+        instrument.add_context_input(
             stream_name='rot',
-            dependent_sources=frozenset({'det1'}),
+            dependent_sources=['det1'],
             transform_path='/entry/instrument/rot/value',
             log_key=_Log,
         )
-        assert ci.workflow_key is None
+        (ci,) = instrument.context_inputs
+        assert isinstance(ci, ChainPatchContextInput)
         assert ci.transform_path == '/entry/instrument/rot/value'
         assert ci.log_key is _Log
 
@@ -580,7 +578,7 @@ class TestInstrumentApplyDynamicTransforms:
         assert workflow.inserted == []
 
     def test_inserts_provider_for_matching_binding(self) -> None:
-        from ess.livedata.handlers.value_log import ValueLog
+        from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
             pass
@@ -610,7 +608,7 @@ class TestInstrumentApplyDynamicTransforms:
         assert workflow.inserted == []
 
     def test_groups_bindings_by_component_type(self) -> None:
-        from ess.livedata.handlers.value_log import ValueLog
+        from ess.livedata.config.value_log import ValueLog
 
         class _LogA(ValueLog):
             pass

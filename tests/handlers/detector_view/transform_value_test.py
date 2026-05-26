@@ -9,8 +9,8 @@ import scipp as sc
 import scippnexus as snx
 from ess.reduce.nexus.types import NeXusComponent, SampleRun
 
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.handlers.dynamic_transforms import build_patched_chain_provider
-from ess.livedata.handlers.value_log import ValueLog
 
 
 class _CarriageLog(ValueLog):

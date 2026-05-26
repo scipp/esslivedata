@@ -15,9 +15,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ess.livedata.config.value_log import ValueLog
     from ess.livedata.config.workflow_spec import JobId
     from ess.livedata.core.message import Message
-    from ess.livedata.handlers.value_log import ValueLog
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -91,78 +91,142 @@ class Device(Stream):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ContextInput:
-    """Declaration of one context-stream input to a workflow.
+    """Base declaration of one context-stream input to a workflow.
 
-    Declares that the value of a stream (:attr:`stream_name`) should be routed
-    to a Sciline pipeline as the value of ``workflow_key``, but only when
-    wiring workflows for the source names listed in :attr:`dependent_sources`.
+    A context input declares that the value of a stream
+    (:attr:`stream_name`) should be routed to a Sciline pipeline when
+    wiring workflows for the source names listed in
+    :attr:`dependent_sources`. The way the value reaches the pipeline
+    distinguishes the two concrete subclasses:
 
-    ``workflow_key`` is typed as :class:`Any` because Sciline keys are
-    parameterised generics (e.g. ``InstrumentAngle[SampleRun]``) and Python's
-    type system cannot describe "type of any Sciline key" precisely.
+    - :class:`DirectBindContextInput` binds the stream value to an
+      explicit Sciline key (``workflow_key``). Used for parameters the
+      workflow consumes directly (e.g. ROI, rotation angles as scalars).
+    - :class:`ChainPatchContextInput` patches a NeXus ``depends_on``
+      chain entry with the stream value, via a fused per-component
+      patched-chain provider. Used for live motion readbacks.
 
-    :attr:`transform_path`, when set, identifies a NeXus ``depends_on`` chain
-    entry whose ``value`` should be patched from this stream. The presence of
-    a path marks the binding as *chain-patch*; the workflow factory routes the
-    stream value into the chain via a fused per-component patched-chain
-    provider rather than via direct parameter binding. Chain-patch bindings
-    must declare :attr:`log_key` (a :class:`ValueLog` subclass) and omit
-    :attr:`workflow_key`.
+    Direct instantiation of this base is forbidden; use one of the
+    subclasses.
 
-    :attr:`log_key` is the :class:`ValueLog` subclass that gives this
-    chain-patch binding a distinct Sciline parameter. Each chain-patch
-    binding declares its own subclass — ``class DetectorCarriageLog(ValueLog):
-    ...`` — so multiple dynamic transforms can coexist on one workflow
-    without colliding on a shared key. Must be set iff :attr:`transform_path`
-    is set.
+    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
+    the wire stream name used by routing and the gate. Resolvers are
+    assumed to be pure name-suffixing operations on ``stream_name``; the
+    registration-time collision check relies on this purity. Leaving it
+    unset (default) means the wire name equals :attr:`stream_name` —
+    used for instrument-property context such as motion.
 
-    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to the
-    wire stream name used by routing and the gate. Resolvers are assumed to
-    be pure name-suffixing operations on ``stream_name``; the registration-time
-    collision check relies on this purity. Leaving it unset (default) means
-    the wire name equals :attr:`stream_name` — used for instrument-property
-    context such as motion.
-
-    :attr:`seed_factory`, when set, produces the cold-start :class:`Message`
-    fired at ``schedule_job`` time so the accumulator exists before any
-    external producer publishes. Used for spec-level inputs with a meaningful
-    "no message yet" default (currently ROI).
+    :attr:`seed_factory`, when set, produces the cold-start
+    :class:`Message` fired at ``schedule_job`` time so the accumulator
+    exists before any external producer publishes. Used for spec-level
+    inputs with a meaningful "no message yet" default (currently ROI).
     """
 
     stream_name: str
-    workflow_key: Any = None
     dependent_sources: frozenset[str]
-    transform_path: str | None = field(default=None)
-    log_key: type[ValueLog] | None = field(default=None)
     stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
     seed_factory: Callable[[JobId], Message] | None = field(default=None)
 
     def __post_init__(self) -> None:
-        if self.transform_path is None:
-            if self.workflow_key is None:
-                raise ValueError(
-                    f"ContextInput for stream {self.stream_name!r}: "
-                    "direct-bind entries must set 'workflow_key'"
-                )
-            if self.log_key is not None:
-                raise ValueError(
-                    f"ContextInput for stream {self.stream_name!r}: "
-                    "'log_key' is only valid for chain-patch entries "
-                    "(set 'transform_path')"
-                )
-        else:
-            if self.workflow_key is not None:
-                raise ValueError(
-                    f"ContextInput for stream {self.stream_name!r}: "
-                    "chain-patch entries must not set 'workflow_key'; "
-                    "declare 'log_key' (a ValueLog subclass) instead"
-                )
-            if self.log_key is None:
-                raise ValueError(
-                    f"ContextInput for stream {self.stream_name!r}: "
-                    "chain-patch entries must declare 'log_key' "
-                    "(a ValueLog subclass) for the per-binding Sciline key"
-                )
+        if type(self) is ContextInput:
+            raise TypeError(
+                "ContextInput is an abstract base; construct "
+                "DirectBindContextInput or ChainPatchContextInput instead"
+            )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DirectBindContextInput(ContextInput):
+    """Context input that binds a stream value to a Sciline key directly.
+
+    The :attr:`workflow_key` is the Sciline key on the target pipeline
+    that receives the stream value via ``set_context``. Typed as
+    :class:`Any` because Sciline keys are parameterised generics (e.g.
+    ``InstrumentAngle[SampleRun]``) and Python's type system cannot
+    describe "type of any Sciline key" precisely.
+    """
+
+    workflow_key: Any
+
+    def __post_init__(self) -> None:
+        pass  # bypass the abstract guard on the base
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChainPatchContextInput(ContextInput):
+    """Context input that patches a NeXus ``depends_on`` chain entry.
+
+    :attr:`transform_path` identifies the chain entry whose ``value``
+    should be patched from this stream. The framework routes the stream
+    value into the chain via a fused per-component patched-chain
+    provider rather than via direct parameter binding.
+
+    :attr:`log_key` is the :class:`ValueLog` subclass that gives this
+    binding a distinct Sciline parameter. Each chain-patch binding
+    declares its own subclass — ``class DetectorCarriageLog(ValueLog):
+    ...`` — so multiple dynamic transforms can coexist on one workflow
+    without colliding on a shared key.
+    """
+
+    transform_path: str
+    log_key: type[ValueLog]
+
+    def __post_init__(self) -> None:
+        pass  # bypass the abstract guard on the base
+
+
+def _build_context_input(
+    *,
+    stream_name: str,
+    dependent_sources: frozenset[str],
+    workflow_key: Any = None,
+    transform_path: str | None = None,
+    log_key: Any = None,
+    stream_resolver: Callable[[JobId, str], str] | None = None,
+    seed_factory: Callable[[JobId], Message] | None = None,
+) -> ContextInput:
+    """Dispatch keyword arguments to the matching ``ContextInput`` subclass.
+
+    Exposed as a single entry point so ``Instrument.add_context_input``
+    and equivalent callers don't have to repeat the discriminator logic.
+    Direct-bind callers supply ``workflow_key``; chain-patch callers
+    supply ``transform_path`` and ``log_key``. Mixing or omitting both
+    sides raises ``ValueError``.
+    """
+    chain_patch = transform_path is not None or log_key is not None
+    if chain_patch:
+        if workflow_key is not None:
+            raise ValueError(
+                f"ContextInput for stream {stream_name!r}: chain-patch "
+                "entries must not set 'workflow_key'; supply 'log_key' "
+                "(a ValueLog subclass) instead"
+            )
+        if transform_path is None or log_key is None:
+            raise ValueError(
+                f"ContextInput for stream {stream_name!r}: chain-patch "
+                "entries must set both 'transform_path' and 'log_key'"
+            )
+        return ChainPatchContextInput(
+            stream_name=stream_name,
+            dependent_sources=dependent_sources,
+            stream_resolver=stream_resolver,
+            seed_factory=seed_factory,
+            transform_path=transform_path,
+            log_key=log_key,
+        )
+    if workflow_key is None:
+        raise ValueError(
+            f"ContextInput for stream {stream_name!r}: direct-bind "
+            "entries must set 'workflow_key' (or supply "
+            "'transform_path' + 'log_key' for a chain-patch entry)"
+        )
+    return DirectBindContextInput(
+        stream_name=stream_name,
+        dependent_sources=dependent_sources,
+        stream_resolver=stream_resolver,
+        seed_factory=seed_factory,
+        workflow_key=workflow_key,
+    )
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

@@ -19,7 +19,7 @@ from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
 
 if TYPE_CHECKING:
-    from ess.livedata.config.stream import ContextInput
+    from ess.livedata.config.stream import DirectBindContextInput
 
 T = TypeVar('T')
 
@@ -284,12 +284,14 @@ class WorkflowSpec(BaseModel):
             "and UI metadata."
         ),
     )
-    context_inputs: list[ContextInput] = Field(
+    context_inputs: list[DirectBindContextInput] = Field(
         default_factory=list,
         description=(
-            "Spec-level context-stream declarations (see ADR 0003). Populated "
-            "via :meth:`SpecHandle.add_context_input` from ``factories.py`` to "
-            "keep workflow-key imports out of ``specs.py``. Empty by default."
+            "Spec-level direct-bind context-stream declarations (see ADR 0003). "
+            "Populated via :meth:`SpecHandle.add_context_input` from "
+            "``factories.py`` to keep workflow-key imports out of ``specs.py``. "
+            "Chain-patch bindings live at instrument scope only. Empty by "
+            "default."
         ),
     )
     skip_motion: bool = Field(
@@ -631,12 +633,18 @@ def find_timeseries_outputs(
 # ``ContextInput`` is defined in ``stream.py`` to keep configuration records
 # co-located; its callable fields reference ``JobId`` and ``Message`` from this
 # module, so we feed both into ``model_rebuild`` to break the import cycle.
-from ess.livedata.config.stream import ContextInput  # noqa: E402
-from ess.livedata.handlers.value_log import ValueLog  # noqa: E402
+from ess.livedata.config.stream import (  # noqa: E402
+    ChainPatchContextInput,
+    ContextInput,
+    DirectBindContextInput,
+)
+from ess.livedata.config.value_log import ValueLog  # noqa: E402
 
 WorkflowSpec.model_rebuild(
     _types_namespace={
         'ContextInput': ContextInput,
+        'ChainPatchContextInput': ChainPatchContextInput,
+        'DirectBindContextInput': DirectBindContextInput,
         'JobId': JobId,
         'Message': Message,
         'ValueLog': ValueLog,

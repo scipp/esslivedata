@@ -3,14 +3,15 @@
 """Tests for LOKI ContextInput declarations."""
 
 from ess.livedata.config.instruments.loki import factories, specs
+from ess.livedata.config.stream import ChainPatchContextInput
 
 
 def test_setup_factories_declares_detector_carriage_context_input() -> None:
     """The rear bank's f144 carriage stream is declared at instrument scope.
 
-    Declared as a chain-patch binding (``transform_path`` set) on
-    ``loki_detector_0`` only; specs consuming that source pick it up by default
-    and non-consumers (tube_view, i_of_q) opt out via ``skip_motion``.
+    Declared as a :class:`ChainPatchContextInput` on ``loki_detector_0`` only;
+    specs consuming that source pick it up by default and non-consumers
+    (tube_view, i_of_q) opt out via ``skip_motion``.
     """
     instrument = specs.instrument
     factories.setup_factories(instrument)
@@ -18,8 +19,8 @@ def test_setup_factories_declares_detector_carriage_context_input() -> None:
     matching = [
         ci
         for ci in instrument.context_inputs
-        if ci.stream_name == 'detector_carriage'
-        and ci.workflow_key is None
+        if isinstance(ci, ChainPatchContextInput)
+        and ci.stream_name == 'detector_carriage'
         and ci.transform_path == '/entry/instrument/detector_carriage/value'
         and ci.dependent_sources == frozenset({'loki_detector_0'})
         and ci.stream_resolver is None

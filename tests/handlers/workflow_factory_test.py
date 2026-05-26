@@ -1022,24 +1022,24 @@ class TestSpecHandleAddContextInput:
         assert factory[handle.workflow_id].skip_motion is True
 
     def test_chain_patch_rejected_at_spec_scope(self) -> None:
-        """Chain-patch bindings must be declared at instrument scope: a
-        spec-scope ``transform_path`` is silent-wrong because
+        """Chain-patch fields are absent from :meth:`SpecHandle.add_context_input`:
+        spec scope is direct-bind only because
         :meth:`Instrument.apply_dynamic_transforms` reads only instrument
-        records, leaving the Sciline parameter unwired."""
+        records. Passing chain-patch kwargs raises ``TypeError`` at the call."""
         import pytest
 
-        from ess.livedata.handlers.value_log import ValueLog
+        from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
             pass
 
         _, handle = self._register(source_names=['det1'])
 
-        with pytest.raises(ValueError, match='instrument scope'):
+        with pytest.raises(TypeError, match='transform_path'):
             handle.add_context_input(
                 stream_name='rot',
                 transform_path='/entry/instrument/rot/value',
                 log_key=_RotLog,
             )
-        with pytest.raises(ValueError, match='instrument scope'):
+        with pytest.raises(TypeError, match='log_key'):
             handle.add_context_input(stream_name='rot', log_key=_RotLog)

@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ess.livedata.config.stream import ContextInput
+from ess.livedata.config.stream import DirectBindContextInput
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
 from ess.livedata.core.timestamp import Timestamp
 
@@ -53,44 +53,31 @@ class SpecHandle:
         self,
         *,
         stream_name: str,
-        workflow_key: Any = None,
+        workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
-        transform_path: str | None = None,
-        log_key: Any = None,
         stream_resolver: Callable[['JobId', str], str] | None = None,
         seed_factory: Callable[['JobId'], 'Message'] | None = None,
     ) -> None:
-        """Append a spec-level :class:`ContextInput` to this spec.
+        """Append a spec-level :class:`DirectBindContextInput` to this spec.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
 
-        Chain-patch bindings (``transform_path`` set) must be declared at
-        instrument scope via :meth:`Instrument.add_context_input`:
+        Spec scope is direct-bind only. Chain-patch bindings must be declared
+        at instrument scope via :meth:`Instrument.add_context_input`:
         :meth:`Instrument.apply_dynamic_transforms` reads only instrument-scope
         records, so a spec-scope chain-patch declaration would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
-
-        See :meth:`Instrument.add_context_input` for the
-        ``workflow_key`` / ``transform_path`` / ``log_key`` discriminator.
         """
-        if transform_path is not None or log_key is not None:
-            raise ValueError(
-                "Chain-patch ContextInput (transform_path/log_key set) must be "
-                "declared at instrument scope via Instrument.add_context_input. "
-                "Spec scope is not supported because "
-                "Instrument.apply_dynamic_transforms reads only instrument-scope "
-                "records."
-            )
         spec = self._factory[self.workflow_id]
         if dependent_sources is None:
             dependent_sources = frozenset(spec.source_names)
         else:
             dependent_sources = frozenset(dependent_sources)
         spec.context_inputs.append(
-            ContextInput(
+            DirectBindContextInput(
                 stream_name=stream_name,
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,

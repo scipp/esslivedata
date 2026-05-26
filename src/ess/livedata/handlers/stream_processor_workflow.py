@@ -14,9 +14,9 @@ import sciline
 import sciline.typing
 from ess.reduce import streaming
 
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.core.timestamp import Timestamp
 
-from .value_log import ValueLog
 from .workflow_factory import Workflow
 
 
