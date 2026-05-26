@@ -138,26 +138,6 @@ class TestDownsampleTimeseries:
         )
         assert sc.identical(result, data)
 
-    def test_int64_time_coord_supported(self):
-        n = 100
-        data = sc.DataArray(
-            data=sc.array(dims=['time'], values=np.arange(n, dtype=np.float64)),
-            coords={
-                'time': sc.array(
-                    dims=['time'],
-                    values=np.arange(n, dtype=np.int64) * int(1e9),
-                    unit='ns',
-                )
-            },
-        )
-        result = downsample_timeseries(
-            data,
-            period_seconds=10.0,
-            recent_seconds=100.0,
-            floor_period_seconds=0.0,
-        )
-        assert result.sizes['time'] <= 11
-
 
 @pytest.mark.parametrize('n', [10_000, 100_000])
 def test_downsampling_caps_output_size(n: int):

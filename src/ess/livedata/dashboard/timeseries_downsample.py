@@ -27,21 +27,6 @@ def _bucket_first_indices(times_ns: np.ndarray, period_ns: int) -> np.ndarray:
     return np.flatnonzero(keep)
 
 
-def _to_int64_ns(coord: sc.Variable) -> np.ndarray | None:
-    """Convert a time coord to int64 nanoseconds, or None if not time-like.
-
-    ``scipp.Variable.to`` does not support astype on datetime64, so we drop to
-    the underlying numpy array and cast via ``datetime64[ns]``.
-    """
-    if coord.dtype == sc.DType.datetime64:
-        return coord.values.astype('datetime64[ns]', copy=False).astype(
-            'int64', copy=False
-        )
-    if coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
-        return coord.to(unit='ns', dtype='int64').values
-    return None
-
-
 def _select_indices(data: sc.DataArray, dim: str, indices: np.ndarray) -> sc.DataArray:
     """Return ``data`` reduced to the given positional indices along ``dim``."""
     new_coords = {}
@@ -110,9 +95,13 @@ def downsample_timeseries(
         return data
     if concat_dim not in data.coords:
         return data
-    times_ns = _to_int64_ns(data.coords[concat_dim])
-    if times_ns is None:
-        return data
+    # FullHistoryExtractor guarantees a datetime64 time coord; scipp.to does
+    # not support astype on datetime64, so reinterpret via numpy.
+    times_ns = (
+        data.coords[concat_dim]
+        .values.astype('datetime64[ns]', copy=False)
+        .astype('int64', copy=False)
+    )
 
     latest_ns = times_ns[-1]
     recent_cutoff_ns = latest_ns - int(recent_seconds * 1e9)

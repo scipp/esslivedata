@@ -38,7 +38,10 @@ from .timeseries_downsample import downsample_timeseries
 
 
 def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
-    """Latest time-coord value across the primary dict, as int64 nanoseconds."""
+    """Latest time-coord value across the primary dict, as int64 nanoseconds.
+
+    Assumes the datetime64 time coord produced by FullHistoryExtractor.
+    """
     latest: int | None = None
     for da in primary.values():
         if 'time' not in da.dims or da.sizes['time'] == 0:
@@ -46,13 +49,7 @@ def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
         coord = da.coords.get('time')
         if coord is None:
             continue
-        last = coord.values[-1]
-        if coord.dtype == sc.DType.datetime64:
-            t = int(np.datetime64(last, 'ns').astype('int64'))
-        elif coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
-            t = int(sc.scalar(int(last), unit=coord.unit).to(unit='ns').value)
-        else:
-            continue
+        t = int(np.datetime64(coord.values[-1], 'ns').astype('int64'))
         if latest is None or t > latest:
             latest = t
     return latest
