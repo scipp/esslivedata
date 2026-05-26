@@ -9,9 +9,7 @@ import scipp as sc
 import scippnexus as snx
 from ess.reduce.nexus.types import NeXusComponent, SampleRun
 
-from ess.livedata.handlers.detector_view.workflow import (
-    build_patched_chain_provider,
-)
+from ess.livedata.handlers.dynamic_transforms import build_patched_chain_provider
 from ess.livedata.handlers.value_log import ValueLog
 
 

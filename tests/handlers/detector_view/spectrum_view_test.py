@@ -19,6 +19,7 @@ from .utils import (
     make_fake_detector_number,
     make_fake_nexus_detector_data,
     make_roi_context_keys,
+    make_test_instrument,
 )
 
 
@@ -49,6 +50,7 @@ def _make_factory_with_spectrum(
     return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
         view_config=LogicalViewConfig(transform=logical_transform, spectrum_view=spec),
+        instrument=make_test_instrument(),
     )
 
 
@@ -116,6 +118,7 @@ class TestSpectrumViewIntegration:
         factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             view_config=LogicalViewConfig(transform=logical_transform),
+            instrument=make_test_instrument(),
         )
         params = make_detector_view_params()()
         workflow = factory.make_workflow(

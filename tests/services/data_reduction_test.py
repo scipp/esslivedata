@@ -181,6 +181,22 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     service.step()
     sink.messages.clear()  # Clear the workflow status message(s), one per source name.
 
+    # LOKI i_of_q is gated on the detector_carriage device stream (chain-patch
+    # binding for loki_detector_0). The synthesizer emits only after all three
+    # substreams (RBV, VAL, DMOV) have arrived; publish all three then step so
+    # the gate is open before detector/monitor events arrive.
+    if instrument == 'loki':
+        app.publish_log_message(
+            source_name='detector_carriage/target_value', time=1, value=0.0
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/idle_flag', time=1, value=1
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/value', time=1, value=0.0
+        )
+        service.step()
+
     app.publish_events(size=2000, time=2)
     service.step()
     # No monitor data yet, so the workflow was not able to produce a result yet

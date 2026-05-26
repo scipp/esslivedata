@@ -1872,10 +1872,11 @@ class TestJobFactoryContextInput:
         assert captured['ck'] == {'temp': _CtxKeyB}
         assert job.missing_context(set()) == {'temp'}
 
-    def test_transform_path_threads_through_to_factory(self) -> None:
-        """``transform_path`` on a ContextInput reaches the factory's
-        ``transform_paths`` kwarg, and ``context_keys`` carries the
-        per-binding :class:`ValueLog` subclass declared on the input."""
+    def test_chain_patch_context_input_delivers_log_key_in_context_keys(self) -> None:
+        """A chain-patch ContextInput contributes its ``log_key`` to the
+        factory's ``context_keys``; the path itself is consumed by
+        :meth:`Instrument.apply_dynamic_transforms` and is not threaded as a
+        separate kwarg."""
         from ess.livedata.handlers.value_log import ValueLog
 
         class _RotLog(ValueLog):
@@ -1900,12 +1901,8 @@ class TestJobFactoryContextInput:
         captured: dict[str, dict] = {}
 
         @handle.attach_factory()
-        def _factory(
-            context_keys: dict[str, type],
-            transform_paths: dict[str, str],
-        ) -> FakeProcessor:
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
             captured['ck'] = context_keys
-            captured['tp'] = transform_paths
             return FakeProcessor(context_keys=context_keys)
 
         factory = JobFactory(instrument, service_name='data_reduction')
@@ -1915,7 +1912,6 @@ class TestJobFactoryContextInput:
         factory.create(job_id=job_id, config=config)
 
         assert captured['ck'] == {'rot': _RotLog}
-        assert captured['tp'] == {'rot': '/entry/instrument/rot/value'}
 
 
 class ThreadTrackingProcessor(FakeProcessor):

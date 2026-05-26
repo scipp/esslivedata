@@ -180,11 +180,6 @@ class JobFactory:
             if job_id.source_name in ci.dependent_sources
         ]
         context_keys = {ci.stream_name: _resolve_workflow_key(ci) for ci in matching}
-        transform_paths = {
-            ci.stream_name: ci.transform_path
-            for ci in matching
-            if ci.transform_path is not None
-        }
         wire_for = {
             ci.stream_name: (
                 ci.stream_resolver(job_id, ci.stream_name)
@@ -207,7 +202,6 @@ class JobFactory:
             config=config,
             aux_source_names=rendered_aux_names,
             context_keys=context_keys,
-            transform_paths=transform_paths,
         )
         job = Job(
             job_id=job_id,

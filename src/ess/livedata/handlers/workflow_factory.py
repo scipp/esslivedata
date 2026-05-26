@@ -67,9 +67,23 @@ class SpecHandle:
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
 
+        Chain-patch bindings (``transform_path`` set) must be declared at
+        instrument scope via :meth:`Instrument.add_context_input`:
+        :meth:`Instrument.apply_dynamic_transforms` reads only instrument-scope
+        records, so a spec-scope chain-patch declaration would route the f144
+        value to a Sciline parameter that no provider consumes — silent-wrong.
+
         See :meth:`Instrument.add_context_input` for the
         ``workflow_key`` / ``transform_path`` / ``log_key`` discriminator.
         """
+        if transform_path is not None or log_key is not None:
+            raise ValueError(
+                "Chain-patch ContextInput (transform_path/log_key set) must be "
+                "declared at instrument scope via Instrument.add_context_input. "
+                "Spec scope is not supported because "
+                "Instrument.apply_dynamic_transforms reads only instrument-scope "
+                "records."
+            )
         spec = self._factory[self.workflow_id]
         if dependent_sources is None:
             dependent_sources = frozenset(spec.source_names)
@@ -80,8 +94,6 @@ class SpecHandle:
                 stream_name=stream_name,
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,
-                transform_path=transform_path,
-                log_key=log_key,
                 stream_resolver=stream_resolver,
                 seed_factory=seed_factory,
             )
@@ -209,7 +221,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         config: WorkflowConfig,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
-        transform_paths: dict[str, str] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -226,10 +237,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Resolved ``ContextInput`` mapping (stream_name → workflow_key).
             Forwarded to factories that opt in by declaring ``context_keys``
             in their signature.
-        transform_paths:
-            Resolved chain-patch mapping (stream_name → NeXus transform path)
-            for ``ContextInput`` records carrying ``transform_path``. Forwarded
-            to factories that declare ``transform_paths`` in their signature.
         """
         workflow_id = config.identifier
         if workflow_id not in self._workflow_specs:
@@ -279,8 +286,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['aux_source_names'] = aux_source_names or {}
         if 'context_keys' in sig.parameters:
             kwargs['context_keys'] = context_keys or {}
-        if 'transform_paths' in sig.parameters:
-            kwargs['transform_paths'] = transform_paths or {}
 
         # Call factory with appropriate arguments
         if kwargs:

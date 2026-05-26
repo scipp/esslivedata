@@ -9,6 +9,8 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.unwrap import LookupTableFilename
@@ -41,11 +43,13 @@ from .types import (
     ViewConfig,
 )
 from .workflow import (
-    add_dynamic_transforms,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
 )
+
+if TYPE_CHECKING:
+    from ess.livedata.config.instrument import Instrument
 
 
 class DetectorViewFactory:
@@ -69,6 +73,10 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
+    instrument:
+        The instrument the factory is registered for. Used to apply
+        any matching dynamic-transform bindings to the detector's chain
+        via :meth:`Instrument.apply_dynamic_transforms`.
     """
 
     def __init__(
@@ -76,9 +84,11 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
+        instrument: Instrument,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
+        self._instrument = instrument
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -92,7 +102,6 @@ class DetectorViewFactory:
         params: DetectorViewParams,
         lookup_table_filename: str | None = None,
         context_keys: dict[str, type] | None = None,
-        transform_paths: dict[str, str] | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -110,10 +119,6 @@ class DetectorViewFactory:
         context_keys:
             Resolved ``ContextInput`` mapping (stream_name → workflow_key)
             for this job. Wires ROI inputs and other direct-bind context.
-        transform_paths:
-            Resolved chain-patch mapping (stream_name → NeXus transform path)
-            from the matching ``ContextInput`` records. Each entry triggers
-            ``add_dynamic_transform`` on the workflow.
 
         Returns
         -------
@@ -121,7 +126,6 @@ class DetectorViewFactory:
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
         """
         context_keys = dict(context_keys or {})
-        transform_paths = dict(transform_paths or {})
         mode = params.coordinate_mode.mode
 
         # Validate wavelength mode requirements
@@ -247,16 +251,10 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic detector geometry: every chain-patch ContextInput
-        # contributes one (transform_path, log_key) binding into a single
-        # fused provider that patches the detector's transformation chain.
-        chain_bindings = [
-            (path, context_keys[stream_name])
-            for stream_name, path in transform_paths.items()
-        ]
-        add_dynamic_transforms(
-            workflow, component_type=NXdetector, bindings=chain_bindings
-        )
+        # Wire dynamic detector geometry: matching instrument-scope chain-patch
+        # bindings are applied to the detector's transformation chain. A no-op
+        # when no binding covers ``source_name``.
+        self._instrument.apply_dynamic_transforms(workflow, {source_name: NXdetector})
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

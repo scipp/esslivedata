@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import sciline
+
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 
 import pydantic
@@ -195,6 +197,62 @@ class Instrument:
         )
         self._validate_binding_stream_name(binding)
         self.context_inputs.append(binding)
+
+    def apply_dynamic_transforms(
+        self,
+        workflow: sciline.Pipeline,
+        components: Mapping[str, type],
+    ) -> None:
+        """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
+
+        For each ``(source_name, component_type)`` entry, selects every
+        instrument-scope chain-patch :class:`ContextInput` whose
+        ``dependent_sources`` includes that source name and groups the
+        ``(transform_path, log_key)`` pairs by component type. Each group
+        becomes a single fused provider that replaces essreduce's
+        ``NeXusTransformationChain[T, SampleRun]`` provider and writes the
+        latest sample of each :class:`ValueLog` parameter into the chain.
+
+        Spec-scope ``ContextInput`` records are not consulted: chain-patch
+        bindings are required to live at instrument scope (enforced in
+        :meth:`SpecHandle.add_context_input`).
+
+        Parameters
+        ----------
+        workflow:
+            Sciline pipeline to patch in place.
+        components:
+            ``source_name -> component_type`` for the essreduce-loaded NeXus
+            components whose ``depends_on`` chain might need patching (e.g.
+            ``{'loki_detector_0': NXdetector,
+            aux_source_names['incident_monitor']: Incident, ...}``). Callers
+            own alias resolution: source names are the actual on-disk names,
+            not aliases. Components with no matching binding are no-ops.
+        """
+        from ess.livedata.handlers.dynamic_transforms import add_dynamic_transforms
+
+        # Dedup by stream_name: repeat ``add_context_input`` calls (e.g. when
+        # ``load_factories`` runs twice in a long-lived process or across tests)
+        # leave duplicate :class:`ContextInput` entries in ``context_inputs``;
+        # passing the same binding twice would create a provider with
+        # duplicate-typed parameters and Sciline rejects that.
+        by_type: dict[type, dict[str, tuple[str, type]]] = {}
+        for source_name, component_type in components.items():
+            for ci in self.context_inputs:
+                if ci.transform_path is None:
+                    continue
+                if source_name not in ci.dependent_sources:
+                    continue
+                by_type.setdefault(component_type, {})[ci.stream_name] = (
+                    ci.transform_path,
+                    ci.log_key,
+                )
+        for component_type, by_stream in by_type.items():
+            add_dynamic_transforms(
+                workflow,
+                component_type=component_type,
+                bindings=list(by_stream.values()),
+            )
 
     @property
     def nexus_file(self) -> str:
@@ -563,6 +621,7 @@ class Instrument:
                 factory = DetectorViewFactory(
                     data_source=InstrumentDetectorSource(self),
                     view_config=view_config,
+                    instrument=self,
                 )
                 handle.attach_factory()(factory.make_workflow)
 

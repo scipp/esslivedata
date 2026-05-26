@@ -39,6 +39,7 @@ def setup_factories(instrument: Instrument) -> None:
     _nmx_panels_view = DetectorViewFactory(
         data_source=InstrumentDetectorSource(instrument),
         view_config=LogicalViewConfig(),  # Identity transform
+        instrument=instrument,
     )
 
     specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_workflow)

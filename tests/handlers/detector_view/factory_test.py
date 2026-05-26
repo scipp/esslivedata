@@ -11,7 +11,7 @@ from ess.livedata.handlers.detector_view.types import (
     LogicalViewConfig,
 )
 
-from .utils import make_fake_detector_number
+from .utils import make_fake_detector_number, make_test_instrument
 
 
 class TestDetectorViewScilineFactory:
@@ -28,6 +28,7 @@ class TestDetectorViewScilineFactory:
         logical_factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             view_config=LogicalViewConfig(transform=transform),
+            instrument=make_test_instrument(),
         )
         assert logical_factory is not None
         assert isinstance(logical_factory._view_config, LogicalViewConfig)
@@ -40,6 +41,7 @@ class TestDetectorViewScilineFactory:
                 projection_type='xy_plane',
                 resolution={'x': 100, 'y': 100},
             ),
+            instrument=make_test_instrument(),
         )
         assert geometric_factory is not None
         assert isinstance(geometric_factory._view_config, GeometricViewConfig)
@@ -61,6 +63,7 @@ class TestDetectorViewScilineFactory:
                     resolution={'x': 100, 'y': 100},
                 ),
             },
+            instrument=make_test_instrument(),
         )
 
         assert factory is not None

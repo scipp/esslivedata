@@ -305,6 +305,3 @@ i_of_q_handle = instrument.register_spec(
     outputs=IofQOutputs,
     params=SansWorkflowParams,
 )
-# I(Q) currently reads the static NeXus geometry; the factory does not wire
-# the dynamic carriage. Opt out until that wiring lands.
-i_of_q_handle.skip_motion()

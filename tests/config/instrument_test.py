@@ -548,6 +548,96 @@ class TestContextInputs:
         instrument._validate_context_input_wire_name_collisions()
 
 
+class _FakePipeline:
+    """Capture provider inserts so apply_dynamic_transforms behaviour is observable."""
+
+    def __init__(self) -> None:
+        self.inserted: list = []
+
+    def insert(self, provider) -> None:
+        self.inserted.append(provider)
+
+
+class TestInstrumentApplyDynamicTransforms:
+    """``Instrument.apply_dynamic_transforms`` patches a workflow's
+    ``NeXusTransformationChain[T, SampleRun]`` provider for every matching
+    instrument-scope chain-patch :class:`ContextInput`."""
+
+    def _make_instrument(self) -> Instrument:
+        return Instrument(
+            name='inst',
+            detector_names=['det1'],
+            streams={
+                'rot': F144Stream(source='rot', topic='topic', units='deg'),
+                'other': F144Stream(source='other', topic='topic', units='deg'),
+            },
+        )
+
+    def test_no_matching_binding_is_noop(self) -> None:
+        instrument = self._make_instrument()
+        workflow = _FakePipeline()
+        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        assert workflow.inserted == []
+
+    def test_inserts_provider_for_matching_binding(self) -> None:
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
+        instrument = self._make_instrument()
+        instrument.add_context_input(
+            stream_name='rot',
+            dependent_sources=['det1'],
+            transform_path='/entry/instrument/rot/value',
+            log_key=_RotLog,
+        )
+
+        workflow = _FakePipeline()
+        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        assert len(workflow.inserted) == 1
+
+    def test_direct_bind_binding_is_skipped(self) -> None:
+        instrument = self._make_instrument()
+        instrument.add_context_input(
+            stream_name='other',
+            workflow_key=_Key,
+            dependent_sources=['det1'],
+        )
+
+        workflow = _FakePipeline()
+        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        assert workflow.inserted == []
+
+    def test_groups_bindings_by_component_type(self) -> None:
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _LogA(ValueLog):
+            pass
+
+        class _LogB(ValueLog):
+            pass
+
+        instrument = self._make_instrument()
+        instrument.add_context_input(
+            stream_name='rot',
+            dependent_sources=['det1'],
+            transform_path='/entry/instrument/rot/value',
+            log_key=_LogA,
+        )
+        instrument.add_context_input(
+            stream_name='other',
+            dependent_sources=['det2'],
+            transform_path='/entry/instrument/other/value',
+            log_key=_LogB,
+        )
+
+        workflow = _FakePipeline()
+        # One component_type per matching source — two separate inserts.
+        instrument.apply_dynamic_transforms(workflow, {'det1': object, 'det2': type})
+        assert len(workflow.inserted) == 2
+
+
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""
 
