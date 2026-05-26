@@ -6,8 +6,12 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ess.livedata.config.stream import DirectBindContextInput
-from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    SpecContextInput,
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowSpec,
+)
 from ess.livedata.core.timestamp import Timestamp
 
 if TYPE_CHECKING:
@@ -58,7 +62,7 @@ class SpecHandle:
         stream_resolver: Callable[['JobId', str], str] | None = None,
         seed_factory: Callable[['JobId'], 'Message'] | None = None,
     ) -> None:
-        """Append a spec-level :class:`DirectBindContextInput` to this spec.
+        """Append a spec-level :class:`SpecContextInput` to this spec.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
@@ -77,7 +81,7 @@ class SpecHandle:
         else:
             dependent_sources = frozenset(dependent_sources)
         spec.context_inputs.append(
-            DirectBindContextInput(
+            SpecContextInput(
                 stream_name=stream_name,
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,

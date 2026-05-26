@@ -22,6 +22,7 @@ from ess.livedata.config.stream import (
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobSchedule,
+    SpecContextInput,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -187,14 +188,16 @@ class JobFactory:
         wire_for = {
             ci.stream_name: (
                 ci.stream_resolver(job_id, ci.stream_name)
-                if ci.stream_resolver is not None
+                if isinstance(ci, SpecContextInput) and ci.stream_resolver is not None
                 else ci.stream_name
             )
             for ci in matching
         }
         context_stream_names = set(wire_for.values())
         seed_messages = [
-            ci.seed_factory(job_id) for ci in matching if ci.seed_factory is not None
+            ci.seed_factory(job_id)
+            for ci in matching
+            if isinstance(ci, SpecContextInput) and ci.seed_factory is not None
         ]
 
         # The factory still receives a single merged mapping: at the workflow

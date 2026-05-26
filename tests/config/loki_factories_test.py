@@ -23,8 +23,6 @@ def test_setup_factories_declares_detector_carriage_context_input() -> None:
         and ci.stream_name == 'detector_carriage'
         and ci.transform_path == '/entry/instrument/detector_carriage/value'
         and ci.dependent_sources == frozenset({'loki_detector_0'})
-        and ci.stream_resolver is None
-        and ci.seed_factory is None
     ]
     assert matching, instrument.context_inputs
 

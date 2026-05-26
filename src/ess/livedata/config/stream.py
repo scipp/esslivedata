@@ -10,14 +10,12 @@ instrument chooses to call it. The instrument-facing name is the key into
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ess.livedata.config.value_log import ValueLog
-    from ess.livedata.config.workflow_spec import JobId
-    from ess.livedata.core.message import Message
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -109,23 +107,18 @@ class ContextInput:
     Direct instantiation of this base is forbidden; use one of the
     subclasses.
 
-    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
-    the wire stream name used by routing and the gate. Resolvers are
-    assumed to be pure name-suffixing operations on ``stream_name``; the
-    registration-time collision check relies on this purity. Leaving it
-    unset (default) means the wire name equals :attr:`stream_name` —
-    used for instrument-property context such as motion.
-
-    :attr:`seed_factory`, when set, produces the cold-start
-    :class:`Message` fired at ``schedule_job`` time so the accumulator
-    exists before any external producer publishes. Used for spec-level
-    inputs with a meaningful "no message yet" default (currently ROI).
+    These records are purely declarative: stream name, the spec sources
+    they apply to, and the Sciline-side identity (workflow key or chain
+    target). Per-job runtime behavior — wire-name suffixing, cold-start
+    seeding — lives on the spec-scope wrapper
+    :class:`ess.livedata.config.workflow_spec.SpecContextInput`, which
+    extends :class:`DirectBindContextInput`. Instrument-scope entries
+    never carry such callables; their wire name is the declared
+    :attr:`stream_name` and they have no cold-start seed.
     """
 
     stream_name: str
     dependent_sources: frozenset[str]
-    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
-    seed_factory: Callable[[JobId], Message] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if type(self) is ContextInput:
@@ -182,8 +175,6 @@ def _build_context_input(
     workflow_key: Any = None,
     transform_path: str | None = None,
     log_key: Any = None,
-    stream_resolver: Callable[[JobId, str], str] | None = None,
-    seed_factory: Callable[[JobId], Message] | None = None,
 ) -> ContextInput:
     """Dispatch keyword arguments to the matching ``ContextInput`` subclass.
 
@@ -209,8 +200,6 @@ def _build_context_input(
         return ChainPatchContextInput(
             stream_name=stream_name,
             dependent_sources=dependent_sources,
-            stream_resolver=stream_resolver,
-            seed_factory=seed_factory,
             transform_path=transform_path,
             log_key=log_key,
         )
@@ -223,8 +212,6 @@ def _build_context_input(
     return DirectBindContextInput(
         stream_name=stream_name,
         dependent_sources=dependent_sources,
-        stream_resolver=stream_resolver,
-        seed_factory=seed_factory,
         workflow_key=workflow_key,
     )
 

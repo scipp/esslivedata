@@ -8,18 +8,16 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ess.livedata.config.stream import DirectBindContextInput
 from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
-
-if TYPE_CHECKING:
-    from ess.livedata.config.stream import DirectBindContextInput
 
 T = TypeVar('T')
 
@@ -155,6 +153,30 @@ class JobId:
         return f"{self.source_name}/{self.job_number}"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpecContextInput(DirectBindContextInput):
+    """Spec-scope direct-bind context input with per-job runtime callables.
+
+    Lives in the spec tier (not in ``stream.py``) because the optional
+    callables reference :class:`JobId` and :class:`Message` — runtime
+    concepts that the declarative-record layer must not depend on.
+
+    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
+    the wire stream name used by routing and the gate. Resolvers are
+    assumed to be pure name-suffixing operations on ``stream_name``; the
+    registration-time collision check relies on this purity. Leaving it
+    unset means the wire name equals :attr:`stream_name`.
+
+    :attr:`seed_factory`, when set, produces the cold-start
+    :class:`Message` fired at ``schedule_job`` time so the accumulator
+    exists before any external producer publishes. Used for spec-level
+    inputs with a meaningful "no message yet" default (currently ROI).
+    """
+
+    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
+    seed_factory: Callable[[JobId], Message] | None = field(default=None)
+
+
 @dataclass(frozen=True)
 class AuxInput:
     """Specification of an auxiliary data source input for a workflow.
@@ -284,7 +306,7 @@ class WorkflowSpec(BaseModel):
             "and UI metadata."
         ),
     )
-    context_inputs: list[DirectBindContextInput] = Field(
+    context_inputs: list[SpecContextInput] = Field(
         default_factory=list,
         description=(
             "Spec-level direct-bind context-stream declarations (see ADR 0003). "
@@ -627,26 +649,3 @@ def find_timeseries_outputs(
         )
 
     return results
-
-
-# Resolve the deferred ``ContextInput`` field annotation on ``WorkflowSpec``.
-# ``ContextInput`` is defined in ``stream.py`` to keep configuration records
-# co-located; its callable fields reference ``JobId`` and ``Message`` from this
-# module, so we feed both into ``model_rebuild`` to break the import cycle.
-from ess.livedata.config.stream import (  # noqa: E402
-    ChainPatchContextInput,
-    ContextInput,
-    DirectBindContextInput,
-)
-from ess.livedata.config.value_log import ValueLog  # noqa: E402
-
-WorkflowSpec.model_rebuild(
-    _types_namespace={
-        'ContextInput': ContextInput,
-        'ChainPatchContextInput': ChainPatchContextInput,
-        'DirectBindContextInput': DirectBindContextInput,
-        'JobId': JobId,
-        'Message': Message,
-        'ValueLog': ValueLog,
-    }
-)

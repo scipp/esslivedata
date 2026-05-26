@@ -737,10 +737,10 @@ class Instrument:
         - **Instrument-vs-spec.** For every (spec, source) pair where both
           instrument-level and spec-level :class:`ContextInput` entries
           apply, the resolved wire-stream names must be unique. Resolvers
-          are assumed to be name-suffixing of the ``(job_id, stream_name)``
-          pair (see :class:`ContextInput` docstring); we treat the
-          unresolved ``stream_name`` as the collision key, which is sound
-          for the resolvers in use today (ROI's ``f"{job_id}/{name}"``).
+          (see :class:`SpecContextInput`) are assumed to be name-suffixing
+          of the ``(job_id, stream_name)`` pair; we treat the unresolved
+          ``stream_name`` as the collision key, which is sound for the
+          resolvers in use today (ROI's ``f"{job_id}/{name}"``).
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
