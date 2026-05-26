@@ -1011,3 +1011,24 @@ class TestSpecHandleAddContextInput:
         [entry] = factory[handle.workflow_id].context_inputs
         assert entry.stream_resolver is resolver
         assert entry.seed_factory is seed
+
+    def test_skip_motion_sets_spec_flag(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        assert factory[handle.workflow_id].skip_motion is False
+
+        handle.skip_motion()
+
+        assert factory[handle.workflow_id].skip_motion is True
+
+    def test_transform_path_stored_without_workflow_key(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        handle.add_context_input(
+            stream_name='rot',
+            transform_path='/entry/instrument/rot/value',
+        )
+
+        [entry] = factory[handle.workflow_id].context_inputs
+        assert entry.workflow_key is None
+        assert entry.transform_path == '/entry/instrument/rot/value'

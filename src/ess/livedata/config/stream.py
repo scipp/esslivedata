@@ -100,6 +100,14 @@ class ContextInput:
     parameterised generics (e.g. ``InstrumentAngle[SampleRun]``) and Python's
     type system cannot describe "type of any Sciline key" precisely.
 
+    :attr:`transform_path`, when set, identifies a NeXus ``depends_on`` chain
+    entry whose ``value`` should be patched from this stream. The presence of
+    a path marks the binding as *chain-patch*; the workflow factory routes the
+    stream value into the chain via ``add_dynamic_transform`` rather than
+    via direct parameter binding. For chain-patch bindings ``workflow_key``
+    defaults to the generic ``TransformValueLog`` key (resolved lazily by the
+    factory layer) and may be omitted at the call site.
+
     :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to the
     wire stream name used by routing and the gate. Resolvers are assumed to
     be pure name-suffixing operations on ``stream_name``; the registration-time
@@ -114,10 +122,18 @@ class ContextInput:
     """
 
     stream_name: str
-    workflow_key: Any
+    workflow_key: Any = None
     dependent_sources: frozenset[str]
+    transform_path: str | None = field(default=None)
     stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
     seed_factory: Callable[[JobId], Message] | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.workflow_key is None and self.transform_path is None:
+            raise ValueError(
+                f"ContextInput for stream {self.stream_name!r}: at least one "
+                "of 'workflow_key' or 'transform_path' must be set"
+            )
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

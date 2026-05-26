@@ -1833,6 +1833,86 @@ class TestJobFactoryContextInput:
         # Internal bookkeeping: gate already considers the stream seen.
         assert wire in manager._seen_context_streams[job_id]
 
+    def test_skip_motion_excludes_instrument_scope_bindings(self) -> None:
+        """A spec with ``skip_motion`` set ignores all instrument-scope inputs.
+
+        The spec's own bindings, if any, are unaffected.
+        """
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector1'],
+        )
+        handle.add_context_input(stream_name='temp', workflow_key=_CtxKeyB)
+        handle.skip_motion()
+
+        captured: dict[str, dict[str, type]] = {}
+
+        @handle.attach_factory()
+        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
+            captured['ck'] = context_keys
+            return FakeProcessor(context_keys=context_keys)
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job, _ = factory.create(job_id=job_id, config=config)
+
+        # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
+        assert captured['ck'] == {'temp': _CtxKeyB}
+        assert job.missing_context(set()) == {'temp'}
+
+    def test_transform_path_threads_through_to_factory(self) -> None:
+        """``transform_path`` on a ContextInput reaches the factory's
+        ``transform_paths`` kwarg, and ``workflow_key`` defaults to
+        :class:`TransformValueLog`."""
+        from ess.livedata.handlers.detector_view.types import TransformValueLog
+
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='rot',
+            dependent_sources=['detector1'],
+            transform_path='/entry/instrument/rot/value',
+        )
+
+        captured: dict[str, dict] = {}
+
+        @handle.attach_factory()
+        def _factory(
+            context_keys: dict[str, type],
+            transform_paths: dict[str, str],
+        ) -> FakeProcessor:
+            captured['ck'] = context_keys
+            captured['tp'] = transform_paths
+            return FakeProcessor(context_keys=context_keys)
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        factory.create(job_id=job_id, config=config)
+
+        assert captured['ck'] == {'rot': TransformValueLog}
+        assert captured['tp'] == {'rot': '/entry/instrument/rot/value'}
+
 
 class ThreadTrackingProcessor(FakeProcessor):
     """Processor that records which thread called accumulate and finalize."""

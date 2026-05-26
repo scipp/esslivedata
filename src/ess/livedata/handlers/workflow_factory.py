@@ -53,8 +53,9 @@ class SpecHandle:
         self,
         *,
         stream_name: str,
-        workflow_key: Any,
+        workflow_key: Any = None,
         dependent_sources: Iterable[str] | None = None,
+        transform_path: str | None = None,
         stream_resolver: Callable[['JobId', str], str] | None = None,
         seed_factory: Callable[['JobId'], 'Message'] | None = None,
     ) -> None:
@@ -64,6 +65,9 @@ class SpecHandle:
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
+
+        See :meth:`Instrument.add_context_input` for the
+        ``workflow_key`` / ``transform_path`` discriminator.
         """
         spec = self._factory[self.workflow_id]
         if dependent_sources is None:
@@ -75,10 +79,24 @@ class SpecHandle:
                 stream_name=stream_name,
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,
+                transform_path=transform_path,
                 stream_resolver=stream_resolver,
                 seed_factory=seed_factory,
             )
         )
+
+    def skip_motion(self) -> None:
+        """Opt this spec out of all instrument-scope context-stream bindings.
+
+        Use from ``specs.py`` when this spec consumes a source whose
+        instrument declaration carries motion (carriage, rotation, etc.) but
+        this spec does not need the geometry value — e.g. a counts-only
+        ratemeter on a moving detector. The spec is removed from the gate
+        and from the resolved context for those streams. Spec-scope bindings
+        (declared via :meth:`add_context_input`) are unaffected.
+        """
+        spec = self._factory[self.workflow_id]
+        spec.skip_motion = True
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
@@ -189,6 +207,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         config: WorkflowConfig,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
+        transform_paths: dict[str, str] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -205,6 +224,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Resolved ``ContextInput`` mapping (stream_name → workflow_key).
             Forwarded to factories that opt in by declaring ``context_keys``
             in their signature.
+        transform_paths:
+            Resolved chain-patch mapping (stream_name → NeXus transform path)
+            for ``ContextInput`` records carrying ``transform_path``. Forwarded
+            to factories that declare ``transform_paths`` in their signature.
         """
         workflow_id = config.identifier
         if workflow_id not in self._workflow_specs:
@@ -254,6 +277,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['aux_source_names'] = aux_source_names or {}
         if 'context_keys' in sig.parameters:
             kwargs['context_keys'] = context_keys or {}
+        if 'transform_paths' in sig.parameters:
+            kwargs['transform_paths'] = transform_paths or {}
 
         # Call factory with appropriate arguments
         if kwargs:

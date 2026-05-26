@@ -292,6 +292,16 @@ class WorkflowSpec(BaseModel):
             "keep workflow-key imports out of ``specs.py``. Empty by default."
         ),
     )
+    skip_motion: bool = Field(
+        default=False,
+        description=(
+            "When True, this spec ignores all instrument-scope "
+            ":class:`ContextInput` bindings. Set via "
+            ":meth:`SpecHandle.skip_motion` from a spec that consumes a "
+            "source carrying instrument-declared motion but does not need "
+            "the geometry value (e.g. a ratemeter on a moving detector)."
+        ),
+    )
     reset_on_run_transition: bool = Field(
         default=True,
         description=(

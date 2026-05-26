@@ -287,6 +287,10 @@ detector_ratemeter_handle = instrument.register_spec(
     params=DetectorRatemeterParams,
     outputs=DetectorRatemeterOutputs,
 )
+# Counts-only — geometry is irrelevant.
+detector_ratemeter_handle.skip_motion()
+# Detector view sums over banks — rotation angles are not consumed.
+unified_detector_view_handle.skip_motion()
 
 # Register Q-map workflow specs
 qmap_handle = instrument.register_spec(

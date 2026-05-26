@@ -297,7 +297,7 @@ Three points on a spectrum, from most manual to most automated:
 
 1. **Status quo.** Per-handle `add_context_input(stream_name=…,
    workflow_key=…, dependent_sources=…)`; per-instrument `transform_names`
-   dict. Workflow author writes everything. The current branch.
+   dict. Workflow author writes everything.
 
 2. **Declared-need, derived-wiring.** Workflow author declares "this
    handle uses position of component X" (a single call). The framework
@@ -321,12 +321,6 @@ Open questions across the design space:
   the same declaration record (`ContextInput`) carry it, or does it get
   its own type? Today the same record carries both; the question is
   whether that survives once geometry becomes automated.
-- Does the two-scope model (`Instrument.add_context_input` vs
-  `SpecHandle.add_context_input`) survive automation? Today instrument
-  scope has no live use case (see HTML §3 and the agent's history
-  investigation summarised in §1 above's discussion). Under automation,
-  motion-context is always per-handle; instrument scope would be left
-  serving only hypothetical whole-instrument process streams.
 - What is the inspection / debugging story for auto-wired bindings? At
   minimum: logging on startup, and an API surface that returns the
   effective set of `ContextInput` records per (spec, source).
@@ -334,7 +328,65 @@ Open questions across the design space:
   argument to the chain walker, as a per-handle override, or via a
   separate Sciline-side mechanism that takes priority over auto-wiring?
 
-## 9. References
+## 9. Resolution on this branch
+
+The branch lands a pragmatic refinement of option 1 that closes the
+silent-omission failure mode without taking on codegen or graph
+introspection. Three changes:
+
+**1. Chain-patch paths live on `ContextInput`.** A new
+`transform_path: str | None` field replaces the per-instrument
+`transform_names` dict carried by `DetectorViewFactory`. When set, the
+binding is chain-patch; `workflow_key` defaults to `TransformValueLog`
+(resolved by `JobFactory.create` via a lazy import, keeping the `config`
+package free of detector-view internals). The factory receives the
+resolved paths through a new `transform_paths` kwarg dispatched by
+`WorkflowFactory.create`. The `key is TransformValueLog` sentinel branch
+in `DetectorViewFactory` is gone; the factory iterates `transform_paths`
+directly.
+
+**2. Instrument scope is the default for motion; `skip_motion` opts
+out.** LOKI's carriage and bifrost's two rotation streams move from
+per-spec to instrument scope (one declaration each, with
+`dependent_sources` naming the affected source). Specs that consume the
+source but not the geometry (LOKI `tube_view`, `i_of_q`; bifrost
+`detector_ratemeter`, `unified_detector_view`) call
+`SpecHandle.skip_motion()` to drop out of the gate. The flag is a single
+boolean — no per-stream list — because a spec spanning many sources
+typically either needs all instrument-scope context or none of it.
+`skip_motion=True` ignores *all* instrument-scope bindings for that spec;
+spec-scope bindings (declared by the spec itself) are unaffected. Today
+every instrument-scope binding is motion-related, hence the name; if a
+non-motion instrument binding ever lands, rename.
+
+**3. Failure-mode shift.** Before: forgetting to declare a binding on a
+new spec consuming the source was silent (job runs without the dynamic
+value). After: new specs pick up instrument-scope bindings by default;
+forgetting to `skip_motion` on a non-consuming spec produces a *noisy*
+gate-on-unused-stream (the job waits, doesn't process with stale data).
+Silent-wrong is upgraded to noisy-slow.
+
+### What this does *not* address
+
+- **Wiring `i_of_q` to consume carriage.** The LOKI I(Q) factory still
+  reads the static NeXus geometry; it does not patch the dynamic
+  carriage value. `i_of_q_handle.skip_motion()` preserves current
+  behaviour — wiring carriage into the I(Q) graph is a separate task.
+- **Codegen of `transform_path`.** The path is still hand-typed against
+  the NeXus file. An optional `__post_init__`-time validation against
+  the NeXus geometry would catch typos at registration; not implemented
+  here.
+- **Multiple dynamic transforms in one chain.** The framework iterates
+  over `transform_paths`, so multiple bindings on one source work in
+  principle, but `TransformValueLog` is singular — a second chain-patch
+  binding on the same source would need a parameterised key. No current
+  case exercises this.
+- **Direct-bind opt-out for non-motion.** `skip_motion` ignores all
+  instrument-scope bindings indiscriminately. If a future instrument-
+  scope binding is process context (not motion) and some spec wants to
+  keep it while dropping motion, this needs finer-grained opt-out.
+
+## 10. References
 
 - [ADR 0002][adr-0002] — Context-stream gating at the JobManager.
 - [ADR 0003][adr-0003] — Unified declaration model for workflow context
@@ -346,19 +398,23 @@ Open questions across the design space:
 
 ### Key files in the branch
 
-- `src/ess/livedata/config/stream.py` — `ContextInput` record
-  (line 91).
-- `src/ess/livedata/config/instruments/loki/factories.py` — LOKI
-  `_LOKI_TRANSFORM_NAMES` dict and `add_context_input` call.
-- `src/ess/livedata/config/instruments/bifrost/factories.py` — Bifrost
-  per-handle rotation declarations.
+- `src/ess/livedata/config/stream.py` — `ContextInput` record with
+  `transform_path` field.
+- `src/ess/livedata/config/workflow_spec.py` — `WorkflowSpec.skip_motion`
+  field.
+- `src/ess/livedata/config/instruments/loki/{specs,factories}.py` —
+  instrument-scope carriage declaration; `skip_motion` on tube_view and
+  i_of_q.
+- `src/ess/livedata/config/instruments/bifrost/{specs,factories}.py` —
+  instrument-scope rotation declarations; `skip_motion` on
+  detector_ratemeter and unified_detector_view.
 - `src/ess/livedata/handlers/detector_view/factory.py` —
-  `DetectorViewFactory.transform_names` plumbing and the
-  `TransformValueLog` branch (around line 257).
+  `transform_paths` kwarg replacing the `transform_names` ctor param.
+- `src/ess/livedata/handlers/workflow_factory.py` —
+  `SpecHandle.skip_motion`; `transform_paths` dispatched to factories.
 - `src/ess/livedata/config/instrument.py` —
-  `Instrument.add_context_input`, validation in
-  `_validate_context_input_wire_name_collisions` (line 584).
-- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` merge
-  logic (line 137); gate (`_gate_pending_context`, line 525).
-- `src/ess/livedata/config/route_derivation.py` — `gather_source_names`
-  pickup extension (line 29).
+  `Instrument.add_context_input` accepts `transform_path`.
+- `src/ess/livedata/core/job_manager.py` — `JobFactory.create` filters
+  instrument-scope bindings via `skip_motion`, builds
+  `transform_paths`, and resolves `workflow_key` via
+  `_resolve_workflow_key`.

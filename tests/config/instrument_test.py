@@ -428,6 +428,19 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='collision'):
             instrument._validate_context_input_wire_name_collisions()
 
+    def test_context_input_requires_workflow_key_or_transform_path(self):
+        with pytest.raises(ValueError, match=r'workflow_key.*transform_path'):
+            ContextInput(stream_name='rot', dependent_sources=frozenset({'det1'}))
+
+    def test_context_input_accepts_transform_path_without_workflow_key(self):
+        ci = ContextInput(
+            stream_name='rot',
+            dependent_sources=frozenset({'det1'}),
+            transform_path='/entry/instrument/rot/value',
+        )
+        assert ci.workflow_key is None
+        assert ci.transform_path == '/entry/instrument/rot/value'
+
     def test_no_collision_when_dependent_sources_disjoint(self):
         """Same stream name on instrument and spec scope is fine when the sources
         do not overlap -- the (spec, source) pair never sees both bindings.

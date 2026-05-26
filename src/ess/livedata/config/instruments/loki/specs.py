@@ -263,7 +263,7 @@ xy_projection_handle = register_detector_view_spec(
 )
 
 # Register tube view for all detector banks
-instrument.add_logical_view(
+tube_view_handle = instrument.add_logical_view(
     name='tube_view',
     title='Tube View',
     description='Sum over straw and pixel dimensions to show layer x tube counts.',
@@ -272,6 +272,8 @@ instrument.add_logical_view(
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
+# Tube view sums over straw/pixel — bank position is irrelevant.
+tube_view_handle.skip_motion()
 
 # Register the chopperless wavelength lookup-table spec. The factory is attached
 # in factories.py.
@@ -293,3 +295,6 @@ i_of_q_handle = instrument.register_spec(
     outputs=IofQOutputs,
     params=SansWorkflowParams,
 )
+# I(Q) currently reads the static NeXus geometry; the factory does not wire
+# the dynamic carriage. Opt out until that wiring lands.
+i_of_q_handle.skip_motion()

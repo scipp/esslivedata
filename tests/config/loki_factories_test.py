@@ -1,34 +1,51 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for LOKI spec-level ContextInput declarations."""
+"""Tests for LOKI ContextInput declarations."""
 
 from ess.livedata.config.instruments.loki import factories, specs
 
 
 def test_setup_factories_declares_detector_carriage_context_input() -> None:
-    """The LOKI rear bank's f144 carriage stream is declared as a context input.
+    """The rear bank's f144 carriage stream is declared at instrument scope.
 
-    Per ADR 0003 § "Instrument bindings are source-scoped", the carriage stream
-    is declared on the ``xy_projection`` spec rather than at instrument scope:
-    ``loki_detector_0`` also feeds ``tube_view`` (logical sum, no absolute-
-    position need) and other workflows that do not consume carriage. The
-    spec-level declaration scopes the gate precisely to the geometric view.
+    Declared as a chain-patch binding (``transform_path`` set) on
+    ``loki_detector_0`` only; specs consuming that source pick it up by default
+    and non-consumers (tube_view, i_of_q) opt out via ``skip_motion``.
     """
-    from ess.livedata.handlers.detector_view.types import TransformValueLog
-
     instrument = specs.instrument
     factories.setup_factories(instrument)
 
-    spec = instrument.workflow_factory[specs.xy_projection_handle.workflow_id]
-    # setup_factories may run more than once across the test session (the
-    # singleton instrument is shared); assert presence rather than count.
     matching = [
         ci
-        for ci in spec.context_inputs
+        for ci in instrument.context_inputs
         if ci.stream_name == 'detector_carriage'
-        and ci.workflow_key is TransformValueLog
+        and ci.workflow_key is None
+        and ci.transform_path == '/entry/instrument/detector_carriage/value'
         and ci.dependent_sources == frozenset({'loki_detector_0'})
         and ci.stream_resolver is None
         and ci.seed_factory is None
     ]
-    assert matching, spec.context_inputs
+    assert matching, instrument.context_inputs
+
+
+def test_motion_independent_specs_opt_out_via_skip_motion() -> None:
+    """tube_view and i_of_q consume ``loki_detector_0`` but not its position.
+
+    Both specs must declare ``skip_motion`` so they're not gated on the
+    instrument-scope carriage stream.
+    """
+    instrument = specs.instrument
+
+    tube_view_spec = instrument.workflow_factory[
+        next(
+            wf_id for wf_id in instrument.workflow_factory if wf_id.name == 'tube_view'
+        )
+    ]
+    i_of_q_spec = instrument.workflow_factory[specs.i_of_q_handle.workflow_id]
+    assert tube_view_spec.skip_motion
+    assert i_of_q_spec.skip_motion
+
+    xy_projection_spec = instrument.workflow_factory[
+        specs.xy_projection_handle.workflow_id
+    ]
+    assert not xy_projection_spec.skip_motion

@@ -69,27 +69,20 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
-    # on the cut-workflow graph. Routed via context_keys; not NeXus components
-    # loaded by name. Declared per qmap-family spec rather than at instrument
-    # scope because ``unified_detector`` is also the source of the
-    # detector-view and ratemeter specs, which do not consume rotation
-    # (ADR 0003 § "Instrument bindings are source-scoped").
-    def _add_qmap_rotation_context(handle):
-        handle.add_context_input(
-            stream_name='detector_tank_angle_r0',
-            workflow_key=InstrumentAngle[SampleRun],
-        )
-        handle.add_context_input(
-            stream_name='rotation_stage',
-            workflow_key=SampleAngle[SampleRun],
-        )
-
-    for handle in (
-        specs.qmap_handle,
-        specs.elastic_qmap_handle,
-        specs.elastic_qmap_custom_handle,
-    ):
-        _add_qmap_rotation_context(handle)
+    # on the cut-workflow graph. Direct-bind (no chain patch) — declared at
+    # instrument scope so every spec consuming ``unified_detector`` picks them
+    # up; non-consumers (detector view, ratemeter) opt out via ``skip_motion``
+    # in ``specs.py``.
+    instrument.add_context_input(
+        stream_name='detector_tank_angle_r0',
+        dependent_sources={'unified_detector'},
+        workflow_key=InstrumentAngle[SampleRun],
+    )
+    instrument.add_context_input(
+        stream_name='rotation_stage',
+        dependent_sources={'unified_detector'},
+        workflow_key=SampleAngle[SampleRun],
+    )
 
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow

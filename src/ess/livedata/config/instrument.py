@@ -169,19 +169,27 @@ class Instrument:
         self,
         *,
         stream_name: str,
-        workflow_key: Any,
         dependent_sources: Iterable[str],
+        workflow_key: Any = None,
+        transform_path: str | None = None,
     ) -> None:
         """Register a stream as a context input to one or more specs.
 
         Use from ``setup_factories`` to keep heavy Sciline-key imports out of
         ``specs.py``. Inputs declared at construction time go through the same
         validation in ``__post_init__``.
+
+        For chain-patch motion bindings, supply ``transform_path`` (the NeXus
+        path of the dynamic transformation to patch) and omit ``workflow_key``;
+        the factory infers the generic ``TransformValueLog`` key. For
+        direct-bind bindings, supply ``workflow_key`` (the Sciline key on the
+        target pipeline) and omit ``transform_path``.
         """
         binding = ContextInput(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=frozenset(dependent_sources),
+            transform_path=transform_path,
         )
         self._validate_binding_stream_name(binding)
         self.context_inputs.append(binding)

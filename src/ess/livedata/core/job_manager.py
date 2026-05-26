@@ -14,6 +14,7 @@ import scipp as sc
 import structlog
 
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.stream import ContextInput
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobSchedule,
@@ -167,16 +168,23 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        # Match ContextInput records (instrument + spec) by source membership.
+        # Match ContextInput records by source membership. ``skip_motion``
+        # filters out instrument-scope entries — a spec that explicitly
+        # declares a binding cannot opt out of it via the flag.
+        instrument_inputs = (
+            [] if workflow_spec.skip_motion else self._instrument.context_inputs
+        )
         matching = [
             ci
-            for ci in (
-                *self._instrument.context_inputs,
-                *workflow_spec.context_inputs,
-            )
+            for ci in (*instrument_inputs, *workflow_spec.context_inputs)
             if job_id.source_name in ci.dependent_sources
         ]
-        context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
+        context_keys = {ci.stream_name: _resolve_workflow_key(ci) for ci in matching}
+        transform_paths = {
+            ci.stream_name: ci.transform_path
+            for ci in matching
+            if ci.transform_path is not None
+        }
         wire_for = {
             ci.stream_name: (
                 ci.stream_resolver(job_id, ci.stream_name)
@@ -199,6 +207,7 @@ class JobFactory:
             config=config,
             aux_source_names=rendered_aux_names,
             context_keys=context_keys,
+            transform_paths=transform_paths,
         )
         job = Job(
             job_id=job_id,
@@ -725,3 +734,14 @@ def _process_job(
 def pending_context_warning(missing: set[str]) -> str:
     """Human-readable warning message for a job gated on missing context streams."""
     return f"Waiting for context streams: {', '.join(sorted(missing))}"
+
+
+def _resolve_workflow_key(ci: ContextInput) -> Any:
+    """Workflow key used by ``set_context``. Chain-patch bindings default to
+    :class:`TransformValueLog` (lazy-imported to keep ``core`` independent of
+    detector-view handler internals)."""
+    if ci.workflow_key is not None:
+        return ci.workflow_key
+    from ess.livedata.handlers.detector_view.types import TransformValueLog
+
+    return TransformValueLog

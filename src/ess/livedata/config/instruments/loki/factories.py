@@ -47,19 +47,20 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.handlers.detector_view.types import TransformValueLog
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
 
-    # Source-name → NeXus transform path. Paired with the ``ContextInput``
-    # declaration below: ``detector_carriage`` carries the f144 value, this
-    # dict tells ``DetectorViewFactory`` which transformation in
-    # ``loki_detector_0``'s ``depends_on`` chain to patch. ADR 0003 §
-    # "LOKI transform_name carrier".
-    _LOKI_TRANSFORM_NAMES: dict[str, str] = {
-        'loki_detector_0': '/entry/instrument/detector_carriage/value',
-    }
+    # The rear bank's NeXus ``depends_on`` chain has a dynamic ``detector_carriage``
+    # transformation driven by the live f144 carriage readback. Declared at
+    # instrument scope so every spec consuming ``loki_detector_0`` picks it up by
+    # default; specs that don't need geometry (tube_view, i_of_q) opt out via
+    # ``skip_motion`` in ``specs.py``.
+    instrument.add_context_input(
+        stream_name='detector_carriage',
+        dependent_sources={'loki_detector_0'},
+        transform_path='/entry/instrument/detector_carriage/value',
+    )
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
@@ -110,28 +111,16 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
-        transform_names=_LOKI_TRANSFORM_NAMES,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
-
-    # Dynamic detector geometry: the rear bank's NeXus 'detector_carriage'
-    # transformation is driven by the live f144 carriage readback. Declared
-    # per-spec rather than at instrument scope because ``loki_detector_0``
-    # also feeds ``tube_view`` (logical sum, no absolute-position need),
-    # ``i_of_q`` and other reductions that do not consume carriage
-    # (ADR 0003 § "Instrument bindings are source-scoped").
-    specs.xy_projection_handle.add_context_input(
-        stream_name='detector_carriage',
-        workflow_key=TransformValueLog,
-        dependent_sources=frozenset({'loki_detector_0'}),
-    )
 
     @specs.xy_projection_handle.attach_factory()
     def _detector_view_workflow_factory(
         source_name: str,
         params: DetectorViewParams,
         context_keys: dict[str, type],
+        transform_paths: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
         lookup_table_filename = None
@@ -143,6 +132,7 @@ def setup_factories(instrument: Instrument) -> None:
             params,
             lookup_table_filename=lookup_table_filename,
             context_keys=context_keys,
+            transform_paths=transform_paths,
         )
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
