@@ -232,21 +232,22 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
 
 
 @pytest.mark.slow
-def test_bifrost_qmap_drops_events_until_rotation_arrives(
+def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Bifrost qmap drops events when rotation context has not arrived yet.
+    """Bifrost qmap is gated on rotation context until both motion streams
+    have published, then resumes producing output.
 
-    The cut workflow's ``group_by_rotation`` consumes the f144 rotation streams
-    inside the accumulate chain. Without the JobManager-level context gate
-    (ADR 0002), the first detector batch would crash with
-    ``'NoneType' object has no attribute 'ndim'``; instead the gate keeps the
-    job in ``pending_context`` until rotation values arrive, dropping the
-    primary detector batches in the meantime.
+    The cut workflow consumes the f144 rotation streams inside the
+    accumulate chain. Without the JobManager-level context gate (ADR 0002),
+    the first detector batch would crash with
+    ``'NoneType' object has no attribute 'ndim'``; the gate instead keeps
+    the job in ``pending_context`` until rotation values arrive.
 
-    The steady-state recovery path (rotation arrives, workflow resumes producing
-    output) is not asserted here because the data-reduction service does not yet
-    subscribe to motion topics for log-context bindings.
+    Steady-state recovery: after the device synthesizer has merged all
+    three substreams of each rotation Device and emitted on the parent
+    device name (``detector_tank_angle_r0``, ``rotation_stage``), the
+    gate opens and subsequent detector batches produce output.
     """
     caplog.set_level(logging.INFO)
     app = make_reduction_app(instrument='bifrost')
@@ -277,6 +278,25 @@ def test_bifrost_qmap_drops_events_until_rotation_arrives(
     app.publish_events(size=2000, time=3)
     service.step()
     assert len(sink.messages) == 0
+
+    # Publish RBV/VAL/DMOV substreams for both rotation devices; the
+    # synthesizer needs all three before emitting on the parent device name.
+    for device in ('detector_tank_angle_r0', 'rotation_stage'):
+        for substream, value in (
+            ('target_value', 0.0),
+            ('idle_flag', 1),
+            ('value', 0.0),
+        ):
+            app.publish_log_message(
+                source_name=f'{device}/{substream}', time=4, value=value
+            )
+    service.step()
+
+    # Gate has opened; events arriving now produce output.
+    sink.messages.clear()
+    app.publish_events(size=2000, time=5)
+    service.step()
+    assert len(sink.messages) >= 1
 
 
 def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None:
