@@ -1659,7 +1659,7 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
@@ -1703,7 +1703,7 @@ class TestJobFactoryContextInput:
             outputs=SimpleTestOutputs,
         )
         # detector_names limited to 'detector1' so use streams not source_names.
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector2'],
@@ -1756,7 +1756,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_context_input(
+        handle.add_parameter_context(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=_resolver,
@@ -1812,7 +1812,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_context_input(
+        handle.add_parameter_context(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=lambda jid, name: f"{jid}/{name}",
@@ -1851,12 +1851,12 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
         )
-        handle.add_context_input(stream_name='temp', workflow_key=_CtxKeyB)
+        handle.add_parameter_context(stream_name='temp', workflow_key=_CtxKeyB)
         handle.skip_motion()
 
         captured: dict[str, dict[str, type]] = {}
@@ -1895,7 +1895,7 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='rot',
             dependent_sources=['detector1'],
             transform_path='/entry/instrument/rot/value',

@@ -118,7 +118,7 @@ class DetectorViewFactory:
             from instrument-specific params.
         context_keys:
             Resolved ``ContextInput`` mapping (stream_name → workflow_key)
-            for this job. Wires ROI inputs and other direct-bind context.
+            for this job. Wires ROI inputs and other parameter context.
 
         Returns
         -------
@@ -251,7 +251,7 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        # Wire dynamic detector geometry: matching instrument-scope chain-patch
+        # Wire dynamic detector geometry: matching instrument-scope transformation
         # bindings are applied to the detector's transformation chain. A no-op
         # when no binding covers ``source_name``.
         self._instrument.apply_dynamic_transforms(workflow, {source_name: NXdetector})

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ess.livedata.config.workflow_spec import (
-    SpecContextInput,
+    SpecParameterContext,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -53,7 +53,7 @@ class SpecHandle:
         """Decorator to attach factory implementation to this spec."""
         return self._factory.attach_factory(self.workflow_id)
 
-    def add_context_input(
+    def add_parameter_context(
         self,
         *,
         stream_name: str,
@@ -62,17 +62,18 @@ class SpecHandle:
         stream_resolver: Callable[['JobId', str], str] | None = None,
         seed_factory: Callable[['JobId'], 'Message'] | None = None,
     ) -> None:
-        """Append a spec-level :class:`SpecContextInput` to this spec.
+        """Append a spec-level :class:`SpecParameterContext` to this spec.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
 
-        Spec scope is direct-bind only. Chain-patch bindings must be declared
-        at instrument scope via :meth:`Instrument.add_context_input`:
+        Spec scope is parameter-context only. Transformation contexts must be
+        declared at instrument scope via
+        :meth:`Instrument.add_transformation_context`:
         :meth:`Instrument.apply_dynamic_transforms` reads only instrument-scope
-        records, so a spec-scope chain-patch declaration would route the f144
+        records, so a spec-scope transformation context would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
         """
         spec = self._factory[self.workflow_id]
@@ -81,7 +82,7 @@ class SpecHandle:
         else:
             dependent_sources = frozenset(dependent_sources)
         spec.context_inputs.append(
-            SpecContextInput(
+            SpecParameterContext(
                 stream_name=stream_name,
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,
@@ -98,7 +99,7 @@ class SpecHandle:
         this spec does not need the geometry value — e.g. a counts-only
         ratemeter on a moving detector. The spec is removed from the gate
         and from the resolved context for those streams. Spec-scope bindings
-        (declared via :meth:`add_context_input`) are unaffected.
+        (declared via :meth:`add_parameter_context`) are unaffected.
         """
         spec = self._factory[self.workflow_id]
         spec.skip_motion = True

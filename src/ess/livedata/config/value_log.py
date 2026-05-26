@@ -4,13 +4,13 @@
 
 :class:`ValueLog` is the typed Sciline-key wrapper that
 :class:`~ess.livedata.handlers.stream_processor_workflow.StreamProcessorWorkflow`
-delivers raw NXlog payloads through. Each chain-patch context binding
+delivers raw NXlog payloads through. Each transformation context binding
 declares its own subclass so multiple dynamic transforms can coexist on
 one workflow without colliding on a shared Sciline parameter.
 
 The type lives in :mod:`config` (rather than next to
 ``StreamProcessorWorkflow`` in :mod:`handlers`) because
-:class:`~ess.livedata.config.stream.ChainPatchContextInput` references it
+:class:`~ess.livedata.config.stream.TransformationContext` references it
 in its ``log_key`` field; keeping the type alongside the declaration
 record avoids ``config`` depending on ``handlers``.
 """

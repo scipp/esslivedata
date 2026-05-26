@@ -97,12 +97,14 @@ class ContextInput:
     :attr:`dependent_sources`. The way the value reaches the pipeline
     distinguishes the two concrete subclasses:
 
-    - :class:`DirectBindContextInput` binds the stream value to an
-      explicit Sciline key (``workflow_key``). Used for parameters the
-      workflow consumes directly (e.g. ROI, rotation angles as scalars).
-    - :class:`ChainPatchContextInput` patches a NeXus ``depends_on``
-      chain entry with the stream value, via a fused per-component
-      patched-chain provider. Used for live motion readbacks.
+    - :class:`ParameterContext` feeds the stream value to an explicit
+      Sciline parameter key (``workflow_key``). Used when the workflow
+      consumes the value directly (ROI requests, scalar motion readbacks
+      like Bifrost rotation angles).
+    - :class:`TransformationContext` patches an NXtransformations chain
+      entry with the stream value, via a fused per-component
+      patched-chain provider. Used for live geometry from motion logs
+      (e.g. LOKI detector carriage).
 
     Direct instantiation of this base is forbidden; use one of the
     subclasses.
@@ -111,8 +113,8 @@ class ContextInput:
     they apply to, and the Sciline-side identity (workflow key or chain
     target). Per-job runtime behavior — wire-name suffixing, cold-start
     seeding — lives on the spec-scope wrapper
-    :class:`ess.livedata.config.workflow_spec.SpecContextInput`, which
-    extends :class:`DirectBindContextInput`. Instrument-scope entries
+    :class:`ess.livedata.config.workflow_spec.SpecParameterContext`,
+    which extends :class:`ParameterContext`. Instrument-scope entries
     never carry such callables; their wire name is the declared
     :attr:`stream_name` and they have no cold-start seed.
     """
@@ -124,13 +126,13 @@ class ContextInput:
         if type(self) is ContextInput:
             raise TypeError(
                 "ContextInput is an abstract base; construct "
-                "DirectBindContextInput or ChainPatchContextInput instead"
+                "ParameterContext or TransformationContext instead"
             )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class DirectBindContextInput(ContextInput):
-    """Context input that binds a stream value to a Sciline key directly.
+class ParameterContext(ContextInput):
+    """Context input feeding a Sciline workflow parameter directly.
 
     The :attr:`workflow_key` is the Sciline key on the target pipeline
     that receives the stream value via ``set_context``. Typed as
@@ -146,8 +148,8 @@ class DirectBindContextInput(ContextInput):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ChainPatchContextInput(ContextInput):
-    """Context input that patches a NeXus ``depends_on`` chain entry.
+class TransformationContext(ContextInput):
+    """Context input patching an NXtransformations chain entry.
 
     :attr:`transform_path` identifies the chain entry whose ``value``
     should be patched from this stream. The framework routes the stream
@@ -155,10 +157,10 @@ class ChainPatchContextInput(ContextInput):
     provider rather than via direct parameter binding.
 
     :attr:`log_key` is the :class:`ValueLog` subclass that gives this
-    binding a distinct Sciline parameter. Each chain-patch binding
-    declares its own subclass — ``class DetectorCarriageLog(ValueLog):
-    ...`` — so multiple dynamic transforms can coexist on one workflow
-    without colliding on a shared key.
+    binding a distinct Sciline parameter. Each binding declares its own
+    subclass — ``class DetectorCarriageLog(ValueLog): ...`` — so
+    multiple dynamic transforms can coexist on one workflow without
+    colliding on a shared key.
     """
 
     transform_path: str
@@ -166,54 +168,6 @@ class ChainPatchContextInput(ContextInput):
 
     def __post_init__(self) -> None:
         pass  # bypass the abstract guard on the base
-
-
-def _build_context_input(
-    *,
-    stream_name: str,
-    dependent_sources: frozenset[str],
-    workflow_key: Any = None,
-    transform_path: str | None = None,
-    log_key: Any = None,
-) -> ContextInput:
-    """Dispatch keyword arguments to the matching ``ContextInput`` subclass.
-
-    Exposed as a single entry point so ``Instrument.add_context_input``
-    and equivalent callers don't have to repeat the discriminator logic.
-    Direct-bind callers supply ``workflow_key``; chain-patch callers
-    supply ``transform_path`` and ``log_key``. Mixing or omitting both
-    sides raises ``ValueError``.
-    """
-    chain_patch = transform_path is not None or log_key is not None
-    if chain_patch:
-        if workflow_key is not None:
-            raise ValueError(
-                f"ContextInput for stream {stream_name!r}: chain-patch "
-                "entries must not set 'workflow_key'; supply 'log_key' "
-                "(a ValueLog subclass) instead"
-            )
-        if transform_path is None or log_key is None:
-            raise ValueError(
-                f"ContextInput for stream {stream_name!r}: chain-patch "
-                "entries must set both 'transform_path' and 'log_key'"
-            )
-        return ChainPatchContextInput(
-            stream_name=stream_name,
-            dependent_sources=dependent_sources,
-            transform_path=transform_path,
-            log_key=log_key,
-        )
-    if workflow_key is None:
-        raise ValueError(
-            f"ContextInput for stream {stream_name!r}: direct-bind "
-            "entries must set 'workflow_key' (or supply "
-            "'transform_path' + 'log_key' for a chain-patch entry)"
-        )
-    return DirectBindContextInput(
-        stream_name=stream_name,
-        dependent_sources=dependent_sources,
-        workflow_key=workflow_key,
-    )
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

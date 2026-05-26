@@ -327,7 +327,7 @@ class TestContextInputs:
     def test_add_binding_records_entry(self):
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -342,16 +342,16 @@ class TestContextInputs:
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
         with pytest.raises(ValueError, match='unknown stream'):
-            instrument.add_context_input(
+            instrument.add_parameter_context(
                 stream_name='missing',
                 workflow_key=_Key,
                 dependent_sources=['det1'],
             )
 
     def test_constructor_validates_binding_stream_names(self):
-        from ess.livedata.config.stream import DirectBindContextInput
+        from ess.livedata.config.stream import ParameterContext
 
-        bad = DirectBindContextInput(
+        bad = ParameterContext(
             stream_name='missing',
             workflow_key=_Key,
             dependent_sources=frozenset({'det1'}),
@@ -376,7 +376,7 @@ class TestContextInputs:
             },
         )
 
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -398,7 +398,7 @@ class TestContextInputs:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1', 'ghost']
         )
 
@@ -427,13 +427,13 @@ class TestContextInputs:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='a',
             dependent_sources=['det1'],
             transform_path='/a/value',
             log_key=_SharedLog,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='b',
             dependent_sources=['det2'],
             transform_path='/b/value',
@@ -461,20 +461,20 @@ class TestContextInputs:
             detector_names=['det1', 'det2'],
             streams={'shared': _f144('shared')},
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='shared',
             dependent_sources=['det1'],
             transform_path='/a/value',
             log_key=_LogA,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='shared',
             dependent_sources=['det2'],
             transform_path='/b/value',
             log_key=_LogA,
         )
-        with pytest.raises(ValueError, match='conflicting chain-patch'):
-            instrument._validate_chain_patch_stream_consistency()
+        with pytest.raises(ValueError, match='conflicting transformation context'):
+            instrument._validate_transformation_context_consistency()
 
     def test_validates_chain_patch_stream_consistency_on_log_key(self):
         """Two chain-patch entries for one stream must agree on ``log_key``."""
@@ -491,26 +491,26 @@ class TestContextInputs:
             detector_names=['det1', 'det2'],
             streams={'shared': _f144('shared')},
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='shared',
             dependent_sources=['det1'],
             transform_path='/v/value',
             log_key=_LogA,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='shared',
             dependent_sources=['det2'],
             transform_path='/v/value',
             log_key=_LogB,
         )
-        with pytest.raises(ValueError, match='conflicting chain-patch'):
-            instrument._validate_chain_patch_stream_consistency()
+        with pytest.raises(ValueError, match='conflicting transformation context'):
+            instrument._validate_transformation_context_consistency()
 
     def test_chain_patch_stream_consistency_allows_exact_duplicates(self):
         """Repeated identical chain-patch declarations are not a conflict.
 
         ``load_factories`` may be called multiple times in a long-lived
-        process or across tests; redundant ``add_context_input`` calls
+        process or across tests; redundant ``add_transformation_context`` calls
         with matching ``(transform_path, log_key)`` describe the same
         binding and must pass.
         """
@@ -523,13 +523,13 @@ class TestContextInputs:
             name='test', detector_names=['det1'], streams={'s': _f144('s')}
         )
         for _ in range(2):
-            instrument.add_context_input(
+            instrument.add_transformation_context(
                 stream_name='s',
                 dependent_sources=['det1'],
                 transform_path='/v/value',
                 log_key=_Log,
             )
-        instrument._validate_chain_patch_stream_consistency()
+        instrument._validate_transformation_context_consistency()
 
     def test_validates_context_vs_aux_field_collision(self):
         """A context stream_name must not match any aux_sources field name.
@@ -554,7 +554,7 @@ class TestContextInputs:
                 {'rot': AuxInput(choices=('other',), default='other')}
             ),
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
@@ -579,7 +579,7 @@ class TestContextInputs:
                 {'rot': AuxInput(choices=('other',), default='other')}
             ),
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
         handle.skip_motion()
@@ -603,10 +603,10 @@ class TestContextInputs:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        handle.add_context_input(stream_name='rot', workflow_key=_Key)
+        handle.add_parameter_context(stream_name='rot', workflow_key=_Key)
 
         with pytest.raises(ValueError, match='collision'):
             instrument._validate_context_input_wire_name_collisions()
@@ -615,52 +615,22 @@ class TestContextInputs:
         with pytest.raises(TypeError, match='abstract base'):
             ContextInput(stream_name='rot', dependent_sources=frozenset({'det1'}))
 
-    def test_add_context_input_requires_workflow_key_or_chain_patch_pair(self):
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-        with pytest.raises(ValueError, match='workflow_key'):
-            instrument.add_context_input(stream_name='rot', dependent_sources=['det1'])
-
-    def test_add_context_input_chain_patch_requires_log_key(self):
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-        with pytest.raises(ValueError, match=r'transform_path.*log_key'):
-            instrument.add_context_input(
-                stream_name='rot',
-                dependent_sources=['det1'],
-                transform_path='/entry/instrument/rot/value',
-            )
-
-    def test_add_context_input_rejects_mixing_chain_patch_and_workflow_key(self):
+    def test_add_transformation_context_constructs_transformation_context(self):
+        from ess.livedata.config.stream import TransformationContext
         from ess.livedata.config.value_log import ValueLog
 
         class _Log(ValueLog):
             pass
 
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-        with pytest.raises(ValueError, match='must not set'):
-            instrument.add_context_input(
-                stream_name='rot',
-                dependent_sources=['det1'],
-                transform_path='/entry/instrument/rot/value',
-                log_key=_Log,
-                workflow_key=_Key,
-            )
-
-    def test_add_context_input_constructs_chain_patch_subclass(self):
-        from ess.livedata.config.stream import ChainPatchContextInput
-        from ess.livedata.config.value_log import ValueLog
-
-        class _Log(ValueLog):
-            pass
-
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='rot',
             dependent_sources=['det1'],
             transform_path='/entry/instrument/rot/value',
             log_key=_Log,
         )
         (ci,) = instrument.context_inputs
-        assert isinstance(ci, ChainPatchContextInput)
+        assert isinstance(ci, TransformationContext)
         assert ci.transform_path == '/entry/instrument/rot/value'
         assert ci.log_key is _Log
 
@@ -678,10 +648,10 @@ class TestContextInputs:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        handle.add_context_input(
+        handle.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det2']
         )
 
@@ -727,7 +697,7 @@ class TestInstrumentApplyDynamicTransforms:
             pass
 
         instrument = self._make_instrument()
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='rot',
             dependent_sources=['det1'],
             transform_path='/entry/instrument/rot/value',
@@ -740,7 +710,7 @@ class TestInstrumentApplyDynamicTransforms:
 
     def test_direct_bind_binding_is_skipped(self) -> None:
         instrument = self._make_instrument()
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='other',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -760,13 +730,13 @@ class TestInstrumentApplyDynamicTransforms:
             pass
 
         instrument = self._make_instrument()
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='rot',
             dependent_sources=['det1'],
             transform_path='/entry/instrument/rot/value',
             log_key=_LogA,
         )
-        instrument.add_context_input(
+        instrument.add_transformation_context(
             stream_name='other',
             dependent_sources=['det2'],
             transform_path='/entry/instrument/other/value',

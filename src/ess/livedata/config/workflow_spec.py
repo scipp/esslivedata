@@ -15,7 +15,7 @@ from typing import Any, ClassVar, Literal, TypeVar
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ess.livedata.config.stream import DirectBindContextInput
+from ess.livedata.config.stream import ParameterContext
 from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
 
@@ -154,8 +154,8 @@ class JobId:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SpecContextInput(DirectBindContextInput):
-    """Spec-scope direct-bind context input with per-job runtime callables.
+class SpecParameterContext(ParameterContext):
+    """Spec-scope parameter context with per-job runtime callables.
 
     Lives in the spec tier (not in ``stream.py``) because the optional
     callables reference :class:`JobId` and :class:`Message` — runtime
@@ -306,13 +306,13 @@ class WorkflowSpec(BaseModel):
             "and UI metadata."
         ),
     )
-    context_inputs: list[SpecContextInput] = Field(
+    context_inputs: list[SpecParameterContext] = Field(
         default_factory=list,
         description=(
-            "Spec-level direct-bind context-stream declarations (see ADR 0003). "
-            "Populated via :meth:`SpecHandle.add_context_input` from "
+            "Spec-level parameter-context declarations (see ADR 0003). "
+            "Populated via :meth:`SpecHandle.add_parameter_context` from "
             "``factories.py`` to keep workflow-key imports out of ``specs.py``. "
-            "Chain-patch bindings live at instrument scope only. Empty by "
+            "Transformation contexts live at instrument scope only. Empty by "
             "default."
         ),
     )

@@ -116,7 +116,7 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=object, dependent_sources=['det_a']
         )
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'rot'}
@@ -140,7 +140,7 @@ class TestGatherSourceNames:
             outputs=DefaultOutputs,
         )
         # Binding's dependent_sources doesn't intersect any namespace spec.
-        instrument.add_context_input(
+        instrument.add_parameter_context(
             stream_name='rot', workflow_key=object, dependent_sources=['det_b']
         )
         assert gather_source_names(instrument, "detector_data") == {'det_a'}
@@ -162,7 +162,7 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        handle.add_context_input(stream_name='carriage', workflow_key=object)
+        handle.add_parameter_context(stream_name='carriage', workflow_key=object)
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'carriage'}
 
     def test_spec_context_input_with_resolver_is_not_picked_up(self) -> None:
@@ -179,7 +179,7 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        handle.add_context_input(
+        handle.add_parameter_context(
             stream_name='roi',
             workflow_key=object,
             stream_resolver=lambda jid, name: f"{jid}/{name}",
