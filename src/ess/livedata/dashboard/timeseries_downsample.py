@@ -16,14 +16,20 @@ import numpy as np
 import scipp as sc
 
 
-def _bucket_first_indices(times_ns: np.ndarray, period_ns: int) -> np.ndarray:
-    """First-occurrence index of each ``period_ns``-wide bucket along ``times_ns``."""
+def _bucket_last_indices(times_ns: np.ndarray, period_ns: int) -> np.ndarray:
+    """Last-sample index of each end-anchored ``period_ns``-wide bucket.
+
+    Buckets are anchored at ``times_ns[-1]``: bucket ``k`` covers
+    ``(times[-1] - (k+1)*period, times[-1] - k*period]``. Bucket 0 therefore
+    always contains the latest sample, which is included by construction -
+    no force-include of the tail is needed.
+    """
     if period_ns <= 0 or len(times_ns) == 0:
         return np.arange(len(times_ns), dtype=np.int64)
-    buckets = (times_ns - times_ns[0]) // period_ns
+    buckets = (times_ns[-1] - times_ns) // period_ns
     keep = np.empty(len(times_ns), dtype=bool)
-    keep[0] = True
-    keep[1:] = buckets[1:] != buckets[:-1]
+    keep[-1] = True
+    keep[:-1] = buckets[:-1] != buckets[1:]
     return np.flatnonzero(keep)
 
 
@@ -63,10 +69,10 @@ def downsample_timeseries(
 ) -> sc.DataArray:
     """Downsample a timeseries DataArray to a fine-recent + coarse-floor layout.
 
-    Bucketing is purely positional: the time coord is split into a recent band
-    (last ``recent_seconds``) and a floor band (older). Within each band the
-    first sample of every period-wide bucket is kept; the very last sample is
-    always force-included so the lag indicator stays accurate.
+    The time coord is split into a recent band (last ``recent_seconds``) and a
+    floor band (older). Within each band buckets are anchored at the band's
+    latest sample and the last sample of each bucket is kept, so the very
+    latest sample of the input is always present in the output.
 
     A ``floor_period_seconds`` of 0 drops older data entirely.
 
@@ -113,20 +119,18 @@ def downsample_timeseries(
 
     older_indices = np.flatnonzero(~is_recent)
     if floor_ns > 0 and older_indices.size > 0:
-        local = _bucket_first_indices(times_ns[older_indices], floor_ns)
+        local = _bucket_last_indices(times_ns[older_indices], floor_ns)
         parts.append(older_indices[local])
 
     recent_indices = np.flatnonzero(is_recent)
     if recent_indices.size > 0:
-        local = _bucket_first_indices(times_ns[recent_indices], period_ns)
+        local = _bucket_last_indices(times_ns[recent_indices], period_ns)
         parts.append(recent_indices[local])
 
     if not parts:
         return _select_indices(data, concat_dim, np.array([n - 1], dtype=np.int64))
 
     keep = np.concatenate(parts)
-    if keep[-1] != n - 1:
-        keep = np.append(keep, n - 1)
     if keep.size == n:
         return data
     return _select_indices(data, concat_dim, keep)

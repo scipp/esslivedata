@@ -79,9 +79,21 @@ class TestDownsampleTimeseries:
             recent_seconds=100.0,
             floor_period_seconds=0.0,
         )
-        # ~10 stride buckets in 100s. Last sample force-included if not on bucket
-        # boundary.
+        # ~10 stride buckets in 100s; bucket 0 is end-anchored, includes latest.
         assert 10 <= result.sizes['time'] <= 11
+        assert result.values[-1] == data.values[-1]
+
+    def test_latest_sample_always_kept_under_misaligned_recent_window(self):
+        # recent_seconds chosen so the bucket grid does not align to the latest.
+        data = _make_timeseries(100)
+        result = downsample_timeseries(
+            data,
+            period_seconds=10.0,
+            recent_seconds=95.0,
+            floor_period_seconds=0.0,
+        )
+        assert result.values[-1] == data.values[-1]
+        assert result.coords['time'].values[-1] == data.coords['time'].values[-1]
 
     def test_preserves_start_time_end_time_coords(self):
         data = _make_timeseries(60)
