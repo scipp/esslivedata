@@ -14,6 +14,7 @@ last-seen versions and rebuild when versions change.
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
 from uuid import UUID
@@ -55,6 +56,28 @@ class LayerState(Enum):
     ERROR = auto()
 
 
+@dataclass(frozen=True)
+class ComputeTask:
+    """A pending plotter.compute() invocation released by the layer gate.
+
+    Returned from :meth:`LayerStateMachine.stash_pending` and
+    :meth:`LayerStateMachine.set_active` when a build should run now. The
+    caller invokes the build outside any locks and reports completion via
+    ``data_arrived`` / ``error_occurred`` on the owning ``PlotDataService``.
+    """
+
+    plotter: Plotter
+    data: dict[str, dict[Any, Any]]
+    title_resolver: Any
+    kwargs: dict[str, Any]
+
+    def run(self) -> None:
+        """Invoke ``plotter.compute`` with the stashed input."""
+        self.plotter.compute(
+            self.data, title_resolver=self.title_resolver, **self.kwargs
+        )
+
+
 class LayerStateMachine:
     """Manages state transitions for a single plot layer.
 
@@ -74,6 +97,13 @@ class LayerStateMachine:
         self._version = 0
         self._plotter: Plotter | None = None
         self._error_message: str | None = None
+        # Compute gate: tokens express viewer interest, _pending stashes the
+        # latest input while no token is held. Decoupled from lifecycle state
+        # because interest is per-(session, layer) and lifecycle is per-layer.
+        self._active_tokens: set[int] = set()
+        self._pending: tuple[Any, Any, dict[str, Any]] | None = None
+        self._dirty: bool = False
+        self._gate_lock = threading.Lock()
 
     @property
     def state(self) -> LayerState:
@@ -130,6 +160,11 @@ class LayerStateMachine:
         self._plotter = plotter
         self._error_message = None
         self._version += 1
+        # Drop any input stashed for a previous plotter; the new plotter's
+        # subscription will repopulate when its first delta arrives.
+        with self._gate_lock:
+            self._pending = None
+            self._dirty = False
 
     def data_arrived(self) -> None:
         """
@@ -191,6 +226,72 @@ class LayerStateMachine:
         self._version += 1
         if self._plotter is not None:
             self._plotter.mark_presenters_dirty()
+
+    def stash_pending(
+        self,
+        data: dict[str, dict[Any, Any]],
+        *,
+        title_resolver: Any = None,
+        **kwargs: Any,
+    ) -> ComputeTask | None:
+        """Stash the latest input; return a flush task if a viewer is watching.
+
+        Called from the data-subscriber callback on every Kafka delta. When no
+        token is currently held, the input is stashed and the dirty flag is
+        set; intermediate updates collapse to last-writer-wins. When at least
+        one token is held, the returned ``ComputeTask`` should be run by the
+        caller (outside any locks) to produce the build.
+
+        Parameters
+        ----------
+        data:
+            Role-grouped input data passed through to ``plotter.compute``.
+        title_resolver:
+            Resolver passed through to ``plotter.compute``.
+        **kwargs:
+            Extra keyword arguments passed through to ``plotter.compute``.
+        """
+        with self._gate_lock:
+            self._pending = (data, title_resolver, kwargs)
+            self._dirty = True
+            return self._consume_for_flush()
+
+    def set_active(self, token: object, active: bool) -> ComputeTask | None:
+        """Acquire or release a viewer interest token on this layer.
+
+        On the 0→1 transition with dirty pending input, returns a
+        ``ComputeTask`` so the caller can rebuild synchronously. Releasing a
+        token does not drop the stash — it persists until the next 0→1
+        triggers a flush or a plotter replacement clears it.
+        """
+        key = id(token)
+        with self._gate_lock:
+            was_active = bool(self._active_tokens)
+            if active:
+                self._active_tokens.add(key)
+            else:
+                self._active_tokens.discard(key)
+            if was_active or not self._active_tokens:
+                return None
+            return self._consume_for_flush()
+
+    def _consume_for_flush(self) -> ComputeTask | None:
+        # Caller holds _gate_lock.
+        if (
+            not self._active_tokens
+            or not self._dirty
+            or self._plotter is None
+            or self._pending is None
+        ):
+            return None
+        data, title_resolver, kwargs = self._pending
+        self._dirty = False
+        return ComputeTask(
+            plotter=self._plotter,
+            data=data,
+            title_resolver=title_resolver,
+            kwargs=kwargs,
+        )
 
     def has_displayable_plot(self) -> bool:
         """

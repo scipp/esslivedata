@@ -298,9 +298,15 @@ def plot_cell(plot_config):
 
 
 def add_cell_with_layer(orchestrator, grid_id, geometry, config):
-    """Helper to add a cell with a single layer (replaces old add_plot)."""
+    """Helper to add a cell with a single layer (replaces old add_plot).
+
+    Simulates a viewer by acquiring an interest token on the new layer so
+    subsequent data arrivals run plotter.compute eagerly. Production drives
+    this from the polling loop on visible tabs.
+    """
     cell_id = orchestrator.add_cell(grid_id, geometry)
-    orchestrator.add_layer(cell_id, config)
+    layer_id = orchestrator.add_layer(cell_id, config)
+    orchestrator.activate_layer(layer_id, object(), True)
     return cell_id
 
 
@@ -1990,6 +1996,9 @@ class TestPlotAfterWorkflowStopped:
         new_layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
         assert new_layer_id != original_layer_id
 
+        # Simulate the polling loop discovering the replaced layer.
+        plot_orchestrator.activate_layer(new_layer_id, object(), True)
+
         state = plot_data_service.get(new_layer_id)
         assert state is not None
         assert state.state == LayerState.STOPPED
@@ -2056,8 +2065,11 @@ class TestTitleResolver:
         )
 
         cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
-        plot_orchestrator.add_layer(cell_id, config_a)
-        plot_orchestrator.add_layer(cell_id, config_b)
+        layer_a_id = plot_orchestrator.add_layer(cell_id, config_a)
+        layer_b_id = plot_orchestrator.add_layer(cell_id, config_b)
+        # Simulate the polling loop activating both layers' viewers.
+        plot_orchestrator.activate_layer(layer_a_id, object(), True)
+        plot_orchestrator.activate_layer(layer_b_id, object(), True)
 
         # Simulate data arrival for both layers
         for output_name in ('output_a', 'output_b'):

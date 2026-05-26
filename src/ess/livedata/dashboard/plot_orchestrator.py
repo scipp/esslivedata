@@ -950,27 +950,41 @@ class PlotOrchestrator:
         data: dict[str, dict[ResultKey, Any]],
     ) -> None:
         """
-        Compute plot state and transition layer to READY.
+        Submit input through the layer compute gate.
 
-        Calls plotter.compute() with the provided data and notifies PlotDataService.
-        Handles errors by logging and transitioning to error state.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer being computed.
-        plotter
-            The plotter instance to compute with.
-        data
-            Role-grouped data to pass to plotter.compute(). Empty dict for
-            static plotters.
+        Stashes input on the layer state machine. The build runs immediately
+        only if at least one viewer holds an interest token; otherwise the
+        latest input is retained and rebuilt on the next 0→1 token transition
+        (see ``activate_layer``).
         """
         if layer_id not in self._layer_to_cell:
             return
+        state = self._plot_data_service.get(layer_id)
+        if state is None:
+            return
+        title_resolver = self._layer_resolvers.get(layer_id)
+        task = state.stash_pending(data, title_resolver=title_resolver)
+        if task is not None:
+            self._dispatch_compute_task(layer_id, task)
 
+    def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
+        """Acquire or release a viewer interest token on a layer.
+
+        On the 0→1 transition with pending input, the stashed build is run
+        synchronously on the caller's thread (the polling thread). This keeps
+        the same poll pass's component rebuild seeing fresh ``has_cached_state``.
+        """
+        state = self._plot_data_service.get(layer_id)
+        if state is None:
+            return
+        task = state.set_active(token, active)
+        if task is not None:
+            self._dispatch_compute_task(layer_id, task)
+
+    def _dispatch_compute_task(self, layer_id: LayerId, task: Any) -> None:
+        """Run a flush task and transition the layer to READY or ERROR."""
         try:
-            title_resolver = self._layer_resolvers.get(layer_id)
-            plotter.compute(data, title_resolver=title_resolver)
+            task.run()
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
