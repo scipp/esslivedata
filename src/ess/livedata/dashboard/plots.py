@@ -40,19 +40,15 @@ from .timeseries_downsample import downsample_timeseries
 def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
     """Latest time-coord value across the primary dict, as int64 nanoseconds.
 
-    Assumes the datetime64 time coord produced by FullHistoryExtractor.
+    Caller is the timeseries plotter, so each DataArray has a non-empty
+    datetime64 ``time`` coord (guaranteed by FullHistoryExtractor).
     """
-    latest: int | None = None
-    for da in primary.values():
-        if 'time' not in da.dims or da.sizes['time'] == 0:
-            continue
-        coord = da.coords.get('time')
-        if coord is None:
-            continue
-        t = int(np.datetime64(coord.values[-1], 'ns').astype('int64'))
-        if latest is None or t > latest:
-            latest = t
-    return latest
+    if not primary:
+        return None
+    return max(
+        int(np.datetime64(da.coords['time'].values[-1], 'ns').astype('int64'))
+        for da in primary.values()
+    )
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
