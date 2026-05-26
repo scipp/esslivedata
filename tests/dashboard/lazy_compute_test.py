@@ -142,6 +142,64 @@ class TestLazyCompute:
         assert image_plotter.has_cached_state()
 
 
+class TestCorrelationHistogramLazy:
+    """CorrelationHistogramPlotter mirrors the same gating as Plotter."""
+
+    def _make_plotter(self, *, active: bool):
+        from ess.livedata.dashboard.correlation_plotter import (
+            X_AXIS,
+            AxisSpec,
+            CorrelationHistogramPlotter,
+        )
+        from ess.livedata.dashboard.plot_params import PlotScaleParams
+
+        renderer = LinePlotter(scale_opts=PlotScaleParams(), mode='histogram')
+        plotter = CorrelationHistogramPlotter(
+            axes=[AxisSpec(role=X_AXIS, name='position', bins=10)],
+            normalize=False,
+            renderer=renderer,
+        )
+        if active:
+            plotter.set_active(object(), True)
+        return plotter
+
+    def _make_data(self):
+        from ess.livedata.dashboard.correlation_plotter import PRIMARY, X_AXIS
+
+        axis = sc.DataArray(
+            data=sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='m'),
+            coords={'time': sc.array(dims=['time'], values=[100, 200, 300], unit='ms')},
+        )
+        source = sc.DataArray(
+            data=sc.array(dims=['time'], values=[10.0, 20.0], unit='counts'),
+            coords={'time': sc.array(dims=['time'], values=[150, 250], unit='ms')},
+        )
+        return {
+            PRIMARY: {_make_key('detector'): source},
+            X_AXIS: {_make_key('position'): axis},
+        }
+
+    def test_compute_without_active_token_stashes(self):
+        plotter = self._make_plotter(active=False)
+        plotter.compute(self._make_data())
+        assert not plotter.has_cached_state()
+
+    def test_set_active_true_triggers_histogram_and_renderer_build(self):
+        plotter = self._make_plotter(active=False)
+        token = object()
+        plotter.compute(self._make_data())
+        plotter.set_active(token, True)
+        assert plotter.has_cached_state()
+
+    def test_compute_validates_eagerly_when_inactive(self):
+        """Bad input raises synchronously even when no consumer is watching."""
+        from ess.livedata.dashboard.correlation_plotter import PRIMARY
+
+        plotter = self._make_plotter(active=False)
+        with pytest.raises(ValueError, match="at least one data source"):
+            plotter.compute({PRIMARY: {}})
+
+
 class TestStashedInputIsLatest:
     """When activation happens after multiple inputs, build uses latest."""
 

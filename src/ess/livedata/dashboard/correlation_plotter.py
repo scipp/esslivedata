@@ -13,11 +13,13 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Any
 
 import pydantic
 import scipp as sc
+import structlog
 
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -29,6 +31,8 @@ from .plot_params import (
     PlotDisplayParams2d,
 )
 from .plots import ImagePlotter, LinePlotter, PresenterBase, TitleResolver
+
+_logger = structlog.get_logger()
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -173,6 +177,13 @@ class CorrelationHistogramPlotter:
     Receives role-grouped data from DataSubscriber:
     - "primary": dict[ResultKey, DataArray] - data to histogram
     - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
+
+    Not a ``Plotter`` subclass — composes a renderer (``LinePlotter`` or
+    ``ImagePlotter``) rather than building elements directly. Mirrors the
+    same lazy-compute gating as the base class: ``compute`` stashes input
+    and only triggers the histogram + renderer build while a consumer holds
+    interest. The renderer's own ``_active_tokens`` is the gate so we don't
+    duplicate token state.
     """
 
     kdims: list[str] | None = None
@@ -186,6 +197,16 @@ class CorrelationHistogramPlotter:
         self._axes = axes
         self._normalize = normalize
         self._renderer = renderer
+        self._pending: (
+            tuple[
+                dict[ResultKey, sc.DataArray],
+                dict[str, sc.DataArray],
+                TitleResolver | None,
+            ]
+            | None
+        ) = None
+        self._dirty: bool = False
+        self._build_lock = threading.Lock()
 
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
@@ -196,7 +217,11 @@ class CorrelationHistogramPlotter:
         *,
         title_resolver: TitleResolver | None = None,
     ) -> None:
-        """Compute histograms for all data sources and render.
+        """Validate input eagerly; stash extracted data; build if a consumer is active.
+
+        Validation (presence of primary + axis roles) runs on every call so
+        bad input raises immediately at the orchestrator. Only the heavy
+        histogram + renderer build is deferred.
 
         Parameters
         ----------
@@ -205,13 +230,22 @@ class CorrelationHistogramPlotter:
         title_resolver
             Resolves source/output names to display titles.
         """
+        histogram_data, axis_data = self._extract(data)
+        with self._build_lock:
+            self._pending = (histogram_data, axis_data, title_resolver)
+            self._dirty = True
+            should_build = self._renderer.has_active_interest
+        if should_build:
+            self._build_pending()
+
+    def _extract(
+        self, data: dict[str, Any]
+    ) -> tuple[dict[ResultKey, sc.DataArray], dict[str, sc.DataArray]]:
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
             raise ValueError(
                 "Correlation histogram requires at least one data source to histogram."
             )
-
-        # Extract and validate all axis data
         axis_data: dict[str, sc.DataArray] = {}
         for axis in self._axes:
             axis_dict = data.get(axis.role, {})
@@ -222,31 +256,7 @@ class CorrelationHistogramPlotter:
                     "but it was not found in the data."
                 )
             axis_data[axis.name] = ax
-
-        # Build bin spec
-        bin_spec = {axis.name: axis.bins for axis in self._axes}
-
-        histograms: dict[ResultKey, sc.DataArray] = {}
-        for key, source_data in histogram_data.items():
-            dependent = source_data.copy(deep=False)
-            data_max_time = dependent.coords['time'].max()
-
-            # Add all axis coordinates via lookup
-            for axis in self._axes:
-                lut = _make_lookup(axis_data[axis.name], data_max_time)
-                dependent.coords[axis.name] = lut[dependent.coords['time']]
-
-            # Bin data with optional normalization by time width
-            if self._normalize:
-                times = dependent.coords['time']
-                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
-                widths = sc.concat([widths, widths.median()], dim='time')
-                dependent = dependent / widths
-                histograms[key] = dependent.bin(bin_spec).bins.mean()
-            else:
-                histograms[key] = dependent.hist(bin_spec)
-
-        self._renderer.compute({PRIMARY: histograms}, title_resolver=title_resolver)
+        return histogram_data, axis_data
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""
@@ -268,15 +278,60 @@ class CorrelationHistogramPlotter:
         self._renderer.mark_presenters_dirty()
 
     def set_active(self, token: object, active: bool) -> None:
-        """Forward interest to the renderer.
+        """Update consumer interest on the renderer and build if newly active.
 
-        Presenters live on the renderer (``create_presenter`` delegates), so
-        gating compute on renderer interest is the right knob. The histogram
-        step still runs eagerly per data tick; only the renderer's element
-        build is deferred. This is a partial win — see the lazy-compute plan
-        doc for the full-deferral follow-up.
+        The renderer owns the active-token set — presenters live on it via
+        ``create_presenter``'s delegation, so there's nothing to gain by
+        tracking a second set here. The 0→1 transition triggers our own
+        ``_build_pending`` so the histogram step runs only when something
+        will actually consume the result.
         """
+        was_active = self._renderer.has_active_interest
         self._renderer.set_active(token, active)
+        if self._renderer.has_active_interest and not was_active and self._dirty:
+            self._build_pending()
+
+    def _build_pending(self) -> None:
+        with self._build_lock:
+            if self._pending is None or not self._dirty:
+                return
+            histogram_data, axis_data, title_resolver = self._pending
+            self._dirty = False
+        try:
+            self._build_histograms(histogram_data, axis_data, title_resolver)
+        except Exception:
+            _logger.exception(
+                "CorrelationHistogramPlotter._build_histograms failed",
+                plotter_type=type(self).__name__,
+            )
+
+    def _build_histograms(
+        self,
+        histogram_data: dict[ResultKey, sc.DataArray],
+        axis_data: dict[str, sc.DataArray],
+        title_resolver: TitleResolver | None,
+    ) -> None:
+        bin_spec = {axis.name: axis.bins for axis in self._axes}
+
+        histograms: dict[ResultKey, sc.DataArray] = {}
+        for key, source_data in histogram_data.items():
+            dependent = source_data.copy(deep=False)
+            data_max_time = dependent.coords['time'].max()
+
+            for axis in self._axes:
+                lut = _make_lookup(axis_data[axis.name], data_max_time)
+                dependent.coords[axis.name] = lut[dependent.coords['time']]
+
+            if self._normalize:
+                times = dependent.coords['time']
+                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
+                widths = sc.concat([widths, widths.median()], dim='time')
+                dependent = dependent / widths
+                histograms[key] = dependent.bin(bin_spec).bins.mean()
+            else:
+                histograms[key] = dependent.hist(bin_spec)
+
+        self._renderer.compute({PRIMARY: histograms}, title_resolver=title_resolver)
 
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
