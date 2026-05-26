@@ -86,6 +86,17 @@ class LayerStateMachine:
 
     Thread-safe: all state modifications happen through atomic operations.
 
+    Threading of the compute gate
+    -----------------------------
+    ``stash_pending`` is called from the data-subscriber callback on the
+    background ingestion thread; ``set_active`` is called from the per-session
+    polling thread (Bokeh main). Both return a ``ComputeTask`` when a build
+    should run; the caller invokes ``task.run()`` on its own thread (outside
+    the gate lock). So regular Kafka-delta builds execute on the bg ingestion
+    thread, while the 0→1 activation flush executes on the polling thread —
+    deliberately, so the same poll pass's component rebuild observes fresh
+    ``has_cached_state``.
+
     Parameters
     ----------
     initial_state:

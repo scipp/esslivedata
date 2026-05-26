@@ -982,7 +982,13 @@ class PlotOrchestrator:
             self._dispatch_compute_task(layer_id, task)
 
     def _dispatch_compute_task(self, layer_id: LayerId, task: Any) -> None:
-        """Run a flush task and transition the layer to READY or ERROR."""
+        """Run a flush task and transition the layer to READY or ERROR.
+
+        Thread-agnostic: runs on whatever thread the caller is on — the bg
+        ingestion thread when entered via ``_run_compute``, the polling thread
+        when entered via ``activate_layer``. See ``LayerStateMachine`` for the
+        gate's threading contract.
+        """
         try:
             task.run()
             self._plot_data_service.data_arrived(layer_id)
