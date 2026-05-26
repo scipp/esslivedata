@@ -280,7 +280,7 @@ class SlicerPlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
-    def compute(self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs) -> None:
+    def _build(self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs) -> None:
         """
         Prepare 3D data for slicing with pre-computed color bounds.
 

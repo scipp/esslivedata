@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import threading
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -225,6 +226,15 @@ class Plotter:
 
     Tracks presenters via WeakSet and marks them dirty when state changes.
     This enables efficient polling-based update detection.
+
+    Compute is gated on active-consumer interest. Subclasses override
+    ``_build`` rather than ``compute``: the base ``compute`` stashes input and
+    only invokes ``_build`` when a consumer is currently watching (managed
+    mode), so plots in hidden tabs and idle backends don't pay the O(N) build
+    cost on every Kafka delta. Interest is tracked via opaque tokens on the
+    plotter itself, not via the existing presenter WeakSet, because presenter
+    creation depends on ``has_cached_state`` — tying interest to presenters
+    would create a chicken-and-egg loop on the very first build.
     """
 
     def __init__(
@@ -251,6 +261,16 @@ class Plotter:
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
+        self._pending: tuple[Any, TitleResolver | None, dict[str, Any]] | None = None
+        self._dirty: bool = False
+        self._active_tokens: set[int] = set()
+        # When False the plotter builds eagerly on every compute() call. The
+        # first set_active() call switches into managed mode, where build is
+        # gated on at least one active token. This keeps unit tests that just
+        # call compute() working without explicit interest setup; the dashboard
+        # tabs widget calls set_active() to opt into gating.
+        self._managed: bool = False
+        self._build_lock = threading.Lock()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
         self.layout_params = layout_params or LayoutParams()
@@ -415,22 +435,68 @@ class Plotter:
         title_resolver: TitleResolver | None = None,
         **kwargs,
     ) -> None:
+        """Submit input; build now if any consumer is active, else stash.
+
+        In *unmanaged* mode (the default until ``set_active`` is called once),
+        every call builds immediately — preserves the contract for callers
+        that construct plotters directly (unit tests, scripts).
+
+        In *managed* mode, the heavy ``_build`` step only runs while at least
+        one consumer has called ``set_active(token, True)``. When no consumer
+        is watching, the latest input is stashed and a dirty flag is set; the
+        next acquisition of interest builds from that stash. Multiple input
+        arrivals while inactive collapse to the latest — intermediate updates
+        are dropped, which matches the contract of ``compute``
+        (last-writer-wins on ``_cached_state``).
         """
-        Compute plot elements from input data and cache the result.
+        self._pending = (data, title_resolver, kwargs)
+        self._dirty = True
+        if not self._managed or self._active_tokens:
+            self._build_pending()
 
-        This is Stage 1 of the two-stage plotter architecture. It transforms
-        input data into HoloViews elements, caches the result, and marks all
-        registered presenters as dirty.
+    def set_active(self, token: object, active: bool) -> None:
+        """Mark this plotter active or inactive for one consumer.
 
-        Parameters
-        ----------
-        data:
-            Role-grouped data. Standard plotters consume the ``primary`` role.
-        title_resolver:
-            Resolves source/output names to display titles. If None, raw names
-            are used.
-        **kwargs:
-            Additional keyword arguments passed to plot().
+        The first call switches the plotter into managed mode: subsequent
+        ``compute`` calls become lazy and only build while at least one token
+        is active. On the 0→1 transition, a dirty pending input triggers
+        ``_build`` synchronously so that ``has_cached_state()`` becomes true
+        before the same polling pass tries to create a presenter.
+        """
+        self._managed = True
+        key = id(token)
+        was_active = bool(self._active_tokens)
+        if active:
+            self._active_tokens.add(key)
+        else:
+            self._active_tokens.discard(key)
+        is_active_now = bool(self._active_tokens)
+        if is_active_now and not was_active and self._dirty:
+            self._build_pending()
+
+    @property
+    def has_active_interest(self) -> bool:
+        return bool(self._active_tokens)
+
+    def _build_pending(self) -> None:
+        with self._build_lock:
+            if self._pending is None or not self._dirty:
+                return
+            data, title_resolver, kwargs = self._pending
+            self._dirty = False
+        self._build(data, title_resolver=title_resolver, **kwargs)
+
+    def _build(
+        self,
+        data: dict[str, dict[ResultKey, sc.DataArray]],
+        *,
+        title_resolver: TitleResolver | None = None,
+        **kwargs,
+    ) -> None:
+        """Build plot elements from input data and cache the result.
+
+        Subclasses override this rather than ``compute`` so they inherit the
+        lazy-on-active-tab gating in the base class.
         """
         data = data.get(PRIMARY, {})
         if self._normalize_to_rate:

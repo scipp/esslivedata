@@ -92,3 +92,64 @@ def test_overlay_plotter_compute(benchmark, overlay_plotter):
     data_key = _make_result_key()
     da = _make_2d_overlay_data(n_curves=5)
     benchmark(overlay_plotter.compute, {'primary': {data_key: da}})
+
+
+# Tab-switch latency benchmarks. These measure the cost of a 0→1 active-token
+# transition with a dirty pending input, which is the work that happens when
+# a user switches to a previously hidden tab containing one or more plotters.
+
+
+def _stash_input(plotter, data: dict) -> None:
+    """Submit input while the plotter has no active token (input gets stashed)."""
+    token = object()
+    plotter.set_active(token, False)
+    plotter.compute(data)
+    assert not plotter.has_cached_state()
+
+
+def _activate_once(plotter) -> None:
+    plotter.set_active(object(), True)
+
+
+def test_tab_switch_latency_line_n100k(benchmark, line_plotter):
+    """One LinePlotter, N=100k, dirty: time the activation rebuild."""
+    data_key = _make_result_key()
+    da = _make_1d_curve_data(n=100_000)
+
+    def setup():
+        plotter = LinePlotter.from_params(PlotParams1d())
+        _stash_input(plotter, {'primary': {data_key: da}})
+        return (plotter,), {}
+
+    benchmark.pedantic(_activate_once, setup=setup, rounds=20)
+
+
+def test_tab_switch_latency_image_1k(benchmark, image_plotter):
+    """One ImagePlotter, 1k x 1k pixels, dirty: time the activation rebuild."""
+    data_key = _make_result_key()
+    da = _make_2d_image_data(nx=1024, ny=1024)
+
+    def setup():
+        plotter = ImagePlotter.from_params(PlotParams2d())
+        _stash_input(plotter, {'primary': {data_key: da}})
+        return (plotter,), {}
+
+    benchmark.pedantic(_activate_once, setup=setup, rounds=10)
+
+
+def test_tab_switch_latency_10_line_plotters(benchmark):
+    """Worst-case "busy tab" switch: 10 LinePlotters at N=100k, sequential rebuild."""
+    data_key = _make_result_key()
+    da = _make_1d_curve_data(n=100_000)
+
+    def setup():
+        plotters = [LinePlotter.from_params(PlotParams1d()) for _ in range(10)]
+        for p in plotters:
+            _stash_input(p, {'primary': {data_key: da}})
+        return (plotters,), {}
+
+    def activate_all(plotters):
+        for p in plotters:
+            p.set_active(object(), True)
+
+    benchmark.pedantic(activate_all, setup=setup, rounds=10)

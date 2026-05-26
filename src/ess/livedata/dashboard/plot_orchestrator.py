@@ -881,6 +881,12 @@ class PlotOrchestrator:
             plotter = self._plotting_controller.create_plotter(
                 config.plot_name, params=config.params
             )
+            # Arm lazy-compute gating: subsequent compute() calls only build
+            # when at least one consumer (tabs widget) has acquired interest.
+            # Plotters created outside the orchestrator (tests, scripts) stay
+            # in eager mode until they opt in.
+            if hasattr(plotter, 'set_active'):
+                plotter.set_active(self, False)
             self._plot_data_service.job_started(layer_id, plotter)
             return plotter
         except Exception:

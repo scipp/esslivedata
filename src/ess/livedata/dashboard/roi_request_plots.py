@@ -590,7 +590,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     def create_presenter(self) -> PresenterBase:
         """Create a presenter for this plotter."""
 
-    def compute(
+    def _build(
         self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs
     ) -> dict[ResultKey, sc.DataArray]:
         """

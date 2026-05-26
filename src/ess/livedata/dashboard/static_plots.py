@@ -134,6 +134,10 @@ class StaticPlotter(ABC):
         element = self.create_static_plot()
         self._set_cached_state(element)
 
+    def set_active(self, token: object, active: bool) -> None:
+        """No-op: static plots build once from params, regardless of viewers."""
+        del token, active
+
 
 class RectanglesCoordinates(pydantic.BaseModel):
     """Wrapper for rectangle coordinate input to get full-width card."""

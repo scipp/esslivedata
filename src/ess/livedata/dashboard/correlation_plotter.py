@@ -267,6 +267,17 @@ class CorrelationHistogramPlotter:
         """Mark all presenters as dirty by delegating to the renderer."""
         self._renderer.mark_presenters_dirty()
 
+    def set_active(self, token: object, active: bool) -> None:
+        """Forward interest to the renderer.
+
+        Presenters live on the renderer (``create_presenter`` delegates), so
+        gating compute on renderer interest is the right knob. The histogram
+        step still runs eagerly per data tick; only the renderer's element
+        build is deferred. This is a partial win — see the lazy-compute plan
+        doc for the full-deferral follow-up.
+        """
+        self._renderer.set_active(token, active)
+
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
     """Plotter for 1D correlation histograms."""

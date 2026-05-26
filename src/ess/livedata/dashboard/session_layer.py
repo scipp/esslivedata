@@ -112,6 +112,10 @@ class SessionLayer:
     layer_id: LayerId
     last_seen_version: int
     components: SessionComponents | None = None
+    # Plotter this SessionLayer currently holds an interest token on. Tracked so
+    # that on plotter replacement (workflow restart) the old plotter releases
+    # its interest before the new one acquires.
+    active_plotter: object | None = None
 
     @property
     def dmap(self) -> hv.DynamicMap | hv.Element | None:
