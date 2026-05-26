@@ -208,6 +208,7 @@ class Job:
         processor: Workflow,
         source_names: list[str],
         aux_source_names: dict[str, str] | None = None,
+        context_aux_source_names: dict[str, str] | None = None,
         context_stream_names: set[str] | None = None,
         reset_on_run_transition: bool = True,
     ) -> None:
@@ -225,12 +226,20 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         aux_source_names:
-            Mapping from field names to stream names for auxiliary data sources.
-            None if no auxiliary sources are needed.
+            Mapping from field names to stream names for user-selected
+            auxiliary data sources (workflow ``AuxSources``). None if no
+            user-selected auxiliary sources are needed.
+        context_aux_source_names:
+            Mapping from field names to wire stream names for framework-
+            routed context inputs (ADR 0003 ``ContextInput`` records). Kept
+            separate from ``aux_source_names`` so semantic readers don't
+            confuse user-selected aux with framework-injected context.
+            Both maps feed the same per-stream routing table; the split is
+            for accounting, not behaviour.
         context_stream_names:
-            Wire stream names whose context value must be available before the
-            workflow runs. The :class:`JobManager` gates the job on these per
-            ADR 0002. Defaults to the empty set — no gating.
+            Wire stream names whose context value must be available before
+            the workflow runs. The :class:`JobManager` gates the job on
+            these per ADR 0002. Defaults to the empty set — no gating.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         """
@@ -242,18 +251,23 @@ class Job:
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
+        self._context_aux_mapping: dict[str, str] = context_aux_source_names or {}
         self._context_stream_names: set[str] = context_stream_names or set()
 
-        # Create reverse mapping: stream_name -> list of field_names
-        # This supports multiplexing where one stream maps to multiple fields. In most
-        # cases this is not desirable, but the pydantic model for the aux sources should
-        # perform such validation. Here is not the place to prevent this, since there
-        # may be valid use cases.
+        # Reverse mapping: stream_name -> list of field_names. Both aux and
+        # context streams feed the same routing table because at the
+        # workflow boundary both deliver values keyed by field name. The
+        # split between the two mappings is preserved on the input side
+        # so callers can distinguish user-selected aux from framework-
+        # injected context. Multiplexing (one stream → many fields) is
+        # supported; ``AuxSources`` is responsible for rejecting it where
+        # undesired.
         self._stream_to_fields: dict[str, list[str]] = {}
-        for field_name, stream_name in self._aux_source_mapping.items():
-            if stream_name not in self._stream_to_fields:
-                self._stream_to_fields[stream_name] = []
-            self._stream_to_fields[stream_name].append(field_name)
+        for field_name, stream_name in (
+            *self._aux_source_mapping.items(),
+            *self._context_aux_mapping.items(),
+        ):
+            self._stream_to_fields.setdefault(stream_name, []).append(field_name)
 
     @property
     def job_id(self) -> JobId:
@@ -277,13 +291,28 @@ class Job:
 
     @property
     def aux_source_names(self) -> list[str]:
-        """
-        Get the list of auxiliary stream names for routing purposes.
+        """User-selected auxiliary stream names (workflow ``AuxSources``).
 
-        Returns the stream names (values from the mapping) that JobManager
-        should use to route incoming data to this job.
+        Excludes framework-injected context wire names — those are exposed
+        via :attr:`context_wire_names`. Routing code that needs every
+        stream this job consumes should use :attr:`input_stream_names`.
         """
         return list(self._aux_source_mapping.values())
+
+    @property
+    def context_wire_names(self) -> list[str]:
+        """Wire stream names for framework-routed context inputs."""
+        return list(self._context_aux_mapping.values())
+
+    @property
+    def input_stream_names(self) -> list[str]:
+        """Every stream name this job consumes (aux + context).
+
+        Use for routing — see :meth:`Job.add` and the dispatch in
+        :class:`JobManager`. Semantic readers wanting only user-selected
+        aux should use :attr:`aux_source_names`.
+        """
+        return [*self._aux_source_mapping.values(), *self._context_aux_mapping.values()]
 
     def missing_context(self, available: set[str]) -> set[str]:
         """

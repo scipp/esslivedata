@@ -192,19 +192,24 @@ class JobFactory:
             )
             for ci in matching
         }
-        # Splice context wire names into the field→wire aux mapping; the
-        # existing Job routing handles both kinds uniformly.
-        rendered_aux_names = {**rendered_aux_names, **wire_for}
         context_stream_names = set(wire_for.values())
         seed_messages = [
             ci.seed_factory(job_id) for ci in matching if ci.seed_factory is not None
         ]
 
+        # The factory still receives a single merged mapping: at the workflow
+        # boundary aux and context are both keyed by field name, and the
+        # downstream :class:`StreamProcessorWorkflow` doesn't distinguish.
+        # Job, by contrast, carries the two as separate fields so callers
+        # can ask "user-selected aux" vs "framework-injected context"
+        # without conflation.
+        merged_for_factory = {**rendered_aux_names, **wire_for}
+
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
-            aux_source_names=rendered_aux_names,
+            aux_source_names=merged_for_factory,
             context_keys=context_keys,
         )
         job = Job(
@@ -213,6 +218,7 @@ class JobFactory:
             processor=stream_processor,
             source_names=[job_id.source_name],
             aux_source_names=rendered_aux_names,
+            context_aux_source_names=wire_for,
             context_stream_names=context_stream_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
@@ -450,7 +456,7 @@ class JobManager:
         for job_id, job in self._scheduled_jobs.items():
             if self._job_schedules[job_id].should_start(start_time):
                 names.update(job.source_names)
-                names.update(job.aux_source_names)
+                names.update(job.input_stream_names)
         return names
 
     def push_data(self, data: WorkflowData) -> list[JobReply]:
@@ -545,7 +551,7 @@ class JobManager:
         gated: set[JobId] = set()
         for job in self.active_jobs:
             seen = self._seen_context_streams.setdefault(job.job_id, set())
-            seen.update(available & set(job.aux_source_names))
+            seen.update(available & set(job.input_stream_names))
             missing = job.missing_context(seen)
             if missing:
                 self._job_warning_messages[job.job_id] = pending_context_warning(
@@ -713,7 +719,7 @@ def _filter_data_for_job(job: Job, data: WorkflowData) -> JobData:
     for stream, value in data.data.items():
         if stream.name in job.source_names:
             job_data.primary_data[stream.name] = value
-        elif stream.name in job.aux_source_names:
+        elif stream.name in job.input_stream_names:
             job_data.aux_data[stream.name] = value
     return job_data
 

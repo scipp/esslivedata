@@ -1683,8 +1683,12 @@ class TestJobFactoryContextInput:
         # streams, satisfied as soon as 'rot' becomes available.
         assert job.missing_context(set()) == {'rot'}
         assert job.missing_context({'rot'}) == set()
-        # And spliced into aux_source_names so existing Job routing handles it.
-        assert 'rot' in job.aux_source_names
+        # Routed as a context wire stream, not user-selected aux: visible via
+        # context_wire_names and the routing-combined input_stream_names, but
+        # not via aux_source_names.
+        assert 'rot' in job.context_wire_names
+        assert 'rot' in job.input_stream_names
+        assert 'rot' not in job.aux_source_names
         # No seed_factory declared → no cold-start messages.
         assert seeds == []
 
