@@ -689,7 +689,12 @@ class LinePlotter(Plotter):
 
     @classmethod
     def from_timeseries_params(cls, params: PlotParamsTimeseries):
-        """Create LinePlotter for the timeseries plotter, with downsampling on."""
+        """Create LinePlotter for the timeseries plotter, with downsampling on.
+
+        Downsampling and update throttling live at the plotter rather than at
+        the extractor: the subscription stays a plain full-history pull, and
+        per-plot config can change without re-subscribing.
+        """
         instance = cls.from_display_params(params)
         instance._downsampling = params.downsampling
         return instance
@@ -701,6 +706,20 @@ class LinePlotter(Plotter):
         title_resolver: TitleResolver | None = None,
         **kwargs,
     ) -> None:
+        """Compute plot state, with timeseries throttling and downsampling.
+
+        For non-timeseries instances (``_downsampling is None``) this just
+        delegates to ``Plotter.compute``.
+
+        For timeseries instances the call short-circuits when the new data's
+        latest timestamp is less than ``period_seconds`` past the timestamp
+        seen at the last compute that actually ran. Returning early skips
+        ``_set_cached_state``, which leaves presenters non-dirty and prevents
+        the downstream ``pipe.send`` / Bokeh patch / WebSocket flush /
+        browser repaint. When the call does proceed, every primary DataArray
+        is reduced via ``downsample_timeseries`` before delegating to the
+        standard plot path.
+        """
         if self._downsampling is None:
             super().compute(data, title_resolver=title_resolver, **kwargs)
             return

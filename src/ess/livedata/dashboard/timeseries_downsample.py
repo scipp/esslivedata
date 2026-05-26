@@ -5,9 +5,9 @@
 Long-running timeseries accumulate many points (~100 k for a day at 1 Hz),
 which makes per-tick plot rebuilds and the resulting ``pipe.send`` payloads
 expensive. ``downsample_timeseries`` reduces a DataArray to two bands of
-uniform stride: a recent window at fine resolution plus an optional coarse
-floor that extends indefinitely backwards. See issue #940 and
-``docs/developer/plans/940-timeseries-downsampling.md``.
+uniform stride: a recent window at fine resolution plus a coarse floor
+that extends the run's older history indefinitely (set the floor period
+to 0 to drop older data instead). See issue #940.
 """
 
 from __future__ import annotations
