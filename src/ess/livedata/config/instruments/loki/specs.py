@@ -29,12 +29,22 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
+from ess.livedata.handlers.value_log import ValueLog
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     register_wavelength_lut_workflow_spec,
 )
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
+
+
+class DetectorCarriageLog(ValueLog):
+    """Per-binding Sciline key for the LOKI rear-bank carriage f144 NXlog.
+
+    Drives the ``detector_carriage`` transformation in ``loki_detector_0``'s
+    ``depends_on`` chain. Distinct subclass so multiple dynamic transforms
+    on a workflow remain distinguishable in Sciline.
+    """
 
 
 class TransmissionMode(StrEnum):

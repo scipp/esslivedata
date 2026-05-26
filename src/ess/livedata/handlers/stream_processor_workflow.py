@@ -16,6 +16,7 @@ from ess.reduce import streaming
 
 from ess.livedata.core.timestamp import Timestamp
 
+from .value_log import ValueLog
 from .workflow_factory import Workflow
 
 
@@ -95,8 +96,16 @@ class StreamProcessorWorkflow(Workflow):
         # will fail. See aux_sources / render() in workflow_spec.py for how
         # the routing layer ensures only jobs that subscribed to a stream
         # receive its data.
+        #
+        # ValueLog subclasses are typed wrappers around an NXlog DataArray;
+        # the raw payload (a DataArray) is wrapped as key(values=raw) so
+        # each chain-patch binding has a distinct Sciline node identity.
         context = {
-            sciline_key: data[key]
+            sciline_key: (
+                sciline_key(values=data[key])
+                if isinstance(sciline_key, type) and issubclass(sciline_key, ValueLog)
+                else data[key]
+            )
             for key, sciline_key in self._context_keys.items()
             if key in data
         }

@@ -403,6 +403,44 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='ghost'):
             instrument._validate_binding_dependent_sources()
 
+    def test_validates_duplicate_log_key_across_bindings(self):
+        """Two chain-patch ContextInput entries with different streams must
+        not share a ``log_key`` -- Sciline keys identify parameters by
+        class, so a shared key would silently merge two streams into one
+        Sciline node."""
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _SharedLog(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1', 'det2'],
+            streams={'a': _f144('a'), 'b': _f144('b')},
+        )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1', 'det2'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_input(
+            stream_name='a',
+            dependent_sources=['det1'],
+            transform_path='/a/value',
+            log_key=_SharedLog,
+        )
+        instrument.add_context_input(
+            stream_name='b',
+            dependent_sources=['det2'],
+            transform_path='/b/value',
+            log_key=_SharedLog,
+        )
+
+        with pytest.raises(ValueError, match=r'log_key.*shared'):
+            instrument._validate_context_input_log_key_uniqueness()
+
     def test_validates_wire_name_collision_between_instrument_and_spec(self):
         """Instrument- and spec-level ContextInput entries must not name-collide.
 
@@ -428,18 +466,62 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='collision'):
             instrument._validate_context_input_wire_name_collisions()
 
-    def test_context_input_requires_workflow_key_or_transform_path(self):
-        with pytest.raises(ValueError, match=r'workflow_key.*transform_path'):
+    def test_direct_bind_requires_workflow_key(self):
+        with pytest.raises(ValueError, match='workflow_key'):
             ContextInput(stream_name='rot', dependent_sources=frozenset({'det1'}))
 
-    def test_context_input_accepts_transform_path_without_workflow_key(self):
+    def test_chain_patch_requires_log_key(self):
+        with pytest.raises(ValueError, match='log_key'):
+            ContextInput(
+                stream_name='rot',
+                dependent_sources=frozenset({'det1'}),
+                transform_path='/entry/instrument/rot/value',
+            )
+
+    def test_chain_patch_rejects_workflow_key(self):
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _Log(ValueLog):
+            pass
+
+        with pytest.raises(ValueError, match='must not set'):
+            ContextInput(
+                stream_name='rot',
+                dependent_sources=frozenset({'det1'}),
+                transform_path='/entry/instrument/rot/value',
+                log_key=_Log,
+                workflow_key=_Key,
+            )
+
+    def test_direct_bind_rejects_log_key(self):
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _Log(ValueLog):
+            pass
+
+        with pytest.raises(ValueError, match='only valid for chain-patch'):
+            ContextInput(
+                stream_name='rot',
+                dependent_sources=frozenset({'det1'}),
+                workflow_key=_Key,
+                log_key=_Log,
+            )
+
+    def test_chain_patch_accepts_transform_path_and_log_key(self):
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _Log(ValueLog):
+            pass
+
         ci = ContextInput(
             stream_name='rot',
             dependent_sources=frozenset({'det1'}),
             transform_path='/entry/instrument/rot/value',
+            log_key=_Log,
         )
         assert ci.workflow_key is None
         assert ci.transform_path == '/entry/instrument/rot/value'
+        assert ci.log_key is _Log
 
     def test_no_collision_when_dependent_sources_disjoint(self):
         """Same stream name on instrument and spec scope is fine when the sources

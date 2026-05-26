@@ -737,11 +737,8 @@ def pending_context_warning(missing: set[str]) -> str:
 
 
 def _resolve_workflow_key(ci: ContextInput) -> Any:
-    """Workflow key used by ``set_context``. Chain-patch bindings default to
-    :class:`TransformValueLog` (lazy-imported to keep ``core`` independent of
-    detector-view handler internals)."""
-    if ci.workflow_key is not None:
-        return ci.workflow_key
-    from ess.livedata.handlers.detector_view.types import TransformValueLog
-
-    return TransformValueLog
+    """Sciline key used by ``set_context``. Chain-patch bindings carry their
+    per-binding :class:`ValueLog` subclass on :attr:`ContextInput.log_key`;
+    direct-bind bindings carry :attr:`ContextInput.workflow_key`. Exactly
+    one is set (enforced by :meth:`ContextInput.__post_init__`)."""
+    return ci.log_key if ci.log_key is not None else ci.workflow_key

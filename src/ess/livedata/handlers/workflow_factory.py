@@ -56,6 +56,7 @@ class SpecHandle:
         workflow_key: Any = None,
         dependent_sources: Iterable[str] | None = None,
         transform_path: str | None = None,
+        log_key: Any = None,
         stream_resolver: Callable[['JobId', str], str] | None = None,
         seed_factory: Callable[['JobId'], 'Message'] | None = None,
     ) -> None:
@@ -67,7 +68,7 @@ class SpecHandle:
         spec.
 
         See :meth:`Instrument.add_context_input` for the
-        ``workflow_key`` / ``transform_path`` discriminator.
+        ``workflow_key`` / ``transform_path`` / ``log_key`` discriminator.
         """
         spec = self._factory[self.workflow_id]
         if dependent_sources is None:
@@ -80,6 +81,7 @@ class SpecHandle:
                 workflow_key=workflow_key,
                 dependent_sources=dependent_sources,
                 transform_path=transform_path,
+                log_key=log_key,
                 stream_resolver=stream_resolver,
                 seed_factory=seed_factory,
             )

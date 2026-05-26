@@ -1021,14 +1021,21 @@ class TestSpecHandleAddContextInput:
 
         assert factory[handle.workflow_id].skip_motion is True
 
-    def test_transform_path_stored_without_workflow_key(self) -> None:
+    def test_chain_patch_stores_transform_path_and_log_key(self) -> None:
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
         factory, handle = self._register(source_names=['det1'])
 
         handle.add_context_input(
             stream_name='rot',
             transform_path='/entry/instrument/rot/value',
+            log_key=_RotLog,
         )
 
         [entry] = factory[handle.workflow_id].context_inputs
         assert entry.workflow_key is None
         assert entry.transform_path == '/entry/instrument/rot/value'
+        assert entry.log_key is _RotLog

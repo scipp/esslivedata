@@ -172,6 +172,7 @@ class Instrument:
         dependent_sources: Iterable[str],
         workflow_key: Any = None,
         transform_path: str | None = None,
+        log_key: Any = None,
     ) -> None:
         """Register a stream as a context input to one or more specs.
 
@@ -180,16 +181,17 @@ class Instrument:
         validation in ``__post_init__``.
 
         For chain-patch motion bindings, supply ``transform_path`` (the NeXus
-        path of the dynamic transformation to patch) and omit ``workflow_key``;
-        the factory infers the generic ``TransformValueLog`` key. For
-        direct-bind bindings, supply ``workflow_key`` (the Sciline key on the
-        target pipeline) and omit ``transform_path``.
+        path of the dynamic transformation to patch) and ``log_key`` (a
+        :class:`ValueLog` subclass that becomes this binding's Sciline node).
+        For direct-bind bindings, supply ``workflow_key`` (the Sciline key on
+        the target pipeline) and omit ``transform_path`` / ``log_key``.
         """
         binding = ContextInput(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=frozenset(dependent_sources),
             transform_path=transform_path,
+            log_key=log_key,
         )
         self._validate_binding_stream_name(binding)
         self.context_inputs.append(binding)
@@ -569,6 +571,7 @@ class Instrument:
 
         self._validate_binding_dependent_sources()
         self._validate_context_input_wire_name_collisions()
+        self._validate_context_input_log_key_uniqueness()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -595,6 +598,37 @@ class Instrument:
                     f"unknown dependent_sources {sorted(unknown)}; no registered "
                     f"spec advertises these source_names"
                 )
+
+    def _validate_context_input_log_key_uniqueness(self) -> None:
+        """Raise if two chain-patch ContextInput entries share a ``log_key``.
+
+        Sciline keys identify parameters by class. Two bindings with the
+        same ``log_key`` but different streams would silently collapse
+        into a single Sciline node, merging unrelated streams. Each
+        chain-patch binding must declare its own :class:`ValueLog`
+        subclass.
+
+        Repeat entries for the same ``stream_name`` (which can occur if
+        ``load_factories`` is called multiple times in a long-lived
+        process) are allowed: they describe the same binding, not a
+        collision.
+        """
+        seen: dict[type, str] = {}
+        all_inputs = list(self.context_inputs)
+        for spec in self.workflow_factory.values():
+            all_inputs.extend(spec.context_inputs)
+        for ci in all_inputs:
+            if ci.log_key is None:
+                continue
+            previous = seen.get(ci.log_key)
+            if previous is not None and previous != ci.stream_name:
+                raise ValueError(
+                    f"ContextInput log_key {ci.log_key.__name__!r} is shared "
+                    f"by streams {previous!r} and {ci.stream_name!r}; each "
+                    "chain-patch binding must declare its own ValueLog "
+                    "subclass to avoid Sciline node collisions"
+                )
+            seen[ci.log_key] = ci.stream_name
 
     def _validate_context_input_wire_name_collisions(self) -> None:
         """Raise if instrument- and spec-level ContextInput entries collide.

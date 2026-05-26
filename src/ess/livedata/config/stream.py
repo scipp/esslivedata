@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import JobId
     from ess.livedata.core.message import Message
+    from ess.livedata.handlers.value_log import ValueLog
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -103,10 +104,17 @@ class ContextInput:
     :attr:`transform_path`, when set, identifies a NeXus ``depends_on`` chain
     entry whose ``value`` should be patched from this stream. The presence of
     a path marks the binding as *chain-patch*; the workflow factory routes the
-    stream value into the chain via ``add_dynamic_transform`` rather than
-    via direct parameter binding. For chain-patch bindings ``workflow_key``
-    defaults to the generic ``TransformValueLog`` key (resolved lazily by the
-    factory layer) and may be omitted at the call site.
+    stream value into the chain via a fused per-component patched-chain
+    provider rather than via direct parameter binding. Chain-patch bindings
+    must declare :attr:`log_key` (a :class:`ValueLog` subclass) and omit
+    :attr:`workflow_key`.
+
+    :attr:`log_key` is the :class:`ValueLog` subclass that gives this
+    chain-patch binding a distinct Sciline parameter. Each chain-patch
+    binding declares its own subclass — ``class DetectorCarriageLog(ValueLog):
+    ...`` — so multiple dynamic transforms can coexist on one workflow
+    without colliding on a shared key. Must be set iff :attr:`transform_path`
+    is set.
 
     :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to the
     wire stream name used by routing and the gate. Resolvers are assumed to
@@ -125,15 +133,36 @@ class ContextInput:
     workflow_key: Any = None
     dependent_sources: frozenset[str]
     transform_path: str | None = field(default=None)
+    log_key: type[ValueLog] | None = field(default=None)
     stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
     seed_factory: Callable[[JobId], Message] | None = field(default=None)
 
     def __post_init__(self) -> None:
-        if self.workflow_key is None and self.transform_path is None:
-            raise ValueError(
-                f"ContextInput for stream {self.stream_name!r}: at least one "
-                "of 'workflow_key' or 'transform_path' must be set"
-            )
+        if self.transform_path is None:
+            if self.workflow_key is None:
+                raise ValueError(
+                    f"ContextInput for stream {self.stream_name!r}: "
+                    "direct-bind entries must set 'workflow_key'"
+                )
+            if self.log_key is not None:
+                raise ValueError(
+                    f"ContextInput for stream {self.stream_name!r}: "
+                    "'log_key' is only valid for chain-patch entries "
+                    "(set 'transform_path')"
+                )
+        else:
+            if self.workflow_key is not None:
+                raise ValueError(
+                    f"ContextInput for stream {self.stream_name!r}: "
+                    "chain-patch entries must not set 'workflow_key'; "
+                    "declare 'log_key' (a ValueLog subclass) instead"
+                )
+            if self.log_key is None:
+                raise ValueError(
+                    f"ContextInput for stream {self.stream_name!r}: "
+                    "chain-patch entries must declare 'log_key' "
+                    "(a ValueLog subclass) for the per-binding Sciline key"
+                )
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

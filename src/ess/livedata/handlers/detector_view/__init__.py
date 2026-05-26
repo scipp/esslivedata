@@ -22,7 +22,6 @@ from .types import (
     GeometricViewConfig,
     LogicalViewConfig,
     SpectrumView,
-    TransformValueStream,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     'LogicalViewConfig',
     'NeXusDetectorSource',
     'SpectrumView',
-    'TransformValueStream',
 ]

@@ -60,6 +60,7 @@ def setup_factories(instrument: Instrument) -> None:
         stream_name='detector_carriage',
         dependent_sources={'loki_detector_0'},
         transform_path='/entry/instrument/detector_carriage/value',
+        log_key=specs.DetectorCarriageLog,
     )
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')

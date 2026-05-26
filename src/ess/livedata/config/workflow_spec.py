@@ -632,7 +632,13 @@ def find_timeseries_outputs(
 # co-located; its callable fields reference ``JobId`` and ``Message`` from this
 # module, so we feed both into ``model_rebuild`` to break the import cycle.
 from ess.livedata.config.stream import ContextInput  # noqa: E402
+from ess.livedata.handlers.value_log import ValueLog  # noqa: E402
 
 WorkflowSpec.model_rebuild(
-    _types_namespace={'ContextInput': ContextInput, 'JobId': JobId, 'Message': Message}
+    _types_namespace={
+        'ContextInput': ContextInput,
+        'JobId': JobId,
+        'Message': Message,
+        'ValueLog': ValueLog,
+    }
 )

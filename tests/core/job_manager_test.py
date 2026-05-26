@@ -1874,9 +1874,12 @@ class TestJobFactoryContextInput:
 
     def test_transform_path_threads_through_to_factory(self) -> None:
         """``transform_path`` on a ContextInput reaches the factory's
-        ``transform_paths`` kwarg, and ``workflow_key`` defaults to
-        :class:`TransformValueLog`."""
-        from ess.livedata.handlers.detector_view.types import TransformValueLog
+        ``transform_paths`` kwarg, and ``context_keys`` carries the
+        per-binding :class:`ValueLog` subclass declared on the input."""
+        from ess.livedata.handlers.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
 
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
@@ -1891,6 +1894,7 @@ class TestJobFactoryContextInput:
             stream_name='rot',
             dependent_sources=['detector1'],
             transform_path='/entry/instrument/rot/value',
+            log_key=_RotLog,
         )
 
         captured: dict[str, dict] = {}
@@ -1910,7 +1914,7 @@ class TestJobFactoryContextInput:
 
         factory.create(job_id=job_id, config=config)
 
-        assert captured['ck'] == {'rot': TransformValueLog}
+        assert captured['ck'] == {'rot': _RotLog}
         assert captured['tp'] == {'rot': '/entry/instrument/rot/value'}
 
 

@@ -41,7 +41,7 @@ from .types import (
     ViewConfig,
 )
 from .workflow import (
-    add_dynamic_transform,
+    add_dynamic_transforms,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -248,10 +248,15 @@ class DetectorViewFactory:
             )
 
         # Wire dynamic detector geometry: every chain-patch ContextInput
-        # contributes one transform path. Resolved by the framework from the
-        # ``ContextInput.transform_path`` declaration.
-        for path in transform_paths.values():
-            add_dynamic_transform(workflow, transform_name=path)
+        # contributes one (transform_path, log_key) binding into a single
+        # fused provider that patches the detector's transformation chain.
+        chain_bindings = [
+            (path, context_keys[stream_name])
+            for stream_name, path in transform_paths.items()
+        ]
+        add_dynamic_transforms(
+            workflow, component_type=NXdetector, bindings=chain_bindings
+        )
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
