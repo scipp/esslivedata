@@ -25,13 +25,37 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
+    PlotParamsTimeseries,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
     TickParams,
+    TimeseriesDownsamplingParams,
 )
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
+from .timeseries_downsample import downsample_timeseries
+
+
+def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
+    """Latest time-coord value across the primary dict, as int64 nanoseconds."""
+    latest: int | None = None
+    for da in primary.values():
+        if 'time' not in da.dims or da.sizes['time'] == 0:
+            continue
+        coord = da.coords.get('time')
+        if coord is None:
+            continue
+        last = coord.values[-1]
+        if coord.dtype == sc.DType.datetime64:
+            t = int(np.datetime64(last, 'ns').astype('int64'))
+        elif coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
+            t = int(sc.scalar(int(last), unit=coord.unit).to(unit='ns').value)
+        else:
+            continue
+        if latest is None or t > latest:
+            latest = t
+    return latest
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
@@ -637,6 +661,8 @@ class LinePlotter(Plotter):
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
             **self._make_tick_opts(tick_params),
         }
+        self._downsampling: TimeseriesDownsamplingParams | None = None
+        self._last_compute_data_time_ns: int | None = None
 
     @classmethod
     def from_display_params(
@@ -660,6 +686,52 @@ class LinePlotter(Plotter):
         return cls.from_display_params(
             params, normalize_to_rate=params.rate.normalize_to_rate
         )
+
+    @classmethod
+    def from_timeseries_params(cls, params: PlotParamsTimeseries):
+        """Create LinePlotter for the timeseries plotter, with downsampling on."""
+        instance = cls.from_display_params(params)
+        instance._downsampling = params.downsampling
+        return instance
+
+    def compute(
+        self,
+        data: dict[str, dict[ResultKey, sc.DataArray]],
+        *,
+        title_resolver: TitleResolver | None = None,
+        **kwargs,
+    ) -> None:
+        if self._downsampling is None:
+            super().compute(data, title_resolver=title_resolver, **kwargs)
+            return
+        primary = data.get(PRIMARY, {})
+        latest_ns = _latest_time_ns(primary)
+        if self._should_skip_for_throttle(latest_ns):
+            return
+        ds = self._downsampling
+        downsampled = {
+            key: downsample_timeseries(
+                da,
+                period_seconds=ds.period_seconds,
+                recent_seconds=ds.recent_seconds,
+                floor_period_seconds=ds.floor_period_seconds,
+            )
+            for key, da in primary.items()
+        }
+        data_for_super = {**data, PRIMARY: downsampled}
+        super().compute(data_for_super, title_resolver=title_resolver, **kwargs)
+        if latest_ns is not None:
+            self._last_compute_data_time_ns = latest_ns
+
+    def _should_skip_for_throttle(self, latest_ns: int | None) -> bool:
+        if (
+            latest_ns is None
+            or self._last_compute_data_time_ns is None
+            or self._downsampling is None
+        ):
+            return False
+        period_ns = int(self._downsampling.period_seconds * 1e9)
+        return (latest_ns - self._last_compute_data_time_ns) < period_ns
 
     def plot(
         self,

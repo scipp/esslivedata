@@ -365,9 +365,11 @@ def _register_all_plotters() -> None:
         factory=LinePlotter.from_params,
     )
 
-    # Uses from_display_params (no window/rate config) because FullHistoryExtractor
+    # Uses from_timeseries_params (no window/rate config) because FullHistoryExtractor
     # collapses start_time/end_time to the full buffer range. Rate normalization
     # would divide every point by the total buffer duration, giving wrong results.
+    # The dedicated factory adds time-based downsampling + update throttling
+    # (issue #940).
     plotter_registry.register_plotter(
         name='timeseries',
         title='Timeseries',
@@ -378,7 +380,7 @@ def _register_all_plotters() -> None:
             multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
-        factory=LinePlotter.from_display_params,
+        factory=LinePlotter.from_timeseries_params,
     )
 
     plotter_registry.register_plotter(
