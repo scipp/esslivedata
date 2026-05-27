@@ -272,7 +272,7 @@ class PlotGridManager:
             name='Source',
             options=[_MODE_TEMPLATE, _MODE_UPLOAD],
             value=_MODE_TEMPLATE,
-            button_type='default',
+            color='default',
             margin=(5, 0),
         )
         self._mode_selector.param.watch(self._on_mode_changed, 'value')
@@ -308,17 +308,17 @@ class PlotGridManager:
 
         # Add grid button (visible in normal mode)
         self._add_button = pn.widgets.Button(
-            name='Add Grid', button_type='primary', margin=(5, 0)
+            name='Add Grid', color='primary', margin=(5, 0)
         )
         self._add_button.on_click(self._on_add_grid)
 
         # Edit mode buttons (visible in edit mode)
         self._save_button = pn.widgets.Button(
-            name='Save Changes', button_type='primary', visible=False, margin=(5, 0)
+            name='Save Changes', color='primary', visible=False, margin=(5, 0)
         )
         self._save_button.on_click(self._on_save_changes)
         self._copy_button = pn.widgets.Button(
-            name='Save as Copy', button_type='default', visible=False, margin=(5, 0)
+            name='Save as Copy', color='default', visible=False, margin=(5, 0)
         )
         self._copy_button.on_click(self._on_save_as_copy)
 

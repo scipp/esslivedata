@@ -138,7 +138,7 @@ class Wizard:
         # Navigation buttons
         self._back_button = pn.widgets.Button(
             name="Back",
-            button_type="light",
+            color="light",
             sizing_mode='fixed',
             width=100,
         )
@@ -146,7 +146,7 @@ class Wizard:
 
         self._next_button = pn.widgets.Button(
             name="Next",
-            button_type="primary",
+            color="primary",
             sizing_mode='fixed',
             width=120,
         )
@@ -154,7 +154,7 @@ class Wizard:
 
         self._cancel_button = pn.widgets.Button(
             name="Cancel",
-            button_type="light",
+            color="light",
             sizing_mode='fixed',
             width=100,
         )

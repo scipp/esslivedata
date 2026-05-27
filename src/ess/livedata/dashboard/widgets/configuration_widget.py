@@ -102,7 +102,7 @@ class ConfigurationWidget:
 
         select_all_btn = pn.widgets.Button(
             name='Select all',
-            button_type='light',
+            color='light',
             width=90,
             height=26,
             margin=(0, 4, 0, 0),
@@ -112,7 +112,7 @@ class ConfigurationWidget:
 
         select_none_btn = pn.widgets.Button(
             name='Select none',
-            button_type='light',
+            color='light',
             width=90,
             height=26,
             margin=0,
@@ -527,12 +527,10 @@ class ConfigurationModal:
         self._panel = ConfigurationPanel(config=config)
 
         # Create action buttons
-        self._start_button = pn.widgets.Button(
-            name=start_button_text, button_type="primary"
-        )
+        self._start_button = pn.widgets.Button(name=start_button_text, color="primary")
         self._start_button.on_click(self._on_start_clicked)
 
-        self._cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
+        self._cancel_button = pn.widgets.Button(name="Cancel", color="light")
         self._cancel_button.on_click(self._on_cancel_clicked)
 
         # Create modal with panel + buttons

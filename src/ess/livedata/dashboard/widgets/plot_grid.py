@@ -264,7 +264,7 @@ class PlotGrid:
         button = pn.widgets.Button(
             name=appearance.label,
             sizing_mode='stretch_both',
-            button_type='light',
+            color='light',
             disabled=appearance.disabled,
             styles=appearance.styles,
             stylesheets=appearance.stylesheets,
