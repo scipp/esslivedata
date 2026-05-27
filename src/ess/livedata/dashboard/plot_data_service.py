@@ -14,6 +14,7 @@ last-seen versions and rebuild when versions change.
 from __future__ import annotations
 
 import threading
+import weakref
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
@@ -112,6 +113,9 @@ class LayerStateMachine:
         # latest input while no token is held. Decoupled from lifecycle state
         # because interest is per-(session, layer) and lifecycle is per-layer.
         self._active_tokens: set[int] = set()
+        # Tokens we've already attached a weakref finalizer to, so we don't
+        # register a second one on a False→True re-acquire.
+        self._finalized_keys: set[int] = set()
         self._pending: tuple[Any, Any, dict[str, Any]] | None = None
         self._dirty: bool = False
         self._gate_lock = threading.Lock()
@@ -274,17 +278,37 @@ class LayerStateMachine:
         ``ComputeTask`` so the caller can rebuild synchronously. Releasing a
         token does not drop the stash — it persists until the next 0→1
         triggers a flush or a plotter replacement clears it.
+
+        A ``weakref.finalize`` is attached on first acquire so the token is
+        auto-released if the caller is garbage-collected without an explicit
+        release. Explicit ``set_active(token, False)`` remains the fast path;
+        the finalizer is belt-and-braces against missed cleanup (e.g., a
+        session disposed without ``PlotGridTabs.shutdown`` running).
         """
         key = id(token)
         with self._gate_lock:
             was_active = bool(self._active_tokens)
             if active:
                 self._active_tokens.add(key)
+                if key not in self._finalized_keys:
+                    self._finalized_keys.add(key)
+                    # Captures ``key`` (an int) and a bound method, not the
+                    # token itself — so the finalizer does not keep the token
+                    # alive. CPython runs the finalizer before the token's
+                    # memory can be reused for a different object, so an
+                    # ``id()`` collision cannot race with an active token.
+                    weakref.finalize(token, self._release_token, key)
             else:
                 self._active_tokens.discard(key)
             if was_active or not self._active_tokens:
                 return None
             return self._consume_for_flush()
+
+    def _release_token(self, key: int) -> None:
+        """Drop a token key from the gate (called by the weakref finalizer)."""
+        with self._gate_lock:
+            self._active_tokens.discard(key)
+            self._finalized_keys.discard(key)
 
     def _consume_for_flush(self) -> ComputeTask | None:
         # Caller holds _gate_lock.

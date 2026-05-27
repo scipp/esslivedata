@@ -297,16 +297,24 @@ def plot_cell(plot_config):
     return (DEFAULT_GEOMETRY, plot_config)
 
 
+class _Viewer:
+    """Weakref-compatible stand-in for a viewer (real callers are SessionLayer)."""
+
+
 def add_cell_with_layer(orchestrator, grid_id, geometry, config):
     """Helper to add a cell with a single layer (replaces old add_plot).
 
     Simulates a viewer by acquiring an interest token on the new layer so
     subsequent data arrivals run plotter.compute eagerly. Production drives
-    this from the polling loop on visible tabs.
+    this from the polling loop on visible tabs. The token is kept alive on
+    the orchestrator so it is not gc-collected mid-test (the gate's weakref
+    finalizer would otherwise release it).
     """
     cell_id = orchestrator.add_cell(grid_id, geometry)
     layer_id = orchestrator.add_layer(cell_id, config)
-    orchestrator.activate_layer(layer_id, object(), True)
+    token = _Viewer()
+    orchestrator.__dict__.setdefault('_test_viewer_tokens', []).append(token)
+    orchestrator.activate_layer(layer_id, token, True)
     return cell_id
 
 
@@ -1997,7 +2005,8 @@ class TestPlotAfterWorkflowStopped:
         assert new_layer_id != original_layer_id
 
         # Simulate the polling loop discovering the replaced layer.
-        plot_orchestrator.activate_layer(new_layer_id, object(), True)
+        _new_layer_viewer = _Viewer()
+        plot_orchestrator.activate_layer(new_layer_id, _new_layer_viewer, True)
 
         state = plot_data_service.get(new_layer_id)
         assert state is not None
@@ -2068,8 +2077,10 @@ class TestTitleResolver:
         layer_a_id = plot_orchestrator.add_layer(cell_id, config_a)
         layer_b_id = plot_orchestrator.add_layer(cell_id, config_b)
         # Simulate the polling loop activating both layers' viewers.
-        plot_orchestrator.activate_layer(layer_a_id, object(), True)
-        plot_orchestrator.activate_layer(layer_b_id, object(), True)
+        _viewer_a = _Viewer()
+        _viewer_b = _Viewer()
+        plot_orchestrator.activate_layer(layer_a_id, _viewer_a, True)
+        plot_orchestrator.activate_layer(layer_b_id, _viewer_b, True)
 
         # Simulate data arrival for both layers
         for output_name in ('output_a', 'output_b'):

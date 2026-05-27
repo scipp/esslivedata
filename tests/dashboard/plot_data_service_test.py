@@ -222,6 +222,10 @@ class TestPlotDataService:
         assert service.get(layer_id).plotter is plotter_b
 
 
+class _Token:
+    """Weakref-compatible stand-in for a viewer (real callers are SessionLayer)."""
+
+
 class TestLayerComputeGate:
     """Tests for the lazy compute gate on LayerStateMachine."""
 
@@ -238,7 +242,8 @@ class TestLayerComputeGate:
 
     def test_set_active_then_stash_flushes_immediately(self):
         state, plotter = self._ready_state()
-        state.set_active(object(), True)
+        token = _Token()
+        state.set_active(token, True)
         task = state.stash_pending({'k': 1})
         assert task is not None
         task.run()
@@ -246,7 +251,7 @@ class TestLayerComputeGate:
 
     def test_stash_then_set_active_flushes_on_zero_to_one_transition(self):
         state, plotter = self._ready_state()
-        token = object()
+        token = _Token()
         state.set_active(token, False)
         state.stash_pending({'k': 1})
         assert plotter.compute_calls == []
@@ -257,7 +262,7 @@ class TestLayerComputeGate:
 
     def test_only_zero_to_one_transition_returns_a_task(self):
         state, _plotter = self._ready_state()
-        token = object()
+        token = _Token()
         state.set_active(token, True)
         state.stash_pending({'k': 1}).run()
         # Re-asserting True after the flush returns None (no pending dirty).
@@ -265,7 +270,7 @@ class TestLayerComputeGate:
 
     def test_multiple_tokens_keep_active_until_last_released(self):
         state, plotter = self._ready_state()
-        t1, t2 = object(), object()
+        t1, t2 = _Token(), _Token()
         state.set_active(t1, True)
         state.set_active(t2, True)
         task = state.stash_pending({'k': 1})
@@ -284,7 +289,7 @@ class TestLayerComputeGate:
 
     def test_intermediate_updates_collapse_to_latest(self):
         state, plotter = self._ready_state()
-        token = object()
+        token = _Token()
         state.set_active(token, False)
         for i in range(5):
             state.stash_pending({'k': i})
@@ -296,11 +301,12 @@ class TestLayerComputeGate:
     def test_release_of_unknown_token_is_noop(self):
         state, _plotter = self._ready_state()
         # Releasing a token never seen does not raise or change anything.
-        assert state.set_active(object(), False) is None
+        unknown = _Token()
+        assert state.set_active(unknown, False) is None
 
     def test_pending_cleared_when_plotter_replaced(self):
         state, _old = self._ready_state()
-        token = object()
+        token = _Token()
         state.set_active(token, False)
         state.stash_pending({'k': 1})  # stashed for old plotter
         new_plotter = FakePlotter()
@@ -311,6 +317,22 @@ class TestLayerComputeGate:
 
     def test_stash_returns_no_task_before_job_started(self):
         state = LayerStateMachine()
-        state.set_active(object(), True)
+        token = _Token()
+        state.set_active(token, True)
         # No plotter yet → no flush.
         assert state.stash_pending({'k': 1}) is None
+
+    def test_token_auto_released_on_garbage_collection(self):
+        """Safety net: if the caller is gc'd without releasing, the gate closes."""
+        import gc
+
+        state, _plotter = self._ready_state()
+        token = _Token()
+        state.set_active(token, True)
+        # Active: stash flushes immediately.
+        assert state.stash_pending({'k': 1}) is not None
+        # Drop the only reference and force gc; finalizer must release the key.
+        del token
+        gc.collect()
+        # Gate is now closed (no active tokens) → next stash returns None.
+        assert state.stash_pending({'k': 2}) is None
