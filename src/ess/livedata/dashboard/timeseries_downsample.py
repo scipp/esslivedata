@@ -16,23 +16,6 @@ import numpy as np
 import scipp as sc
 
 
-def _bucket_last_indices(times_ns: np.ndarray, period_ns: int) -> np.ndarray:
-    """Last-sample index of each end-anchored ``period_ns``-wide bucket.
-
-    Buckets are anchored at ``times_ns[-1]``: bucket ``k`` covers
-    ``(times[-1] - (k+1)*period, times[-1] - k*period]``. Bucket 0 therefore
-    always contains the latest sample, which is included by construction -
-    no force-include of the tail is needed.
-    """
-    if period_ns <= 0 or len(times_ns) == 0:
-        return np.arange(len(times_ns), dtype=np.int64)
-    buckets = (times_ns[-1] - times_ns) // period_ns
-    keep = np.empty(len(times_ns), dtype=bool)
-    keep[-1] = True
-    keep[:-1] = buckets[:-1] != buckets[1:]
-    return np.flatnonzero(keep)
-
-
 def downsample_timeseries(
     data: sc.DataArray,
     *,
@@ -71,40 +54,41 @@ def downsample_timeseries(
     if concat_dim not in data.dims:
         return data
     n = data.sizes[concat_dim]
-    if n < 2:
+    if n < 2 or concat_dim not in data.coords:
         return data
-    if concat_dim not in data.coords:
-        return data
-    # FullHistoryExtractor guarantees a datetime64 time coord; scipp.to does
-    # not support astype on datetime64, so reinterpret via numpy.
-    times_ns = (
-        data.coords[concat_dim]
-        .values.astype('datetime64[ns]', copy=False)
-        .astype('int64', copy=False)
+
+    times = data.coords[concat_dim].to(unit='ns', copy=False)
+    latest = times[concat_dim, -1]
+    period = sc.scalar(max(int(period_seconds * 1e9), 1), unit='ns')
+    floor_period_ns = max(int(floor_period_seconds * 1e9), 0)
+    recent_cutoff = latest - sc.scalar(int(recent_seconds * 1e9), unit='ns')
+    is_recent = times >= recent_cutoff
+    drop_older = floor_period_ns <= 0
+
+    if drop_older:
+        buckets = (latest - times) // period
+    else:
+        # If no older samples, latest_older is unused (gated by is_recent below),
+        # but must be a valid datetime scalar for sc.where.
+        is_older = ~is_recent
+        latest_older = (
+            times[is_older][concat_dim, -1] if sc.any(is_older).value else latest
+        )
+        floor_period = sc.scalar(floor_period_ns, unit='ns')
+        band_latest = sc.where(is_recent, latest, latest_older)
+        band_period = sc.where(is_recent, period, floor_period)
+        buckets = (band_latest - times) // band_period
+
+    # Keep a sample iff it is the last of its (band, bucket) run.
+    bucket_changes = buckets[concat_dim, :-1] != buckets[concat_dim, 1:]
+    band_changes = is_recent[concat_dim, :-1] != is_recent[concat_dim, 1:]
+    trailing_true = sc.array(dims=[concat_dim], values=np.array([True]))
+    keep_mask = sc.concat(
+        [bucket_changes | band_changes, trailing_true], dim=concat_dim
     )
+    if drop_older:
+        keep_mask = keep_mask & is_recent
 
-    latest_ns = times_ns[-1]
-    recent_cutoff_ns = latest_ns - int(recent_seconds * 1e9)
-    period_ns = max(int(period_seconds * 1e9), 1)
-    floor_ns = max(int(floor_period_seconds * 1e9), 0)
-
-    is_recent = times_ns >= recent_cutoff_ns
-    parts: list[np.ndarray] = []
-
-    older_indices = np.flatnonzero(~is_recent)
-    if floor_ns > 0 and older_indices.size > 0:
-        local = _bucket_last_indices(times_ns[older_indices], floor_ns)
-        parts.append(older_indices[local])
-
-    recent_indices = np.flatnonzero(is_recent)
-    if recent_indices.size > 0:
-        local = _bucket_last_indices(times_ns[recent_indices], period_ns)
-        parts.append(recent_indices[local])
-
-    if not parts:
-        return data[concat_dim, np.array([n - 1], dtype=np.int64)]
-
-    keep = np.concatenate(parts)
-    if keep.size == n:
+    if keep_mask.values.all():
         return data
-    return data[concat_dim, keep]
+    return data[keep_mask]
