@@ -78,7 +78,7 @@ def _create_add_button_or_menu(
     )
 
     menu_button = pn.widgets.MenuButton(
-        name='',
+        label='',
         items=items,
         icon=get_icon('plus'),
         icon_size='1.5em',

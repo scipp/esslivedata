@@ -23,13 +23,13 @@ class TestAuxSourcesWidgetLabels:
         )
         widget = AuxSourcesWidget(aux)
         select = widget.select_widgets['incident_monitor']
-        assert select.name == 'Incident Monitor'
+        assert select.label == 'Incident Monitor'
 
     def test_widget_name_falls_back_to_field_name(self) -> None:
         aux = AuxSources({'rotation': 'rot_angle'})
         widget = AuxSourcesWidget(aux)
         select = widget.select_widgets['rotation']
-        assert select.name == 'rotation'
+        assert select.label == 'rotation'
 
     def test_option_labels_use_get_source_title(self) -> None:
         titles = {'mon1': 'Incident Monitor', 'mon2': 'Transmission Monitor'}
@@ -164,14 +164,14 @@ class TestAuxSourcesWidgetMultipleInputs:
         self, loki_style_widget: AuxSourcesWidget
     ) -> None:
         select = loki_style_widget.select_widgets['incident_monitor']
-        assert select.name == 'Incident Monitor'
+        assert select.label == 'Incident Monitor'
         assert select.options == {'Incident Monitor': 'beam_monitor_m1'}
 
     def test_loki_style_transmission_monitor_label(
         self, loki_style_widget: AuxSourcesWidget
     ) -> None:
         select = loki_style_widget.select_widgets['transmission_monitor']
-        assert select.name == 'Transmission Monitor'
+        assert select.label == 'Transmission Monitor'
         assert select.options == {'Transmission Monitor': 'beam_monitor_m3'}
 
     def test_loki_style_get_values(self, loki_style_widget: AuxSourcesWidget) -> None:

@@ -153,7 +153,7 @@ def create_tool_button(
         Panel Button widget styled as a tool button.
     """
     button = pn.widgets.Button(
-        name='',
+        label='',
         icon=get_icon(icon_name),
         icon_size='1.5em',
         width=ButtonStyles.TOOL_BUTTON_SIZE,

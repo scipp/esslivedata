@@ -137,7 +137,7 @@ class Wizard:
 
         # Navigation buttons
         self._back_button = pn.widgets.Button(
-            name="Back",
+            label="Back",
             color="light",
             sizing_mode='fixed',
             width=100,
@@ -145,7 +145,7 @@ class Wizard:
         self._back_button.on_click(self._on_back_clicked)
 
         self._next_button = pn.widgets.Button(
-            name="Next",
+            label="Next",
             color="primary",
             sizing_mode='fixed',
             width=120,
@@ -153,7 +153,7 @@ class Wizard:
         self._next_button.on_click(self._on_next_clicked)
 
         self._cancel_button = pn.widgets.Button(
-            name="Cancel",
+            label="Cancel",
             color="light",
             sizing_mode='fixed',
             width=100,
@@ -298,10 +298,10 @@ class Wizard:
 
         # Show Next/Action button based on step
         if self._is_last_step and self._action_button_label:
-            self._next_button.name = self._action_button_label
+            self._next_button.label = self._action_button_label
             nav_buttons.append(self._next_button)
         elif not self._is_last_step:
-            self._next_button.name = "Next"
+            self._next_button.label = "Next"
             nav_buttons.append(self._next_button)
 
         # Create navigation button row (fixed at bottom)

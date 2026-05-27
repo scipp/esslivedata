@@ -262,7 +262,7 @@ class PlotGrid:
 
         # Create a button that fills the cell
         button = pn.widgets.Button(
-            name=appearance.label,
+            label=appearance.label,
             sizing_mode='stretch_both',
             color='light',
             disabled=appearance.disabled,
@@ -383,7 +383,7 @@ class PlotGrid:
         appearance = self._get_cell_appearance_for_state(row, col)
 
         # Update button properties in-place
-        button.name = appearance.label
+        button.label = appearance.label
         button.disabled = appearance.disabled
         button.styles = appearance.styles
         button.stylesheets = appearance.stylesheets

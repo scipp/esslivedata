@@ -124,7 +124,7 @@ class LogProducerWidget:
         )
 
         self._throttled_checkbox = pn.widgets.Checkbox(
-            name='Continuous updates', value=True, width=300
+            label='Continuous updates', value=True, width=300
         )
         pn.config.throttled = True
         self._throttled_checkbox.param.watch(self._on_throttled_change, 'value')
@@ -162,7 +162,7 @@ class LogProducerWidget:
     def _create_slider(self, config: dict) -> pn.widgets.FloatSlider:
         """Create a slider widget from configuration."""
         slider = pn.widgets.FloatSlider(
-            name=config['label'],
+            label=config['label'],
             start=config['min'],
             end=config['max'],
             step=config['step'],
