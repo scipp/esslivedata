@@ -107,8 +107,11 @@ DETECTORS = WorkflowGroup(
 )
 TIMESERIES = WorkflowGroup(
     name='timeseries',
-    title='Timeseries',
-    description='Timeseries log data workflows.',
+    title='Devices and sensors',
+    description=(
+        'Time-stamped readings from motors, sample environment, and other '
+        'instrument components. Stored as NXlog groups in NeXus files.'
+    ),
 )
 
 
