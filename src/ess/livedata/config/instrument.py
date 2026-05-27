@@ -700,8 +700,8 @@ class Instrument:
         """
         seen: dict[type, str] = {}
         all_inputs = list(self.context_inputs)
-        for spec in self.workflow_factory.values():
-            all_inputs.extend(spec.context_inputs)
+        for reg in self.workflow_factory.registrations():
+            all_inputs.extend(reg.context_inputs)
         for ci in all_inputs:
             if not isinstance(ci, TransformationContext):
                 continue
@@ -762,11 +762,14 @@ class Instrument:
           field→wire dict, and a key clash would silently overwrite the
           aux entry.
         """
-        for spec in self.workflow_factory.values():
+        for reg in self.workflow_factory.registrations():
+            spec = reg.spec
             aux_field_names: set[str] = (
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
             )
-            instrument_inputs = [] if spec.skip_motion else self.context_inputs
+            instrument_inputs = (
+                [] if reg.skip_instrument_contexts else self.context_inputs
+            )
             for source in spec.source_names:
                 instrument_names: set[str] = {
                     ci.stream_name
@@ -775,7 +778,7 @@ class Instrument:
                 }
                 spec_names: set[str] = {
                     ci.stream_name
-                    for ci in spec.context_inputs
+                    for ci in reg.context_inputs
                     if source in ci.dependent_sources
                 }
                 scope_collisions = instrument_names & spec_names

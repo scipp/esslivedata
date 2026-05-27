@@ -8,15 +8,13 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ess.livedata.config.stream import ParameterContext
-from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
 
 T = TypeVar('T')
@@ -153,30 +151,6 @@ class JobId:
         return f"{self.source_name}/{self.job_number}"
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SpecParameterContext(ParameterContext):
-    """Spec-scope parameter context with per-job runtime callables.
-
-    Lives in the spec tier (not in ``stream.py``) because the optional
-    callables reference :class:`JobId` and :class:`Message` — runtime
-    concepts that the declarative-record layer must not depend on.
-
-    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
-    the wire stream name used by routing and the gate. Resolvers are
-    assumed to be pure name-suffixing operations on ``stream_name``; the
-    registration-time collision check relies on this purity. Leaving it
-    unset means the wire name equals :attr:`stream_name`.
-
-    :attr:`seed_factory`, when set, produces the cold-start
-    :class:`Message` fired at ``schedule_job`` time so the accumulator
-    exists before any external producer publishes. Used for spec-level
-    inputs with a meaningful "no message yet" default (currently ROI).
-    """
-
-    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
-    seed_factory: Callable[[JobId], Message] | None = field(default=None)
-
-
 @dataclass(frozen=True)
 class AuxInput:
     """Specification of an auxiliary data source input for a workflow.
@@ -304,26 +278,6 @@ class WorkflowSpec(BaseModel):
             "Auxiliary data source specification. Defines the available auxiliary "
             "data streams that a workflow can consume, with their choices, defaults, "
             "and UI metadata."
-        ),
-    )
-    context_inputs: list[SpecParameterContext] = Field(
-        default_factory=list,
-        description=(
-            "Spec-level parameter-context declarations (see ADR 0003). "
-            "Populated via :meth:`SpecHandle.add_parameter_context` from "
-            "``factories.py`` to keep workflow-key imports out of ``specs.py``. "
-            "Transformation contexts live at instrument scope only. Empty by "
-            "default."
-        ),
-    )
-    skip_motion: bool = Field(
-        default=False,
-        description=(
-            "When True, this spec ignores all instrument-scope "
-            ":class:`ContextInput` bindings. Set via "
-            ":meth:`SpecHandle.skip_motion` from a spec that consumes a "
-            "source carrying instrument-declared motion but does not need "
-            "the geometry value (e.g. a ratemeter on a moving detector)."
         ),
     )
     reset_on_run_transition: bool = Field(

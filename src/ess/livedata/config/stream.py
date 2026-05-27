@@ -113,7 +113,7 @@ class ContextInput:
     they apply to, and the Sciline-side identity (workflow key or chain
     target). Per-job runtime behavior — wire-name suffixing, cold-start
     seeding — lives on the spec-scope wrapper
-    :class:`ess.livedata.config.workflow_spec.SpecParameterContext`,
+    :class:`ess.livedata.handlers.workflow_factory.SpecParameterContext`,
     which extends :class:`ParameterContext`. Instrument-scope entries
     never carry such callables; their wire name is the declared
     :attr:`stream_name` and they have no cold-start seed.

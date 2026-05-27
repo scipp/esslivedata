@@ -689,7 +689,7 @@ class TestDreamMonitorWorkflowFactory:
             name='monitor_histogram',
             version=1,
         )
-        factory = instrument.workflow_factory._factories[workflow_id]
+        factory = instrument.workflow_factory.registration(workflow_id).factory
 
         workflow = factory(monitor_name, dream_params_wavelength_mode)
         assert workflow is not None

@@ -34,10 +34,9 @@ def gather_source_names(
     """
     names: set[str] = set()
     factory = instrument.workflow_factory
-    service_specs = [
-        spec for wid, spec in factory.items() if factory.get_service(wid) == service
-    ]
-    for spec in service_specs:
+    service_regs = [reg for reg in factory.registrations() if reg.service == service]
+    for reg in service_regs:
+        spec = reg.spec
         names.update(spec.source_names)
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
@@ -46,14 +45,14 @@ def gather_source_names(
         # name (ROI-style resolvers materialise per-job wire names that
         # ``gather_source_names`` cannot resolve at service-startup time;
         # they route via a dedicated topic registered elsewhere).
-        for ci in spec.context_inputs:
+        for ci in reg.context_inputs:
             if ci.stream_resolver is None:
                 names.add(ci.stream_name)
     # Instrument-level ContextInput entries: include when any spec hosted by
     # this service shares a source with the binding's ``dependent_sources``.
     for ci in instrument.context_inputs:
         if any(
-            set(spec.source_names) & ci.dependent_sources for spec in service_specs
+            set(reg.spec.source_names) & ci.dependent_sources for reg in service_regs
         ):
             names.add(ci.stream_name)
     devices = instrument.devices

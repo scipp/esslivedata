@@ -78,7 +78,9 @@ def test_workflow_factory_is_attached(instrument_name: str, workflow_id: Workflo
     assert workflow_id in workflow_factory
 
     # Factory should be attached
-    assert workflow_id in workflow_factory._factories, (
+    registration = workflow_factory.registration(workflow_id)
+    assert registration is not None, f"Registration missing for {workflow_id}"
+    assert registration.factory is not None, (
         f"Workflow spec '{workflow_id}' exists but no factory is attached. "
         f"Did you forget to call handle.attach_factory()?"
     )

@@ -22,11 +22,11 @@ from ess.livedata.config.stream import (
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobSchedule,
-    SpecParameterContext,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.handlers.workflow_factory import SpecParameterContext
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import Message, RunStart, RunStop, StreamId
@@ -160,9 +160,10 @@ class JobFactory:
         ):
             raise DifferentInstrument()
 
-        workflow_spec = factory.get(workflow_id)
-        if workflow_spec is None:
+        registration = factory.registration(workflow_id)
+        if registration is None:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
+        workflow_spec = registration.spec
 
         # Render dynamic aux source names using the spec's render() method.
         if workflow_spec.aux_sources is not None:
@@ -173,15 +174,18 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        # Match ContextInput records by source membership. ``skip_motion``
-        # filters out instrument-scope entries — a spec that explicitly
-        # declares a binding cannot opt out of it via the flag.
+        # Match ContextInput records by source membership.
+        # ``skip_instrument_contexts`` filters out instrument-scope entries —
+        # a spec that explicitly declares a binding cannot opt out of it via
+        # the flag.
         instrument_inputs = (
-            [] if workflow_spec.skip_motion else self._instrument.context_inputs
+            []
+            if registration.skip_instrument_contexts
+            else self._instrument.context_inputs
         )
         matching = [
             ci
-            for ci in (*instrument_inputs, *workflow_spec.context_inputs)
+            for ci in (*instrument_inputs, *registration.context_inputs)
             if job_id.source_name in ci.dependent_sources
         ]
         context_keys = {ci.stream_name: _resolve_workflow_key(ci) for ci in matching}

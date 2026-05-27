@@ -71,8 +71,8 @@ def setup_factories(instrument: Instrument) -> None:
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
     # on the cut-workflow graph. Direct-bind (no chain patch) — declared at
     # instrument scope so every spec consuming ``unified_detector`` picks them
-    # up; non-consumers (detector view, ratemeter) opt out via ``skip_motion``
-    # in ``specs.py``.
+    # up; non-consumers (detector view, ratemeter) opt out via
+    # ``skip_instrument_contexts`` in ``specs.py``.
     instrument.add_parameter_context(
         stream_name='detector_tank_angle_r0',
         dependent_sources={'unified_detector'},

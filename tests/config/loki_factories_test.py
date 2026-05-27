@@ -11,7 +11,7 @@ def test_setup_factories_declares_detector_carriage_context_input() -> None:
 
     Declared as a :class:`TransformationContext` on ``loki_detector_0`` only;
     specs consuming that source pick it up by default and non-consumers
-    (tube_view, i_of_q) opt out via ``skip_motion``.
+    (tube_view, i_of_q) opt out via ``skip_instrument_contexts``.
     """
     instrument = specs.instrument
     factories.setup_factories(instrument)
@@ -27,25 +27,20 @@ def test_setup_factories_declares_detector_carriage_context_input() -> None:
     assert matching, instrument.context_inputs
 
 
-def test_motion_independent_specs_opt_out_via_skip_motion() -> None:
+def test_motion_independent_specs_opt_out_via_skip_instrument_contexts() -> None:
     """tube_view consumes ``loki_detector_0`` but not its position.
 
-    It must declare ``skip_motion`` so it's not gated on the instrument-scope
-    carriage stream. ``xy_projection`` and ``i_of_q`` do consume position and
-    must not opt out.
+    It must declare ``skip_instrument_contexts`` so it's not gated on the
+    instrument-scope carriage stream. ``xy_projection`` and ``i_of_q`` do
+    consume position and must not opt out.
     """
     instrument = specs.instrument
+    factory = instrument.workflow_factory
 
-    tube_view_spec = instrument.workflow_factory[
-        next(
-            wf_id for wf_id in instrument.workflow_factory if wf_id.name == 'tube_view'
-        )
-    ]
-    assert tube_view_spec.skip_motion
+    tube_view_id = next(wf_id for wf_id in factory if wf_id.name == 'tube_view')
+    assert factory.registration(tube_view_id).skip_instrument_contexts
 
-    xy_projection_spec = instrument.workflow_factory[
-        specs.xy_projection_handle.workflow_id
-    ]
-    i_of_q_spec = instrument.workflow_factory[specs.i_of_q_handle.workflow_id]
-    assert not xy_projection_spec.skip_motion
-    assert not i_of_q_spec.skip_motion
+    xy_projection_reg = factory.registration(specs.xy_projection_handle.workflow_id)
+    i_of_q_reg = factory.registration(specs.i_of_q_handle.workflow_id)
+    assert not xy_projection_reg.skip_instrument_contexts
+    assert not i_of_q_reg.skip_instrument_contexts

@@ -112,8 +112,8 @@ class TestRegisterDetectorViewSpecs:
             projection=projections,
         )
 
-        spec = instrument.workflow_factory[handle.workflow_id]
-        assert {ci.stream_name for ci in spec.context_inputs} == {
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert {ci.stream_name for ci in reg.context_inputs} == {
             'roi_rectangle',
             'roi_polygon',
         }
@@ -213,8 +213,8 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             source_names=source_names,
         )
 
-        spec = instrument.workflow_factory[handle.workflow_id]
-        by_stream = {ci.stream_name: ci for ci in spec.context_inputs}
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        by_stream = {ci.stream_name: ci for ci in reg.context_inputs}
         assert set(by_stream) == {'roi_rectangle', 'roi_polygon'}
         assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
         assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
@@ -233,9 +233,9 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             projection="xy_plane",
             source_names=["detector1"],
         )
-        spec = instrument.workflow_factory[handle.workflow_id]
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
         rect = next(
-            ci for ci in spec.context_inputs if ci.stream_name == 'roi_rectangle'
+            ci for ci in reg.context_inputs if ci.stream_name == 'roi_rectangle'
         )
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         assert rect.stream_resolver is not None
@@ -260,8 +260,8 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             projection="xy_plane",
             source_names=["detector1"],
         )
-        spec = instrument.workflow_factory[handle.workflow_id]
-        seeds = {ci.stream_name: ci.seed_factory for ci in spec.context_inputs}
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        seeds = {ci.stream_name: ci.seed_factory for ci in reg.context_inputs}
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
 
         rect_msg = seeds['roi_rectangle'](job_id)
@@ -292,8 +292,8 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             source_names=['detector1'],
             roi_support=True,
         )
-        spec = instrument.workflow_factory[handle.workflow_id]
-        by_stream = {ci.stream_name: ci for ci in spec.context_inputs}
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        by_stream = {ci.stream_name: ci for ci in reg.context_inputs}
         assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
         assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
 
@@ -306,8 +306,8 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             source_names=['detector1'],
             roi_support=False,
         )
-        spec = instrument.workflow_factory[handle.workflow_id]
-        assert spec.context_inputs == []
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert reg.context_inputs == ()
 
 
 class TestDetectorViewParamsGetActiveRange:

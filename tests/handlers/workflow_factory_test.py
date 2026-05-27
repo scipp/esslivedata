@@ -963,7 +963,7 @@ class TestSpecHandleAddContextInput:
 
         handle.add_parameter_context(stream_name='roi', workflow_key=_CtxKey)
 
-        [entry] = factory[handle.workflow_id].context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_inputs
         assert entry.stream_name == 'roi'
         assert entry.workflow_key is _CtxKey
         assert entry.dependent_sources == frozenset({'det1', 'det2'})
@@ -979,7 +979,7 @@ class TestSpecHandleAddContextInput:
             dependent_sources=['det1'],
         )
 
-        [entry] = factory[handle.workflow_id].context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_inputs
         assert entry.dependent_sources == frozenset({'det1'})
 
     def test_multiple_entries_are_appended(self) -> None:
@@ -988,7 +988,7 @@ class TestSpecHandleAddContextInput:
         handle.add_parameter_context(stream_name='roi', workflow_key=_CtxKey)
         handle.add_parameter_context(stream_name='polygon', workflow_key=_OtherCtxKey)
 
-        entries = factory[handle.workflow_id].context_inputs
+        entries = factory.registration(handle.workflow_id).context_inputs
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
         assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
 
@@ -1008,18 +1008,20 @@ class TestSpecHandleAddContextInput:
             seed_factory=seed,
         )
 
-        [entry] = factory[handle.workflow_id].context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_inputs
         assert entry.stream_resolver is resolver
         assert entry.seed_factory is seed
 
-    def test_skip_motion_sets_spec_flag(self) -> None:
+    def test_skip_instrument_contexts_sets_registration_flag(self) -> None:
         factory, handle = self._register(source_names=['det1'])
 
-        assert factory[handle.workflow_id].skip_motion is False
+        reg = factory.registration(handle.workflow_id)
+        assert reg.skip_instrument_contexts is False
 
-        handle.skip_motion()
+        handle.skip_instrument_contexts()
 
-        assert factory[handle.workflow_id].skip_motion is True
+        reg = factory.registration(handle.workflow_id)
+        assert reg.skip_instrument_contexts is True
 
     def test_chain_patch_rejected_at_spec_scope(self) -> None:
         """Chain-patch fields are absent from :meth:`SpecHandle.add_parameter_context`:

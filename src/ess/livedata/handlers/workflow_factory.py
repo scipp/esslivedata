@@ -1,22 +1,23 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from __future__ import annotations
+
+import dataclasses
 import inspect
 import typing
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
+from ess.livedata.config.stream import ParameterContext
 from ess.livedata.config.workflow_spec import (
-    SpecParameterContext,
+    JobId,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
-
-if TYPE_CHECKING:
-    from ess.livedata.config.workflow_spec import JobId
-    from ess.livedata.core.message import Message
 
 
 class Workflow(Protocol):
@@ -34,6 +35,50 @@ class Workflow(Protocol):
     def clear(self) -> None: ...
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpecParameterContext(ParameterContext):
+    """Spec-scope parameter context with per-job runtime callables.
+
+    Lives next to :class:`WorkflowFactory` because the optional callables
+    reference :class:`JobId` and :class:`Message` — runtime concepts that
+    the declarative :mod:`config.workflow_spec` layer must not depend on.
+
+    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
+    the wire stream name used by routing and the gate. Resolvers are
+    assumed to be pure name-suffixing operations on ``stream_name``; the
+    registration-time collision check relies on this purity. Leaving it
+    unset means the wire name equals :attr:`stream_name`.
+
+    :attr:`seed_factory`, when set, produces the cold-start
+    :class:`Message` fired at ``schedule_job`` time so the accumulator
+    exists before any external producer publishes. Used for spec-level
+    inputs with a meaningful "no message yet" default (currently ROI).
+    """
+
+    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
+    seed_factory: Callable[[JobId], Message] | None = field(default=None)
+
+
+@dataclass(frozen=True)
+class WorkflowRegistration:
+    """Per-workflow record held by :class:`WorkflowFactory`.
+
+    Bundles the declarative :class:`WorkflowSpec` with implementation-side
+    data: the factory callable, the owning service, spec-scope
+    :class:`ContextInput` declarations, and the opt-out flag for
+    instrument-scope context bindings. Keeping these alongside the factory
+    (rather than on :class:`WorkflowSpec`) preserves the spec as a purely
+    declarative model and keeps runtime-coupled types
+    (:class:`JobId`, :class:`Message`) out of :mod:`config.workflow_spec`.
+    """
+
+    spec: WorkflowSpec
+    service: str
+    factory: Callable[..., Workflow] | None = None
+    context_inputs: tuple[SpecParameterContext, ...] = ()
+    skip_instrument_contexts: bool = False
+
+
 @dataclass(frozen=True)
 class SpecHandle:
     """
@@ -45,7 +90,7 @@ class SpecHandle:
     """
 
     workflow_id: WorkflowId
-    _factory: 'WorkflowFactory'
+    _factory: WorkflowFactory
 
     def attach_factory(
         self,
@@ -59,10 +104,10 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
-        stream_resolver: Callable[['JobId', str], str] | None = None,
-        seed_factory: Callable[['JobId'], 'Message'] | None = None,
+        stream_resolver: Callable[[JobId, str], str] | None = None,
+        seed_factory: Callable[[JobId], Message] | None = None,
     ) -> None:
-        """Append a spec-level :class:`SpecParameterContext` to this spec.
+        """Append a spec-level :class:`SpecParameterContext` to the registration.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
@@ -76,49 +121,48 @@ class SpecHandle:
         records, so a spec-scope transformation context would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
         """
-        spec = self._factory[self.workflow_id]
-        if dependent_sources is None:
-            dependent_sources = frozenset(spec.source_names)
-        else:
-            dependent_sources = frozenset(dependent_sources)
-        spec.context_inputs.append(
-            SpecParameterContext(
-                stream_name=stream_name,
-                workflow_key=workflow_key,
-                dependent_sources=dependent_sources,
-                stream_resolver=stream_resolver,
-                seed_factory=seed_factory,
-            )
+        self._factory._add_context_input(
+            self.workflow_id,
+            stream_name=stream_name,
+            workflow_key=workflow_key,
+            dependent_sources=dependent_sources,
+            stream_resolver=stream_resolver,
+            seed_factory=seed_factory,
         )
 
-    def skip_motion(self) -> None:
+    def skip_instrument_contexts(self) -> None:
         """Opt this spec out of all instrument-scope context-stream bindings.
 
         Use from ``specs.py`` when this spec consumes a source whose
-        instrument declaration carries motion (carriage, rotation, etc.) but
-        this spec does not need the geometry value — e.g. a counts-only
-        ratemeter on a moving detector. The spec is removed from the gate
-        and from the resolved context for those streams. Spec-scope bindings
-        (declared via :meth:`add_parameter_context`) are unaffected.
+        instrument declaration carries context (motion, geometry, etc.) but
+        this spec does not need the value — e.g. a counts-only ratemeter on
+        a moving detector. The spec is removed from the gate and from the
+        resolved context for those streams. Spec-scope bindings (declared
+        via :meth:`add_parameter_context`) are unaffected.
         """
-        spec = self._factory[self.workflow_id]
-        spec.skip_motion = True
+        self._factory._set_skip_instrument_contexts(self.workflow_id)
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
+    """Registry mapping :class:`WorkflowId` to :class:`WorkflowRegistration`.
+
+    Implements ``Mapping[WorkflowId, WorkflowSpec]`` for read access: the
+    dashboard and other spec-only readers see this as a mapping to specs.
+    Use :meth:`registration` / :meth:`registrations` to access the full
+    record (factory callable, context inputs, etc.).
+    """
+
     def __init__(self) -> None:
-        self._factories: dict[WorkflowId, Callable[[], Workflow]] = {}
-        self._workflow_specs: dict[WorkflowId, WorkflowSpec] = {}
-        self._services: dict[WorkflowId, str] = {}
+        self._registrations: dict[WorkflowId, WorkflowRegistration] = {}
 
     def __getitem__(self, key: WorkflowId) -> WorkflowSpec:
-        return self._workflow_specs[key]
+        return self._registrations[key].spec
 
     def __iter__(self) -> Iterator[WorkflowId]:
-        return iter(self._workflow_specs)
+        return iter(self._registrations)
 
     def __len__(self) -> int:
-        return len(self._workflow_specs)
+        return len(self._registrations)
 
     def register_spec(
         self, spec: WorkflowSpec, *, service: str | None = None
@@ -144,15 +188,26 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         Handle for attaching factory later.
         """
         spec_id = spec.get_id()
-        if spec_id in self._workflow_specs:
+        if spec_id in self._registrations:
             raise ValueError(f"Workflow spec '{spec_id}' already registered.")
-        self._workflow_specs[spec_id] = spec
-        self._services[spec_id] = service if service is not None else spec.group.name
+        self._registrations[spec_id] = WorkflowRegistration(
+            spec=spec,
+            service=service if service is not None else spec.group.name,
+        )
         return SpecHandle(workflow_id=spec_id, _factory=self)
+
+    def registration(self, workflow_id: WorkflowId) -> WorkflowRegistration | None:
+        """Return the full registration record for ``workflow_id``, or None."""
+        return self._registrations.get(workflow_id)
+
+    def registrations(self) -> Iterable[WorkflowRegistration]:
+        """Iterate over all registrations."""
+        return self._registrations.values()
 
     def get_service(self, workflow_id: WorkflowId) -> str | None:
         """Return the backend service name that runs the given workflow."""
-        return self._services.get(workflow_id)
+        reg = self._registrations.get(workflow_id)
+        return reg.service if reg is not None else None
 
     def attach_factory(
         self, workflow_id: WorkflowId
@@ -173,12 +228,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         -------
         Decorator function that validates and attaches the factory.
         """
-        if workflow_id not in self._workflow_specs:
+        if workflow_id not in self._registrations:
             raise ValueError(
                 f"Spec '{workflow_id}' not registered. Call register_spec() first."
             )
 
-        spec = self._workflow_specs[workflow_id]
+        spec = self._registrations[workflow_id].spec
 
         def decorator(factory: Callable[..., Workflow]) -> Callable[..., Workflow]:
             # Validate params type hint matches spec
@@ -201,10 +256,44 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
                     f"Spec has params but factory has none for {workflow_id}"
                 )
 
-            self._factories[workflow_id] = factory
+            self._registrations[workflow_id] = dataclasses.replace(
+                self._registrations[workflow_id], factory=factory
+            )
             return factory
 
         return decorator
+
+    def _add_context_input(
+        self,
+        workflow_id: WorkflowId,
+        *,
+        stream_name: str,
+        workflow_key: Any,
+        dependent_sources: Iterable[str] | None,
+        stream_resolver: Callable[[JobId, str], str] | None,
+        seed_factory: Callable[[JobId], Message] | None,
+    ) -> None:
+        reg = self._registrations[workflow_id]
+        if dependent_sources is None:
+            sources = frozenset(reg.spec.source_names)
+        else:
+            sources = frozenset(dependent_sources)
+        new_input = SpecParameterContext(
+            stream_name=stream_name,
+            workflow_key=workflow_key,
+            dependent_sources=sources,
+            stream_resolver=stream_resolver,
+            seed_factory=seed_factory,
+        )
+        self._registrations[workflow_id] = dataclasses.replace(
+            reg, context_inputs=(*reg.context_inputs, new_input)
+        )
+
+    def _set_skip_instrument_contexts(self, workflow_id: WorkflowId) -> None:
+        reg = self._registrations[workflow_id]
+        self._registrations[workflow_id] = dataclasses.replace(
+            reg, skip_instrument_contexts=True
+        )
 
     def create(
         self,
@@ -231,10 +320,11 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             in their signature.
         """
         workflow_id = config.identifier
-        if workflow_id not in self._workflow_specs:
+        if workflow_id not in self._registrations:
             raise KeyError(f"Unknown workflow ID: {workflow_id}")
 
-        workflow_spec = self._workflow_specs[workflow_id]
+        reg = self._registrations[workflow_id]
+        workflow_spec = reg.spec
         if (model_cls := workflow_spec.params) is None:
             if config.params:
                 raise ValueError(
@@ -261,7 +351,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
                 f"Allowed sources: {allowed_sources}"
             )
 
-        factory = self._factories[workflow_id]
+        factory = reg.factory
+        if factory is None:
+            raise ValueError(
+                f"Workflow '{workflow_id}' has no factory attached; "
+                "call attach_factory() before create()."
+            )
         sig = inspect.signature(factory)
 
         # Prepare arguments based on the factory signature. Factories opt in to

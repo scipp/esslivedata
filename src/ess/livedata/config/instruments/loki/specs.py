@@ -283,7 +283,7 @@ tube_view_handle = instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 # Tube view sums over straw/pixel — bank position is irrelevant.
-tube_view_handle.skip_motion()
+tube_view_handle.skip_instrument_contexts()
 
 # Register the chopperless wavelength lookup-table spec. The factory is attached
 # in factories.py.

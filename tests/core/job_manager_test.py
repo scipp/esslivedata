@@ -1837,8 +1837,8 @@ class TestJobFactoryContextInput:
         # Internal bookkeeping: gate already considers the stream seen.
         assert wire in manager._seen_context_streams[job_id]
 
-    def test_skip_motion_excludes_instrument_scope_bindings(self) -> None:
-        """A spec with ``skip_motion`` set ignores all instrument-scope inputs.
+    def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
+        """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
 
         The spec's own bindings, if any, are unaffected.
         """
@@ -1857,7 +1857,7 @@ class TestJobFactoryContextInput:
             dependent_sources=['detector1'],
         )
         handle.add_parameter_context(stream_name='temp', workflow_key=_CtxKeyB)
-        handle.skip_motion()
+        handle.skip_instrument_contexts()
 
         captured: dict[str, dict[str, type]] = {}
 

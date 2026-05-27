@@ -561,9 +561,9 @@ class TestContextInputs:
         with pytest.raises(ValueError, match='aux_sources field'):
             instrument._validate_context_input_wire_name_collisions()
 
-    def test_skip_motion_suppresses_context_vs_aux_collision_for_instrument(self):
-        """``skip_motion`` removes instrument-scope context for the spec, so
-        a matching aux field name does not collide for that spec."""
+    def test_skip_instrument_contexts_suppresses_context_vs_aux_collision(self):
+        """``skip_instrument_contexts`` removes instrument-scope context for the
+        spec, so a matching aux field name does not collide for that spec."""
         from ess.livedata.config.workflow_spec import AuxInput, AuxSources
 
         instrument = Instrument(
@@ -582,7 +582,7 @@ class TestContextInputs:
         instrument.add_parameter_context(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        handle.skip_motion()
+        handle.skip_instrument_contexts()
 
         instrument._validate_context_input_wire_name_collisions()
 
