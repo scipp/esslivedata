@@ -153,12 +153,12 @@ def create_tool_button(
         Panel Button widget styled as a tool button.
     """
     button = pn.widgets.Button(
-        name='',
+        label='',
         icon=get_icon(icon_name),
         icon_size='1.5em',
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        button_type='light',
+        color='light',
         sizing_mode='fixed',
         margin=0,
         stylesheets=create_tool_button_stylesheet(button_color, hover_color),
@@ -204,7 +204,7 @@ def create_download_button(
         icon=get_icon('download'),
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        button_type='primary',
+        color='primary',
         sizing_mode='fixed',
         margin=0,
         embed=False,  # Generate content on click, not upfront

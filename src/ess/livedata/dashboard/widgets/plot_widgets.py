@@ -78,13 +78,13 @@ def _create_add_button_or_menu(
     )
 
     menu_button = pn.widgets.MenuButton(
-        name='',
+        label='',
         items=items,
         icon=get_icon('plus'),
         icon_size='1.5em',
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        button_type='light',
+        color='light',
         sizing_mode='fixed',
         margin=0,
         stylesheets=stylesheets,

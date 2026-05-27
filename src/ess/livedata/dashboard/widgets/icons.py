@@ -14,7 +14,7 @@ copy the SVG path elements, and add an entry to the _ICONS dict using the _svg()
 Usage:
     from ess.livedata.dashboard.widgets.icons import get_icon
 
-    button = pn.widgets.Button(name='', icon=get_icon('settings'))
+    button = pn.widgets.Button(label='', icon=get_icon('settings'))
 """
 
 from __future__ import annotations

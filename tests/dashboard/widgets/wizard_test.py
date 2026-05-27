@@ -592,7 +592,7 @@ class TestWizardRendering:
 
         # Next button should be in the row
         assert wizard._next_button in button_row
-        assert wizard._next_button.name == "Next"
+        assert wizard._next_button.label == "Next"
 
     def test_last_step_shows_action_button_when_label_provided(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
@@ -609,7 +609,7 @@ class TestWizardRendering:
 
         # Next button should be shown with custom label
         assert wizard._next_button in button_row
-        assert wizard._next_button.name == "Create Plot"
+        assert wizard._next_button.label == "Create Plot"
 
     def test_last_step_hides_button_when_no_action_label(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]

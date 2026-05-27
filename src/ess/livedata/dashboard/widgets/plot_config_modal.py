@@ -404,10 +404,10 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         options["Static Overlay"] = STATIC_OVERLAY_GROUP
 
         return pn.widgets.RadioButtonGroup(
-            name='Group',
+            label='Group',
             options=options,
             orientation='horizontal',
-            button_type='primary',
+            color='primary',
             button_style='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
@@ -416,10 +416,10 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def _create_workflow_buttons(self) -> pn.widgets.RadioButtonGroup:
         """Create workflow selection radio buttons (handler bound later)."""
         return pn.widgets.RadioButtonGroup(
-            name='Workflow',
+            label='Workflow',
             options={},
             orientation='vertical',
-            button_type='primary',
+            color='primary',
             button_style='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
@@ -428,10 +428,10 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def _create_output_buttons(self) -> pn.widgets.RadioButtonGroup:
         """Create output selection radio buttons (handler bound later)."""
         return pn.widgets.RadioButtonGroup(
-            name='Output',
+            label='Output',
             options={},
             orientation='vertical',
-            button_type='primary',
+            color='primary',
             button_style='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
@@ -440,7 +440,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def _create_name_input(self) -> pn.widgets.TextInput:
         """Create text input for static overlay naming (handler bound later)."""
         return pn.widgets.TextInput(
-            name='Overlay Name',
+            label='Overlay Name',
             placeholder='Enter a name for this overlay...',
             sizing_mode='stretch_width',
         )
@@ -848,11 +848,11 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             )
 
         self._radio_group = pn.widgets.RadioButtonGroup(
-            name="Plotter Type",
+            label="Plotter Type",
             options=options,
             value=initial_value,
             orientation='vertical',
-            button_type="primary",
+            color="primary",
             button_style="outline",
             sizing_mode='stretch_width',
         )
@@ -953,7 +953,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             )
 
             selector = pn.widgets.Select(
-                name=f'{label} (correlate against)',
+                label=f'{label} (correlate against)',
                 options={'Select...': None, **options},
                 value=initial_value,
                 sizing_mode='stretch_width',
