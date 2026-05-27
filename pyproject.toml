@@ -52,7 +52,7 @@ test = [
     "esssans",
     "essspectroscopy>=26.3.0",
     "holoviews",
-    "panel",
+    "panel>=1.9",
     "param",
     "pytest",
     "pytest-benchmark",
@@ -81,7 +81,7 @@ tbl = []
 dashboard = [
   "bokeh",
   "holoviews",
-  "panel",
+  "panel>=1.9",
   "param",
 ]
 
