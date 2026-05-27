@@ -28,7 +28,7 @@ def _job_id(source: str) -> JobId:
 def _get_workflow_id(instrument: str, name: str) -> workflow_spec.WorkflowId:
     cfg = instrument_registry[instrument]
     for wid, spec in cfg.workflow_factory.items():
-        if spec.group.name == 'timeseries' and spec.name == name:
+        if cfg.workflow_factory.get_service(wid) == 'timeseries' and spec.name == name:
             return wid
     raise AssertionError(f"workflow {name!r} not registered for {instrument!r}")
 
