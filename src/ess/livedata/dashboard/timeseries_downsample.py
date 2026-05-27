@@ -5,9 +5,16 @@
 Long-running timeseries accumulate many points (~100 k for a day at 1 Hz),
 which makes per-tick plot rebuilds and the resulting ``pipe.send`` payloads
 expensive. ``downsample_timeseries`` reduces a DataArray to two bands of
-uniform stride: a recent window at fine resolution plus a coarse floor
-that extends the run's older history indefinitely (set the floor period
-to 0 to drop older data instead). See issue #940.
+uniform stride on a fixed time grid: a recent window at fine resolution
+plus a coarse floor that extends the run's older history indefinitely
+(set the floor period to 0 to drop older data instead).
+
+The bucket grid is anchored to the epoch, so kept samples sit on absolute
+time-quanta and do not slide as new samples arrive. The recent-band cutoff
+is quantized to the floor period: ``recent_seconds`` is therefore a lower
+bound on the actual recent-window length, which can extend by up to one
+floor period before a quantum boundary is crossed and a batch of samples
+retires from the recent band together. See issue #940.
 """
 
 from __future__ import annotations
@@ -26,12 +33,14 @@ def downsample_timeseries(
 ) -> sc.DataArray:
     """Downsample a timeseries DataArray to a fine-recent + coarse-floor layout.
 
-    The time coord is split into a recent band (last ``recent_seconds``) and a
-    floor band (older). Within each band buckets are anchored at the band's
-    latest sample and the last sample of each bucket is kept, so the very
-    latest sample of the input is always present in the output.
+    Bucket boundaries are anchored at the epoch, so kept samples sit on a
+    stable absolute grid. Within each band the last sample of each bucket
+    is kept (the very latest sample of the input is always present).
 
-    A ``floor_period_seconds`` of 0 drops older data entirely.
+    The recent-band cutoff is quantized to the floor grid: actual recent
+    length is between ``recent_seconds`` and ``recent_seconds +
+    floor_period_seconds``. A ``floor_period_seconds`` of 0 drops older
+    data and quantizes the cutoff to the recent period instead.
 
     Parameters
     ----------
@@ -40,7 +49,7 @@ def downsample_timeseries(
     period_seconds:
         Sample period for the recent band, in seconds. Must be > 0.
     recent_seconds:
-        Length of the recent band, in seconds. Must be >= 0.
+        Lower bound on the recent-band length, in seconds. Must be >= 0.
     floor_period_seconds:
         Sample period for the floor band, in seconds. 0 drops older data.
     concat_dim:
@@ -59,27 +68,22 @@ def downsample_timeseries(
 
     times = data.coords[concat_dim].to(unit='ns', copy=False)
     latest = times[concat_dim, -1]
+    epoch = sc.epoch(unit='ns')
     period = sc.scalar(max(int(period_seconds * 1e9), 1), unit='ns')
     floor_period_ns = max(int(floor_period_seconds * 1e9), 0)
-    recent_cutoff = latest - sc.scalar(int(recent_seconds * 1e9), unit='ns')
-    is_recent = times >= recent_cutoff
     drop_older = floor_period_ns <= 0
+    # 1 ns when drop_older avoids divide-by-zero; older bucket IDs are
+    # masked out below so the values are irrelevant.
+    floor_period = sc.scalar(floor_period_ns or 1, unit='ns')
 
-    if drop_older:
-        buckets = (latest - times) // period
-    else:
-        # If no older samples, latest_older is unused (gated by is_recent below),
-        # but must be a valid datetime scalar for sc.where.
-        is_older = ~is_recent
-        latest_older = (
-            times[is_older][concat_dim, -1] if sc.any(is_older).value else latest
-        )
-        floor_period = sc.scalar(floor_period_ns, unit='ns')
-        band_latest = sc.where(is_recent, latest, latest_older)
-        band_period = sc.where(is_recent, period, floor_period)
-        buckets = (band_latest - times) // band_period
+    quantum = period if drop_older else floor_period
+    raw_cutoff = latest - sc.scalar(int(recent_seconds * 1e9), unit='ns')
+    cutoff = ((raw_cutoff - epoch) // quantum) * quantum + epoch
+    is_recent = times >= cutoff
 
-    # Keep a sample iff it is the last of its (band, bucket) run.
+    band_period = sc.where(is_recent, period, floor_period)
+    buckets = (times - epoch) // band_period
+
     bucket_changes = buckets[concat_dim, :-1] != buckets[concat_dim, 1:]
     band_changes = is_recent[concat_dim, :-1] != is_recent[concat_dim, 1:]
     trailing_true = sc.array(dims=[concat_dim], values=np.array([True]))

@@ -57,7 +57,8 @@ class TestDownsampleTimeseries:
         assert result.values[0] >= 3599
 
     def test_floor_band_for_long_run(self):
-        # 1 day @ 1 Hz = 86400 points, recent_seconds=3600, floor=300s
+        # 1 day @ 1 Hz = 86400 points, recent_seconds=3600, floor=300s.
+        # Soft window: recent length is 3600-3900 s; floor: ~275 buckets.
         data = _make_timeseries(86400)
         result = downsample_timeseries(
             data,
@@ -65,9 +66,8 @@ class TestDownsampleTimeseries:
             recent_seconds=3600.0,
             floor_period_seconds=300.0,
         )
-        # Recent: ~3600. Floor: (86400-3600)/300 ≈ 276 buckets.
         n = result.sizes['time']
-        assert 3850 <= n <= 3950, n
+        assert 3850 <= n <= 4200, n
         # Last sample is always preserved.
         assert result.coords['time'].values[-1] == data.coords['time'].values[-1]
 
@@ -162,3 +162,25 @@ def test_downsampling_caps_output_size(n: int):
         floor_period_seconds=300.0,
     )
     assert result.sizes['time'] < 5000
+
+
+def test_kept_samples_stable_between_cutoff_crossings():
+    """Epoch-anchored grid: existing kept samples don't move between ticks.
+
+    Picks two consecutive sizes that do not straddle a floor-period quantum
+    crossing; the second output must extend the first by exactly the newly
+    arrived sample.
+    """
+    kwargs = {
+        "period_seconds": 1.0,
+        "recent_seconds": 3600.0,
+        "floor_period_seconds": 300.0,
+    }
+    # Tick from n=7202 to n=7203: latest=7201 -> 7202; raw_cutoff 3601 -> 3602.
+    # Quantized to 300 stays at 3600. No quantum crossing.
+    a = downsample_timeseries(_make_timeseries(7202), **kwargs)
+    b = downsample_timeseries(_make_timeseries(7203), **kwargs)
+    a_times = set(a.coords['time'].values.tolist())
+    b_times = set(b.coords['time'].values.tolist())
+    assert a_times.issubset(b_times)
+    assert b_times - a_times == {7202 * 10**9}
