@@ -41,10 +41,10 @@ class ValueLog:
     ``workflow_key`` are routed via the fused per-component patched-chain
     provider instead of via direct ``set_context`` binding.
 
-    :attr:`values` is ``None`` before the first ``set_context`` call —
-    ``ess.reduce.streaming.StreamProcessor`` pre-sets every context key to
-    ``None`` — otherwise it is the NXlog produced by ``ToNXlog``, possibly
-    still empty if no f144 message has arrived yet.
+    :attr:`values` is the NXlog produced by ``ToNXlog`` — non-empty by the
+    time it reaches the provider, because the JobManager context-stream
+    gate (ADR 0002) blocks the workflow until the underlying f144 stream
+    has produced a value.
 
     :class:`~ess.livedata.handlers.stream_processor_workflow.StreamProcessorWorkflow`
     detects subclasses of this type among its ``context_keys`` values and
@@ -56,4 +56,4 @@ class ValueLog:
     #: class; chain-patching subclasses must set a concrete path.
     transform_path: ClassVar[str | None] = None
 
-    values: sc.DataArray | None = None
+    values: sc.DataArray

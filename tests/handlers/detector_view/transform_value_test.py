@@ -64,23 +64,6 @@ class TestSingleBinding:
         # Untouched entries preserve their original value.
         assert out.transformations['other'].value.value == 7.0
 
-    def test_raises_when_log_is_none(self):
-        comp = _component(_make_chain())
-        with pytest.raises(ValueError, match='No samples yet'):
-            self._provider()(comp, None)
-
-    def test_raises_when_log_has_no_samples(self):
-        empty = sc.DataArray(
-            sc.array(dims=['time'], values=[], unit='mm'),
-            coords={
-                'time': sc.epoch(unit='ns')
-                + sc.array(dims=['time'], values=[], unit='ns', dtype='int64')
-            },
-        )
-        comp = _component(_make_chain())
-        with pytest.raises(ValueError, match='No samples yet'):
-            self._provider()(comp, _CarriageLog(values=empty))
-
     def test_raises_when_path_not_in_chain(self):
         provider = build_patched_chain_provider(
             snx.NXdetector, [('missing', _CarriageLog)]
@@ -117,15 +100,6 @@ class TestMultipleBindings:
         )
         assert out.transformations['carriage'].value.value == 10.0
         assert out.transformations['other'].value.value == 20.0
-
-    def test_one_log_missing_raises_for_that_entry(self):
-        provider = build_patched_chain_provider(
-            snx.NXdetector,
-            [('carriage', _CarriageLog), ('other', _OtherLog)],
-        )
-        comp = _component(_make_chain())
-        with pytest.raises(ValueError, match="'other'"):
-            provider(comp, _CarriageLog(values=_make_log([1.0])), None)
 
 
 class TestSynthesisedProvider:

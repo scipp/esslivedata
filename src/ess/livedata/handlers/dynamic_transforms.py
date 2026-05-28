@@ -98,7 +98,7 @@ def build_patched_chain_provider(
     """
     bindings_local = list(bindings)
 
-    def _impl(component: Any, *containers: ValueLog | None) -> Any:
+    def _impl(component: Any, *containers: ValueLog) -> Any:
         chain = get_transformation_chain(component)
         patched = deepcopy(chain)
         for (path, _key), container in zip(bindings_local, containers, strict=True):
@@ -106,15 +106,6 @@ def build_patched_chain_provider(
                 raise KeyError(
                     f"Transformation entry {path!r} not found in chain. "
                     f"Available entries: {sorted(patched.transformations.keys())}"
-                )
-            if (
-                container is None
-                or container.values is None
-                or container.values.sizes.get('time', 0) == 0
-            ):
-                raise ValueError(
-                    f"No samples yet for transformation {path!r}: "
-                    "f144 stream has not produced a value."
                 )
             patched.transformations[path].value = container.values['time', -1].data
         return patched
