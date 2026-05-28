@@ -32,13 +32,7 @@ from .plot_params import (
     TimeseriesDownsamplingParams,
 )
 from .range_hook import Axis, RangeTargets
-from .scipp_to_holoviews import (
-    HvConverter1d,
-    _compute_image_bounds_from_edges,
-    _ensure_coords,
-    _get_midpoints,
-    to_holoviews,
-)
+from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
 from .timeseries_downsample import downsample_timeseries
 
@@ -929,22 +923,27 @@ class ImagePlotter(Plotter):
         )
 
     def _compute_image_range_targets(
-        self, plot_data: sc.DataArray, use_log_scale: bool
+        self,
+        element: hv.Element,
+        plot_data: sc.DataArray,
+        use_log_scale: bool,
     ) -> RangeTargets:
-        """Per-axis ``(lo, hi)`` targets for the prepared 2-D image data."""
+        """Per-axis ``(lo, hi)`` targets for the rendered 2-D image element.
+
+        ``x``/``y`` extents are read from ``element.range`` so they match the
+        bounds HoloViews actually renders -- half-pixel extension for
+        midpoint coords, exact edge values for bin edges -- without
+        duplicating that logic here. ``c`` extent is derived from the data
+        because HoloViews does not expose a NaN-filtered or log-filtered
+        value range.
+        """
         targets: RangeTargets = {}
         if plot_data.ndim == 2:
-            coord_data = _ensure_coords(plot_data)
-            x_midpoints = _get_midpoints(coord_data, coord_data.dims[1]).values
-            y_midpoints = _get_midpoints(coord_data, coord_data.dims[0]).values
-            left, bottom, right, top = _compute_image_bounds_from_edges(
-                coord_data, x_midpoints, y_midpoints
-            )
             logx = self._scale_opts.x_scale == PlotScale.log
             logy = self._scale_opts.y_scale == PlotScale.log
-            if x_extent := _bounds_for_log((left, right), log=logx):
+            if x_extent := _bounds_for_log(element.range(0), log=logx):
                 targets['x'] = _pad_range(*x_extent, log=logx)
-            if y_extent := _bounds_for_log((bottom, top), log=logy):
+            if y_extent := _bounds_for_log(element.range(1), log=logy):
                 targets['y'] = _pad_range(*y_extent, log=logy)
         extent = _finite_min_max(plot_data.values, log=use_log_scale)
         if extent is not None:
@@ -968,15 +967,16 @@ class ImagePlotter(Plotter):
         if output_display_name:
             plot_data.name = output_display_name
 
-        targets = self._compute_image_range_targets(plot_data, use_log_scale)
-        if targets:
-            self._range_targets[data_key] = targets
-
         # We are using the masked data here since Holoviews (at least with the Bokeh
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
         histogram = to_holoviews(plot_data, label=label, dim_label=dim_label)
+
+        targets = self._compute_image_range_targets(histogram, plot_data, use_log_scale)
+        if targets:
+            self._range_targets[data_key] = targets
+
         opts = dict(self._base_opts)
         # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
