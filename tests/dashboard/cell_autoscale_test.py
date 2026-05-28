@@ -116,12 +116,23 @@ class _StubPlot:
 
 @pytest.fixture(autouse=True)
 def patch_custom_action(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace Bokeh's ``CustomAction`` factory with a stub for tests."""
+    """Replace Bokeh ``CustomAction`` factories with stubs for tests."""
 
-    def factory(*, active: bool, description: str, icon: Any | None) -> Any:
+    def toggle_factory(
+        *,
+        active: bool,
+        description: str,
+        on_icon: Any | None,
+        off_icon: Any | None,
+    ) -> Any:
+        icon = on_icon if active else off_icon
         return _StubAction(active=active, description=description, icon=icon)
 
-    monkeypatch.setattr(cell_autoscale, '_make_custom_action', factory)
+    def fit_factory(*, description: str, icon: Any | None) -> Any:
+        return _StubAction(active=False, description=description, icon=icon)
+
+    monkeypatch.setattr(cell_autoscale, '_make_toggle_action', toggle_factory)
+    monkeypatch.setattr(cell_autoscale, '_make_fit_action', fit_factory)
 
 
 def _make_plot_all_handles() -> tuple[
@@ -224,6 +235,31 @@ class TestHookWrites:
 
         assert (x.start, x.end) == (None, None)
         assert (y.start, y.end) == (None, None)
+
+    def test_c_axis_re_writes_last_target_when_toggled_off(self) -> None:
+        """HoloViews unconditionally re-writes color_mapper.low/high every
+        render from data extent. When the c-toggle is off we must re-apply
+        the previously written target each render to keep the colorbar
+        frozen at the user's chosen state.
+        """
+        k = _key()
+        plotter = _FakePlotter(frozenset({'c'}), {k: {'c': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        plot, _x, _y, c = _make_plot_all_handles()
+
+        hook = controller.make_hook()
+        hook(plot, None)
+        assert (c.low, c.high) == (0.0, 10.0)
+
+        # User turns off the c-toggle, then HoloViews' next render overwrites
+        # the color_mapper from new data extent (simulated here).
+        controller._toggles['c'].active = False
+        c.low, c.high = 99.0, 999.0
+        plotter._targets = {k: {'c': (100.0, 200.0)}}
+        hook(plot, None)
+
+        # Hook must re-write the last-known target, overriding HV's update.
+        assert (c.low, c.high) == (0.0, 10.0)
 
 
 class TestFitButton:

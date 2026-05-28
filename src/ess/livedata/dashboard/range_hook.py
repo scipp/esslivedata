@@ -24,22 +24,44 @@ class RangeHandles:
     Populated on the first hook invocation per session. The cell-level
     autoscale controller keeps a reference so a Fit action can mutate the
     handles without a Pipe round-trip.
+
+    For Overlay plots (e.g., image + ROI rectangles), ``x_range``/``y_range``
+    live on the top-level ``OverlayPlot`` while ``color_mapper`` lives on the
+    image's sub-plot. We capture the sub-plot too so the controller can set
+    its ``clim`` parameter -- the prototype's freeze mechanism (a finite
+    ``self.clim`` causes HoloViews to skip data-range derivation on the next
+    render).
     """
 
     def __init__(self) -> None:
         self.x_range: Any | None = None
         self.y_range: Any | None = None
         self.color_mapper: Any | None = None
+        self.color_mapper_plot: Any | None = None
 
     def capture(self, plot: Any) -> None:
-        """Capture handles from ``plot.handles``; idempotent across renders."""
+        """Capture handles from ``plot.handles``; idempotent across renders.
+
+        Searches sub-plots when the top-level plot doesn't carry a
+        ``color_mapper`` (Overlay case).
+        """
         handles = plot.handles
         if self.x_range is None:
             self.x_range = handles.get('x_range')
         if self.y_range is None:
             self.y_range = handles.get('y_range')
         if self.color_mapper is None:
-            self.color_mapper = handles.get('color_mapper')
+            cm = handles.get('color_mapper')
+            if cm is not None:
+                self.color_mapper = cm
+                self.color_mapper_plot = plot
+            else:
+                for sub in (getattr(plot, 'subplots', None) or {}).values():
+                    sub_cm = sub.handles.get('color_mapper')
+                    if sub_cm is not None:
+                        self.color_mapper = sub_cm
+                        self.color_mapper_plot = sub
+                        break
 
 
 def make_range_hook(
