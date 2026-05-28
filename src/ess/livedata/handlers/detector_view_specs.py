@@ -511,13 +511,13 @@ def add_roi_context_inputs(handle: SpecHandle) -> None:
     """
     from .detector_view.types import ROIPolygonRequest, ROIRectangleRequest
 
-    handle.add_parameter_context(
+    handle.add_context_input(
         stream_name='roi_rectangle',
         workflow_key=ROIRectangleRequest,
         stream_resolver=lambda job_id, name: f"{job_id}/{name}",
         seed_factory=_roi_rectangle_seed,
     )
-    handle.add_parameter_context(
+    handle.add_context_input(
         stream_name='roi_polygon',
         workflow_key=ROIPolygonRequest,
         stream_resolver=lambda job_id, name: f"{job_id}/{name}",

@@ -3,10 +3,10 @@
 """Validate chain-patch :class:`ContextInput` bindings against the
 currently-registered geometry artifact.
 
-For every :class:`ContextInput` declared on an instrument with
-``transform_path`` set, walks the ``depends_on`` chain of every declared
-consumer in the artifact and confirms the path appears. Catches typos
-and orphaned bindings before runtime.
+For every chain-patch :class:`ContextInput` (one whose ``workflow_key``
+is a :class:`ValueLog` subclass), walks the ``depends_on`` chain of
+every declared consumer in the artifact and confirms the path appears.
+Catches typos and orphaned bindings before runtime.
 
 Also flags any empty NXlog placeholder on a registered source that no
 binding covers — except those in :data:`_KNOWN_ORPHAN_NXLOGS`, a
@@ -22,14 +22,18 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.stream import TransformationContext
+from ess.livedata.config.stream import ContextInput
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
 
-def _chain_patch_inputs(instrument: Instrument) -> list[TransformationContext]:
-    return [
-        b for b in instrument.context_inputs if isinstance(b, TransformationContext)
-    ]
+def _is_chain_patch(ci: ContextInput) -> bool:
+    key = ci.workflow_key
+    return isinstance(key, type) and issubclass(key, ValueLog)
+
+
+def _chain_patch_inputs(instrument: Instrument) -> list[ContextInput]:
+    return [b for b in instrument.context_inputs if _is_chain_patch(b)]
 
 
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
@@ -93,11 +97,11 @@ def test_transform_paths_match_artifact(instrument: Instrument) -> None:
     for binding in _chain_patch_inputs(instrument):
         for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
-            assert binding.transform_path in chain, (
+            assert binding.workflow_key.transform_path in chain, (
                 f"Binding {binding.stream_name!r} declares transform_path "
-                f"{binding.transform_path!r} in consumers of {source_name!r}, "
-                f"but it does not appear on the depends_on chain "
-                f"resolved from the artifact ({artifact}). "
+                f"{binding.workflow_key.transform_path!r} in consumers of "
+                f"{source_name!r}, but it does not appear on the depends_on "
+                f"chain resolved from the artifact ({artifact}). "
                 f"Walked: {chain}"
             )
 
@@ -134,7 +138,7 @@ def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
     Otherwise, workflows loading that source trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    covered = {b.transform_path for b in _chain_patch_inputs(instrument)}
+    covered = {b.workflow_key.transform_path for b in _chain_patch_inputs(instrument)}
     sources = list(instrument.detector_names) + list(instrument.monitors)
     for source_name in sources:
         empty = _empty_nxlog(artifact, source_name)

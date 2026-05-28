@@ -80,10 +80,10 @@ def build_patched_chain_provider(
     The returned provider replaces essreduce's ``get_transformation_chain``
     specialised to ``component_type``: it consumes
     ``NeXusComponent[component_type, SampleRun]`` plus one parameter per
-    binding (annotated with that binding's ``log_key``) and produces
-    ``NeXusTransformationChain[component_type, SampleRun]``. It cannot
-    instead consume the chain as input — that would self-cycle on its own
-    return type.
+    binding (annotated with that binding's :class:`ValueLog` subclass) and
+    produces ``NeXusTransformationChain[component_type, SampleRun]``. It
+    cannot instead consume the chain as input — that would self-cycle on
+    its own return type.
 
     Parameters
     ----------
@@ -91,10 +91,10 @@ def build_patched_chain_provider(
         The NeXus component type whose transformation chain is being patched
         (e.g. ``snx.NXdetector``).
     bindings:
-        ``(transform_path, log_key)`` pairs. The provider takes one positional
-        parameter per pair, annotated with the corresponding ``log_key``; at
-        evaluation time the latest sample of each container is written into
-        ``transformations[transform_path]``.
+        ``(transform_path, value_log_cls)`` pairs. The provider takes one
+        positional parameter per pair, annotated with the corresponding
+        :class:`ValueLog` subclass; at evaluation time the latest sample of
+        each container is written into ``transformations[transform_path]``.
     """
     bindings_local = list(bindings)
 

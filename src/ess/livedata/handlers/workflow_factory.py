@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ess.livedata.config.stream import ParameterContext
+from ess.livedata.config.stream import ContextInput
 from ess.livedata.config.workflow_spec import (
     JobId,
     WorkflowConfig,
@@ -36,8 +36,8 @@ class Workflow(Protocol):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SpecParameterContext(ParameterContext):
-    """Spec-scope parameter context with per-job runtime callables.
+class SpecContextInput(ContextInput):
+    """Spec-scope context input with per-job runtime callables.
 
     Lives next to :class:`WorkflowFactory` because the optional callables
     reference :class:`JobId` and :class:`Message` — runtime concepts that
@@ -75,7 +75,7 @@ class WorkflowRegistration:
     spec: WorkflowSpec
     service: str
     factory: Callable[..., Workflow] | None = None
-    context_inputs: tuple[SpecParameterContext, ...] = ()
+    context_inputs: tuple[SpecContextInput, ...] = ()
     skip_instrument_contexts: bool = False
 
 
@@ -98,7 +98,7 @@ class SpecHandle:
         """Decorator to attach factory implementation to this spec."""
         return self._factory.attach_factory(self.workflow_id)
 
-    def add_parameter_context(
+    def add_context_input(
         self,
         *,
         stream_name: str,
@@ -107,19 +107,21 @@ class SpecHandle:
         stream_resolver: Callable[[JobId, str], str] | None = None,
         seed_factory: Callable[[JobId], Message] | None = None,
     ) -> None:
-        """Append a spec-level :class:`SpecParameterContext` to the registration.
+        """Append a spec-level :class:`SpecContextInput` to the registration.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
 
-        Spec scope is parameter-context only. Transformation contexts must be
+        Chain-patch contexts (``workflow_key`` is a
+        :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
         declared at instrument scope via
-        :meth:`Instrument.add_transformation_context`:
-        :meth:`Instrument.apply_dynamic_transforms` reads only instrument-scope
-        records, so a spec-scope transformation context would route the f144
-        value to a Sciline parameter that no provider consumes — silent-wrong.
+        :meth:`Instrument.add_context_input`:
+        :meth:`Instrument.apply_dynamic_transforms` reads only
+        instrument-scope records, so a spec-scope chain-patch context would
+        route the f144 value to a Sciline parameter that no provider
+        consumes — silent-wrong.
         """
         self._factory._add_context_input(
             self.workflow_id,
@@ -138,7 +140,7 @@ class SpecHandle:
         this spec does not need the value — e.g. a counts-only ratemeter on
         a moving detector. The spec is removed from the gate and from the
         resolved context for those streams. Spec-scope bindings (declared
-        via :meth:`add_parameter_context`) are unaffected.
+        via :meth:`add_context_input`) are unaffected.
         """
         self._factory._set_skip_instrument_contexts(self.workflow_id)
 
@@ -273,12 +275,24 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_resolver: Callable[[JobId, str], str] | None,
         seed_factory: Callable[[JobId], Message] | None,
     ) -> None:
+        # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
+        # would be silent-wrong: Instrument.apply_dynamic_transforms reads
+        # only instrument-scope records, so the f144 value would route to a
+        # Sciline parameter no provider consumes.
+        from ess.livedata.config.value_log import ValueLog
+
+        if isinstance(workflow_key, type) and issubclass(workflow_key, ValueLog):
+            raise ValueError(
+                f"workflow_key {workflow_key.__name__!r} is a ValueLog subclass; "
+                "chain-patch contexts must be declared at instrument scope via "
+                "Instrument.add_context_input, not at spec scope"
+            )
         reg = self._registrations[workflow_id]
         if dependent_sources is None:
             sources = frozenset(reg.spec.source_names)
         else:
             sources = frozenset(dependent_sources)
-        new_input = SpecParameterContext(
+        new_input = SpecContextInput(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,

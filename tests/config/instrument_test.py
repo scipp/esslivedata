@@ -327,7 +327,7 @@ class TestContextInputs:
     def test_add_binding_records_entry(self):
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -342,16 +342,14 @@ class TestContextInputs:
         instrument = Instrument(name='test', streams={'rot': _f144('rot')})
 
         with pytest.raises(ValueError, match='unknown stream'):
-            instrument.add_parameter_context(
+            instrument.add_context_input(
                 stream_name='missing',
                 workflow_key=_Key,
                 dependent_sources=['det1'],
             )
 
     def test_constructor_validates_binding_stream_names(self):
-        from ess.livedata.config.stream import ParameterContext
-
-        bad = ParameterContext(
+        bad = ContextInput(
             stream_name='missing',
             workflow_key=_Key,
             dependent_sources=frozenset({'det1'}),
@@ -376,7 +374,7 @@ class TestContextInputs:
             },
         )
 
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -398,22 +396,22 @@ class TestContextInputs:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1', 'ghost']
         )
 
         with pytest.raises(ValueError, match='ghost'):
             instrument._validate_binding_dependent_sources()
 
-    def test_validates_duplicate_log_key_across_bindings(self):
-        """Two chain-patch ContextInput entries with different streams must
-        not share a ``log_key`` -- Sciline keys identify parameters by
+    def test_validates_duplicate_value_log_subclass_across_bindings(self):
+        """Two chain-patch entries with different streams must not share a
+        :class:`ValueLog` subclass -- Sciline keys identify parameters by
         class, so a shared key would silently merge two streams into one
         Sciline node."""
         from ess.livedata.config.value_log import ValueLog
 
         class _SharedLog(ValueLog):
-            pass
+            transform_path = '/a/value'
 
         instrument = Instrument(
             name='test',
@@ -427,109 +425,76 @@ class TestContextInputs:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='a',
             dependent_sources=['det1'],
-            transform_path='/a/value',
-            log_key=_SharedLog,
+            workflow_key=_SharedLog,
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='b',
             dependent_sources=['det2'],
-            transform_path='/b/value',
-            log_key=_SharedLog,
+            workflow_key=_SharedLog,
         )
 
-        with pytest.raises(ValueError, match=r'log_key.*shared'):
-            instrument._validate_context_input_log_key_uniqueness()
+        with pytest.raises(ValueError, match=r'ValueLog subclass.*shared'):
+            instrument._validate_chain_patch_value_log_uniqueness()
 
-    def test_validates_chain_patch_stream_consistency_on_transform_path(self):
-        """Two chain-patch entries for one stream must agree on
-        ``transform_path``.
+    def test_validates_chain_patch_stream_uniqueness(self):
+        """Two chain-patch entries for one stream must declare the same
+        :class:`ValueLog` subclass.
 
         :meth:`apply_dynamic_transforms` indexes bindings by ``stream_name``
-        per component type; conflicting paths would silently collapse with
-        last-write-wins semantics.
+        per component type; conflicting subclasses would silently collapse
+        with last-write-wins semantics.
         """
         from ess.livedata.config.value_log import ValueLog
 
         class _LogA(ValueLog):
-            pass
-
-        instrument = Instrument(
-            name='test',
-            detector_names=['det1', 'det2'],
-            streams={'shared': _f144('shared')},
-        )
-        instrument.add_transformation_context(
-            stream_name='shared',
-            dependent_sources=['det1'],
-            transform_path='/a/value',
-            log_key=_LogA,
-        )
-        instrument.add_transformation_context(
-            stream_name='shared',
-            dependent_sources=['det2'],
-            transform_path='/b/value',
-            log_key=_LogA,
-        )
-        with pytest.raises(ValueError, match='conflicting transformation context'):
-            instrument._validate_transformation_context_consistency()
-
-    def test_validates_chain_patch_stream_consistency_on_log_key(self):
-        """Two chain-patch entries for one stream must agree on ``log_key``."""
-        from ess.livedata.config.value_log import ValueLog
-
-        class _LogA(ValueLog):
-            pass
+            transform_path = '/v/value'
 
         class _LogB(ValueLog):
-            pass
+            transform_path = '/v/value'
 
         instrument = Instrument(
             name='test',
             detector_names=['det1', 'det2'],
             streams={'shared': _f144('shared')},
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='shared',
             dependent_sources=['det1'],
-            transform_path='/v/value',
-            log_key=_LogA,
+            workflow_key=_LogA,
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='shared',
             dependent_sources=['det2'],
-            transform_path='/v/value',
-            log_key=_LogB,
+            workflow_key=_LogB,
         )
-        with pytest.raises(ValueError, match='conflicting transformation context'):
-            instrument._validate_transformation_context_consistency()
+        with pytest.raises(ValueError, match='conflicting chain-patch'):
+            instrument._validate_chain_patch_value_log_uniqueness()
 
-    def test_chain_patch_stream_consistency_allows_exact_duplicates(self):
+    def test_chain_patch_stream_allows_exact_duplicates(self):
         """Repeated identical chain-patch declarations are not a conflict.
 
         ``load_factories`` may be called multiple times in a long-lived
-        process or across tests; redundant ``add_transformation_context`` calls
-        with matching ``(transform_path, log_key)`` describe the same
-        binding and must pass.
+        process or across tests; redundant ``add_context_input`` calls with
+        matching ``workflow_key`` describe the same binding and must pass.
         """
         from ess.livedata.config.value_log import ValueLog
 
         class _Log(ValueLog):
-            pass
+            transform_path = '/v/value'
 
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'s': _f144('s')}
         )
         for _ in range(2):
-            instrument.add_transformation_context(
+            instrument.add_context_input(
                 stream_name='s',
                 dependent_sources=['det1'],
-                transform_path='/v/value',
-                log_key=_Log,
+                workflow_key=_Log,
             )
-        instrument._validate_transformation_context_consistency()
+        instrument._validate_chain_patch_value_log_uniqueness()
 
     def test_validates_context_vs_aux_field_collision(self):
         """A context stream_name must not match any aux_sources field name.
@@ -554,7 +519,7 @@ class TestContextInputs:
                 {'rot': AuxInput(choices=('other',), default='other')}
             ),
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
@@ -579,7 +544,7 @@ class TestContextInputs:
                 {'rot': AuxInput(choices=('other',), default='other')}
             ),
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
         handle.skip_instrument_contexts()
@@ -603,36 +568,13 @@ class TestContextInputs:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        handle.add_parameter_context(stream_name='rot', workflow_key=_Key)
+        handle.add_context_input(stream_name='rot', workflow_key=_Key)
 
         with pytest.raises(ValueError, match='collision'):
             instrument._validate_context_input_wire_name_collisions()
-
-    def test_abstract_base_cannot_be_instantiated(self):
-        with pytest.raises(TypeError, match='abstract base'):
-            ContextInput(stream_name='rot', dependent_sources=frozenset({'det1'}))
-
-    def test_add_transformation_context_constructs_transformation_context(self):
-        from ess.livedata.config.stream import TransformationContext
-        from ess.livedata.config.value_log import ValueLog
-
-        class _Log(ValueLog):
-            pass
-
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-        instrument.add_transformation_context(
-            stream_name='rot',
-            dependent_sources=['det1'],
-            transform_path='/entry/instrument/rot/value',
-            log_key=_Log,
-        )
-        (ci,) = instrument.context_inputs
-        assert isinstance(ci, TransformationContext)
-        assert ci.transform_path == '/entry/instrument/rot/value'
-        assert ci.log_key is _Log
 
     def test_no_collision_when_dependent_sources_disjoint(self):
         """Same stream name on instrument and spec scope is fine when the sources
@@ -648,10 +590,10 @@ class TestContextInputs:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
-        handle.add_parameter_context(
+        handle.add_context_input(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det2']
         )
 
@@ -694,14 +636,13 @@ class TestInstrumentApplyDynamicTransforms:
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            pass
+            transform_path = '/entry/instrument/rot/value'
 
         instrument = self._make_instrument()
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='rot',
             dependent_sources=['det1'],
-            transform_path='/entry/instrument/rot/value',
-            log_key=_RotLog,
+            workflow_key=_RotLog,
         )
 
         workflow = _FakePipeline()
@@ -710,7 +651,7 @@ class TestInstrumentApplyDynamicTransforms:
 
     def test_direct_bind_binding_is_skipped(self) -> None:
         instrument = self._make_instrument()
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='other',
             workflow_key=_Key,
             dependent_sources=['det1'],
@@ -724,23 +665,21 @@ class TestInstrumentApplyDynamicTransforms:
         from ess.livedata.config.value_log import ValueLog
 
         class _LogA(ValueLog):
-            pass
+            transform_path = '/entry/instrument/rot/value'
 
         class _LogB(ValueLog):
-            pass
+            transform_path = '/entry/instrument/other/value'
 
         instrument = self._make_instrument()
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='rot',
             dependent_sources=['det1'],
-            transform_path='/entry/instrument/rot/value',
-            log_key=_LogA,
+            workflow_key=_LogA,
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='other',
             dependent_sources=['det2'],
-            transform_path='/entry/instrument/other/value',
-            log_key=_LogB,
+            workflow_key=_LogB,
         )
 
         workflow = _FakePipeline()

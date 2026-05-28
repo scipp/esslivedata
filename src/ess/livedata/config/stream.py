@@ -12,10 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from ess.livedata.config.value_log import ValueLog
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -89,85 +86,40 @@ class Device(Stream):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ContextInput:
-    """Base declaration of one context-stream input to a workflow.
+    """Declaration of one context-stream input to a workflow.
 
     A context input declares that the value of a stream
     (:attr:`stream_name`) should be routed to a Sciline pipeline when
     wiring workflows for the source names listed in
-    :attr:`dependent_sources`. The way the value reaches the pipeline
-    distinguishes the two concrete subclasses:
+    :attr:`dependent_sources`. The :attr:`workflow_key` is the Sciline
+    key receiving the value via ``set_context``. Typed as :class:`Any`
+    because Sciline keys are parameterised generics (e.g.
+    ``InstrumentAngle[SampleRun]``) and Python's type system cannot
+    describe "type of any Sciline key" precisely.
 
-    - :class:`ParameterContext` feeds the stream value to an explicit
-      Sciline parameter key (``workflow_key``). Used when the workflow
-      consumes the value directly (ROI requests, scalar motion readbacks
-      like Bifrost rotation angles).
-    - :class:`TransformationContext` patches an NXtransformations chain
-      entry with the stream value, via a fused per-component
-      patched-chain provider. Used for live geometry from motion logs
-      (e.g. LOKI detector carriage).
+    Two flavors share this record:
 
-    Direct instantiation of this base is forbidden; use one of the
-    subclasses.
+    - **Direct parameter.** ``workflow_key`` is an arbitrary Sciline key
+      (e.g. ``InstrumentAngle[SampleRun]``, ``ROIRectangleRequest``).
+      The stream value is fed straight into ``set_context``.
+    - **NXtransformations chain patch.** ``workflow_key`` is a
+      :class:`~ess.livedata.config.value_log.ValueLog` subclass whose
+      ``transform_path`` class attribute identifies the chain entry to
+      patch. :meth:`Instrument.apply_dynamic_transforms` discovers these
+      by ``issubclass(workflow_key, ValueLog)`` and synthesises a fused
+      per-component patched-chain provider.
 
-    These records are purely declarative: stream name, the spec sources
-    they apply to, and the Sciline-side identity (workflow key or chain
-    target). Per-job runtime behavior — wire-name suffixing, cold-start
-    seeding — lives on the spec-scope wrapper
-    :class:`ess.livedata.handlers.workflow_factory.SpecParameterContext`,
-    which extends :class:`ParameterContext`. Instrument-scope entries
-    never carry such callables; their wire name is the declared
-    :attr:`stream_name` and they have no cold-start seed.
+    Per-job runtime behavior — wire-name suffixing, cold-start seeding —
+    lives on the spec-scope wrapper
+    :class:`ess.livedata.handlers.workflow_factory.SpecContextInput`,
+    which extends this class. Instrument-scope entries never carry such
+    callables; their wire name is the declared :attr:`stream_name` and
+    they have no cold-start seed.
     """
 
     stream_name: str
     dependent_sources: frozenset[str]
-
-    def __post_init__(self) -> None:
-        if type(self) is ContextInput:
-            raise TypeError(
-                "ContextInput is an abstract base; construct "
-                "ParameterContext or TransformationContext instead"
-            )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ParameterContext(ContextInput):
-    """Context input feeding a Sciline workflow parameter directly.
-
-    The :attr:`workflow_key` is the Sciline key on the target pipeline
-    that receives the stream value via ``set_context``. Typed as
-    :class:`Any` because Sciline keys are parameterised generics (e.g.
-    ``InstrumentAngle[SampleRun]``) and Python's type system cannot
-    describe "type of any Sciline key" precisely.
-    """
-
     workflow_key: Any
-
-    def __post_init__(self) -> None:
-        pass  # bypass the abstract guard on the base
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class TransformationContext(ContextInput):
-    """Context input patching an NXtransformations chain entry.
-
-    :attr:`transform_path` identifies the chain entry whose ``value``
-    should be patched from this stream. The framework routes the stream
-    value into the chain via a fused per-component patched-chain
-    provider rather than via direct parameter binding.
-
-    :attr:`log_key` is the :class:`ValueLog` subclass that gives this
-    binding a distinct Sciline parameter. Each binding declares its own
-    subclass — ``class DetectorCarriageLog(ValueLog): ...`` — so
-    multiple dynamic transforms can coexist on one workflow without
-    colliding on a shared key.
-    """
-
-    transform_path: str
-    log_key: type[ValueLog]
-
-    def __post_init__(self) -> None:
-        pass  # bypass the abstract guard on the base
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

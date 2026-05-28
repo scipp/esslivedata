@@ -938,7 +938,7 @@ class _OtherCtxKey:
 
 
 class TestSpecHandleAddContextInput:
-    """Cover :meth:`SpecHandle.add_parameter_context` defaults and append semantics."""
+    """Cover :meth:`SpecHandle.add_context_input` defaults and append semantics."""
 
     def _register(self, *, source_names: list[str]) -> tuple[WorkflowFactory, object]:
         factory = WorkflowFactory()
@@ -961,7 +961,7 @@ class TestSpecHandleAddContextInput:
     def test_default_dependent_sources_fall_back_to_spec_sources(self) -> None:
         factory, handle = self._register(source_names=['det1', 'det2'])
 
-        handle.add_parameter_context(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
 
         [entry] = factory.registration(handle.workflow_id).context_inputs
         assert entry.stream_name == 'roi'
@@ -973,7 +973,7 @@ class TestSpecHandleAddContextInput:
     def test_explicit_dependent_sources_override_default(self) -> None:
         factory, handle = self._register(source_names=['det1', 'det2'])
 
-        handle.add_parameter_context(
+        handle.add_context_input(
             stream_name='roi',
             workflow_key=_CtxKey,
             dependent_sources=['det1'],
@@ -985,8 +985,8 @@ class TestSpecHandleAddContextInput:
     def test_multiple_entries_are_appended(self) -> None:
         factory, handle = self._register(source_names=['det1'])
 
-        handle.add_parameter_context(stream_name='roi', workflow_key=_CtxKey)
-        handle.add_parameter_context(stream_name='polygon', workflow_key=_OtherCtxKey)
+        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_input(stream_name='polygon', workflow_key=_OtherCtxKey)
 
         entries = factory.registration(handle.workflow_id).context_inputs
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
@@ -1001,7 +1001,7 @@ class TestSpecHandleAddContextInput:
         def seed(job_id: JobId) -> object:
             return job_id
 
-        handle.add_parameter_context(
+        handle.add_context_input(
             stream_name='roi',
             workflow_key=_CtxKey,
             stream_resolver=resolver,
@@ -1024,24 +1024,21 @@ class TestSpecHandleAddContextInput:
         assert reg.skip_instrument_contexts is True
 
     def test_chain_patch_rejected_at_spec_scope(self) -> None:
-        """Chain-patch fields are absent from :meth:`SpecHandle.add_parameter_context`:
-        spec scope is direct-bind only because
-        :meth:`Instrument.apply_dynamic_transforms` reads only instrument
-        records. Passing chain-patch kwargs raises ``TypeError`` at the call."""
+        """A :class:`ValueLog` ``workflow_key`` at spec scope is rejected.
+
+        Chain-patching is read only from instrument scope by
+        :meth:`Instrument.apply_dynamic_transforms`; a spec-scope ValueLog
+        would route the f144 value to a Sciline parameter that no provider
+        consumes — silent-wrong.
+        """
         import pytest
 
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            pass
+            transform_path = '/entry/instrument/rot/value'
 
         _, handle = self._register(source_names=['det1'])
 
-        with pytest.raises(TypeError, match='transform_path'):
-            handle.add_parameter_context(
-                stream_name='rot',
-                transform_path='/entry/instrument/rot/value',
-                log_key=_RotLog,
-            )
-        with pytest.raises(TypeError, match='log_key'):
-            handle.add_parameter_context(stream_name='rot', log_key=_RotLog)
+        with pytest.raises(ValueError, match=r'chain-patch.*spec scope'):
+            handle.add_context_input(stream_name='rot', workflow_key=_RotLog)

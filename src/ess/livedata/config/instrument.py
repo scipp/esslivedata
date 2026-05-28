@@ -18,15 +18,16 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .stream import (
-    ContextInput,
-    Device,
-    F144Stream,
-    ParameterContext,
-    Stream,
-    TransformationContext,
-)
+from .stream import ContextInput, Device, F144Stream, Stream
+from .value_log import ValueLog
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
+
+
+def _is_chain_patch(ci: ContextInput) -> bool:
+    """A context input whose ``workflow_key`` is a chain-patching ValueLog subclass."""
+    key = ci.workflow_key
+    return isinstance(key, type) and issubclass(key, ValueLog)
+
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
     'wavelength': 'λ',
@@ -174,50 +175,32 @@ class Instrument:
                 f"{sorted(self.streams)}"
             )
 
-    def add_parameter_context(
+    def add_context_input(
         self,
         *,
         stream_name: str,
         dependent_sources: Iterable[str],
         workflow_key: Any,
     ) -> None:
-        """Register a stream as a Sciline parameter context for one or more specs.
+        """Register a stream as a context input for one or more specs.
 
         Use from ``setup_factories`` to keep heavy Sciline-key imports out
         of ``specs.py``. The stream value is bound to ``workflow_key`` on
         the target pipeline via ``set_context``. Inputs declared at
         construction time go through the same validation in
         ``__post_init__``.
+
+        Chain-patching bindings (live geometry from motion logs) pass a
+        :class:`~ess.livedata.config.value_log.ValueLog` subclass as
+        ``workflow_key``: :meth:`apply_dynamic_transforms` discovers them
+        by ``issubclass`` and routes the value into the NeXus
+        ``depends_on`` chain at ``workflow_key.transform_path`` via a
+        fused per-component patched-chain provider.
         """
-        binding = ParameterContext(
+        binding = ContextInput(
             stream_name=stream_name,
             dependent_sources=frozenset(dependent_sources),
             workflow_key=workflow_key,
-        )
-        self._validate_binding_stream_name(binding)
-        self.context_inputs.append(binding)
-
-    def add_transformation_context(
-        self,
-        *,
-        stream_name: str,
-        dependent_sources: Iterable[str],
-        transform_path: str,
-        log_key: Any,
-    ) -> None:
-        """Register a stream as patching an NXtransformations chain entry.
-
-        Used for live motion logs whose value patches the chain entry at
-        ``transform_path`` via a fused per-component patched-chain
-        provider (see :class:`TransformationContext`). ``log_key`` is the
-        :class:`ValueLog` subclass that gives this binding a distinct
-        Sciline parameter.
-        """
-        binding = TransformationContext(
-            stream_name=stream_name,
-            dependent_sources=frozenset(dependent_sources),
-            transform_path=transform_path,
-            log_key=log_key,
         )
         self._validate_binding_stream_name(binding)
         self.context_inputs.append(binding)
@@ -230,17 +213,16 @@ class Instrument:
         """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
 
         For each ``(source_name, component_type)`` entry, selects every
-        instrument-scope transformation :class:`ContextInput` whose
-        ``dependent_sources`` includes that source name and groups the
-        ``(transform_path, log_key)`` pairs by component type. Each group
-        becomes a single fused provider that replaces essreduce's
+        instrument-scope chain-patch :class:`ContextInput` (one whose
+        ``workflow_key`` is a :class:`ValueLog` subclass) whose
+        ``dependent_sources`` includes that source name, and groups the
+        ``(transform_path, workflow_key)`` pairs by component type. Each
+        group becomes a single fused provider that replaces essreduce's
         ``NeXusTransformationChain[T, SampleRun]`` provider and writes the
         latest sample of each :class:`ValueLog` parameter into the chain.
 
-        Spec-scope ``ContextInput`` records are not consulted: transformation
-        contexts are required to live at instrument scope (only
-        :meth:`Instrument.add_transformation_context` exists; the spec-side
-        :meth:`SpecHandle.add_parameter_context` cannot construct them).
+        Spec-scope ``ContextInput`` records are not consulted:
+        chain-patch contexts are required to live at instrument scope.
 
         Parameters
         ----------
@@ -256,21 +238,21 @@ class Instrument:
         """
         from ess.livedata.handlers.dynamic_transforms import add_dynamic_transforms
 
-        # Dedup by stream_name: repeat ``add_transformation_context`` calls
-        # (e.g. when ``load_factories`` runs twice in a long-lived process or
-        # across tests) leave duplicate :class:`TransformationContext` entries in
-        # ``context_inputs``; passing the same binding twice would create a
-        # provider with duplicate-typed parameters and Sciline rejects that.
+        # Dedup by stream_name: repeat ``add_context_input`` calls (e.g. when
+        # ``load_factories`` runs twice in a long-lived process or across tests)
+        # leave duplicate entries in ``context_inputs``; passing the same
+        # binding twice would create a provider with duplicate-typed parameters
+        # and Sciline rejects that.
         by_type: dict[type, dict[str, tuple[str, type]]] = {}
         for source_name, component_type in components.items():
             for ci in self.context_inputs:
-                if not isinstance(ci, TransformationContext):
+                if not _is_chain_patch(ci):
                     continue
                 if source_name not in ci.dependent_sources:
                     continue
                 by_type.setdefault(component_type, {})[ci.stream_name] = (
-                    ci.transform_path,
-                    ci.log_key,
+                    ci.workflow_key.transform_path,
+                    ci.workflow_key,
                 )
         for component_type, by_stream in by_type.items():
             add_dynamic_transforms(
@@ -655,8 +637,7 @@ class Instrument:
 
         self._validate_binding_dependent_sources()
         self._validate_context_input_wire_name_collisions()
-        self._validate_context_input_log_key_uniqueness()
-        self._validate_transformation_context_consistency()
+        self._validate_chain_patch_value_log_uniqueness()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -684,65 +665,48 @@ class Instrument:
                     f"spec advertises these source_names"
                 )
 
-    def _validate_context_input_log_key_uniqueness(self) -> None:
-        """Raise if two transformation context entries share a ``log_key``.
+    def _validate_chain_patch_value_log_uniqueness(self) -> None:
+        """Raise if chain-patch ``(stream_name, workflow_key)`` is not bijective.
 
-        Sciline keys identify parameters by class. Two bindings with the
-        same ``log_key`` but different streams would silently collapse
-        into a single Sciline node, merging unrelated streams. Each
-        transformation context must declare its own :class:`ValueLog`
-        subclass.
+        Sciline keys identify parameters by class, and
+        :meth:`apply_dynamic_transforms` dedups bindings by ``stream_name``
+        with last-write-wins semantics. Both directions must therefore be
+        unique:
 
-        Repeat entries for the same ``stream_name`` (which can occur if
-        ``load_factories`` is called multiple times in a long-lived
-        process) are allowed: they describe the same binding, not a
-        collision.
+        - Two streams sharing one :class:`ValueLog` subclass would silently
+          collapse into a single Sciline node, merging unrelated streams.
+        - Two :class:`ValueLog` subclasses for one stream would silently
+          drop one binding in the chain-patch provider.
+
+        Repeat entries with identical ``(stream_name, workflow_key)`` (which
+        can occur if ``load_factories`` is called multiple times in a
+        long-lived process) are allowed: they describe the same binding.
         """
-        seen: dict[type, str] = {}
+        by_key: dict[type, str] = {}
+        by_stream: dict[str, type] = {}
         all_inputs = list(self.context_inputs)
         for reg in self.workflow_factory.registrations():
             all_inputs.extend(reg.context_inputs)
         for ci in all_inputs:
-            if not isinstance(ci, TransformationContext):
+            if not _is_chain_patch(ci):
                 continue
-            previous = seen.get(ci.log_key)
-            if previous is not None and previous != ci.stream_name:
+            previous_stream = by_key.get(ci.workflow_key)
+            if previous_stream is not None and previous_stream != ci.stream_name:
                 raise ValueError(
-                    f"ContextInput log_key {ci.log_key.__name__!r} is shared "
-                    f"by streams {previous!r} and {ci.stream_name!r}; each "
-                    "transformation context must declare its own ValueLog "
+                    f"ValueLog subclass {ci.workflow_key.__name__!r} is shared "
+                    f"by streams {previous_stream!r} and {ci.stream_name!r}; "
+                    "each chain-patch context must declare its own ValueLog "
                     "subclass to avoid Sciline node collisions"
                 )
-            seen[ci.log_key] = ci.stream_name
-
-    def _validate_transformation_context_consistency(self) -> None:
-        """Raise if two transformation context entries for one stream disagree.
-
-        :meth:`apply_dynamic_transforms` indexes bindings by ``stream_name``
-        within each component type, so two :class:`TransformationContext`
-        entries declaring the same ``stream_name`` but different
-        ``transform_path`` or ``log_key`` would silently collapse into a
-        single (last-write-wins) provider parameter. The contract is that
-        ``stream_name`` is a wire identifier with a single canonical
-        ``(transform_path, log_key)`` mapping; conflicting declarations
-        are a registration error.
-        """
-        seen: dict[str, tuple[str, type]] = {}
-        for ci in self.context_inputs:
-            if not isinstance(ci, TransformationContext):
-                continue
-            current = (ci.transform_path, ci.log_key)
-            previous = seen.get(ci.stream_name)
-            if previous is not None and previous != current:
+            previous_key = by_stream.get(ci.stream_name)
+            if previous_key is not None and previous_key is not ci.workflow_key:
                 raise ValueError(
-                    f"ContextInput stream {ci.stream_name!r} has conflicting "
-                    f"transformation context declarations: "
-                    f"(transform_path={previous[0]!r}, "
-                    f"log_key={previous[1].__name__!r}) vs "
-                    f"(transform_path={current[0]!r}, "
-                    f"log_key={current[1].__name__!r})"
+                    f"Stream {ci.stream_name!r} has conflicting chain-patch "
+                    f"declarations: ValueLog subclasses "
+                    f"{previous_key.__name__!r} and {ci.workflow_key.__name__!r}"
                 )
-            seen[ci.stream_name] = current
+            by_key[ci.workflow_key] = ci.stream_name
+            by_stream[ci.stream_name] = ci.workflow_key
 
     def _validate_context_input_wire_name_collisions(self) -> None:
         """Raise if context-stream wire names collide.
@@ -752,7 +716,7 @@ class Instrument:
         - **Instrument-vs-spec.** For every (spec, source) pair where both
           instrument-level and spec-level :class:`ContextInput` entries
           apply, the resolved wire-stream names must be unique. Resolvers
-          (see :class:`SpecParameterContext`) are assumed to be name-suffixing
+          (see :class:`SpecContextInput`) are assumed to be name-suffixing
           of the ``(job_id, stream_name)`` pair; we treat the unresolved
           ``stream_name`` as the collision key, which is sound for the
           resolvers in use today (ROI's ``f"{job_id}/{name}"``).

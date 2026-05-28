@@ -14,11 +14,6 @@ import scipp as sc
 import structlog
 
 from ess.livedata.config.instrument import Instrument
-from ess.livedata.config.stream import (
-    ContextInput,
-    ParameterContext,
-    TransformationContext,
-)
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobSchedule,
@@ -26,7 +21,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.handlers.workflow_factory import SpecParameterContext
+from ess.livedata.handlers.workflow_factory import SpecContextInput
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import Message, RunStart, RunStop, StreamId
@@ -188,12 +183,11 @@ class JobFactory:
             for ci in (*instrument_inputs, *registration.context_inputs)
             if job_id.source_name in ci.dependent_sources
         ]
-        context_keys = {ci.stream_name: _resolve_workflow_key(ci) for ci in matching}
+        context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
         wire_for = {
             ci.stream_name: (
                 ci.stream_resolver(job_id, ci.stream_name)
-                if isinstance(ci, SpecParameterContext)
-                and ci.stream_resolver is not None
+                if isinstance(ci, SpecContextInput) and ci.stream_resolver is not None
                 else ci.stream_name
             )
             for ci in matching
@@ -202,7 +196,7 @@ class JobFactory:
         seed_messages = [
             ci.seed_factory(job_id)
             for ci in matching
-            if isinstance(ci, SpecParameterContext) and ci.seed_factory is not None
+            if isinstance(ci, SpecContextInput) and ci.seed_factory is not None
         ]
 
         # The factory still receives a single merged mapping: at the workflow
@@ -746,20 +740,3 @@ def _process_job(
 def pending_context_warning(missing: set[str]) -> str:
     """Human-readable warning message for a job gated on missing context streams."""
     return f"Waiting for context streams: {', '.join(sorted(missing))}"
-
-
-def _resolve_workflow_key(ci: ContextInput) -> Any:
-    """Sciline key used by ``set_context``.
-
-    :class:`TransformationContext` carries its per-binding
-    :class:`ValueLog` subclass on ``log_key``; :class:`ParameterContext`
-    carries the target Sciline parameter as ``workflow_key``.
-    """
-    if isinstance(ci, TransformationContext):
-        return ci.log_key
-    if isinstance(ci, ParameterContext):
-        return ci.workflow_key
-    raise TypeError(
-        f"Unexpected ContextInput subclass {type(ci).__name__!r}; "
-        "expected TransformationContext or ParameterContext"
-    )

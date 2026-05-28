@@ -1659,7 +1659,7 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
@@ -1703,7 +1703,7 @@ class TestJobFactoryContextInput:
             outputs=SimpleTestOutputs,
         )
         # detector_names limited to 'detector1' so use streams not source_names.
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector2'],
@@ -1756,7 +1756,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_parameter_context(
+        handle.add_context_input(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=_resolver,
@@ -1812,7 +1812,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_parameter_context(
+        handle.add_context_input(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=lambda jid, name: f"{jid}/{name}",
@@ -1851,12 +1851,12 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_parameter_context(
+        instrument.add_context_input(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
         )
-        handle.add_parameter_context(stream_name='temp', workflow_key=_CtxKeyB)
+        handle.add_context_input(stream_name='temp', workflow_key=_CtxKeyB)
         handle.skip_instrument_contexts()
 
         captured: dict[str, dict[str, type]] = {}
@@ -1876,15 +1876,15 @@ class TestJobFactoryContextInput:
         assert captured['ck'] == {'temp': _CtxKeyB}
         assert job.missing_context(set()) == {'temp'}
 
-    def test_chain_patch_context_input_delivers_log_key_in_context_keys(self) -> None:
-        """A chain-patch ContextInput contributes its ``log_key`` to the
-        factory's ``context_keys``; the path itself is consumed by
-        :meth:`Instrument.apply_dynamic_transforms` and is not threaded as a
-        separate kwarg."""
+    def test_chain_patch_context_input_delivers_value_log_in_context_keys(self) -> None:
+        """A chain-patch ContextInput contributes its :class:`ValueLog`
+        subclass to the factory's ``context_keys``; the transform path lives
+        on the subclass and is consumed by
+        :meth:`Instrument.apply_dynamic_transforms`."""
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            pass
+            transform_path = '/entry/instrument/rot/value'
 
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
@@ -1895,11 +1895,10 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_transformation_context(
+        instrument.add_context_input(
             stream_name='rot',
             dependent_sources=['detector1'],
-            transform_path='/entry/instrument/rot/value',
-            log_key=_RotLog,
+            workflow_key=_RotLog,
         )
 
         captured: dict[str, dict] = {}

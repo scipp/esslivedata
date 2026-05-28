@@ -56,11 +56,10 @@ def setup_factories(instrument: Instrument) -> None:
     # instrument scope so every spec consuming ``loki_detector_0`` picks it up by
     # default; specs that don't need geometry (tube_view, i_of_q) opt out via
     # ``skip_instrument_contexts`` in ``specs.py``.
-    instrument.add_transformation_context(
+    instrument.add_context_input(
         stream_name='detector_carriage',
         dependent_sources={'loki_detector_0'},
-        transform_path='/entry/instrument/detector_carriage/value',
-        log_key=specs.DetectorCarriageLog,
+        workflow_key=specs.DetectorCarriageLog,
     )
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
