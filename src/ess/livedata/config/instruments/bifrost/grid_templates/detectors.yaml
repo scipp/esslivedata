@@ -21,7 +21,7 @@ cells:
       plot_aspect:
         aspect_type: Free
       window:
-        mode: latest
+        mode: window
   - data_sources:
       primary:
         workflow_id: static/geometric/1
