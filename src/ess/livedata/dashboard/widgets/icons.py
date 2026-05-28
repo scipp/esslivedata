@@ -117,20 +117,6 @@ _ICONS: dict[str, str] = {
         '<path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/>'
         '<path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/>'
     ),
-    # Lock (autoscale off / axis frozen)
-    'lock': _svg(
-        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
-        '1 -2 -2v-6z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
-    ),
-    # Lock-open (autoscale on / axis follows data)
-    'lock-open': _svg(
-        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
-        '0 0 1 -2 -2z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
-    ),
     # Per-axis lock/lock-open variants.
     #
     # The lock body fills x=5-19, y=11-21 and the shackle peaks at y=3 in the
@@ -208,10 +194,9 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons: arrows-maximize, backspace, chevron-down,
-        chevron-right, chevron-up, download, eye, eye-off, lock, lock-c, lock-open,
-        lock-open-c, lock-open-x, lock-open-y, lock-x, lock-y, pencil,
-        player-pause, player-play, player-stop, plus, refresh, settings,
-        trash, x.
+        chevron-right, chevron-up, download, eye, eye-off, lock-c, lock-open-c,
+        lock-open-x, lock-open-y, lock-x, lock-y, pencil, player-pause,
+        player-play, player-stop, plus, refresh, settings, trash, x.
 
     Returns
     -------
