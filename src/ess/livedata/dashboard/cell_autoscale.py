@@ -3,9 +3,8 @@
 """Per-cell, per-session autoscale controller for plot toggles + Fit.
 
 A :class:`CellAutoscaleController` owns the Bokeh ``CustomAction`` tools that
-appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit),
-captures handles to the figure's ``Range1d`` / color mapper, and on each
-HoloViews render writes per-axis ranges based on the toggle state.
+appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit)
+and on each HoloViews render writes per-axis ranges based on the toggle state.
 
 See ``docs/developer/plans/plot-axis-autoscale-implementation.md`` §2 Phase 3.
 """
@@ -15,8 +14,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import structlog
+
 from .plots import Plotter
 from .range_hook import Axis, RangeHandles
+
+logger = structlog.get_logger(__name__)
 
 _TOGGLE_DESCRIPTIONS: dict[Axis, str] = {
     'x': 'X-axis autoscale',
@@ -83,9 +86,9 @@ class CellAutoscaleController:
     """Per-cell, per-session controller for axis autoscale toggles + Fit.
 
     Owns one Bokeh ``CustomAction`` per autoscalable axis (toggle) plus one
-    for Fit. Owns a :class:`RangeHandles`. Exposes a single HoloViews-compatible
-    hook that installs the tools on the figure toolbar, captures handles, and
-    on each render writes per-axis ranges based on each toggle's ``.active``.
+    for Fit. Exposes a single HoloViews-compatible hook that installs the
+    tools on the figure toolbar and on each render writes per-axis ranges
+    based on each toggle's ``.active``.
 
     Toggles default to ``True`` so the very first render with real data snaps
     the range away from the pipe's dummy bounds (strategy §4.5).
@@ -93,7 +96,7 @@ class CellAutoscaleController:
     Parameters
     ----------
     layer_plotters:
-        Plotters for the cell's layers (deduplicated). Targets are unioned
+        Plotters for the cell's layers. Targets are unioned
         across all plotters' computed ``_range_targets`` entries.
     """
 
@@ -102,26 +105,23 @@ class CellAutoscaleController:
         self._axes: frozenset[Axis] = frozenset().union(
             *(plotter.AUTOSCALE_AXES for plotter in self._plotters)
         )
-        self._handles = RangeHandles()
         # Lazy-created on first render so each session's tools live in the
         # session's own Bokeh document (see dashboard-widgets rules).
         self._toggles: dict[Axis, Any] = {}
         self._fit_tool: Any | None = None
         self._tools_installed = False
         # Last target written per axis. Read back on subsequent off-state
-        # renders so the c-axis freeze and the Fit button have a stable
-        # value to apply.
+        # renders so the c-axis freeze has a stable value to apply.
         self._last_targets: dict[Axis, tuple[float, float]] = {}
+        # One-shot Fit signal: set by the Fit on_change handler, honoured on
+        # the next render regardless of toggle state, then cleared. Avoids
+        # writing to potentially-stale handles cached at click time.
+        self._fit_pending: bool = False
 
     @property
     def axes(self) -> frozenset[Axis]:
         """Axes for which this controller exposes a toggle."""
         return self._axes
-
-    @property
-    def handles(self) -> RangeHandles:
-        """The cell's captured Bokeh handles (populated on first render)."""
-        return self._handles
 
     def get_target(self, axis: Axis) -> tuple[float, float] | None:
         """Union of per-plotter ``(lo, hi)`` targets for ``axis``.
@@ -133,6 +133,9 @@ class CellAutoscaleController:
         for plotter in self._plotters:
             if axis not in plotter.AUTOSCALE_AXES:
                 continue
+            # TODO: tighten the iter_range_targets() return type on Plotter so
+            # this loop has full static typing (blocked by other agent's work
+            # on plots.py).
             for _key, targets in plotter.iter_range_targets():
                 target = targets.get(axis)
                 if target is None:
@@ -147,9 +150,12 @@ class CellAutoscaleController:
 
         1. Installs the ``CustomAction`` tools on the figure toolbar (once
            per session, idempotent).
-        2. Captures ``x_range`` / ``y_range`` / ``color_mapper`` handles.
-        3. For each axis whose toggle is active, writes ``(lo, hi)`` to the
-           corresponding Bokeh handle.
+        2. For each axis whose toggle is active, writes ``(lo, hi)`` to the
+           current Bokeh handle. Handles are read from ``plot.handles`` per
+           render -- HoloViews swaps the figure on kdim/Layout transitions,
+           so a cached handle would soon point at a detached model.
+        3. If a Fit click is pending, writes all axes regardless of toggle
+           state, then clears the flag.
 
         When :attr:`axes` is empty the hook is a no-op.
         """
@@ -159,26 +165,27 @@ class CellAutoscaleController:
         def hook(plot: Any, element: Any) -> None:
             del element
             self._install_tools(plot)
-            self._handles.capture(plot)
-            self._apply_targets()
-            # HV's ColorbarPlot reads ``self.clim`` on every render; when both
-            # entries are finite it uses them instead of deriving low/high from
-            # data extent (see holoviews/plotting/bokeh/element.py
-            # ``_get_colormapper``). Setting clim on the colormapped sub-plot
-            # makes the next render's ``_get_colormapper`` pass through our
-            # value untouched -- the exact mechanism the prototype relies on
-            # (when the toggle is off it omits ``clim`` from element opts so
-            # HV's plot param sticks at the last finite value).
-            cm_plot = self._handles.color_mapper_plot
-            if (
-                cm_plot is not None
-                and hasattr(cm_plot, 'clim')
-                and 'c' in self._axes
-                and (clim := self._last_targets.get('c')) is not None
-            ):
-                cm_plot.clim = clim
+            self._apply_targets(plot)
+            self._apply_clim_freeze(plot)
 
         return hook
+
+    def dispose(self) -> None:
+        """Detach Bokeh callbacks and drop tool references.
+
+        Breaks the controller → tool → on_change-callback → controller
+        reference cycle so long sessions don't accumulate detached
+        controllers when cells are rebuilt or removed.
+        """
+        if self._fit_tool is not None:
+            try:
+                self._fit_tool.remove_on_change('active', self._on_fit_active_change)
+            except (ValueError, KeyError):
+                # Already removed, or stub without remove_on_change.
+                pass
+        self._toggles = {}
+        self._fit_tool = None
+        self._tools_installed = False
 
     def _install_tools(self, plot: Any) -> None:
         """Install ``CustomAction`` tools on the figure toolbar once.
@@ -188,21 +195,16 @@ class CellAutoscaleController:
         """
         if self._tools_installed:
             return
-        try:
-            from .widgets.icons import get_icon_data_uri
+        from .widgets.icons import get_icon_data_uri
 
-            axis_icons: dict[Axis, tuple[str | None, str | None]] = {
-                axis: (
-                    get_icon_data_uri(f'lock-open-{axis}'),
-                    get_icon_data_uri(f'lock-{axis}'),
-                )
-                for axis in self._axes
-            }
-            fit_icon = get_icon_data_uri('arrows-maximize')
-        except Exception:
-            # Tests with stub plots don't require real icons.
-            axis_icons = dict.fromkeys(self._axes, (None, None))
-            fit_icon = None
+        axis_icons: dict[Axis, tuple[str, str]] = {
+            axis: (
+                get_icon_data_uri(f'lock-open-{axis}'),
+                get_icon_data_uri(f'lock-{axis}'),
+            )
+            for axis in self._axes
+        }
+        fit_icon = get_icon_data_uri('arrows-maximize')
 
         for axis in sorted(self._axes):
             on_icon, off_icon = axis_icons[axis]
@@ -219,73 +221,86 @@ class CellAutoscaleController:
         self._fit_tool.on_change('active', self._on_fit_active_change)
 
         toolbar = getattr(getattr(plot, 'state', None), 'toolbar', None)
-        if toolbar is not None:
-            # Tools are added via assignment to keep Bokeh's property setter
-            # notified; in-place append would not trigger change events.
-            toolbar.tools = [
-                *toolbar.tools,
-                *self._toggles.values(),
-                self._fit_tool,
-            ]
+        if toolbar is None:
+            # Don't mark installed -- a subsequent render with a real toolbar
+            # should retry rather than silently lose the toggles forever.
+            logger.warning(
+                "No Bokeh toolbar found for cell autoscale controller; "
+                "toggles will be unavailable until the next render."
+            )
+            return
+        # Tools are added via assignment to keep Bokeh's property setter
+        # notified; in-place append would not trigger change events.
+        toolbar.tools = [
+            *toolbar.tools,
+            *self._toggles.values(),
+            self._fit_tool,
+        ]
         self._tools_installed = True
 
-    def _apply_targets(self) -> None:
-        """Write current targets to handles based on each axis's toggle state.
+    def _apply_targets(self, plot: Any) -> None:
+        """Write current targets to handles based on toggle / Fit state.
 
-        For x/y the hook writes only when the toggle is active; HoloViews
-        honours ``framewise=False`` for ``Range1d`` so the previous range
-        (and any manual pan/zoom) is preserved when we skip. For ``c`` the
-        hook also re-applies the last target when the toggle is off -- a
-        belt-and-suspenders safety net alongside the ``plot.clim`` write
-        in ``make_hook`` (which is what actually freezes the colorbar by
-        making HV's next ``_get_colormapper`` use our value).
+        For x/y the hook writes only when the toggle is active or Fit is
+        pending; HoloViews honours ``framewise=False`` for ``Range1d`` so the
+        previous range (and any manual pan/zoom) is preserved when we skip.
+        For ``c`` the hook also re-applies the last target when the toggle is
+        off -- a belt-and-suspenders safety net alongside the ``clim`` write
+        in ``_apply_clim_freeze`` (which is what actually freezes the
+        colorbar by making HV's next ``_get_colormapper`` use our value).
         """
+        fit = self._fit_pending
         for axis in self._axes:
             toggle = self._toggles.get(axis)
-            if toggle is None:
-                continue
-            if toggle.active:
+            active = fit or (toggle is not None and toggle.active)
+            if active:
                 target = self.get_target(axis)
                 if target is None:
                     continue
                 self._last_targets[axis] = target
-                self._write_axis(axis, target)
+                RangeHandles.write(plot, axis, *target)
             elif axis == 'c' and (frozen := self._last_targets.get(axis)) is not None:
-                self._write_axis(axis, frozen)
+                RangeHandles.write(plot, axis, *frozen)
+        if fit:
+            self._fit_pending = False
 
-    def _write_axis(self, axis: Axis, target: tuple[float, float]) -> None:
-        """Write a single axis target onto its captured handle."""
-        lo, hi = target
-        if axis == 'c':
-            mapper = self._handles.color_mapper
-            if mapper is None:
-                return
-            mapper.low = lo
-            mapper.high = hi
-        else:
-            handle = self._handles.x_range if axis == 'x' else self._handles.y_range
-            if handle is None:
-                return
-            handle.start = lo
-            handle.end = hi
+    def _apply_clim_freeze(self, plot: Any) -> None:
+        """Pin ``cm_plot.clim`` so HV's next render keeps our color range.
+
+        HV's ``ColorbarPlot`` reads ``self.clim`` on every render; when both
+        entries are finite it uses them instead of deriving low/high from
+        data extent (see holoviews/plotting/bokeh/element.py
+        ``_get_colormapper``). Setting ``clim`` on the colormapped sub-plot
+        makes the next render's ``_get_colormapper`` pass through our value
+        untouched -- the exact mechanism the prototype relies on (when the
+        toggle is off it omits ``clim`` from element opts so HV's plot param
+        sticks at the last finite value).
+
+        Note: this reaches past HoloViews' public surface and is likely to
+        break on HV bumps. If a documented hook becomes available, switch to
+        it and file an upstream issue tracking the need.
+        """
+        if 'c' not in self._axes:
+            return
+        clim = self._last_targets.get('c')
+        if clim is None:
+            return
+        cm_plot = RangeHandles.color_mapper_plot(plot)
+        if cm_plot is not None and hasattr(cm_plot, 'clim'):
+            cm_plot.clim = clim
 
     def _on_fit_active_change(self, attr: str, old: bool, new: bool) -> None:
         """Bokeh server-side handler for the Fit tool's ``active`` property.
 
-        When the user clicks Fit, ``active`` flips to ``True``; we write
-        current targets to all handles regardless of toggle state, then
-        reset ``active`` to ``False`` so the button returns to its
-        neutral visual state.
+        When the user clicks Fit, ``active`` flips to ``True``; we set a
+        one-shot pending flag that the next hook invocation honours
+        regardless of toggle state. Robust to figure swaps between the click
+        and the next render: the hook writes through the live handles.
         """
         del attr, old
         if not new:
             return
-        for axis in self._axes:
-            target = self.get_target(axis)
-            if target is None:
-                continue
-            self._last_targets[axis] = target
-            self._write_axis(axis, target)
+        self._fit_pending = True
         if self._fit_tool is not None:
             self._fit_tool.active = False
 

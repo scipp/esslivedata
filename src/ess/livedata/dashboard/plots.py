@@ -57,12 +57,21 @@ def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
     )
 
 _LINEAR_PAD = 0.05
+_LINEAR_PAD_MIN = 0.5
 _LOG_PAD_FACTOR = 1.1
 
 
 def _pad_linear(lo: float, hi: float) -> tuple[float, float]:
-    """Apply 5% symmetric padding for linear axes."""
+    """Apply 5% symmetric padding for linear axes.
+
+    When ``hi == lo`` (single point, single-bin histogram, constant image),
+    fall back to an additive offset based on ``abs(lo)`` so the resulting
+    range is non-degenerate. Bokeh renders nothing for a zero-width range.
+    """
     extent = hi - lo
+    if extent == 0.0:
+        offset = max(abs(lo) * _LINEAR_PAD, _LINEAR_PAD_MIN)
+        return lo - offset, hi + offset
     pad = _LINEAR_PAD * extent
     return lo - pad, hi + pad
 
@@ -70,14 +79,10 @@ def _pad_linear(lo: float, hi: float) -> tuple[float, float]:
 def _pad_log(lo: float, hi: float) -> tuple[float, float]:
     """Apply multiplicative padding for log axes.
 
-    The lower bound is clamped to ``lo`` if dividing would underflow (e.g.
-    when ``lo`` is already very small) so the result stays strictly
-    positive — ``LogColorMapper`` rejects non-positive bounds.
+    Assumes ``lo > 0`` — callers must filter non-positive inputs before
+    invoking this (use ``_finite_min_max(values, log=True)``).
     """
-    padded_lo = lo / _LOG_PAD_FACTOR
-    if padded_lo <= 0.0 or not np.isfinite(padded_lo):
-        padded_lo = lo
-    return padded_lo, hi * _LOG_PAD_FACTOR
+    return lo / _LOG_PAD_FACTOR, hi * _LOG_PAD_FACTOR
 
 
 def _pad_range(lo: float, hi: float, *, log: bool) -> tuple[float, float]:
@@ -85,11 +90,42 @@ def _pad_range(lo: float, hi: float, *, log: bool) -> tuple[float, float]:
     return _pad_log(lo, hi) if log else _pad_linear(lo, hi)
 
 
-def _finite_min_max(values: np.ndarray) -> tuple[float, float] | None:
-    """Return finite (min, max) of ``values``, or ``None`` if none are finite."""
+def _bounds_for_log(
+    bounds: tuple[float, float], *, log: bool
+) -> tuple[float, float] | None:
+    """Validate explicit ``(lo, hi)`` bounds for an axis.
+
+    Returns ``None`` if any bound is non-finite, or if ``log=True`` and the
+    lower bound is non-positive — log axes require strictly positive bounds.
+    """
+    lo, hi = bounds
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return None
+    if log and lo <= 0.0:
+        return None
+    return lo, hi
+
+
+def _finite_min_max(
+    values: np.ndarray, *, log: bool = False
+) -> tuple[float, float] | None:
+    """Return finite (min, max) of ``values``, or ``None`` if none qualify.
+
+    Parameters
+    ----------
+    values:
+        Input array.
+    log:
+        If True, also drop non-positive values. ``LogColorMapper`` and
+        Bokeh's log axes reject non-positive bounds, so any padding derived
+        from a non-positive ``lo`` would break rendering.
+    """
     if values.size == 0:
         return None
-    finite = values[np.isfinite(values)]
+    mask = np.isfinite(values)
+    if log:
+        mask &= values > 0
+    finite = values[mask]
     if finite.size == 0:
         return None
     return float(finite.min()), float(finite.max())
@@ -517,6 +553,7 @@ class Plotter:
                 )
                 plots.append(plot_element)
         except Exception as e:
+            self._range_targets = {}
             plots = [
                 hv.Text(0.5, 0.5, f"Error: {e}").opts(
                     text_align='center', text_baseline='middle'
@@ -802,9 +839,11 @@ class LinePlotter(Plotter):
         dim = data.dim
         if dim in data.coords:
             coord_values = data.coords[dim].values
-            if (coord_extent := _finite_min_max(coord_values)) is not None:
+            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            if coord_extent is not None:
                 targets['x'] = _pad_range(*coord_extent, log=self._logx)
-        if (value_extent := _finite_min_max(data.values)) is not None:
+        value_extent = _finite_min_max(data.values, log=self._logy)
+        if value_extent is not None:
             targets['y'] = _pad_range(*value_extent, log=self._logy)
         return targets
 
@@ -903,9 +942,12 @@ class ImagePlotter(Plotter):
             )
             logx = self._scale_opts.x_scale == PlotScale.log
             logy = self._scale_opts.y_scale == PlotScale.log
-            targets['x'] = _pad_range(left, right, log=logx)
-            targets['y'] = _pad_range(bottom, top, log=logy)
-        if (extent := _finite_min_max(plot_data.values)) is not None:
+            if x_extent := _bounds_for_log((left, right), log=logx):
+                targets['x'] = _pad_range(*x_extent, log=logx)
+            if y_extent := _bounds_for_log((bottom, top), log=logy):
+                targets['y'] = _pad_range(*y_extent, log=logy)
+        extent = _finite_min_max(plot_data.values, log=use_log_scale)
+        if extent is not None:
             targets['c'] = _pad_range(*extent, log=use_log_scale)
         return targets
 
@@ -1085,9 +1127,11 @@ class Overlay1DPlotter(Plotter):
         plot_dim = data.dims[1]
         if plot_dim in data.coords:
             coord_values = data.coords[plot_dim].values
-            if (coord_extent := _finite_min_max(coord_values)) is not None:
+            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            if coord_extent is not None:
                 targets['x'] = _pad_range(*coord_extent, log=self._logx)
-        if (value_extent := _finite_min_max(data.values)) is not None:
+        value_extent = _finite_min_max(data.values, log=self._logy)
+        if value_extent is not None:
             targets['y'] = _pad_range(*value_extent, log=self._logy)
         return targets
 

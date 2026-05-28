@@ -264,6 +264,10 @@ class CorrelationHistogramPlotter:
         """Delegate per-axis target lookup to the inner renderer."""
         return self._renderer.get_range_targets(data_key)
 
+    def iter_range_targets(self):
+        """Delegate per-key target iteration to the inner renderer."""
+        return self._renderer.iter_range_targets()
+
     def create_presenter(self) -> PresenterBase:
         """Create a presenter owned by this plotter.
 

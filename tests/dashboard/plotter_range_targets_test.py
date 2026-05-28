@@ -385,6 +385,85 @@ class TestCorrelationHistogramRangeTargets:
         assert set(targets) >= {'x', 'y', 'c'}
         assert targets == plotter._renderer.get_range_targets(src_key)
 
+    def test_1d_iter_range_targets_delegated_to_renderer(self):
+        params = CorrelationHistogram1dParams(bins=Bin1dParams(x_bins=4))
+        plotter = CorrelationHistogram1dPlotter(params=params)
+        src_key = ResultKey(
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
+            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        axis_key = ResultKey(
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
+            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        data = {
+            PRIMARY: {
+                src_key: _correlation_source_data(
+                    [100, 200, 300, 400], [1.0, 2.0, 3.0, 4.0]
+                )
+            },
+            X_AXIS: {
+                axis_key: _correlation_axis_data(
+                    [100, 200, 300, 400], [0.0, 1.0, 2.0, 3.0]
+                )
+            },
+        }
+        plotter.compute(data)
+
+        assert list(plotter.iter_range_targets()) == list(
+            plotter._renderer.iter_range_targets()
+        )
+        # Sanity: the iteration is non-empty and includes the source key.
+        keys = [k for k, _ in plotter.iter_range_targets()]
+        assert src_key in keys
+
+    def test_2d_iter_range_targets_delegated_to_renderer(self):
+        params = CorrelationHistogram2dParams(
+            bins=Bin2dParams(x_bins=4, y_bins=4),
+        )
+        plotter = CorrelationHistogram2dPlotter(params=params)
+        src_key = ResultKey(
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
+            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        x_axis_key = ResultKey(
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
+            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        y_axis_key = ResultKey(
+            workflow_id=WorkflowId(instrument='test', name='test', version=1),
+            job_id=JobId(source_name='temperature', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        data = {
+            PRIMARY: {
+                src_key: _correlation_source_data(
+                    [100, 200, 300, 400], [1.0, 2.0, 3.0, 4.0]
+                )
+            },
+            X_AXIS: {
+                x_axis_key: _correlation_axis_data(
+                    [100, 200, 300, 400], [0.0, 1.0, 2.0, 3.0]
+                )
+            },
+            Y_AXIS: {
+                y_axis_key: _correlation_axis_data(
+                    [100, 200, 300, 400], [10.0, 20.0, 30.0, 40.0], unit='K'
+                )
+            },
+        }
+        plotter.compute(data)
+
+        items = list(plotter.iter_range_targets())
+        assert items == list(plotter._renderer.iter_range_targets())
+        # Sanity: c axis is included in the yielded targets.
+        assert all('c' in targets for _, targets in items)
+        assert src_key in [k for k, _ in items]
+
 
 @pytest.mark.parametrize(
     ('plotter_cls', 'axes'),

@@ -551,7 +551,18 @@ class PlotGridTabs:
             active_cell_ids.update(grid_config.cells.keys())
         for cid in list(self._session_autoscale_controllers):
             if cid not in active_cell_ids:
-                del self._session_autoscale_controllers[cid]
+                self._drop_autoscale_controller(cid)
+
+    def _drop_autoscale_controller(self, cell_id: CellId) -> None:
+        """Pop the controller for ``cell_id`` and dispose it (if any).
+
+        Calling ``dispose()`` breaks the controller → Bokeh-tool →
+        on_change-callback → controller reference cycle so long sessions
+        don't accumulate detached controllers after cell rebuilds/removals.
+        """
+        controller = self._session_autoscale_controllers.pop(cell_id, None)
+        if controller is not None:
+            controller.dispose()
 
     def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, LayerStateMachine]:
         """
@@ -978,7 +989,7 @@ class PlotGridTabs:
                 plots.append(dmap)
 
         if not plots:
-            self._session_autoscale_controllers.pop(cell_id, None)
+            self._drop_autoscale_controller(cell_id)
             return None
 
         result: hv.DynamicMap | hv.Element
@@ -995,7 +1006,7 @@ class PlotGridTabs:
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.
         if has_layout:
-            self._session_autoscale_controllers.pop(cell_id, None)
+            self._drop_autoscale_controller(cell_id)
         else:
             hooks: list = []
             filename = build_save_filename_from_cell(
@@ -1010,13 +1021,15 @@ class PlotGridTabs:
                     if aspect_hook is not None:
                         hooks.append(aspect_hook)
             # Fresh controller on every cell rebuild: keeps tools and
-            # toggle state local to this session's Bokeh document.
+            # toggle state local to this session's Bokeh document. Dispose
+            # any prior controller for this cell first to break its
+            # on_change reference cycle (would otherwise leak across the
+            # session lifetime).
+            self._drop_autoscale_controller(cell_id)
             controller = build_controller_from_layers(cell_plotters)
             if controller is not None:
                 self._session_autoscale_controllers[cell_id] = controller
                 hooks.append(controller.make_hook())
-            else:
-                self._session_autoscale_controllers.pop(cell_id, None)
             if hooks:
                 result = result.opts(hooks=hooks)
 
@@ -1117,7 +1130,8 @@ class PlotGridTabs:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
         self._session_layers.clear()
-        self._session_autoscale_controllers.clear()
+        for cid in list(self._session_autoscale_controllers):
+            self._drop_autoscale_controller(cid)
         self._grid_manager.shutdown()
 
     @property
