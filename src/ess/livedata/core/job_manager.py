@@ -199,19 +199,13 @@ class JobFactory:
             if isinstance(ci, SpecContextBinding) and ci.seed_factory is not None
         ]
 
-        # The factory still receives a single merged mapping: at the workflow
-        # boundary aux and context are both keyed by field name, and the
-        # downstream :class:`StreamProcessorWorkflow` doesn't distinguish.
-        # Job, by contrast, carries the two as separate fields so callers
-        # can ask "user-selected aux" vs "framework-injected context"
-        # without conflation.
-        merged_for_factory = {**rendered_aux_names, **wire_for}
+        aux_streams = {**rendered_aux_names, **wire_for}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
-            aux_source_names=merged_for_factory,
+            aux_source_names=aux_streams,
             context_keys=context_keys,
         )
         job = Job(
@@ -219,9 +213,8 @@ class JobFactory:
             workflow_id=workflow_id,
             processor=stream_processor,
             source_names=[job_id.source_name],
-            aux_source_names=rendered_aux_names,
-            context_aux_source_names=wire_for,
-            context_stream_names=context_stream_names,
+            aux_streams=aux_streams,
+            gating_streams=context_stream_names,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
         return job, seed_messages

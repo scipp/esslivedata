@@ -103,7 +103,7 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
         workflow_id=sample_workflow_id,
         processor=fake_processor,
         source_names=["test_source"],
-        aux_source_names={"aux_source": "aux_source"},
+        aux_streams={"aux_source": "aux_source"},
     )
 
 
@@ -645,7 +645,7 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
+            aux_streams={
                 "incident_monitor": "monitor1",
                 "transmission_monitor": "monitor2",
             },
@@ -685,7 +685,7 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={"monitor1": "monitor1", "monitor2": "monitor2"},
+            aux_streams={"monitor1": "monitor1", "monitor2": "monitor2"},
         )
 
         # Send data with stream names
@@ -708,40 +708,38 @@ class TestJobAuxSourceMapping:
         assert accumulated["monitor1"] == sc.scalar(10.0)
         assert accumulated["monitor2"] == sc.scalar(20.0)
 
-    def test_aux_source_names_property_returns_stream_names(
+    def test_input_stream_names_returns_stream_names(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test that aux_source_names property returns stream names for routing."""
+        """Test that input_stream_names returns stream names for routing."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
+            aux_streams={
                 "incident_monitor": "monitor1",
                 "transmission_monitor": "monitor2",
             },
         )
 
-        # The property should return stream names (values) for JobManager routing
-        aux_names = job.aux_source_names
-        assert set(aux_names) == {"monitor1", "monitor2"}
+        assert set(job.input_stream_names) == {"monitor1", "monitor2"}
 
     def test_aux_sources_empty_dict(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test handling of empty aux_sources dict."""
+        """Test handling of empty aux_streams dict."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={},  # Empty dict
+            aux_streams={},
         )
 
-        assert job.aux_source_names == []
+        assert job.input_stream_names == []
 
         data = JobData(
             start_time=Timestamp.from_ns(100),
@@ -757,17 +755,17 @@ class TestJobAuxSourceMapping:
     def test_aux_sources_none(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test handling of None aux_sources."""
+        """Test handling of None aux_streams."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names=None,
+            aux_streams=None,
         )
 
-        assert job.aux_source_names == []
+        assert job.input_stream_names == []
 
     def test_partial_aux_data_with_dict_mapping(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
@@ -779,7 +777,7 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
+            aux_streams={
                 "incident_monitor": "monitor1",
                 "transmission_monitor": "monitor2",
             },
@@ -813,7 +811,7 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
+            aux_streams={
                 "incident_monitor": "monitor1",  # Both fields map to same stream
                 "normalization_monitor": "monitor1",
             },

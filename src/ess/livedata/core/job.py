@@ -207,9 +207,8 @@ class Job:
         workflow_id: WorkflowId,
         processor: Workflow,
         source_names: list[str],
-        aux_source_names: dict[str, str] | None = None,
-        context_aux_source_names: dict[str, str] | None = None,
-        context_stream_names: set[str] | None = None,
+        aux_streams: dict[str, str] | None = None,
+        gating_streams: set[str] | None = None,
         reset_on_run_transition: bool = True,
     ) -> None:
         """
@@ -225,21 +224,19 @@ class Job:
             The Workflow instance that will process data for this job.
         source_names:
             The names of the primary data sources for this job.
-        aux_source_names:
-            Mapping from field names to stream names for user-selected
-            auxiliary data sources (workflow ``AuxSources``). None if no
-            user-selected auxiliary sources are needed.
-        context_aux_source_names:
-            Mapping from field names to wire stream names for framework-
-            routed context bindings (ADR 0003 ``ContextBinding`` records). Kept
-            separate from ``aux_source_names`` so semantic readers don't
-            confuse user-selected aux with framework-injected context.
-            Both maps feed the same per-stream routing table; the split is
-            for accounting, not behaviour.
-        context_stream_names:
-            Wire stream names whose context value must be available before
-            the workflow runs. The :class:`JobManager` gates the job on
-            these per ADR 0002. Defaults to the empty set — no gating.
+        aux_streams:
+            Field-name to stream-name mapping for every non-primary input —
+            user-selected ``AuxSources`` and framework-routed
+            ``ContextBinding`` wire streams both live here. The distinction
+            between the two only matters at registration / factory time;
+            once a Job is constructed, both kinds are remapped the same way
+            in :meth:`add`. Multiplexing (one stream → many fields) is
+            supported; ``AuxSources`` rejects it where undesired.
+        gating_streams:
+            Subset of ``aux_streams.values()`` whose value must be
+            available before the workflow runs. The :class:`JobManager`
+            gates the job on these per ADR 0002. Defaults to the empty
+            set — no gating.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         """
@@ -250,23 +247,11 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
-        self._aux_source_mapping: dict[str, str] = aux_source_names or {}
-        self._context_aux_mapping: dict[str, str] = context_aux_source_names or {}
-        self._context_stream_names: set[str] = context_stream_names or set()
+        self._aux_streams: dict[str, str] = aux_streams or {}
+        self._gating_streams: set[str] = gating_streams or set()
 
-        # Reverse mapping: stream_name -> list of field_names. Both aux and
-        # context streams feed the same routing table because at the
-        # workflow boundary both deliver values keyed by field name. The
-        # split between the two mappings is preserved on the input side
-        # so callers can distinguish user-selected aux from framework-
-        # injected context. Multiplexing (one stream → many fields) is
-        # supported; ``AuxSources`` is responsible for rejecting it where
-        # undesired.
         self._stream_to_fields: dict[str, list[str]] = {}
-        for field_name, stream_name in (
-            *self._aux_source_mapping.items(),
-            *self._context_aux_mapping.items(),
-        ):
+        for field_name, stream_name in self._aux_streams.items():
             self._stream_to_fields.setdefault(stream_name, []).append(field_name)
 
     @property
@@ -290,44 +275,24 @@ class Job:
         return self._source_names
 
     @property
-    def aux_source_names(self) -> list[str]:
-        """User-selected auxiliary stream names (workflow ``AuxSources``).
-
-        Excludes framework-injected context wire names — those are exposed
-        via :attr:`context_wire_names`. Routing code that needs every
-        stream this job consumes should use :attr:`input_stream_names`.
-        """
-        return list(self._aux_source_mapping.values())
-
-    @property
-    def context_wire_names(self) -> list[str]:
-        """Wire stream names for framework-routed context bindings."""
-        return list(self._context_aux_mapping.values())
-
-    @property
     def input_stream_names(self) -> list[str]:
-        """Every stream name this job consumes (aux + context).
-
-        Use for routing — see :meth:`Job.add` and the dispatch in
-        :class:`JobManager`. Semantic readers wanting only user-selected
-        aux should use :attr:`aux_source_names`.
-        """
-        return [*self._aux_source_mapping.values(), *self._context_aux_mapping.values()]
+        """Every non-primary stream name this job consumes."""
+        return list(self._aux_streams.values())
 
     def missing_context(self, available: set[str]) -> set[str]:
         """
-        Context-stream names that have no value available yet.
+        Gating-stream names that have no value available yet.
 
         The :class:`JobManager` consults this each tick (against the post-
         ``get_context`` set of available stream names) to decide whether to
-        gate the job: any missing context stream indicates a parametric input
+        gate the job: any missing gating stream indicates a parametric input
         whose accumulator has not produced a value, so running the workflow
         would either crash or silently produce data attributed to an
         uninitialised context. Dynamic aux (e.g. monitor streams that
         accumulate over time) is not in this set and does not gate.
         See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
         """
-        return self._context_stream_names - available
+        return self._gating_streams - available
 
     @property
     def reset_on_run_transition(self) -> bool:

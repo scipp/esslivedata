@@ -57,8 +57,8 @@ class FakeJobFactory(JobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=aux,
-            context_stream_names=set(aux.values()),
+            aux_streams=aux,
+            gating_streams=set(aux.values()),
         )
 
         self.created_jobs.append((job_id, config))
@@ -1368,7 +1368,7 @@ class TestJobFactoryRender:
 
         # Verify that render() was called and result was used
         # The job should have the rendered aux source names with source prefix
-        assert job.aux_source_names == [f'{job_id.source_name}/monitor1']
+        assert job.input_stream_names == [f'{job_id.source_name}/monitor1']
 
     def test_job_factory_default_render_preserves_names(self) -> None:
         """Test JobFactory with default render() behavior."""
@@ -1418,7 +1418,7 @@ class TestJobFactoryRender:
         job, _ = factory.create(job_id=job_id, config=config)
 
         # Default render should preserve the original names
-        assert set(job.aux_source_names) == {'monitor1', 'monitor2'}
+        assert set(job.input_stream_names) == {'monitor1', 'monitor2'}
 
     def test_job_factory_with_no_aux_sources(self) -> None:
         """Test JobFactory with workflow that has no aux sources."""
@@ -1452,7 +1452,7 @@ class TestJobFactoryRender:
 
         # Should not raise, should create job with empty aux sources
         job, _ = factory.create(job_id=job_id, config=config)
-        assert job.aux_source_names == []
+        assert job.input_stream_names == []
 
     def test_job_factory_with_empty_aux_source_names(self) -> None:
         """Test JobFactory when config has empty aux_source_names dict with defaults."""
@@ -1491,7 +1491,7 @@ class TestJobFactoryRender:
 
         job, _ = factory.create(job_id=job_id, config=config)
         # Empty dict triggers model defaults, so should use 'monitor1'
-        assert job.aux_source_names == ['monitor1']
+        assert job.input_stream_names == ['monitor1']
 
     def test_job_factory_render_uses_source_name(self) -> None:
         """Test that render() can use source_name from JobId."""
@@ -1552,8 +1552,8 @@ class TestJobFactoryRender:
         job2, _ = factory.create(job_id=job_id_2, config=config2)
 
         # Each job should have source-specific stream name
-        assert job1.aux_source_names == ['detector1/roi_rectangle']
-        assert job2.aux_source_names == ['detector2/roi_rectangle']
+        assert job1.input_stream_names == ['detector1/roi_rectangle']
+        assert job2.input_stream_names == ['detector2/roi_rectangle']
 
     def test_job_factory_render_with_empty_dict_uses_defaults(self) -> None:
         """Test that empty aux_source_names dict triggers model defaults and render."""
@@ -1611,7 +1611,7 @@ class TestJobFactoryRender:
         job, _ = factory.create(job_id=job_id, config=config)
 
         # Should use default 'monitor1' and render it with source prefix
-        assert job.aux_source_names == ['detector1/monitor1']
+        assert job.input_stream_names == ['detector1/monitor1']
 
 
 class _CtxKeyA:
@@ -1683,12 +1683,8 @@ class TestJobFactoryContextBinding:
         # streams, satisfied as soon as 'rot' becomes available.
         assert job.missing_context(set()) == {'rot'}
         assert job.missing_context({'rot'}) == set()
-        # Routed as a context wire stream, not user-selected aux: visible via
-        # context_wire_names and the routing-combined input_stream_names, but
-        # not via aux_source_names.
-        assert 'rot' in job.context_wire_names
+        # The wire stream is routed to the workflow alongside user-selected aux.
         assert 'rot' in job.input_stream_names
-        assert 'rot' not in job.aux_source_names
         # No seed_factory declared → no cold-start messages.
         assert seeds == []
 
@@ -1948,7 +1944,7 @@ class ThreadTrackingJobFactory(FakeJobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=config.aux_source_names,
+            aux_streams=config.aux_source_names,
         )
         self.created_jobs.append((job_id, config))
         return job, []
