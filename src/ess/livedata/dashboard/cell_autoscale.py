@@ -5,8 +5,6 @@
 A :class:`CellAutoscaleController` owns the Bokeh ``CustomAction`` tools that
 appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit)
 and on each HoloViews render writes per-axis ranges based on the toggle state.
-
-See ``docs/developer/plans/plot-axis-autoscale-implementation.md`` §2 Phase 3.
 """
 
 from __future__ import annotations
