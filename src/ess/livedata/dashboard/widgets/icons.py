@@ -234,12 +234,24 @@ def list_icons() -> list[str]:
     return sorted(_ICONS.keys())
 
 
-def get_icon_data_uri(name: str) -> str:
+BOKEH_TOOLBAR_ICON_COLOR = '#5b5b5b'
+"""Approximate stroke color of Bokeh's built-in toolbar tool icons.
+
+Data-URI icons render as ``<img>`` rather than inline SVG, so
+``stroke="currentColor"`` does not inherit the surrounding text color and
+falls back to black. Substituting this value matches Bokeh's own toolbar
+icons visually.
+"""
+
+
+def get_icon_data_uri(name: str, *, stroke: str = BOKEH_TOOLBAR_ICON_COLOR) -> str:
     """Return an icon as a ``data:image/svg+xml;base64,...`` URI.
 
     Useful for Bokeh ``CustomAction(icon=...)``, which accepts a data URI with
-    an ``image/*`` MIME type but not a raw SVG string.
+    an ``image/*`` MIME type but not a raw SVG string. ``stroke`` replaces the
+    SVG's ``currentColor`` so the icon renders in a fixed color rather than
+    falling back to black.
     """
-    svg = get_icon(name)
+    svg = get_icon(name).replace('stroke="currentColor"', f'stroke="{stroke}"')
     encoded = base64.b64encode(svg.encode('utf-8')).decode('ascii')
     return f'data:image/svg+xml;base64,{encoded}'
