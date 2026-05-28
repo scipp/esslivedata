@@ -121,16 +121,16 @@ _ICONS: dict[str, str] = {
         '<path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/>'
         '<path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/>'
     ),
-    # Arrows-maximize (fit / expand)
-    'arrows-maximize': _svg(
-        '<path d="M16 4l4 0l0 4"/>'
-        '<path d="M14 10l6 -6"/>'
-        '<path d="M8 20l-4 0l0 -4"/>'
-        '<path d="M4 20l6 -6"/>'
-        '<path d="M16 20l4 0l0 -4"/>'
-        '<path d="M14 14l6 6"/>'
-        '<path d="M8 4l-4 0l0 4"/>'
-        '<path d="M4 4l6 6"/>'
+    # Arrows-minimize (fit data to viewport)
+    'arrows-minimize': _svg(
+        '<path d="M5 9l4 0l0 -4"/>'
+        '<path d="M3 3l6 6"/>'
+        '<path d="M5 15l4 0l0 4"/>'
+        '<path d="M3 21l6 -6"/>'
+        '<path d="M19 9l-4 0l0 -4"/>'
+        '<path d="M15 9l6 -6"/>'
+        '<path d="M19 15l-4 0l0 4"/>'
+        '<path d="M15 15l6 6"/>'
     ),
 }
 
@@ -176,7 +176,7 @@ def get_icon(name: str) -> str:
     Parameters
     ----------
     name:
-        Icon name. Available icons: arrows-maximize, backspace, chevron-down,
+        Icon name. Available icons: arrows-minimize, backspace, chevron-down,
         chevron-right, chevron-up, download, eye, eye-off, lock-c, lock-open-c,
         lock-open-x, lock-open-y, lock-x, lock-y, pencil, player-pause,
         player-play, player-stop, plus, refresh, settings, trash, x.

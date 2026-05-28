@@ -204,7 +204,7 @@ class CellAutoscaleController:
             )
             for axis in self._axes
         }
-        fit_icon = get_icon_data_uri('arrows-maximize')
+        fit_icon = get_icon_data_uri('arrows-minimize')
 
         for axis in sorted(self._axes):
             on_icon, off_icon = axis_icons[axis]
