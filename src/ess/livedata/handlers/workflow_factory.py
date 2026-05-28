@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ess.livedata.config.stream import ContextInput
+from ess.livedata.config.stream import ContextBinding
 from ess.livedata.config.workflow_spec import (
     JobId,
     WorkflowConfig,
@@ -36,8 +36,8 @@ class Workflow(Protocol):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SpecContextInput(ContextInput):
-    """Spec-scope context input with per-job runtime callables.
+class SpecContextBinding(ContextBinding):
+    """Spec-scope context binding with per-job runtime callables.
 
     Lives next to :class:`WorkflowFactory` because the optional callables
     reference :class:`JobId` and :class:`Message` — runtime concepts that
@@ -65,7 +65,7 @@ class WorkflowRegistration:
 
     Bundles the declarative :class:`WorkflowSpec` with implementation-side
     data: the factory callable, the owning service, spec-scope
-    :class:`ContextInput` declarations, and the opt-out flag for
+    :class:`ContextBinding` declarations, and the opt-out flag for
     instrument-scope context bindings. Keeping these alongside the factory
     (rather than on :class:`WorkflowSpec`) preserves the spec as a purely
     declarative model and keeps runtime-coupled types
@@ -75,7 +75,7 @@ class WorkflowRegistration:
     spec: WorkflowSpec
     service: str
     factory: Callable[..., Workflow] | None = None
-    context_inputs: tuple[SpecContextInput, ...] = ()
+    context_bindings: tuple[SpecContextBinding, ...] = ()
     skip_instrument_contexts: bool = False
 
 
@@ -98,7 +98,7 @@ class SpecHandle:
         """Decorator to attach factory implementation to this spec."""
         return self._factory.attach_factory(self.workflow_id)
 
-    def add_context_input(
+    def add_context_binding(
         self,
         *,
         stream_name: str,
@@ -107,7 +107,7 @@ class SpecHandle:
         stream_resolver: Callable[[JobId, str], str] | None = None,
         seed_factory: Callable[[JobId], Message] | None = None,
     ) -> None:
-        """Append a spec-level :class:`SpecContextInput` to the registration.
+        """Append a spec-level :class:`SpecContextBinding` to the registration.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
@@ -117,13 +117,13 @@ class SpecHandle:
         Chain-patch contexts (``workflow_key`` is a
         :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
         declared at instrument scope via
-        :meth:`Instrument.add_context_input`:
+        :meth:`Instrument.add_context_binding`:
         :meth:`Instrument.apply_dynamic_transforms` reads only
         instrument-scope records, so a spec-scope chain-patch context would
         route the f144 value to a Sciline parameter that no provider
         consumes — silent-wrong.
         """
-        self._factory._add_context_input(
+        self._factory._add_context_binding(
             self.workflow_id,
             stream_name=stream_name,
             workflow_key=workflow_key,
@@ -140,7 +140,7 @@ class SpecHandle:
         this spec does not need the value — e.g. a counts-only ratemeter on
         a moving detector. The spec is removed from the gate and from the
         resolved context for those streams. Spec-scope bindings (declared
-        via :meth:`add_context_input`) are unaffected.
+        via :meth:`add_context_binding`) are unaffected.
         """
         self._factory._set_skip_instrument_contexts(self.workflow_id)
 
@@ -151,7 +151,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
     Implements ``Mapping[WorkflowId, WorkflowSpec]`` for read access: the
     dashboard and other spec-only readers see this as a mapping to specs.
     Use :meth:`registration` / :meth:`registrations` to access the full
-    record (factory callable, context inputs, etc.).
+    record (factory callable, context bindings, etc.).
     """
 
     def __init__(self) -> None:
@@ -265,7 +265,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         return decorator
 
-    def _add_context_input(
+    def _add_context_binding(
         self,
         workflow_id: WorkflowId,
         *,
@@ -285,14 +285,14 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             raise ValueError(
                 f"workflow_key {workflow_key.__name__!r} is a ValueLog subclass; "
                 "chain-patch contexts must be declared at instrument scope via "
-                "Instrument.add_context_input, not at spec scope"
+                "Instrument.add_context_binding, not at spec scope"
             )
         reg = self._registrations[workflow_id]
         if dependent_sources is None:
             sources = frozenset(reg.spec.source_names)
         else:
             sources = frozenset(dependent_sources)
-        new_input = SpecContextInput(
+        new_input = SpecContextBinding(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
@@ -300,7 +300,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             seed_factory=seed_factory,
         )
         self._registrations[workflow_id] = dataclasses.replace(
-            reg, context_inputs=(*reg.context_inputs, new_input)
+            reg, context_bindings=(*reg.context_bindings, new_input)
         )
 
     def _set_skip_instrument_contexts(self, workflow_id: WorkflowId) -> None:
@@ -329,7 +329,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         aux_source_names:
             Rendered auxiliary source names (already resolved by JobFactory).
         context_keys:
-            Resolved ``ContextInput`` mapping (stream_name → workflow_key).
+            Resolved ``ContextBinding`` mapping (stream_name → workflow_key).
             Forwarded to factories that opt in by declaring ``context_keys``
             in their signature.
         """

@@ -6,7 +6,7 @@
 
 ## Context
 
-Sciline-based workflows parametrise their graph on context inputs — motor positions, ROIs, choppers — delivered alongside detector data. `StreamProcessor` holds a hidden `None` seed for every context input. If a workflow runs before a context message has arrived, providers downstream of that input receive `None` and either crash (bifrost's `process_chunk_workflow` reads rotation inside `accumulate`, raising `'NoneType' object has no attribute 'ndim'`) or — worse — silently produce detector data attributed to a default geometry. Both failure modes have surfaced in production.
+Sciline-based workflows parametrise their graph on context bindings — motor positions, ROIs, choppers — delivered alongside detector data. `StreamProcessor` holds a hidden `None` seed for every context binding. If a workflow runs before a context message has arrived, providers downstream of that input receive `None` and either crash (bifrost's `process_chunk_workflow` reads rotation inside `accumulate`, raising `'NoneType' object has no attribute 'ndim'`) or — worse — silently produce detector data attributed to a default geometry. Both failure modes have surfaced in production.
 
 The system needs a gate that prevents workflow invocation until every **context** input the workflow depends on has a value. The design questions are where this gate lives and how it knows which inputs to gate on.
 
@@ -23,7 +23,7 @@ Context streams are declared separately from `AuxSources`, at spec-level or inst
 
 ### ROI cold start
 
-ROI is a context input with a meaningful "no message yet" steady state: the user has not (yet) selected an ROI. The dashboard publishes a zero-length concatenated DataArray when the user deletes the last ROI, but at cold startup it publishes nothing — so a gate that waits for the first ROI message would never open for a detector-view workflow whose user has not yet drawn one.
+ROI is a context binding with a meaningful "no message yet" steady state: the user has not (yet) selected an ROI. The dashboard publishes a zero-length concatenated DataArray when the user deletes the last ROI, but at cold startup it publishes nothing — so a gate that waits for the first ROI message would never open for a detector-view workflow whose user has not yet drawn one.
 
 The `MessagePreprocessor` populates accumulators lazily — only on first message arrival (`orchestrating_processor.py:62-68`). An accumulator that does not exist contributes no value, so a defaulted `LatestValueHandler` is useless on its own: without a triggering message, it never gets constructed and its default never reaches the gate.
 
@@ -31,7 +31,7 @@ The `MessagePreprocessor` populates accumulators lazily — only on first messag
 
 Gate at `JobManager`, not at the workflow execution unit. Two design pieces fall out of the aux-vs-context disambiguation:
 
-1. **Gate on context streams.** `Job` carries `context_stream_names: set[str]` — the set of wire stream names whose values the workflow consumes via `set_context`. `Job.missing_context(available)` returns the context streams not present in the (post-`get_context`) `WorkflowData`. The JobManager skips and warns when this set is non-empty. The set is populated at `JobFactory.create` from spec-level and instrument-level context-input declarations (see ADR 0003 for the declaration mechanism).
+1. **Gate on context streams.** `Job` carries `context_stream_names: set[str]` — the set of wire stream names whose values the workflow consumes via `set_context`. `Job.missing_context(available)` returns the context streams not present in the (post-`get_context`) `WorkflowData`. The JobManager skips and warns when this set is non-empty. The set is populated at `JobFactory.create` from spec-level and instrument-level context-binding declarations (see ADR 0003 for the declaration mechanism).
 2. **Seed context accumulators at job scheduling.** Context inputs with a steady-state default value (currently ROI) carry a seed alongside their declaration. The JobManager forwards seed messages to the preprocessor at scheduling time as ordinary `Message` objects, creating the accumulator and seeding it with the default. Subsequent dashboard publishes overwrite the seed normally.
 
 Activation remains time-driven via `should_start`. On each tick, after `OrchestratingProcessor` enriches `WorkflowData` with cached context via `MessagePreprocessor.get_context`, JobManager checks per active job: is `job.missing_context({s.name for s in data.data})` empty? If not, skip the job for this tick and record a `pending_context_warning(missing)`.
@@ -52,7 +52,7 @@ Activation remains time-driven via `should_start`. On each tick, after `Orchestr
 
 ### Aux vs context, explicitly
 
-`Job.aux_source_names` keeps its existing routing semantics — every aux stream the job consumes, regardless of how the workflow uses it. A new `context_stream_names: set[str]` carries the gating set, populated at `JobFactory.create` from context-input declarations resolved for the specific (spec, source). `Job.missing_context(available)` uses this set; `Job.missing_aux` does not exist. The declaration model is settled in ADR 0003.
+`Job.aux_source_names` keeps its existing routing semantics — every aux stream the job consumes, regardless of how the workflow uses it. A new `context_stream_names: set[str]` carries the gating set, populated at `JobFactory.create` from context-binding declarations resolved for the specific (spec, source). `Job.missing_context(available)` uses this set; `Job.missing_aux` does not exist. The declaration model is settled in ADR 0003.
 
 This keeps spec/instrument-level declarations as the single source of truth for which inputs are context. Adding a new workflow that needs gating requires no changes to `JobManager` — only the standard declaration in the spec or on the instrument binding.
 

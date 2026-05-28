@@ -1,11 +1,11 @@
-# Block B: Implement ADR 0003 (unified ContextInput declaration model)
+# Block B: Implement ADR 0003 (unified ContextBinding declaration model)
 
 Builds on the Block A commits on `jobmanager-context-gate` (commits c16e5c24,
 7424b02c, cda8ba5f) that implement the JobManager gate per ADR 0002 with
 transitional carriers (`Workflow.context_keys` protocol member,
 `AuxSources.initial_context_messages` hook, `DetectorROIAuxSources`,
 `bifrost_aux_sources`). This plan replaces those transitional carriers with
-first-class `ContextInput` declarations as specified in ADR 0003.
+first-class `ContextBinding` declarations as specified in ADR 0003.
 
 Reviewed by senior-engineer-review (decisions baked in below; risk register
 trimmed to what remains open).
@@ -37,19 +37,19 @@ gained `context_keys` as a fourth opt-in kwarg (a fifth would warrant
 rethinking the pattern itself).
 
 Two follow-ups noted for separate PRs:
-- Document `ContextInput`'s resolver-purity assumption (name-suffixing) in
+- Document `ContextBinding`'s resolver-purity assumption (name-suffixing) in
   its docstring — B8's collision check depends on it.
 - Revisit the `WorkflowFactory.create` opt-in pattern if a fifth kwarg appears.
 
 ## Final-state target (post-Block B)
 
-- `LogContextBinding` renamed to `ContextInput` (`config/stream.py`),
+- `LogContextBinding` renamed to `ContextBinding` (`config/stream.py`),
   with optional `stream_resolver` and `seed_factory` fields.
-- `Instrument.log_context_bindings` → `Instrument.context_inputs`;
-  `Instrument.add_log_context_binding` → `Instrument.add_context_input`.
-- `WorkflowSpec.context_inputs: list[ContextInput]`; `SpecHandle.add_context_input`
+- `Instrument.log_context_bindings` → `Instrument.context_bindings`;
+  `Instrument.add_log_context_binding` → `Instrument.add_context_binding`.
+- `WorkflowSpec.context_bindings: list[ContextBinding]`; `SpecHandle.add_context_binding`
   appends, defaulting `dependent_sources` to `frozenset(spec.source_names)`.
-- `JobFactory.create` merges instrument + spec ContextInput entries filtered by
+- `JobFactory.create` merges instrument + spec ContextBinding entries filtered by
   source membership, computes `context_keys` (workflow-facing field-name →
   workflow-key) and `context_stream_names` (wire-name set for the gate), and
   emits seed messages. `JobManager.schedule_job` (via `_seed_initial_context`)
@@ -63,17 +63,17 @@ Two follow-ups noted for separate PRs:
   still accepts `context_keys` as a constructor argument (unchanged).
   `AreaDetectorView` and `TimeseriesStreamProcessor` lose their empty stubs.
 - `DetectorROIAuxSources` deleted. ROI declared per-spec via
-  `spec_handle.add_context_input(...)` with a resolver
+  `spec_handle.add_context_binding(...)` with a resolver
   (`lambda jid, name: f"{jid}/{name}"`) and a `seed_factory`.
 - `bifrost_aux_sources` deleted; the three qmap-family `register_spec` calls
   lose the `aux_sources=…` kwarg. The existing instrument-level
-  `add_context_input` calls in bifrost's `factories.py` carry the rotation
+  `add_context_binding` calls in bifrost's `factories.py` carry the rotation
   declarations.
 - LOKI's `LOKI_DYNAMIC_TRANSFORMS` dual declaration collapses: one
-  `instrument.add_context_input(stream_name='detector_carriage',
+  `instrument.add_context_binding(stream_name='detector_carriage',
   workflow_key=TransformValueLog, dependent_sources=frozenset({'loki_detector_0'}))`
   in `loki/factories.py`. The `transform_name` (NeXus path used by
-  `add_dynamic_transform`) does not fit `ContextInput` and lives in a small
+  `add_dynamic_transform`) does not fit `ContextBinding` and lives in a small
   per-source `dict[str, str]` local to `loki/factories.py` — see ADR 0003 §
   "LOKI transform_name carrier". `DetectorViewFactory.dynamic_transforms`
   constructor parameter is removed; the factory receives `context_keys` as a
@@ -83,7 +83,7 @@ Two follow-ups noted for separate PRs:
   dynamic, user-selectable aux only.
 - `Job.context_aux_stream_names` → `Job.context_stream_names`.
 - `gather_source_names` learns to include the stream names of instrument-level
-  `context_inputs` and spec-level `context_inputs` whose `stream_resolver` is
+  `context_bindings` and spec-level `context_bindings` whose `stream_resolver` is
   `None` (so the bifrost rotation and LOKI carriage f144 streams get subscribed
   by the `detector_data` namespace). Spec-level entries with a resolver are
   job-scoped (ROI) and routed via a dedicated topic, not via
@@ -91,56 +91,56 @@ Two follow-ups noted for separate PRs:
 - `SpecRequirements.requires_aux_sources` in `dashboard/plotter_registry.py:89-120`
   is removed as YAGNI — the only references are in the deleted test cases
   (see B3).
-- Registration-time collision validation: a spec-level `ContextInput` whose
+- Registration-time collision validation: a spec-level `ContextBinding` whose
   resolved wire name collides with an instrument-level one for any (spec,
   source) pair is a registration error.
 
 ## Commit sequence
 
-### B1 — Introduce ContextInput, deprecate LogContextBinding
+### B1 — Introduce ContextBinding, deprecate LogContextBinding
 
 Mechanical rename + add optional fields. No semantic change.
 
 Files:
 - `src/ess/livedata/config/stream.py` — rename `LogContextBinding` to
-  `ContextInput`; add `stream_resolver: Callable[[JobId, str], str] | None = None`
+  `ContextBinding`; add `stream_resolver: Callable[[JobId, str], str] | None = None`
   and `seed_factory: Callable[[JobId], Message] | None = None` (both default
   preserve current behaviour). Keep the class `@dataclass(frozen=True, slots=True,
   kw_only=True)`.
 - `src/ess/livedata/config/__init__.py` — update the re-export.
 - `src/ess/livedata/config/instrument.py` —
-  - rename field `log_context_bindings` → `context_inputs`;
-  - rename method `add_log_context_binding` → `add_context_input`;
+  - rename field `log_context_bindings` → `context_bindings`;
+  - rename method `add_log_context_binding` → `add_context_binding`;
   - update `_validate_binding_stream_name` body + error message
-    ("ContextInput references unknown stream…").
+    ("ContextBinding references unknown stream…").
 - `src/ess/livedata/config/instruments/bifrost/factories.py:74,79` — update the
   two `add_log_context_binding` call sites.
 - `tests/config/instrument_test.py:330+` — rename `TestLogContextBindings` to
-  `TestContextInputs`; update the six `add_log_context_binding` call sites
+  `TestContextBindings`; update the six `add_log_context_binding` call sites
   (lines 334, 349, 369, 372, 402, 424). Update assertions on
-  `instrument.log_context_bindings` to `instrument.context_inputs`.
+  `instrument.log_context_bindings` to `instrument.context_bindings`.
 
 Validation: `pytest -n auto -q`. Slow bifrost qmap test should pass unchanged.
 
-### B2 — WorkflowSpec.context_inputs + SpecHandle.add_context_input
+### B2 — WorkflowSpec.context_bindings + SpecHandle.add_context_binding
 
 Additive. No consumption yet.
 
 Files:
 - `src/ess/livedata/config/workflow_spec.py` — add
-  `context_inputs: list[ContextInput] = Field(default_factory=list)` to
+  `context_bindings: list[ContextBinding] = Field(default_factory=list)` to
   `WorkflowSpec`.
 - `src/ess/livedata/handlers/workflow_factory.py` — extend `SpecHandle` with
-  `add_context_input(stream_name, workflow_key, *, dependent_sources=None,
-  stream_resolver=None, seed_factory=None)` that constructs a `ContextInput`
-  and appends it to `self._factory[self.workflow_id].context_inputs`. When
+  `add_context_binding(stream_name, workflow_key, *, dependent_sources=None,
+  stream_resolver=None, seed_factory=None)` that constructs a `ContextBinding`
+  and appends it to `self._factory[self.workflow_id].context_bindings`. When
   `dependent_sources` is None, default to `frozenset(spec.source_names)`.
 - Unit tests for the new method (default `dependent_sources` substitution,
   appending semantics).
 
 Validation: `pytest -n auto -q`.
 
-### B3 — Add ContextInput record declarations (additive only)
+### B3 — Add ContextBinding record declarations (additive only)
 
 **Revised after the first implementation attempt.** The previous draft of B3
 deleted `DetectorROIAuxSources` and `bifrost_aux_sources` while leaving
@@ -149,7 +149,7 @@ path. That path produces an empty gate set once the AuxSources subclasses are
 removed, so bifrost crashes immediately. The fix is to split "add new
 declarations" from "switch consumption + delete legacy" into two commits:
 
-- **B3 (this commit):** Add the new ContextInput records everywhere they need
+- **B3 (this commit):** Add the new ContextBinding records everywhere they need
   to land. NOTHING is deleted; the legacy AuxSources subclasses, kwargs, and
   factory parameters stay in place. The new records are inert because
   `JobFactory.create` still reads `Workflow.context_keys` and
@@ -163,7 +163,7 @@ Files (B3, purely additive):
 ROI declarations:
 - `src/ess/livedata/handlers/detector_view_specs.py` (around
   `register_detector_view_spec`, line 583+) — when `roi_support` is true,
-  call `handle.add_context_input(stream_name='roi_rectangle',
+  call `handle.add_context_binding(stream_name='roi_rectangle',
   workflow_key=ROIRectangleRequest,
   stream_resolver=lambda jid, name: f"{jid}/{name}",
   seed_factory=_roi_rectangle_seed)` and the polygon equivalent. Add
@@ -176,7 +176,7 @@ ROI declarations:
 
 LOKI carriage declaration:
 - `src/ess/livedata/config/instruments/loki/factories.py` — add
-  `instrument.add_context_input(stream_name='detector_carriage',
+  `instrument.add_context_binding(stream_name='detector_carriage',
   workflow_key=TransformValueLog,
   dependent_sources=frozenset({'loki_detector_0'}))`.
 - Do NOT yet delete `LOKI_DYNAMIC_TRANSFORMS` or change `DetectorViewFactory`.
@@ -184,9 +184,9 @@ LOKI carriage declaration:
   declaration; B4 removes the duplication.
 
 Bifrost declarations:
-- Already in place from B1 (the `add_log_context_binding` → `add_context_input`
-  rename). Bifrost's `instrument.add_context_input(...)` calls in
-  `bifrost/factories.py:74,79` now contribute to `instrument.context_inputs`,
+- Already in place from B1 (the `add_log_context_binding` → `add_context_binding`
+  rename). Bifrost's `instrument.add_context_binding(...)` calls in
+  `bifrost/factories.py:74,79` now contribute to `instrument.context_bindings`,
   ready for B4 to consume.
 
 Tests:
@@ -198,19 +198,19 @@ Tests:
 Validation: full fast suite (no behaviour changes) + bifrost slow test
 (passes via the legacy `Workflow.context_keys ∩ aux_source_names` path).
 
-### B4 — Atomic swap: JobFactory consumes ContextInput; delete legacy
+### B4 — Atomic swap: JobFactory consumes ContextBinding; delete legacy
 
 Switches the source of the gate set + seed messages AND removes the legacy
-declarations + factory parameters whose roles are now covered by ContextInput.
+declarations + factory parameters whose roles are now covered by ContextBinding.
 This is the largest commit and the one that requires the most care, but it
-remains a single coherent change: "the system now uses ContextInput".
+remains a single coherent change: "the system now uses ContextBinding".
 
 Files:
 
 JobFactory + JobManager swap:
 - `src/ess/livedata/core/job_manager.py` (`JobFactory.create`) —
-  - build `matching` as the union of `instrument.context_inputs` and
-    `spec.context_inputs` filtered by `job_id.source_name in ci.dependent_sources`;
+  - build `matching` as the union of `instrument.context_bindings` and
+    `spec.context_bindings` filtered by `job_id.source_name in ci.dependent_sources`;
   - `context_keys = {ci.stream_name: ci.workflow_key for ci in matching}`;
   - `wire_for = {ci.stream_name:
         ci.stream_resolver(job_id, ci.stream_name) if ci.stream_resolver
@@ -263,7 +263,7 @@ LOKI transform_name carrier:
   stripped-down `dict[str, str]` (source_name → transform_name). Pass it to
   `DetectorViewFactory` via a new constructor kwarg `transform_names:
   dict[str, str]`. The `aux_stream` field of `TransformValueStream` is no
-  longer needed (its role is taken by `ContextInput.stream_name`).
+  longer needed (its role is taken by `ContextBinding.stream_name`).
 - `src/ess/livedata/config/instruments/loki/specs.py:43-51,27,277` — delete
   `LOKI_DYNAMIC_TRANSFORMS`, the `DetectorROIAuxSources` import, and the
   `aux_sources=DetectorROIAuxSources(dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS)`
@@ -306,16 +306,16 @@ Test updates:
   `WorkflowConfig.aux_source_names`. After `bifrost_aux_sources` deletion,
   `spec.aux_sources is None` and the test should pass `aux_source_names={}`.
   The rotation streams now flow into the gate via
-  `instrument.context_inputs` (in place since B1).
+  `instrument.context_bindings` (in place since B1).
 - New tests in `tests/core/job_manager_test.py` (or a dedicated file)
   covering: `JobFactory.create` building `context_keys` from instrument +
-  spec ContextInput; seed_factory firing through `on_schedule_seed`; the
+  spec ContextBinding; seed_factory firing through `on_schedule_seed`; the
   ROI cold-start case opening the gate at tick 1.
 
 Validation: full fast suite + `test_bifrost_qmap_drops_events_until_rotation_arrives`
 slow test + ROI/detector-view tests. This commit is large by design; the
 plan keeps it as one atomic change to avoid an intermediate state where
-ContextInput is consumed AND legacy AuxSources still fires (which would
+ContextBinding is consumed AND legacy AuxSources still fires (which would
 cause double-seeding for ROI).
 
 ### B5 — Rename Job.context_aux_stream_names → Job.context_stream_names
@@ -364,7 +364,7 @@ Files:
 
 Validation: `pytest -n auto -q`.
 
-### B7 — Routing-pickup extension for ContextInput
+### B7 — Routing-pickup extension for ContextBinding
 
 Required for bifrost rotation and LOKI carriage f144 streams to be subscribed
 by the `detector_data` namespace. Without this, the gate stays closed
@@ -375,9 +375,9 @@ Files:
   line 14-46) — after the existing aux-source pickup at lines 36-38, add:
 
   ```python
-  # Spec-level ContextInput: include only if not job-scoped (resolver is None).
+  # Spec-level ContextBinding: include only if not job-scoped (resolver is None).
   # Job-scoped entries (ROI) route via a dedicated topic.
-  for ci in spec.context_inputs:
+  for ci in spec.context_bindings:
       if ci.stream_resolver is None:
           names.add(ci.stream_name)
   ```
@@ -386,7 +386,7 @@ Files:
   apply to every spec whose source is in `dependent_sources`):
 
   ```python
-  for ci in instrument.context_inputs:
+  for ci in instrument.context_bindings:
       # Pickup if any spec in this namespace shares a source with the binding.
       relevant = any(
           spec.group.name == namespace
@@ -410,7 +410,7 @@ recovery-path assertion to a follow-up if non-trivial.
 Files:
 - `src/ess/livedata/config/instrument.py` (`Instrument.__post_init__` or a
   helper invoked at the end of registration) — for every (spec, source) pair
-  where both spec-level and instrument-level ContextInput entries apply,
+  where both spec-level and instrument-level ContextBinding entries apply,
   compute the resolved wire-stream names for the spec-level entries (using
   a placeholder JobId — the resolver must be pure of JobId-specific data
   beyond name suffixing; if not, use the unresolved `stream_name`) and assert
@@ -422,10 +422,10 @@ Validation: `pytest -n auto -q`.
 ## Sequencing rationale
 
 - B1-B2 are additive and risk-free. Each is safe to land alone.
-- B3 is purely additive: new ContextInput records are added alongside the
+- B3 is purely additive: new ContextBinding records are added alongside the
   legacy AuxSources subclasses. JobFactory still consumes the legacy path; the
   new records are inert. Behaviour is unchanged.
-- B4 is the atomic swap. JobFactory switches to consume ContextInput records,
+- B4 is the atomic swap. JobFactory switches to consume ContextBinding records,
   the legacy `Workflow.context_keys` / `AuxSources.initial_context_messages`
   consumption is removed, and the now-unused AuxSources subclasses + kwargs +
   factory parameters are deleted in one commit. Splitting "switch" from
@@ -435,7 +435,7 @@ Validation: `pytest -n auto -q`.
   cleanly.
 - B6 deletes the dead protocol/method stubs (`Workflow.context_keys`,
   `AuxSources.initial_context_messages`) that nothing consumes after B4.
-- B7 unblocks routing for non-ROI ContextInput (the bifrost/LOKI
+- B7 unblocks routing for non-ROI ContextBinding (the bifrost/LOKI
   production-readiness blocker, flagged in ADR 0003 as a hard co-requirement,
   not a follow-up).
 - B8 adds the validation backstop.
@@ -455,7 +455,7 @@ Validation: `pytest -n auto -q`.
 
 1. **`LOKI transform_name` carrier location.** ADR 0003 § "LOKI transform_name
   carrier" accepts a small per-source `dict[str, str]` in `loki/factories.py`
-  as a workaround for `ContextInput` not carrying the NeXus path. The
+  as a workaround for `ContextBinding` not carrying the NeXus path. The
   alternative — encode `transform_name` into the workflow_key wrapper — is
   uglier. Implementation should confirm the dict approach is clean enough; if
   it grows beyond LOKI to other instruments, revisit.
@@ -467,7 +467,7 @@ Validation: `pytest -n auto -q`.
   The check assumes `stream_resolver(jid, name)` is a name-suffixing operation;
   a resolver that does anything else would make collision detection unsound.
   The ROI resolver is `lambda jid, name: f"{jid}/{name}"` so this holds today.
-  Document the assumption in `ContextInput`'s docstring.
+  Document the assumption in `ContextBinding`'s docstring.
 
 ## Validation gates
 

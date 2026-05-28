@@ -56,7 +56,7 @@ def setup_factories(instrument: Instrument) -> None:
     # instrument scope so every spec consuming ``loki_detector_0`` picks it up by
     # default; specs that don't need geometry (tube_view, i_of_q) opt out via
     # ``skip_instrument_contexts`` in ``specs.py``.
-    instrument.add_context_input(
+    instrument.add_context_binding(
         stream_name='detector_carriage',
         dependent_sources={'loki_detector_0'},
         workflow_key=specs.DetectorCarriageLog,

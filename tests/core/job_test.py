@@ -45,7 +45,7 @@ class FakeProcessor(Workflow):
         # ``context_keys`` is kept on the constructor (some tests pass it for
         # behavioural symmetry with real workflows) but is no longer surfaced
         # on the Workflow protocol — see ADR 0003 § "Workflow protocol stays
-        # pure". JobFactory derives the gate set from ContextInput records.
+        # pure". JobFactory derives the gate set from ContextBinding records.
         _ = context_keys
         self.data: dict[str, Any] = {}
         self.accumulate_calls = []

@@ -14,7 +14,7 @@ latest sample into the corresponding transformation along the chain.
 :func:`add_dynamic_transforms` inserts the provider into the workflow.
 Callers usually go through :meth:`Instrument.apply_dynamic_transforms`,
 which derives the binding list from the instrument's
-:attr:`Instrument.context_inputs` registry.
+:attr:`Instrument.context_bindings` registry.
 """
 
 from __future__ import annotations

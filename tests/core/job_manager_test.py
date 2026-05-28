@@ -45,7 +45,7 @@ class FakeJobFactory(JobFactory):
         return result
 
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> tuple[Job, list]:
-        # For testing, treat every declared aux as a context input — the
+        # For testing, treat every declared aux as a context binding — the
         # scenario most production workflows with aux expose. Tests that
         # need a dynamic-aux scenario construct the Job directly.
         aux = config.aux_source_names or {}
@@ -1615,15 +1615,15 @@ class TestJobFactoryRender:
 
 
 class _CtxKeyA:
-    """Opaque workflow_key used by ContextInput tests."""
+    """Opaque workflow_key used by ContextBinding tests."""
 
 
 class _CtxKeyB:
-    """Opaque workflow_key used by ContextInput tests."""
+    """Opaque workflow_key used by ContextBinding tests."""
 
 
 def _build_instrument_with_streams():
-    """Build an instrument with the f144 streams used by the ContextInput tests."""
+    """Build an instrument with the f144 streams used by the ContextBinding tests."""
     from ess.livedata.config.instrument import Instrument
     from ess.livedata.config.stream import F144Stream
 
@@ -1641,15 +1641,15 @@ def _build_instrument_with_streams():
     )
 
 
-class TestJobFactoryContextInput:
-    """ADR 0003: JobFactory.create merges instrument + spec ContextInput records.
+class TestJobFactoryContextBinding:
+    """ADR 0003: JobFactory.create merges instrument + spec ContextBinding records.
 
     Source of context_keys, wire-stream names, and cold-start seeds. The legacy
     ``Workflow.context_keys`` / ``AuxSources.initial_context_messages`` paths
     have been retired in B4.
     """
 
-    def test_instrument_context_input_populates_context_keys(self) -> None:
+    def test_instrument_context_binding_populates_context_keys(self) -> None:
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1659,7 +1659,7 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
@@ -1692,7 +1692,7 @@ class TestJobFactoryContextInput:
         # No seed_factory declared → no cold-start messages.
         assert seeds == []
 
-    def test_instrument_context_input_filters_by_source(self) -> None:
+    def test_instrument_context_binding_filters_by_source(self) -> None:
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1703,7 +1703,7 @@ class TestJobFactoryContextInput:
             outputs=SimpleTestOutputs,
         )
         # detector_names limited to 'detector1' so use streams not source_names.
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector2'],
@@ -1723,8 +1723,8 @@ class TestJobFactoryContextInput:
         assert job.missing_context(set()) == set()
         assert seeds == []
 
-    def test_spec_context_input_with_resolver_and_seed_opens_gate(self) -> None:
-        """Cold-start seed for a spec-level ContextInput opens the gate at tick 1.
+    def test_spec_context_binding_with_resolver_and_seed_opens_gate(self) -> None:
+        """Cold-start seed for a spec-level ContextBinding opens the gate at tick 1.
 
         Mirrors the ROI scenario: a job-scoped resolver materialises the wire
         name and a ``seed_factory`` produces the cold-start message. The
@@ -1756,7 +1756,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_context_input(
+        handle.add_context_binding(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=_resolver,
@@ -1788,7 +1788,7 @@ class TestJobFactoryContextInput:
     def test_schedule_job_seeds_and_marks_streams_seen(self) -> None:
         """schedule_job fires the seed callback and marks streams in _seen.
 
-        End-to-end through JobManager: a spec-level ContextInput with a
+        End-to-end through JobManager: a spec-level ContextBinding with a
         seed_factory contributes its wire name to ``_seen_context_streams``
         immediately, so a subsequent tick with no producer activity passes the
         gate.
@@ -1812,7 +1812,7 @@ class TestJobFactoryContextInput:
                 value=sc.scalar(0.0),
             )
 
-        handle.add_context_input(
+        handle.add_context_binding(
             stream_name='roi',
             workflow_key=_CtxKeyA,
             stream_resolver=lambda jid, name: f"{jid}/{name}",
@@ -1851,12 +1851,12 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector1'],
         )
-        handle.add_context_input(stream_name='temp', workflow_key=_CtxKeyB)
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
         handle.skip_instrument_contexts()
 
         captured: dict[str, dict[str, type]] = {}
@@ -1876,11 +1876,16 @@ class TestJobFactoryContextInput:
         assert captured['ck'] == {'temp': _CtxKeyB}
         assert job.missing_context(set()) == {'temp'}
 
-    def test_chain_patch_context_input_delivers_value_log_in_context_keys(self) -> None:
-        """A chain-patch ContextInput contributes its :class:`ValueLog`
+    def test_chain_patch_context_binding_delivers_value_log_in_context_keys(
+        self,
+    ) -> None:
+        """A chain-patch ContextBinding contributes ValueLog subclass.
+
+        A chain-patch ContextBinding contributes its :class:`ValueLog`
         subclass to the factory's ``context_keys``; the transform path lives
         on the subclass and is consumed by
-        :meth:`Instrument.apply_dynamic_transforms`."""
+        :meth:`Instrument.apply_dynamic_transforms`.
+        """
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
@@ -1895,7 +1900,7 @@ class TestJobFactoryContextInput:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot',
             dependent_sources=['detector1'],
             workflow_key=_RotLog,

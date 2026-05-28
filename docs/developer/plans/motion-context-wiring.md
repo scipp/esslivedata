@@ -5,7 +5,7 @@ Background document for the ongoing work on context-stream declarations
 `jobmanager-context-gate`).
 
 [adr-0002]: ../adr/0002-context-stream-gating-at-jobmanager.md
-[adr-0003]: ../adr/0003-context-input-declaration-model.md
+[adr-0003]: ../adr/0003-context-binding-declaration-model.md
 
 The goal of this document is to capture what motion-context wiring is, how
 it currently works in the codebase, what knowledge lives where, and which
@@ -48,7 +48,7 @@ f144 streams that supply the dynamic values.
 ## 2. State in the current branch
 
 The branch `jobmanager-context-gate` lands a unified declaration model
-(`ContextInput`) for context streams in general — including, but not
+(`ContextBinding`) for context streams in general — including, but not
 limited to, motion. See [the review HTML](./adr-0002-0003-review.html) §3
 for the full mechanism.
 
@@ -58,7 +58,7 @@ From `src/ess/livedata/config/stream.py:91`:
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ContextInput:
+class ContextBinding:
     stream_name:        str
     workflow_key:       Any                                    # Sciline key
     dependent_sources:  frozenset[str]
@@ -81,7 +81,7 @@ _LOKI_TRANSFORM_NAMES: dict[str, str] = {
     'loki_detector_0': '/entry/instrument/detector_carriage/value',
 }
 
-specs.xy_projection_handle.add_context_input(
+specs.xy_projection_handle.add_context_binding(
     stream_name='detector_carriage',
     workflow_key=TransformValueLog,
     dependent_sources=frozenset({'loki_detector_0'}),
@@ -98,11 +98,11 @@ in `context_keys` and calls
 
 ```python
 def _add_qmap_rotation_context(handle):
-    handle.add_context_input(
+    handle.add_context_binding(
         stream_name='detector_tank_angle_r0',
         workflow_key=InstrumentAngle[SampleRun],
     )
-    handle.add_context_input(
+    handle.add_context_binding(
         stream_name='rotation_stage',
         workflow_key=SampleAngle[SampleRun],
     )
@@ -143,12 +143,12 @@ The hand-written declarations expose several failure shapes:
 
 - **Typos in `stream_name`** — caught at `Instrument.__post_init__` if the
   stream isn't in `instrument.streams`; raises
-  `"ContextInput references unknown stream …"`.
+  `"ContextBinding references unknown stream …"`.
 - **Typos in `dependent_sources`** — caught at registration by
   `_validate_binding_dependent_sources`; raises if a binding lists a
   source no spec advertises.
 - **Wire-name collision** between instrument- and spec-level entries —
-  caught by `_validate_context_input_wire_name_collisions` (added in
+  caught by `_validate_context_binding_wire_name_collisions` (added in
   commit `2dd70b25`).
 - **Wrong `workflow_key`** — no validation. A binding may name an
   unrelated Sciline key; the workflow factory has to be wired correctly
@@ -199,9 +199,9 @@ with the value, not what the value is.
 | -------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------- |
 | Stream exists; topic; source; units                      | NeXus file                                           | `streams_parsed.py` (codegen) → `instrument.streams` |
 | Which streams are dynamic transforms in which chain      | NeXus `depends_on` + `source` attributes             | Hand-written `_LOKI_TRANSFORM_NAMES`            |
-| Which component a chain belongs to                       | NeXus `depends_on` head                              | Hand-written `dependent_sources` on `ContextInput` |
+| Which component a chain belongs to                       | NeXus `depends_on` head                              | Hand-written `dependent_sources` on `ContextBinding` |
 | Whether a workflow needs a component's absolute position | Sciline graph (whether it consumes `Position[X]`)    | Implicit; workflow author knows it              |
-| The Sciline key that should receive the dynamic value    | Workflow design                                      | Hand-written `workflow_key` on `ContextInput`   |
+| The Sciline key that should receive the dynamic value    | Workflow design                                      | Hand-written `workflow_key` on `ContextBinding`   |
 | The NeXus path to patch                                  | NeXus `depends_on` chain                             | Hand-written `_LOKI_TRANSFORM_NAMES` value      |
 
 Rows 1, 2, 3, 6 are derivable from the NeXus file. Rows 4, 5 are
@@ -220,7 +220,7 @@ workflow but have no representation in NeXus geometry:
 | Geometry context | Detector carriage, sample rotation, chopper position (as a transformation) | Yes — `depends_on` chains  |
 | Process context  | Chopper setpoint / phase, sample temperature, ROI selection, dashboard parameters | No                         |
 
-Both today use the same `ContextInput` carrier. The distinction matters
+Both today use the same `ContextBinding` carrier. The distinction matters
 because the source of truth for *what should be wired* differs.
 
 ## 6. Sciline-side constraints
@@ -295,14 +295,14 @@ Independent of which mechanism is chosen:
 
 Three points on a spectrum, from most manual to most automated:
 
-1. **Status quo.** Per-handle `add_context_input(stream_name=…,
+1. **Status quo.** Per-handle `add_context_binding(stream_name=…,
    workflow_key=…, dependent_sources=…)`; per-instrument `transform_names`
    dict. Workflow author writes everything.
 
 2. **Declared-need, derived-wiring.** Workflow author declares "this
    handle uses position of component X" (a single call). The framework
    walks X's `depends_on` chain, identifies dynamic transformations, and
-   emits the corresponding `ContextInput` records and
+   emits the corresponding `ContextBinding` records and
    `add_dynamic_transform` calls. The workflow key remains a workflow
    concern — either auto-supplied for chain patching, or named explicitly
    for direct parameter binding.
@@ -318,12 +318,12 @@ Open questions across the design space:
   codegen (one-time per NeXus file), or runtime at `Instrument.__post_init__`
   (re-derived each process)?
 - For non-geometry context (chopper setpoint, temperature, ROI): does
-  the same declaration record (`ContextInput`) carry it, or does it get
+  the same declaration record (`ContextBinding`) carry it, or does it get
   its own type? Today the same record carries both; the question is
   whether that survives once geometry becomes automated.
 - What is the inspection / debugging story for auto-wired bindings? At
   minimum: logging on startup, and an API surface that returns the
-  effective set of `ContextInput` records per (spec, source).
+  effective set of `ContextBinding` records per (spec, source).
 - How are workflow-side opt-outs declared (freeze, override)? As an
   argument to the chain walker, as a per-handle override, or via a
   separate Sciline-side mechanism that takes priority over auto-wiring?
@@ -334,7 +334,7 @@ The branch lands a pragmatic refinement of option 1 that closes the
 silent-omission failure mode without taking on codegen or graph
 introspection. Three changes:
 
-**1. Chain-patch paths live on `ContextInput`.** A
+**1. Chain-patch paths live on `ContextBinding`.** A
 `transform_path: str | None` field replaces the per-instrument
 `transform_names` dict carried by `DetectorViewFactory`; when set, the
 binding is chain-patch and carries its own author-declared
@@ -392,19 +392,19 @@ Silent-wrong is upgraded to noisy-slow.
 - [ADR 0002][adr-0002] — Context-stream gating at the JobManager.
 - [ADR 0003][adr-0003] — Unified declaration model for workflow context
   inputs.
-- [Block B implementation plan](./adr-0003-context-input-implementation.md)
-  — Sequencing of the ContextInput migration.
+- [Block B implementation plan](./adr-0003-context-binding-implementation.md)
+  — Sequencing of the ContextBinding migration.
 - [adr-0002-0003-review.html](./adr-0002-0003-review.html) — Full review
   of both ADRs as landed on the `jobmanager-context-gate` branch.
 
 ### Key files in the branch
 
-- `src/ess/livedata/config/stream.py` — `ContextInput` record with
+- `src/ess/livedata/config/stream.py` — `ContextBinding` record with
   `transform_path` and `log_key` fields.
 - `src/ess/livedata/config/workflow_spec.py` — `WorkflowSpec.skip_motion`
   field.
 - `src/ess/livedata/config/instrument.py` —
-  `Instrument.add_context_input` accepts `transform_path`/`log_key`;
+  `Instrument.add_context_binding` accepts `transform_path`/`log_key`;
   `Instrument.apply_dynamic_transforms` patches a workflow's chain
   providers from the instrument's bindings.
 - `src/ess/livedata/config/instruments/loki/{specs,factories}.py` —
@@ -424,7 +424,7 @@ Silent-wrong is upgraded to noisy-slow.
   `DetectorViewFactory` takes `instrument` and calls
   `instrument.apply_dynamic_transforms`.
 - `src/ess/livedata/handlers/workflow_factory.py` —
-  `SpecHandle.skip_motion`; `SpecHandle.add_context_input` rejects
+  `SpecHandle.skip_motion`; `SpecHandle.add_context_binding` rejects
   chain-patch bindings (must live at instrument scope).
 - `src/ess/livedata/core/job_manager.py` — `JobFactory.create` filters
   instrument-scope bindings via `skip_motion` and resolves

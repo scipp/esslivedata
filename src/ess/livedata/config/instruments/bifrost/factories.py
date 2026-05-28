@@ -73,12 +73,12 @@ def setup_factories(instrument: Instrument) -> None:
     # instrument scope so every spec consuming ``unified_detector`` picks them
     # up; non-consumers (detector view, ratemeter) opt out via
     # ``skip_instrument_contexts`` in ``specs.py``.
-    instrument.add_context_input(
+    instrument.add_context_binding(
         stream_name='detector_tank_angle_r0',
         dependent_sources={'unified_detector'},
         workflow_key=InstrumentAngle[SampleRun],
     )
-    instrument.add_context_input(
+    instrument.add_context_binding(
         stream_name='rotation_stage',
         dependent_sources={'unified_detector'},
         workflow_key=SampleAngle[SampleRun],

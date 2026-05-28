@@ -231,7 +231,7 @@ class Job:
             user-selected auxiliary sources are needed.
         context_aux_source_names:
             Mapping from field names to wire stream names for framework-
-            routed context inputs (ADR 0003 ``ContextInput`` records). Kept
+            routed context bindings (ADR 0003 ``ContextBinding`` records). Kept
             separate from ``aux_source_names`` so semantic readers don't
             confuse user-selected aux with framework-injected context.
             Both maps feed the same per-stream routing table; the split is
@@ -301,7 +301,7 @@ class Job:
 
     @property
     def context_wire_names(self) -> list[str]:
-        """Wire stream names for framework-routed context inputs."""
+        """Wire stream names for framework-routed context bindings."""
         return list(self._context_aux_mapping.values())
 
     @property

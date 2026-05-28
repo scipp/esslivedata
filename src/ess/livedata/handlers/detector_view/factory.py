@@ -117,7 +117,7 @@ class DetectorViewFactory:
             The caller (instrument factory) is responsible for resolving this
             from instrument-specific params.
         context_keys:
-            Resolved ``ContextInput`` mapping (stream_name → workflow_key)
+            Resolved ``ContextBinding`` mapping (stream_name → workflow_key)
             for this job. Wires ROI inputs and other parameter context.
 
         Returns

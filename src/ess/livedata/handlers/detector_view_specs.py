@@ -503,21 +503,21 @@ def _roi_polygon_seed(job_id: JobId) -> Message:
     )
 
 
-def add_roi_context_inputs(handle: SpecHandle) -> None:
-    """Declare the rectangle/polygon ROI context inputs for a detector-view spec.
+def add_roi_context_bindings(handle: SpecHandle) -> None:
+    """Declare the rectangle/polygon ROI context bindings for a detector-view spec.
 
     The wire-stream resolver prefixes the stream name with the JobId so each
     job instance owns its ROI configuration stream.
     """
     from .detector_view.types import ROIPolygonRequest, ROIRectangleRequest
 
-    handle.add_context_input(
+    handle.add_context_binding(
         stream_name='roi_rectangle',
         workflow_key=ROIRectangleRequest,
         stream_resolver=lambda job_id, name: f"{job_id}/{name}",
         seed_factory=_roi_rectangle_seed,
     )
-    handle.add_context_input(
+    handle.add_context_binding(
         stream_name='roi_polygon',
         workflow_key=ROIPolygonRequest,
         stream_resolver=lambda job_id, name: f"{job_id}/{name}",
@@ -627,5 +627,5 @@ def register_detector_view_spec(
             roi_support=True, spectrum_view=spectrum_view
         ),
     )
-    add_roi_context_inputs(handle)
+    add_roi_context_bindings(handle)
     return handle

@@ -97,8 +97,8 @@ class TestGatherSourceNames:
         result = gather_source_names(instrument, "detector_data")
         assert result == set()
 
-    def test_instrument_context_input_is_picked_up(self) -> None:
-        """Instrument-level ContextInput streams routed when a namespace spec
+    def test_instrument_context_binding_is_picked_up(self) -> None:
+        """Instrument-level ContextBinding streams routed when a namespace spec
         in the same source set consumes them (ADR 0003 § "Routing vs gating").
         """
         from ess.livedata.config.stream import F144Stream
@@ -116,14 +116,14 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot', workflow_key=object, dependent_sources=['det_a']
         )
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'rot'}
         # Other namespace has no overlap with dependent_sources → not picked up.
         assert gather_source_names(instrument, "data_reduction") == set()
 
-    def test_instrument_context_input_skipped_when_no_namespace_overlap(self) -> None:
+    def test_instrument_context_binding_skipped_when_no_namespace_overlap(self) -> None:
         from ess.livedata.config.stream import F144Stream
 
         instrument = Instrument(
@@ -140,13 +140,13 @@ class TestGatherSourceNames:
             outputs=DefaultOutputs,
         )
         # Binding's dependent_sources doesn't intersect any namespace spec.
-        instrument.add_context_input(
+        instrument.add_context_binding(
             stream_name='rot', workflow_key=object, dependent_sources=['det_b']
         )
         assert gather_source_names(instrument, "detector_data") == {'det_a'}
 
-    def test_spec_context_input_without_resolver_is_picked_up(self) -> None:
-        """Spec-level ContextInput without a stream_resolver routes by name."""
+    def test_spec_context_binding_without_resolver_is_picked_up(self) -> None:
+        """Spec-level ContextBinding without a stream_resolver routes by name."""
         from ess.livedata.config.stream import F144Stream
 
         instrument = Instrument(
@@ -162,10 +162,10 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        handle.add_context_input(stream_name='carriage', workflow_key=object)
+        handle.add_context_binding(stream_name='carriage', workflow_key=object)
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'carriage'}
 
-    def test_spec_context_input_with_resolver_is_not_picked_up(self) -> None:
+    def test_spec_context_binding_with_resolver_is_not_picked_up(self) -> None:
         """Job-scoped (resolver-bearing) entries route via a dedicated topic,
         not via ``gather_source_names`` — the wire name can only be resolved
         per-job and not at namespace-startup time.
@@ -179,7 +179,7 @@ class TestGatherSourceNames:
             source_names=["det_a"],
             outputs=DefaultOutputs,
         )
-        handle.add_context_input(
+        handle.add_context_binding(
             stream_name='roi',
             workflow_key=object,
             stream_resolver=lambda jid, name: f"{jid}/{name}",

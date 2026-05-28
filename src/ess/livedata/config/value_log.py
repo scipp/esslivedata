@@ -11,7 +11,7 @@ also carries the NeXus :attr:`transform_path` it patches.
 
 The type lives in :mod:`config` (rather than next to
 ``StreamProcessorWorkflow`` in :mod:`handlers`) because
-:class:`~ess.livedata.config.stream.ContextInput` references it via its
+:class:`~ess.livedata.config.stream.ContextBinding` references it via its
 ``workflow_key`` field for chain-patching bindings; keeping the type
 alongside the declaration record avoids ``config`` depending on
 ``handlers``.
@@ -36,7 +36,7 @@ class ValueLog:
 
     Subclasses set :attr:`transform_path` (a class attribute) to the
     NeXus transformation chain entry whose ``value`` is patched from the
-    latest sample of this log. :class:`~ess.livedata.config.stream.ContextInput`
+    latest sample of this log. :class:`~ess.livedata.config.stream.ContextBinding`
     entries pointing at a :class:`ValueLog` subclass as their
     ``workflow_key`` are routed via the fused per-component patched-chain
     provider instead of via direct ``set_context`` binding.

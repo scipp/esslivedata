@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Validate chain-patch :class:`ContextInput` bindings against the
+"""Validate chain-patch :class:`ContextBinding` bindings against the
 currently-registered geometry artifact.
 
-For every chain-patch :class:`ContextInput` (one whose ``workflow_key``
+For every chain-patch :class:`ContextBinding` (one whose ``workflow_key``
 is a :class:`ValueLog` subclass), walks the ``depends_on`` chain of
 every declared consumer in the artifact and confirms the path appears.
 Catches typos and orphaned bindings before runtime.
@@ -22,18 +22,18 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.stream import ContextInput
+from ess.livedata.config.stream import ContextBinding
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
 
-def _is_chain_patch(ci: ContextInput) -> bool:
+def _is_chain_patch(ci: ContextBinding) -> bool:
     key = ci.workflow_key
     return isinstance(key, type) and issubclass(key, ValueLog)
 
 
-def _chain_patch_inputs(instrument: Instrument) -> list[ContextInput]:
-    return [b for b in instrument.context_inputs if _is_chain_patch(b)]
+def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
+    return [b for b in instrument.context_bindings if _is_chain_patch(b)]
 
 
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
@@ -149,7 +149,7 @@ def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
         pytest.fail(
             f"Source {source_name!r} has an empty NXlog placeholder at "
             f"{empty!r} not covered by any binding. Add a chain-patch "
-            f"ContextInput to {instrument.name} or fix the geometry "
+            f"ContextBinding to {instrument.name} or fix the geometry "
             f"artifact (or list it in _KNOWN_ORPHAN_NXLOGS with a "
             f"follow-up reference)."
         )

@@ -95,8 +95,8 @@ class TestRegisterDetectorViewSpecs:
         # source_names should be derived from dict keys
         assert set(spec.source_names) == {"mantle_detector", "endcap_detector"}
 
-    def test_mixed_projections_spec_includes_roi_context_inputs(self):
-        """Test that mixed projection spec declares ROI ContextInput records."""
+    def test_mixed_projections_spec_includes_roi_context_bindings(self):
+        """Test that mixed projection spec declares ROI ContextBinding records."""
         from ess.livedata.handlers.detector_view_specs import (
             register_detector_view_spec,
         )
@@ -113,7 +113,7 @@ class TestRegisterDetectorViewSpecs:
         )
 
         reg = instrument.workflow_factory.registration(handle.workflow_id)
-        assert {ci.stream_name for ci in reg.context_inputs} == {
+        assert {ci.stream_name for ci in reg.context_bindings} == {
             'roi_rectangle',
             'roi_polygon',
         }
@@ -193,10 +193,10 @@ class TestRegisterDetectorViewSpecs:
         assert 'ess.reduce.live.raw' not in sys.modules
 
 
-class TestRegisterDetectorViewSpecROIContextInputs:
-    """ROI ContextInput records registered by register_detector_view_spec()."""
+class TestRegisterDetectorViewSpecROIContextBindings:
+    """ROI ContextBinding records registered by register_detector_view_spec()."""
 
-    def test_register_adds_roi_rectangle_and_polygon_context_inputs(self) -> None:
+    def test_register_adds_roi_rectangle_and_polygon_context_bindings(self) -> None:
         from ess.livedata.handlers.detector_view.types import (
             ROIPolygonRequest,
             ROIRectangleRequest,
@@ -214,7 +214,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
         )
 
         reg = instrument.workflow_factory.registration(handle.workflow_id)
-        by_stream = {ci.stream_name: ci for ci in reg.context_inputs}
+        by_stream = {ci.stream_name: ci for ci in reg.context_bindings}
         assert set(by_stream) == {'roi_rectangle', 'roi_polygon'}
         assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
         assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
@@ -222,7 +222,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
         assert by_stream['roi_rectangle'].dependent_sources == frozenset(source_names)
         assert by_stream['roi_polygon'].dependent_sources == frozenset(source_names)
 
-    def test_roi_context_input_resolver_prefixes_with_job_id(self) -> None:
+    def test_roi_context_binding_resolver_prefixes_with_job_id(self) -> None:
         from ess.livedata.handlers.detector_view_specs import (
             register_detector_view_spec,
         )
@@ -235,7 +235,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
         )
         reg = instrument.workflow_factory.registration(handle.workflow_id)
         rect = next(
-            ci for ci in reg.context_inputs if ci.stream_name == 'roi_rectangle'
+            ci for ci in reg.context_bindings if ci.stream_name == 'roi_rectangle'
         )
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         assert rect.stream_resolver is not None
@@ -243,7 +243,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             rect.stream_resolver(job_id, rect.stream_name) == f"{job_id}/roi_rectangle"
         )
 
-    def test_roi_context_input_seed_factory_yields_empty_geometry_message(
+    def test_roi_context_binding_seed_factory_yields_empty_geometry_message(
         self,
     ) -> None:
         import scipp as sc
@@ -261,7 +261,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             source_names=["detector1"],
         )
         reg = instrument.workflow_factory.registration(handle.workflow_id)
-        seeds = {ci.stream_name: ci.seed_factory for ci in reg.context_inputs}
+        seeds = {ci.stream_name: ci.seed_factory for ci in reg.context_bindings}
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
 
         rect_msg = seeds['roi_rectangle'](job_id)
@@ -278,7 +278,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             poly_msg.value, models.PolygonROI.to_concatenated_data_array({})
         )
 
-    def test_logical_view_with_roi_support_adds_context_inputs(self) -> None:
+    def test_logical_view_with_roi_support_adds_context_bindings(self) -> None:
         from ess.livedata.handlers.detector_view.types import (
             ROIPolygonRequest,
             ROIRectangleRequest,
@@ -293,11 +293,11 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             roi_support=True,
         )
         reg = instrument.workflow_factory.registration(handle.workflow_id)
-        by_stream = {ci.stream_name: ci for ci in reg.context_inputs}
+        by_stream = {ci.stream_name: ci for ci in reg.context_bindings}
         assert by_stream['roi_rectangle'].workflow_key is ROIRectangleRequest
         assert by_stream['roi_polygon'].workflow_key is ROIPolygonRequest
 
-    def test_logical_view_without_roi_support_has_no_context_inputs(self) -> None:
+    def test_logical_view_without_roi_support_has_no_context_bindings(self) -> None:
         instrument = Instrument(name="test_instrument")
         handle = instrument.add_logical_view(
             name='no_roi_view',
@@ -307,7 +307,7 @@ class TestRegisterDetectorViewSpecROIContextInputs:
             roi_support=False,
         )
         reg = instrument.workflow_factory.registration(handle.workflow_id)
-        assert reg.context_inputs == ()
+        assert reg.context_bindings == ()
 
 
 class TestDetectorViewParamsGetActiveRange:

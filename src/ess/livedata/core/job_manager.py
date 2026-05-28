@@ -21,7 +21,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.handlers.workflow_factory import SpecContextInput
+from ess.livedata.handlers.workflow_factory import SpecContextBinding
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import Message, RunStart, RunStop, StreamId
@@ -141,7 +141,7 @@ class JobFactory:
         """Build a Job and its cold-start context seed messages.
 
         Returns the constructed :class:`Job` together with the list of
-        :class:`Message` objects produced by the matching ``ContextInput``
+        :class:`Message` objects produced by the matching ``ContextBinding``
         ``seed_factory`` hooks. ``JobManager.schedule_job`` forwards the seeds
         to the preprocessor and marks the corresponding wire stream names as
         already-seen for the gate (see ADR 0002).
@@ -169,25 +169,25 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        # Match ContextInput records by source membership.
+        # Match ContextBinding records by source membership.
         # ``skip_instrument_contexts`` filters out instrument-scope entries —
         # a spec that explicitly declares a binding cannot opt out of it via
         # the flag.
         instrument_inputs = (
             []
             if registration.skip_instrument_contexts
-            else self._instrument.context_inputs
+            else self._instrument.context_bindings
         )
         matching = [
             ci
-            for ci in (*instrument_inputs, *registration.context_inputs)
+            for ci in (*instrument_inputs, *registration.context_bindings)
             if job_id.source_name in ci.dependent_sources
         ]
         context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
         wire_for = {
             ci.stream_name: (
                 ci.stream_resolver(job_id, ci.stream_name)
-                if isinstance(ci, SpecContextInput) and ci.stream_resolver is not None
+                if isinstance(ci, SpecContextBinding) and ci.stream_resolver is not None
                 else ci.stream_name
             )
             for ci in matching
@@ -196,7 +196,7 @@ class JobFactory:
         seed_messages = [
             ci.seed_factory(job_id)
             for ci in matching
-            if isinstance(ci, SpecContextInput) and ci.seed_factory is not None
+            if isinstance(ci, SpecContextBinding) and ci.seed_factory is not None
         ]
 
         # The factory still receives a single merged mapping: at the workflow
@@ -259,7 +259,7 @@ class JobManager:
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
         # See ADR 0002 / ADR 0003. Invoked from ``schedule_job`` with the
-        # cold-start context messages produced by the matching ``ContextInput``
+        # cold-start context messages produced by the matching ``ContextBinding``
         # ``seed_factory`` hooks. The orchestrator wires this to
         # ``MessagePreprocessor.seed_messages``.
         self._on_schedule_seed = on_schedule_seed
@@ -333,7 +333,7 @@ class JobManager:
     def _seed_initial_context(self, job_id: JobId, messages: list[Message]) -> None:
         """Forward cold-start context seeds and mark their wire streams as seen.
 
-        See ADR 0002. ``ContextInput`` declarations with a ``seed_factory``
+        See ADR 0002. ``ContextBinding`` declarations with a ``seed_factory``
         produce messages that populate the preprocessor before any external
         producer publishes; the gate then opens on tick one for those streams.
         """

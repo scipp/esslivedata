@@ -18,13 +18,16 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
-from .stream import ContextInput, Device, F144Stream, Stream
+from .stream import ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
 
-def _is_chain_patch(ci: ContextInput) -> bool:
-    """A context input whose ``workflow_key`` is a chain-patching ValueLog subclass."""
+def _is_chain_patch(ci: ContextBinding) -> bool:
+    """A context binding whose ``workflow_key`` is a chain-patching.
+
+    ValueLog subclass.
+    """
     key = ci.workflow_key
     return isinstance(key, type) and issubclass(key, ValueLog)
 
@@ -114,7 +117,7 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
-    context_inputs: list[ContextInput] = field(default_factory=list)
+    context_bindings: list[ContextBinding] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
@@ -133,7 +136,7 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
-        for binding in self.context_inputs:
+        for binding in self.context_bindings:
             self._validate_binding_stream_name(binding)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=self._timeseries_source_names()
@@ -167,22 +170,22 @@ class Instrument:
             if isinstance(stream, Device)
         }
 
-    def _validate_binding_stream_name(self, binding: ContextInput) -> None:
+    def _validate_binding_stream_name(self, binding: ContextBinding) -> None:
         if binding.stream_name not in self.streams:
             raise ValueError(
-                f"ContextInput references unknown stream "
+                f"ContextBinding references unknown stream "
                 f"{binding.stream_name!r}; declared streams: "
                 f"{sorted(self.streams)}"
             )
 
-    def add_context_input(
+    def add_context_binding(
         self,
         *,
         stream_name: str,
         dependent_sources: Iterable[str],
         workflow_key: Any,
     ) -> None:
-        """Register a stream as a context input for one or more specs.
+        """Register a stream as a context binding for one or more specs.
 
         Use from ``setup_factories`` to keep heavy Sciline-key imports out
         of ``specs.py``. The stream value is bound to ``workflow_key`` on
@@ -197,13 +200,13 @@ class Instrument:
         ``depends_on`` chain at ``workflow_key.transform_path`` via a
         fused per-component patched-chain provider.
         """
-        binding = ContextInput(
+        binding = ContextBinding(
             stream_name=stream_name,
             dependent_sources=frozenset(dependent_sources),
             workflow_key=workflow_key,
         )
         self._validate_binding_stream_name(binding)
-        self.context_inputs.append(binding)
+        self.context_bindings.append(binding)
 
     def apply_dynamic_transforms(
         self,
@@ -213,7 +216,7 @@ class Instrument:
         """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
 
         For each ``(source_name, component_type)`` entry, selects every
-        instrument-scope chain-patch :class:`ContextInput` (one whose
+        instrument-scope chain-patch :class:`ContextBinding` (one whose
         ``workflow_key`` is a :class:`ValueLog` subclass) whose
         ``dependent_sources`` includes that source name, and groups the
         ``(transform_path, workflow_key)`` pairs by component type. Each
@@ -221,7 +224,7 @@ class Instrument:
         ``NeXusTransformationChain[T, SampleRun]`` provider and writes the
         latest sample of each :class:`ValueLog` parameter into the chain.
 
-        Spec-scope ``ContextInput`` records are not consulted:
+        Spec-scope ``ContextBinding`` records are not consulted:
         chain-patch contexts are required to live at instrument scope.
 
         Parameters
@@ -238,14 +241,14 @@ class Instrument:
         """
         from ess.livedata.handlers.dynamic_transforms import add_dynamic_transforms
 
-        # Dedup by stream_name: repeat ``add_context_input`` calls (e.g. when
+        # Dedup by stream_name: repeat ``add_context_binding`` calls (e.g. when
         # ``load_factories`` runs twice in a long-lived process or across tests)
-        # leave duplicate entries in ``context_inputs``; passing the same
+        # leave duplicate entries in ``context_bindings``; passing the same
         # binding twice would create a provider with duplicate-typed parameters
         # and Sciline rejects that.
         by_type: dict[type, dict[str, tuple[str, type]]] = {}
         for source_name, component_type in components.items():
-            for ci in self.context_inputs:
+            for ci in self.context_bindings:
                 if not _is_chain_patch(ci):
                     continue
                 if source_name not in ci.dependent_sources:
@@ -471,7 +474,7 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.handlers.detector_view_specs import (
-            add_roi_context_inputs,
+            add_roi_context_bindings,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -492,7 +495,7 @@ class Instrument:
             outputs=outputs,
         )
         if roi_support:
-            add_roi_context_inputs(handle)
+            add_roi_context_bindings(handle)
         self._logical_view_handles[name] = handle
         self._logical_views.append(
             LogicalViewConfig(
@@ -636,7 +639,7 @@ class Instrument:
             module.setup_factories(self)
 
         self._validate_binding_dependent_sources()
-        self._validate_context_input_wire_name_collisions()
+        self._validate_context_binding_wire_name_collisions()
         self._validate_chain_patch_value_log_uniqueness()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
@@ -651,16 +654,16 @@ class Instrument:
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""
-        if not self.context_inputs:
+        if not self.context_bindings:
             return
         known_sources: set[str] = set()
         for spec in self.workflow_factory.values():
             known_sources.update(spec.source_names)
-        for binding in self.context_inputs:
+        for binding in self.context_bindings:
             unknown = binding.dependent_sources - known_sources
             if unknown:
                 raise ValueError(
-                    f"ContextInput for stream {binding.stream_name!r} lists "
+                    f"ContextBinding for stream {binding.stream_name!r} lists "
                     f"unknown dependent_sources {sorted(unknown)}; no registered "
                     f"spec advertises these source_names"
                 )
@@ -684,9 +687,9 @@ class Instrument:
         """
         by_key: dict[type, str] = {}
         by_stream: dict[str, type] = {}
-        all_inputs = list(self.context_inputs)
+        all_inputs = list(self.context_bindings)
         for reg in self.workflow_factory.registrations():
-            all_inputs.extend(reg.context_inputs)
+            all_inputs.extend(reg.context_bindings)
         for ci in all_inputs:
             if not _is_chain_patch(ci):
                 continue
@@ -708,15 +711,15 @@ class Instrument:
             by_key[ci.workflow_key] = ci.stream_name
             by_stream[ci.stream_name] = ci.workflow_key
 
-    def _validate_context_input_wire_name_collisions(self) -> None:
+    def _validate_context_binding_wire_name_collisions(self) -> None:
         """Raise if context-stream wire names collide.
 
         Two collisions are detected:
 
         - **Instrument-vs-spec.** For every (spec, source) pair where both
-          instrument-level and spec-level :class:`ContextInput` entries
+          instrument-level and spec-level :class:`ContextBinding` entries
           apply, the resolved wire-stream names must be unique. Resolvers
-          (see :class:`SpecContextInput`) are assumed to be name-suffixing
+          (see :class:`SpecContextBinding`) are assumed to be name-suffixing
           of the ``(job_id, stream_name)`` pair; we treat the unresolved
           ``stream_name`` as the collision key, which is sound for the
           resolvers in use today (ROI's ``f"{job_id}/{name}"``).
@@ -732,7 +735,7 @@ class Instrument:
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
             )
             instrument_inputs = (
-                [] if reg.skip_instrument_contexts else self.context_inputs
+                [] if reg.skip_instrument_contexts else self.context_bindings
             )
             for source in spec.source_names:
                 instrument_names: set[str] = {
@@ -742,13 +745,13 @@ class Instrument:
                 }
                 spec_names: set[str] = {
                     ci.stream_name
-                    for ci in reg.context_inputs
+                    for ci in reg.context_bindings
                     if source in ci.dependent_sources
                 }
                 scope_collisions = instrument_names & spec_names
                 if scope_collisions:
                     raise ValueError(
-                        f"ContextInput stream-name collision for spec "
+                        f"ContextBinding stream-name collision for spec "
                         f"{spec.name!r} on source {source!r}: "
                         f"{sorted(scope_collisions)} declared at both "
                         f"instrument and spec scope"
@@ -756,7 +759,7 @@ class Instrument:
                 aux_collisions = (instrument_names | spec_names) & aux_field_names
                 if aux_collisions:
                     raise ValueError(
-                        f"ContextInput stream-name collision with aux field "
+                        f"ContextBinding stream-name collision with aux field "
                         f"for spec {spec.name!r} on source {source!r}: "
                         f"{sorted(aux_collisions)} declared as both a "
                         f"context stream and an aux_sources field; the merged "

@@ -265,7 +265,7 @@
     chain, ROI is already wired per-job, and <em>chopper setpoint / phase streams are coming next</em>.
     Each case had been shoehorned through whichever carrier was nearest:
     <code>LogContextBinding</code>, <code>AuxSources</code> doing double duty, ad-hoc factory
-    parameters. <em>ADR 0003</em> replaces that with one declaration record (<code>ContextInput</code>)
+    parameters. <em>ADR 0003</em> replaces that with one declaration record (<code>ContextBinding</code>)
     and two scopes, so the same pattern covers motion, ROIs, and future chopper context uniformly.
     <em>ADR 0002</em> is a smaller runtime cleanup riding along: the prior implicit behaviour was
     "let the workflow crash if context hasn't arrived" — now the JobManager gates explicitly.
@@ -315,7 +315,7 @@ each used different plumbing.
     </tr>
     <tr>
       <td><b>ROI (rectangle / polygon)</b></td>
-      <td>Per-job context input from the dashboard</td>
+      <td>Per-job context binding from the dashboard</td>
       <td>In this branch (spec-scoped with resolver + seed)</td>
     </tr>
     <tr>
@@ -329,7 +329,7 @@ each used different plumbing.
 <p>
 The branch lands one mechanism that covers the first four uniformly and unblocks the fifth.
 The runtime-behaviour cleanup (ADR 0002) is a side effect of taking these wirings seriously:
-once "context inputs" are first-class, gating on their availability is a small predicate.
+once "context bindings" are first-class, gating on their availability is a small predicate.
 </p>
 
 <!-- ============================================================ -->
@@ -366,7 +366,7 @@ once "context inputs" are first-class, gating on their availability is a small p
 </div>
 
 <div class="card">
-  <h4>3. No spec-scope declaration site for context inputs</h4>
+  <h4>3. No spec-scope declaration site for context bindings</h4>
   <p>
     <code>LogContextBinding</code> on <code>Instrument</code> was the only first-class context-binding
     type, source-scoped and f144-specific in name. Bifrost rotation used it. Anything spec-scoped —
@@ -388,7 +388,7 @@ once "context inputs" are first-class, gating on their availability is a small p
 
 <div class="card">
   <pre><span class="k">@dataclass</span>(frozen=<span class="k">True</span>, slots=<span class="k">True</span>, kw_only=<span class="k">True</span>)
-<span class="k">class</span> <span class="t">ContextInput</span>:
+<span class="k">class</span> <span class="t">ContextBinding</span>:
     stream_name:        <span class="t">str</span>                                       <span class="c"># workflow-facing</span>
     workflow_key:       <span class="t">Any</span> = <span class="k">None</span>                                <span class="c"># Sciline key; inferred for chain-patch</span>
     dependent_sources:  <span class="t">frozenset</span>[<span class="t">str</span>]
@@ -410,7 +410,7 @@ once "context inputs" are first-class, gating on their availability is a small p
 <div class="card-grid">
   <div class="card" style="margin: 0;">
     <h4>Instrument scope</h4>
-    <p><code>Instrument.add_context_input(...)</code> in <code>factories.py</code>.</p>
+    <p><code>Instrument.add_context_binding(...)</code> in <code>factories.py</code>.</p>
     <p style="font-size: 13.5px;">
       Activates for every spec whose source set overlaps <code>dependent_sources</code>.
       No resolver, no seed. Specs that consume the source but not the value opt out via
@@ -426,7 +426,7 @@ once "context inputs" are first-class, gating on their availability is a small p
   </div>
   <div class="card" style="margin: 0;">
     <h4>Spec scope</h4>
-    <p><code>SpecHandle.add_context_input(...)</code> in <code>factories.py</code>.</p>
+    <p><code>SpecHandle.add_context_binding(...)</code> in <code>factories.py</code>.</p>
     <p style="font-size: 13.5px;">
       Defaults <code>dependent_sources</code> to <code>frozenset(spec.source_names)</code>.
       Supports <code>stream_resolver</code> (for per-job wire names) and <code>seed_factory</code>
@@ -449,8 +449,8 @@ must not pull in instrument-specific Sciline pipelines.
 
 <div class="card">
   <pre><span class="k">def</span> <span class="t">create</span>(<span class="k">self</span>, *, job_id, config) -&gt; <span class="t">tuple</span>[Job, <span class="t">list</span>[Message]]:
-    instrument_inputs = [] <span class="k">if</span> spec.skip_motion <span class="k">else</span> instrument.context_inputs
-    matching = [ci <span class="k">for</span> ci <span class="k">in</span> (*instrument_inputs, *spec.context_inputs)
+    instrument_inputs = [] <span class="k">if</span> spec.skip_motion <span class="k">else</span> instrument.context_bindings
+    matching = [ci <span class="k">for</span> ci <span class="k">in</span> (*instrument_inputs, *spec.context_bindings)
                 <span class="k">if</span> job_id.source_name <span class="k">in</span> ci.dependent_sources]
 
     context_keys         = {ci.stream_name: _resolve_workflow_key(ci) <span class="k">for</span> ci <span class="k">in</span> matching}
@@ -469,7 +469,7 @@ must not pull in instrument-specific Sciline pipelines.
   <p style="margin-top: 12px; font-size: 13.5px; color: var(--text-dim);">
     Context wire names splice into <code>aux_source_names</code>, so existing
     <code>Job._filter_data_for_job</code> and <code>_stream_to_fields</code> routing handles both
-    dynamic and context inputs uniformly. The gate set lives in its own field.
+    dynamic and context bindings uniformly. The gate set lives in its own field.
     <code>_resolve_workflow_key</code> defaults chain-patch entries (those with
     <code>transform_path</code> set) to <code>TransformValueLog</code>.
     <span class="ref">src/ess/livedata/core/job_manager.py:138</span>
@@ -479,7 +479,7 @@ must not pull in instrument-specific Sciline pipelines.
 <h3>Routing pickup (a hard co-requirement)</h3>
 
 <p>
-<code>gather_source_names</code> learns to include context-input streams in the per-namespace
+<code>gather_source_names</code> learns to include context-binding streams in the per-namespace
 Kafka subscription set:
 </p>
 
@@ -499,22 +499,22 @@ subscribed and the gate would stay closed indefinitely.
 <p style="font-size: 13.5px; color: var(--text-dim);">
 The branch lands in two steps: <em>Block A</em> implements the gate with transitional carriers
 (<code>Workflow.context_keys</code> on the protocol, <code>AuxSources.initial_context_messages</code>);
-<em>Block B</em> replaces them with <code>ContextInput</code> and deletes the carriers. A few rows
+<em>Block B</em> replaces them with <code>ContextBinding</code> and deletes the carriers. A few rows
 below are therefore net no-ops vs main — they existed only inside this branch.
 </p>
 
 <table>
   <thead><tr><th>Removed</th><th>Why</th></tr></thead>
   <tbody>
-    <tr><td class="del mono">LogContextBinding</td><td>Renamed to <code>ContextInput</code></td></tr>
+    <tr><td class="del mono">LogContextBinding</td><td>Renamed to <code>ContextBinding</code></td></tr>
     <tr><td class="del mono">Instrument.get_context_keys</td><td>No production callers after bifrost migration</td></tr>
-    <tr><td class="del mono">DetectorROIAuxSources</td><td>ROI now per-spec via <code>add_context_input</code></td></tr>
+    <tr><td class="del mono">DetectorROIAuxSources</td><td>ROI now per-spec via <code>add_context_binding</code></td></tr>
     <tr><td class="del mono">bifrost_aux_sources</td><td>Rotation now at instrument scope on <code>unified_detector</code></td></tr>
     <tr><td class="del mono">LOKI_DYNAMIC_TRANSFORMS</td><td>Replaced by tiny <code>dict[str, str]</code> in <code>loki/factories.py</code></td></tr>
     <tr><td class="del mono">Workflow.context_keys (protocol)</td><td>Transitional carrier within this branch — net no-op vs main. SPW keeps the ctor arg.</td></tr>
-    <tr><td class="del mono">AuxSources.initial_context_messages</td><td>Transitional carrier introduced and removed within this branch — net no-op vs main. Seeding lives on <code>ContextInput.seed_factory</code>.</td></tr>
-    <tr><td class="del mono">DetectorViewFactory.dynamic_transforms</td><td>Chain-patch path now lives on <code>ContextInput.transform_path</code>; the factory receives a <code>transform_paths</code> kwarg from the framework.</td></tr>
-    <tr><td class="del mono">_LOKI_TRANSFORM_NAMES (loki/factories.py)</td><td>Path lives on the <code>ContextInput</code> declaration.</td></tr>
+    <tr><td class="del mono">AuxSources.initial_context_messages</td><td>Transitional carrier introduced and removed within this branch — net no-op vs main. Seeding lives on <code>ContextBinding.seed_factory</code>.</td></tr>
+    <tr><td class="del mono">DetectorViewFactory.dynamic_transforms</td><td>Chain-patch path now lives on <code>ContextBinding.transform_path</code>; the factory receives a <code>transform_paths</code> kwarg from the framework.</td></tr>
+    <tr><td class="del mono">_LOKI_TRANSFORM_NAMES (loki/factories.py)</td><td>Path lives on the <code>ContextBinding</code> declaration.</td></tr>
     <tr><td class="del mono">SpecRequirements.requires_aux_sources</td><td>YAGNI — only deleted tests referenced it</td></tr>
   </tbody>
 </table>
@@ -523,7 +523,7 @@ below are therefore net no-ops vs main — they existed only inside this branch.
 <h2 id="runtime"><span class="num">4</span>The runtime invariant (ADR 0002)</h2>
 
 <p>
-A small, orthogonal piece. Once context inputs are first-class declarations, gating their
+A small, orthogonal piece. Once context bindings are first-class declarations, gating their
 availability at the JobManager becomes a single predicate.
 </p>
 
@@ -551,7 +551,7 @@ push_data(WorkflowData) <span class="dim">┐</span>
 <h4>Key pieces</h4>
 
 <ul>
-  <li><code>Job.context_stream_names: set[str]</code> — strict subset of <code>aux_source_names.values()</code>. Populated by <code>JobFactory.create</code> from the matched <code>ContextInput</code> records.</li>
+  <li><code>Job.context_stream_names: set[str]</code> — strict subset of <code>aux_source_names.values()</code>. Populated by <code>JobFactory.create</code> from the matched <code>ContextBinding</code> records.</li>
   <li><code>Job.missing_context(available) → set[str]</code> — the predicate.</li>
   <li><code>JobManager._seen_context_streams: dict[JobId, set[str]]</code> — sticky per-job seen-set. Once a context value arrives it stays seen; the gate doesn't need cached context refilled every tick.</li>
   <li><code>JobState.pending_context</code> — new state. Distinct from <code>warning</code> (which means "last run produced an error") so a healthy-but-waiting job isn't confused with one that failed.</li>
@@ -566,7 +566,7 @@ inside <code>accumulate</code> and crashes with
 <code class="mono">'NoneType' object has no attribute 'ndim'</code>. Other workflows silently
 attribute detector data to a default geometry. The gate replaces these with
 <code>JobState.pending_context</code> plus a warning message — the workflow is not invoked until
-every context input has a value.
+every context binding has a value.
 </p>
 
 <!-- ============================================================ -->
@@ -627,13 +627,13 @@ all the per-job state.
   <tbody>
     <tr>
       <td>Chain-patch motion (NeXus <code>depends_on</code> driven)</td>
-      <td><code>instrument.add_context_input(stream_name=…, dependent_sources={…}, transform_path=…)</code></td>
+      <td><code>instrument.add_context_binding(stream_name=…, dependent_sources={…}, transform_path=…)</code></td>
       <td>No</td>
       <td>No <span class="pill">producer must be healthy</span></td>
     </tr>
     <tr>
       <td>Direct-bind motion (typed Sciline param)</td>
-      <td><code>instrument.add_context_input(stream_name=…, dependent_sources={…}, workflow_key=…)</code></td>
+      <td><code>instrument.add_context_binding(stream_name=…, dependent_sources={…}, workflow_key=…)</code></td>
       <td>No</td>
       <td>No <span class="pill">producer must be healthy</span></td>
     </tr>
@@ -645,7 +645,7 @@ all the per-job state.
     </tr>
     <tr>
       <td>ROI-like (per-job, default known)</td>
-      <td><code>add_roi_context_inputs(handle)</code> helper</td>
+      <td><code>add_roi_context_bindings(handle)</code> helper</td>
       <td><code>lambda jid, n: f"{jid}/{n}"</code></td>
       <td><code>seed_factory</code> with byte-identical "no selection" message</td>
     </tr>
@@ -658,11 +658,11 @@ all the per-job state.
 <p>Collapsed by default. Each is a small thing worth knowing but not central to the design.</p>
 
 <details>
-  <summary><span class="tag">design</span>Chain-patch wiring: <code>transform_path</code> on <code>ContextInput</code></summary>
+  <summary><span class="tag">design</span>Chain-patch wiring: <code>transform_path</code> on <code>ContextBinding</code></summary>
   <div class="body">
     <p>
     For chain-patch motion bindings, the NeXus path of the dynamic transformation lives on
-    <code>ContextInput.transform_path</code>. <code>JobFactory.create</code> builds a
+    <code>ContextBinding.transform_path</code>. <code>JobFactory.create</code> builds a
     <code>transform_paths</code> dict from matching records and dispatches it to factories that
     declare the kwarg. <code>DetectorViewFactory</code> iterates it to call
     <code>add_dynamic_transform</code>. <code>workflow_key</code> is inferred as
@@ -701,14 +701,14 @@ all the per-job state.
   <summary><span class="tag">validation</span>Registration-time collision check assumes resolver purity</summary>
   <div class="body">
     <p>
-    <code>Instrument._validate_context_input_wire_name_collisions</code> guards against the case
-    where an instrument-level and a spec-level <code>ContextInput</code> resolve to the same wire
+    <code>Instrument._validate_context_binding_wire_name_collisions</code> guards against the case
+    where an instrument-level and a spec-level <code>ContextBinding</code> resolve to the same wire
     name for the same (spec, source) pair. Raises <code>ValueError</code> at registration.
     </p>
     <p>
     Implementation uses the unresolved <code>stream_name</code> as the collision key — sound only
     because resolvers are assumed to be pure name-suffixing operations. Documented in
-    <code>ContextInput</code>'s docstring; not enforced. A resolver that hashes or pulls from
+    <code>ContextBinding</code>'s docstring; not enforced. A resolver that hashes or pulls from
     JobId metadata would make the check unsound. ROI's
     <code>f"{job_id}/{name}"</code> is the only resolver today.
     </p>
@@ -793,10 +793,10 @@ all the per-job state.
   <summary><span class="tag">storage</span>Pydantic <code>model_rebuild</code> at the bottom of <code>workflow_spec.py</code></summary>
   <div class="body">
     <p>
-    <code>WorkflowSpec.context_inputs: list[ContextInput]</code> uses a forward-ref;
-    <code>ContextInput</code> lives in <code>stream.py</code> and references <code>JobId</code>
+    <code>WorkflowSpec.context_bindings: list[ContextBinding]</code> uses a forward-ref;
+    <code>ContextBinding</code> lives in <code>stream.py</code> and references <code>JobId</code>
     + <code>Message</code> from <code>workflow_spec.py</code> / <code>message.py</code>. To break
-    the cycle, <code>workflow_spec.py</code> imports <code>ContextInput</code> at the bottom and
+    the cycle, <code>workflow_spec.py</code> imports <code>ContextBinding</code> at the bottom and
     calls <code>model_rebuild(_types_namespace={…})</code>. Slightly awkward but localised.
     </p>
   </div>
@@ -879,7 +879,7 @@ all the per-job state.
 <div class="disc-item">
   <h4>Resolver purity assumption in the collision check</h4>
   <p>
-    Documented in <code>ContextInput</code>'s docstring; not enforced. Acceptable today (only ROI
+    Documented in <code>ContextBinding</code>'s docstring; not enforced. Acceptable today (only ROI
     has a resolver, and it's pure name-suffixing). Consider an explicit assertion or a typed
     resolver protocol if more resolvers appear.
   </p>
@@ -915,7 +915,7 @@ all the per-job state.
 <div class="disc-item">
   <h4>NeXus path validation</h4>
   <p>
-    <code>ContextInput.transform_path</code> is hand-typed. Validating it against the actual
+    <code>ContextBinding.transform_path</code> is hand-typed. Validating it against the actual
     NeXus geometry at <code>Instrument.__post_init__</code> would catch typos at registration
     instead of runtime. Cheap to add — open follow-up.
   </p>
@@ -927,7 +927,7 @@ all the per-job state.
     A second job-scoped context kind requires: a <code>StreamKind</code> enum value, a
     <code>RoutingAdapterBuilder.with_*_route()</code> method called from
     <code>services/detector_data.py</code>, and a <code>case</code> branch in
-    <code>detector_data_handler.py:53</code>. <code>ContextInput</code> and the gate are generic;
+    <code>detector_data_handler.py:53</code>. <code>ContextBinding</code> and the gate are generic;
     the per-kind plumbing is not. Decide now whether to factor a registry, or grow per-kind if a
     second appears.
   </p>
@@ -965,20 +965,20 @@ all the per-job state.
       <td>ADRs</td>
       <td>
         <span class="ref">docs/developer/adr/0002-context-stream-gating-at-jobmanager.md</span><br>
-        <span class="ref">docs/developer/adr/0003-context-input-declaration-model.md</span>
+        <span class="ref">docs/developer/adr/0003-context-binding-declaration-model.md</span>
       </td>
     </tr>
     <tr>
       <td>The record</td>
-      <td><span class="ref">src/ess/livedata/config/stream.py:92</span> <code>ContextInput</code> (with <code>transform_path</code>)</td>
+      <td><span class="ref">src/ess/livedata/config/stream.py:92</span> <code>ContextBinding</code> (with <code>transform_path</code>)</td>
     </tr>
     <tr>
       <td>Two scopes + opt-out</td>
       <td>
-        <span class="ref">src/ess/livedata/config/instrument.py:168</span> <code>Instrument.add_context_input</code><br>
-        <span class="ref">src/ess/livedata/handlers/workflow_factory.py:52</span> <code>SpecHandle.add_context_input</code><br>
+        <span class="ref">src/ess/livedata/config/instrument.py:168</span> <code>Instrument.add_context_binding</code><br>
+        <span class="ref">src/ess/livedata/handlers/workflow_factory.py:52</span> <code>SpecHandle.add_context_binding</code><br>
         <span class="ref">src/ess/livedata/handlers/workflow_factory.py:88</span> <code>SpecHandle.skip_motion</code><br>
-        <span class="ref">src/ess/livedata/config/workflow_spec.py:284</span> <code>WorkflowSpec.context_inputs</code><br>
+        <span class="ref">src/ess/livedata/config/workflow_spec.py:284</span> <code>WorkflowSpec.context_bindings</code><br>
         <span class="ref">src/ess/livedata/config/workflow_spec.py:292</span> <code>WorkflowSpec.skip_motion</code>
       </td>
     </tr>
@@ -1014,12 +1014,12 @@ all the per-job state.
         <span class="ref">src/ess/livedata/config/instruments/bifrost/specs.py</span> (<code>skip_motion</code> on detector_ratemeter, unified_detector_view)<br>
         <span class="ref">src/ess/livedata/config/instruments/loki/factories.py</span> (instrument-scope carriage with <code>transform_path</code>)<br>
         <span class="ref">src/ess/livedata/config/instruments/loki/specs.py</span> (<code>skip_motion</code> on tube_view, i_of_q)<br>
-        <span class="ref">src/ess/livedata/handlers/detector_view_specs.py:506</span> <code>add_roi_context_inputs</code>
+        <span class="ref">src/ess/livedata/handlers/detector_view_specs.py:506</span> <code>add_roi_context_bindings</code>
       </td>
     </tr>
     <tr>
       <td>Collision validation</td>
-      <td><span class="ref">src/ess/livedata/config/instrument.py:599</span> <code>_validate_context_input_wire_name_collisions</code></td>
+      <td><span class="ref">src/ess/livedata/config/instrument.py:599</span> <code>_validate_context_binding_wire_name_collisions</code></td>
     </tr>
     <tr>
       <td>Dashboard gap (discussion #1)</td>

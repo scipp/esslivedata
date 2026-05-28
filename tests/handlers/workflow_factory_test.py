@@ -937,8 +937,8 @@ class _OtherCtxKey:
     pass
 
 
-class TestSpecHandleAddContextInput:
-    """Cover :meth:`SpecHandle.add_context_input` defaults and append semantics."""
+class TestSpecHandleAddContextBinding:
+    """Cover :meth:`SpecHandle.add_context_binding` defaults and append semantics."""
 
     def _register(self, *, source_names: list[str]) -> tuple[WorkflowFactory, object]:
         factory = WorkflowFactory()
@@ -961,9 +961,9 @@ class TestSpecHandleAddContextInput:
     def test_default_dependent_sources_fall_back_to_spec_sources(self) -> None:
         factory, handle = self._register(source_names=['det1', 'det2'])
 
-        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_binding(stream_name='roi', workflow_key=_CtxKey)
 
-        [entry] = factory.registration(handle.workflow_id).context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_bindings
         assert entry.stream_name == 'roi'
         assert entry.workflow_key is _CtxKey
         assert entry.dependent_sources == frozenset({'det1', 'det2'})
@@ -973,22 +973,22 @@ class TestSpecHandleAddContextInput:
     def test_explicit_dependent_sources_override_default(self) -> None:
         factory, handle = self._register(source_names=['det1', 'det2'])
 
-        handle.add_context_input(
+        handle.add_context_binding(
             stream_name='roi',
             workflow_key=_CtxKey,
             dependent_sources=['det1'],
         )
 
-        [entry] = factory.registration(handle.workflow_id).context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_bindings
         assert entry.dependent_sources == frozenset({'det1'})
 
     def test_multiple_entries_are_appended(self) -> None:
         factory, handle = self._register(source_names=['det1'])
 
-        handle.add_context_input(stream_name='roi', workflow_key=_CtxKey)
-        handle.add_context_input(stream_name='polygon', workflow_key=_OtherCtxKey)
+        handle.add_context_binding(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_binding(stream_name='polygon', workflow_key=_OtherCtxKey)
 
-        entries = factory.registration(handle.workflow_id).context_inputs
+        entries = factory.registration(handle.workflow_id).context_bindings
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
         assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
 
@@ -1001,14 +1001,14 @@ class TestSpecHandleAddContextInput:
         def seed(job_id: JobId) -> object:
             return job_id
 
-        handle.add_context_input(
+        handle.add_context_binding(
             stream_name='roi',
             workflow_key=_CtxKey,
             stream_resolver=resolver,
             seed_factory=seed,
         )
 
-        [entry] = factory.registration(handle.workflow_id).context_inputs
+        [entry] = factory.registration(handle.workflow_id).context_bindings
         assert entry.stream_resolver is resolver
         assert entry.seed_factory is seed
 
@@ -1041,4 +1041,4 @@ class TestSpecHandleAddContextInput:
         _, handle = self._register(source_names=['det1'])
 
         with pytest.raises(ValueError, match=r'chain-patch.*spec scope'):
-            handle.add_context_input(stream_name='rot', workflow_key=_RotLog)
+            handle.add_context_binding(stream_name='rot', workflow_key=_RotLog)

@@ -85,10 +85,10 @@ class Device(Stream):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ContextInput:
+class ContextBinding:
     """Declaration of one context-stream input to a workflow.
 
-    A context input declares that the value of a stream
+    A context binding declares that the value of a stream
     (:attr:`stream_name`) should be routed to a Sciline pipeline when
     wiring workflows for the source names listed in
     :attr:`dependent_sources`. The :attr:`workflow_key` is the Sciline
@@ -111,7 +111,7 @@ class ContextInput:
 
     Per-job runtime behavior — wire-name suffixing, cold-start seeding —
     lives on the spec-scope wrapper
-    :class:`ess.livedata.handlers.workflow_factory.SpecContextInput`,
+    :class:`ess.livedata.handlers.workflow_factory.SpecContextBinding`,
     which extends this class. Instrument-scope entries never carry such
     callables; their wire name is the declared :attr:`stream_name` and
     they have no cold-start seed.

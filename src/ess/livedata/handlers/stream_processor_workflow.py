@@ -49,7 +49,7 @@ class StreamProcessorWorkflow(Workflow):
             Dynamic inputs are accumulated across calls via
             ``StreamProcessor.accumulate()``.
         context_keys:
-            Mapping from stream names to sciline keys for context inputs.
+            Mapping from stream names to sciline keys for context bindings.
             Context inputs update pipeline parameters via
             ``StreamProcessor.set_context()``. Unlike dynamic inputs, context
             values are **stateful**: a value set in one ``accumulate()`` call
