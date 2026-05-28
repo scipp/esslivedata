@@ -131,6 +131,61 @@ _ICONS: dict[str, str] = {
         '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
         '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
     ),
+    # Per-axis lock/lock-open variants.
+    #
+    # The lock body fills x=5-19, y=11-21 and the shackle peaks at y=3 in the
+    # middle of the icon. The top-right corner (x=17-23, y=1-7) is empty, so
+    # we tuck an axis-label badge there. The badge paths use stroke-width=1.5
+    # — the icon-wide default of 2 would dominate at this scale. Badges are
+    # sized roughly square so X/Y/C remain recognisable letter shapes.
+    'lock-x': _svg(
+        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
+        '1 -2 -2v-6z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
+        '<path stroke-width="1.5" d="M17 1l5 5"/>'
+        '<path stroke-width="1.5" d="M22 1l-5 5"/>'
+    ),
+    'lock-open-x': _svg(
+        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
+        '0 0 1 -2 -2z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
+        '<path stroke-width="1.5" d="M17 1l5 5"/>'
+        '<path stroke-width="1.5" d="M22 1l-5 5"/>'
+    ),
+    'lock-y': _svg(
+        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
+        '1 -2 -2v-6z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
+        '<path stroke-width="1.5" d="M17 1l2.5 3"/>'
+        '<path stroke-width="1.5" d="M22 1l-2.5 3"/>'
+        '<path stroke-width="1.5" d="M19.5 4l0 3"/>'
+    ),
+    'lock-open-y': _svg(
+        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
+        '0 0 1 -2 -2z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
+        '<path stroke-width="1.5" d="M17 1l2.5 3"/>'
+        '<path stroke-width="1.5" d="M22 1l-2.5 3"/>'
+        '<path stroke-width="1.5" d="M19.5 4l0 3"/>'
+    ),
+    'lock-c': _svg(
+        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
+        '1 -2 -2v-6z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
+        '<path stroke-width="1.5" d="M22 1.5a3 2.5 0 1 0 0 5"/>'
+    ),
+    'lock-open-c': _svg(
+        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
+        '0 0 1 -2 -2z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
+        '<path stroke-width="1.5" d="M22 1.5a3 2.5 0 1 0 0 5"/>'
+    ),
     # Arrows-maximize (fit / expand)
     'arrows-maximize': _svg(
         '<path d="M16 4l4 0l0 4"/>'
@@ -153,8 +208,9 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons: arrows-maximize, backspace, chevron-down,
-        chevron-right, chevron-up, download, eye, eye-off, lock, lock-open,
-        pencil, player-pause, player-play, player-stop, plus, refresh, settings,
+        chevron-right, chevron-up, download, eye, eye-off, lock, lock-c, lock-open,
+        lock-open-c, lock-open-x, lock-open-y, lock-x, lock-y, pencil,
+        player-pause, player-play, player-stop, plus, refresh, settings,
         trash, x.
 
     Returns

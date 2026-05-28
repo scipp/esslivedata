@@ -191,16 +191,21 @@ class CellAutoscaleController:
         try:
             from .widgets.icons import get_icon_data_uri
 
-            on_icon = get_icon_data_uri('lock-open')
-            off_icon = get_icon_data_uri('lock')
+            axis_icons: dict[Axis, tuple[str | None, str | None]] = {
+                axis: (
+                    get_icon_data_uri(f'lock-open-{axis}'),
+                    get_icon_data_uri(f'lock-{axis}'),
+                )
+                for axis in self._axes
+            }
             fit_icon = get_icon_data_uri('arrows-maximize')
         except Exception:
             # Tests with stub plots don't require real icons.
-            on_icon = None
-            off_icon = None
+            axis_icons = dict.fromkeys(self._axes, (None, None))
             fit_icon = None
 
         for axis in sorted(self._axes):
+            on_icon, off_icon = axis_icons[axis]
             self._toggles[axis] = _make_toggle_action(
                 active=True,
                 description=_TOGGLE_DESCRIPTIONS[axis],
