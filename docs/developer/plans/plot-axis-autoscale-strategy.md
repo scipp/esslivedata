@@ -442,28 +442,13 @@ directly via a `hooks=[...]` callback for x/y.
   mutated each render through a separate HoloViews code path, so
   `.opts(clim=(lo, hi))` per frame works as expected. Cleaner than
   reaching for `plot.handles['color_mapper'].low/high` ourselves.
-- **Plot-type policy decides which axes get toggles.**
-  - `ImagePlotter`: colorbar toggle only (x/y are detector geometry,
-    never autoscale); fixes #912 directly.
-  - `LinePlotter` (counts histogram, ROI line, 1-D reduction): y toggle
-    only (kdim is fixed binning); if multi-dataset overlay, one toggle
-    for the shared y.
-  - Time-series (`LinePlotter` + `FullHistoryExtractor`): y toggle, x
-    is driven by Follow-latest mode (see below) rather than by a
-    toggle.
-  - `Overlay1DPlotter`: y toggle (shared across slices).
-  - `FlattenPlotter`: colorbar toggle, as `ImagePlotter`.
-  - `SlicerPlotter`: unchanged — opts out, computes global `clim`
-    already.
-  - `BarsPlotter`, `CorrelationPlotter`: no toggles for now.
+  To investigate: Do 1D elements like `hv.Line` have a similar `vlim` option that
+  works like this, or do we need to use the `ydim` mechanism via a hook?
 - **Fit button: one-shot fit-to-data, regardless of toggle state.**
   Mutates the figure's `Range1d` / `color_mapper` handles directly to
   current data extent. Toggle state is unchanged afterwards. Single
   button covering all axes by default; see §4.9 for the open question
   of splitting into "Fit ranges" (kdims) and "Fit value" (vdim/clim).
-- **Follow-latest mode (time-series x axis only).** When active, the
-  same hook mechanism writes `(latest - window, latest)` to `x_range`
-  each frame. Replaces the x-axis toggle for time-series plots.
 - **Autoscaler class, `grow_threshold` / `shrink_threshold` kwargs,
   and the autoscaler test suite are deleted.**
 

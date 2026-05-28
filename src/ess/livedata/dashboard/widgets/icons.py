@@ -19,6 +19,8 @@ Usage:
 
 from __future__ import annotations
 
+import base64
+
 # Common SVG attributes used by all Tabler icons
 _SVG_ATTRS = (
     'xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
@@ -115,6 +117,31 @@ _ICONS: dict[str, str] = {
         '<path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/>'
         '<path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/>'
     ),
+    # Lock (autoscale off / axis frozen)
+    'lock': _svg(
+        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
+        '1 -2 -2v-6z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
+    ),
+    # Lock-open (autoscale on / axis follows data)
+    'lock-open': _svg(
+        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
+        '0 0 1 -2 -2z"/>'
+        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
+    ),
+    # Arrows-maximize (fit / expand)
+    'arrows-maximize': _svg(
+        '<path d="M16 4l4 0l0 4"/>'
+        '<path d="M14 10l6 -6"/>'
+        '<path d="M8 20l-4 0l0 -4"/>'
+        '<path d="M4 20l6 -6"/>'
+        '<path d="M16 20l4 0l0 -4"/>'
+        '<path d="M14 14l6 6"/>'
+        '<path d="M8 4l-4 0l0 4"/>'
+        '<path d="M4 4l6 6"/>'
+    ),
 }
 
 
@@ -125,9 +152,10 @@ def get_icon(name: str) -> str:
     Parameters
     ----------
     name:
-        Icon name. Available icons: backspace, chevron-down, chevron-right,
-        chevron-up, download, eye, eye-off, pencil, player-pause, player-play,
-        player-stop, plus, refresh, settings, trash, x.
+        Icon name. Available icons: arrows-maximize, backspace, chevron-down,
+        chevron-right, chevron-up, download, eye, eye-off, lock, lock-open,
+        pencil, player-pause, player-play, player-stop, plus, refresh, settings,
+        trash, x.
 
     Returns
     -------
@@ -148,3 +176,14 @@ def get_icon(name: str) -> str:
 def list_icons() -> list[str]:
     """Return a list of all available icon names."""
     return sorted(_ICONS.keys())
+
+
+def get_icon_data_uri(name: str) -> str:
+    """Return an icon as a ``data:image/svg+xml;base64,...`` URI.
+
+    Useful for Bokeh ``CustomAction(icon=...)``, which accepts a data URI with
+    an ``image/*`` MIME type but not a raw SVG string.
+    """
+    svg = get_icon(name)
+    encoded = base64.b64encode(svg.encode('utf-8')).decode('ascii')
+    return f'data:image/svg+xml;base64,{encoded}'

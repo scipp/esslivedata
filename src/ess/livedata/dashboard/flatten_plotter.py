@@ -262,7 +262,6 @@ class FlattenPlotter(ImagePlotter):
         cfg = params.flatten
         rate = getattr(params, 'rate', None)
         return cls(
-            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
