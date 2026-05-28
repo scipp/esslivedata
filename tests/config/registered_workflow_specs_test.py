@@ -266,9 +266,7 @@ def test_workflow_output_has_compatible_plotter(
             f"Add default_factory to the backing field to enable plotter matching."
         )
 
-    compatible = plotter_registry.get_compatible_plotters_with_spec(
-        {view_name: template}, spec.aux_sources
-    )
+    compatible = plotter_registry.get_compatible_plotters({view_name: template})
 
     assert compatible, (
         f"View '{view_name}' of {workflow_id} has no compatible plotter. "
