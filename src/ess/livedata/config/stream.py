@@ -118,8 +118,8 @@ class ContextBinding:
     """
 
     stream_name: str
-    dependent_sources: frozenset[str]
     workflow_key: Any
+    dependent_sources: frozenset[str]
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the
