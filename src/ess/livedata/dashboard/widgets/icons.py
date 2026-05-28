@@ -3,10 +3,14 @@
 """
 Embedded SVG icons for the dashboard.
 
-Icons are from Tabler Icons (https://tabler.io/icons), MIT licensed.
-They are embedded as strings to work in air-gapped environments where
-users may not have internet access. Panel's default icon loading fetches
+Most icons are taken verbatim from Tabler Icons (https://tabler.io/icons),
+MIT licensed. They are embedded as strings to work in air-gapped environments
+where users may not have internet access. Panel's default icon loading fetches
 from CDN at runtime in the browser, which fails offline.
+
+The ``lock-{axis}`` / ``lock-open-{axis}`` variants are custom: the lock body
+is Tabler's ``lock`` / ``lock-open``, but the axis-label badge in the top-right
+corner is not a Tabler icon.
 
 To add a new icon: download from https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/outline/{name}.svg,
 copy the SVG path elements, and add an entry to the _ICONS dict using the _svg() helper.
@@ -117,61 +121,6 @@ _ICONS: dict[str, str] = {
         '<path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/>'
         '<path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/>'
     ),
-    # Per-axis lock/lock-open variants.
-    #
-    # The lock body fills x=5-19, y=11-21 and the shackle peaks at y=3 in the
-    # middle of the icon. The top-right corner (x=17-23, y=1-7) is empty, so
-    # we tuck an axis-label badge there. The badge paths use stroke-width=1.5
-    # — the icon-wide default of 2 would dominate at this scale. Badges are
-    # sized roughly square so X/Y/C remain recognisable letter shapes.
-    'lock-x': _svg(
-        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
-        '1 -2 -2v-6z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
-        '<path stroke-width="1.5" d="M17 1l5 5"/>'
-        '<path stroke-width="1.5" d="M22 1l-5 5"/>'
-    ),
-    'lock-open-x': _svg(
-        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
-        '0 0 1 -2 -2z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
-        '<path stroke-width="1.5" d="M17 1l5 5"/>'
-        '<path stroke-width="1.5" d="M22 1l-5 5"/>'
-    ),
-    'lock-y': _svg(
-        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
-        '1 -2 -2v-6z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
-        '<path stroke-width="1.5" d="M17 1l2.5 3"/>'
-        '<path stroke-width="1.5" d="M22 1l-2.5 3"/>'
-        '<path stroke-width="1.5" d="M19.5 4l0 3"/>'
-    ),
-    'lock-open-y': _svg(
-        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
-        '0 0 1 -2 -2z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
-        '<path stroke-width="1.5" d="M17 1l2.5 3"/>'
-        '<path stroke-width="1.5" d="M22 1l-2.5 3"/>'
-        '<path stroke-width="1.5" d="M19.5 4l0 3"/>'
-    ),
-    'lock-c': _svg(
-        '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
-        '1 -2 -2v-6z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
-        '<path stroke-width="1.5" d="M22 1.5a3 2.5 0 1 0 0 5"/>'
-    ),
-    'lock-open-c': _svg(
-        '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
-        '0 0 1 -2 -2z"/>'
-        '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
-        '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
-        '<path stroke-width="1.5" d="M22 1.5a3 2.5 0 1 0 0 5"/>'
-    ),
     # Arrows-maximize (fit / expand)
     'arrows-maximize': _svg(
         '<path d="M16 4l4 0l0 4"/>'
@@ -184,6 +133,40 @@ _ICONS: dict[str, str] = {
         '<path d="M4 4l6 6"/>'
     ),
 }
+
+
+# Custom per-axis lock variants, composed from Tabler's ``lock`` / ``lock-open``
+# bodies plus an axis-label badge tucked into the empty top-right corner
+# (x=17-23, y=1-7). The badge paths use stroke-width=1.5 — the icon-wide
+# default of 2 would dominate at this scale. Badges are sized roughly square
+# so X/Y/C remain recognisable letter shapes.
+_LOCK_CLOSED = (  # Tabler ``lock``
+    '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 '
+    '1 -2 -2v-6z"/>'
+    '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+    '<path d="M8 11v-4a4 4 0 1 1 8 0v4"/>'
+)
+_LOCK_OPEN = (  # Tabler ``lock-open``
+    '<path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 '
+    '0 0 1 -2 -2z"/>'
+    '<path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/>'
+    '<path d="M8 11v-5a4 4 0 0 1 8 0"/>'
+)
+_AXIS_BADGES = {
+    'x': (
+        '<path stroke-width="1.5" d="M17 1l5 5"/>'
+        '<path stroke-width="1.5" d="M22 1l-5 5"/>'
+    ),
+    'y': (
+        '<path stroke-width="1.5" d="M17 1l2.5 3"/>'
+        '<path stroke-width="1.5" d="M22 1l-2.5 3"/>'
+        '<path stroke-width="1.5" d="M19.5 4l0 3"/>'
+    ),
+    'c': '<path stroke-width="1.5" d="M22 1.5a3 2.5 0 1 0 0 5"/>',
+}
+for _axis, _badge in _AXIS_BADGES.items():
+    _ICONS[f'lock-{_axis}'] = _svg(_LOCK_CLOSED + _badge)
+    _ICONS[f'lock-open-{_axis}'] = _svg(_LOCK_OPEN + _badge)
 
 
 def get_icon(name: str) -> str:
