@@ -1628,7 +1628,12 @@ def _build_instrument_with_streams():
     from ess.livedata.config.stream import F144Stream
 
     def _f(name: str) -> F144Stream:
-        return F144Stream(source=name, topic='topic', units='mm')
+        return F144Stream(
+            source=name,
+            topic='topic',
+            units='mm',
+            nexus_path=f'/entry/instrument/{name}/value',
+        )
 
     return Instrument(
         name='test',
@@ -1878,14 +1883,14 @@ class TestJobFactoryContextBinding:
         """A chain-patch ContextBinding contributes ValueLog subclass.
 
         A chain-patch ContextBinding contributes its :class:`ValueLog`
-        subclass to the factory's ``context_keys``; the transform path lives
-        on the subclass and is consumed by
+        subclass to the factory's ``context_keys``; the transform path is
+        derived from the binding's ``stream_name`` and consumed by
         :meth:`Instrument.apply_dynamic_transforms`.
         """
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            transform_path = '/entry/instrument/rot/value'
+            pass
 
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(

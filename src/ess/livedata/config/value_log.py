@@ -6,8 +6,14 @@
 :class:`~ess.livedata.handlers.stream_processor_workflow.StreamProcessorWorkflow`
 delivers raw NXlog payloads through. Each chain-patch binding declares
 its own subclass so multiple dynamic transforms can coexist on one
-workflow without colliding on a shared Sciline parameter; the subclass
-also carries the NeXus :attr:`transform_path` it patches.
+workflow without colliding on a shared Sciline parameter.
+
+The NeXus transformation-chain path patched by a binding is *not*
+declared here: it is derived from the binding's ``stream_name`` (the
+f144 substream's ``nexus_path``) by
+:meth:`Instrument.chain_patch_path`. This keeps a single source of
+truth in ``streams_parsed.py`` and makes miswiring structurally
+impossible.
 
 The type lives in :mod:`config` (rather than next to
 ``StreamProcessorWorkflow`` in :mod:`handlers`) because
@@ -20,7 +26,6 @@ alongside the declaration record avoids ``config`` depending on
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
 
 import scipp as sc
 
@@ -34,12 +39,10 @@ class ValueLog:
     ``value``-over-``time`` payload: :attr:`values` carries the
     cumulative timeseries (a ``DataArray`` with a ``time`` coord).
 
-    Subclasses set :attr:`transform_path` (a class attribute) to the
-    NeXus transformation chain entry whose ``value`` is patched from the
-    latest sample of this log. :class:`~ess.livedata.config.stream.ContextBinding`
-    entries pointing at a :class:`ValueLog` subclass as their
-    ``workflow_key`` are routed via the fused per-component patched-chain
-    provider instead of via direct ``set_context`` binding.
+    :class:`~ess.livedata.config.stream.ContextBinding` entries pointing
+    at a :class:`ValueLog` subclass as their ``workflow_key`` are routed
+    via the fused per-component patched-chain provider instead of via
+    direct ``set_context`` binding.
 
     :attr:`values` is the NXlog produced by ``ToNXlog`` — non-empty by the
     time it reaches the provider, because the JobManager context-stream
@@ -51,9 +54,5 @@ class ValueLog:
     wraps the raw NXlog as ``key(values=raw)`` before delegating to
     ``set_context``.
     """
-
-    #: NeXus transformation chain entry this log patches. ``None`` on the base
-    #: class; chain-patching subclasses must set a concrete path.
-    transform_path: ClassVar[str | None] = None
 
     values: sc.DataArray

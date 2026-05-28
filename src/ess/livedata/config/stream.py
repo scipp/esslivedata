@@ -103,11 +103,13 @@ class ContextBinding:
       (e.g. ``InstrumentAngle[SampleRun]``, ``ROIRectangleRequest``).
       The stream value is fed straight into ``set_context``.
     - **NXtransformations chain patch.** ``workflow_key`` is a
-      :class:`~ess.livedata.config.value_log.ValueLog` subclass whose
-      ``transform_path`` class attribute identifies the chain entry to
-      patch. :meth:`Instrument.apply_dynamic_transforms` discovers these
-      by ``issubclass(workflow_key, ValueLog)`` and synthesises a fused
-      per-component patched-chain provider.
+      :class:`~ess.livedata.config.value_log.ValueLog` subclass. The
+      chain entry to patch is derived from :attr:`stream_name` (the
+      RBV substream's ``nexus_path``) by
+      :meth:`Instrument.chain_patch_path`.
+      :meth:`Instrument.apply_dynamic_transforms` discovers these
+      bindings by ``issubclass(workflow_key, ValueLog)`` and synthesises
+      a fused per-component patched-chain provider.
 
     Per-job runtime behavior — wire-name suffixing, cold-start seeding —
     lives on the spec-scope wrapper

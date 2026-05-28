@@ -320,7 +320,12 @@ class _Key:
 
 
 def _f144(name: str) -> F144Stream:
-    return F144Stream(source=name, topic='topic', units='mm')
+    return F144Stream(
+        source=name,
+        topic='topic',
+        units='mm',
+        nexus_path=f'/entry/instrument/{name}/value',
+    )
 
 
 class TestContextBindings:
@@ -411,7 +416,7 @@ class TestContextBindings:
         from ess.livedata.config.value_log import ValueLog
 
         class _SharedLog(ValueLog):
-            transform_path = '/a/value'
+            pass
 
         instrument = Instrument(
             name='test',
@@ -450,10 +455,10 @@ class TestContextBindings:
         from ess.livedata.config.value_log import ValueLog
 
         class _LogA(ValueLog):
-            transform_path = '/v/value'
+            pass
 
         class _LogB(ValueLog):
-            transform_path = '/v/value'
+            pass
 
         instrument = Instrument(
             name='test',
@@ -483,7 +488,7 @@ class TestContextBindings:
         from ess.livedata.config.value_log import ValueLog
 
         class _Log(ValueLog):
-            transform_path = '/v/value'
+            pass
 
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'s': _f144('s')}
@@ -621,8 +626,18 @@ class TestInstrumentApplyDynamicTransforms:
             name='inst',
             detector_names=['det1'],
             streams={
-                'rot': F144Stream(source='rot', topic='topic', units='deg'),
-                'other': F144Stream(source='other', topic='topic', units='deg'),
+                'rot': F144Stream(
+                    source='rot',
+                    topic='topic',
+                    units='deg',
+                    nexus_path='/entry/instrument/rot/value',
+                ),
+                'other': F144Stream(
+                    source='other',
+                    topic='topic',
+                    units='deg',
+                    nexus_path='/entry/instrument/other/value',
+                ),
             },
         )
 
@@ -636,7 +651,7 @@ class TestInstrumentApplyDynamicTransforms:
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            transform_path = '/entry/instrument/rot/value'
+            pass
 
         instrument = self._make_instrument()
         instrument.add_context_binding(
@@ -665,10 +680,10 @@ class TestInstrumentApplyDynamicTransforms:
         from ess.livedata.config.value_log import ValueLog
 
         class _LogA(ValueLog):
-            transform_path = '/entry/instrument/rot/value'
+            pass
 
         class _LogB(ValueLog):
-            transform_path = '/entry/instrument/other/value'
+            pass
 
         instrument = self._make_instrument()
         instrument.add_context_binding(

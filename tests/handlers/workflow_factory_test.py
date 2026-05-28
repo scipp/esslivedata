@@ -1036,7 +1036,7 @@ class TestSpecHandleAddContextBinding:
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
-            transform_path = '/entry/instrument/rot/value'
+            pass
 
         _, handle = self._register(source_names=['det1'])
 

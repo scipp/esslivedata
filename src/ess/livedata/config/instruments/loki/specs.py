@@ -46,8 +46,6 @@ class DetectorCarriageLog(ValueLog):
     on a workflow remain distinguishable in Sciline.
     """
 
-    transform_path = '/entry/instrument/detector_carriage/value'
-
 
 class TransmissionMode(StrEnum):
     """Transmission correction mode for SANS reduction."""

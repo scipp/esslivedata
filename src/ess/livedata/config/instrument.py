@@ -177,6 +177,35 @@ class Instrument:
                 f"{binding.stream_name!r}; declared streams: "
                 f"{sorted(self.streams)}"
             )
+        if _is_chain_patch(binding):
+            self.chain_patch_path(binding)
+
+    def chain_patch_path(self, binding: ContextBinding) -> str:
+        """Resolve the NeXus chain entry path patched by a chain-patch binding.
+
+        The patch target is the ``nexus_path`` of the f144 RBV substream the
+        binding sources from: for a :class:`Device` stream, the RBV is
+        ``streams[stream.value]``; for a plain :class:`F144Stream` it is the
+        stream itself. The chain entry and the f144 source-of-truth must
+        live at the same NeXus path — the geometry artifact writes the
+        placeholder NXlog at the same path the live stream targets — so
+        this single field is the source of truth for both.
+        """
+        stream = self.streams[binding.stream_name]
+        rbv = self.streams[stream.value] if isinstance(stream, Device) else stream
+        if not isinstance(rbv, F144Stream):
+            raise ValueError(
+                f"Chain-patch binding {binding.stream_name!r} resolves to "
+                f"{type(rbv).__name__}, not F144Stream; chain-patch sources "
+                "must carry f144 NXlog payloads"
+            )
+        if rbv.nexus_path is None:
+            raise ValueError(
+                f"Chain-patch binding {binding.stream_name!r} resolves to an "
+                f"F144Stream with no nexus_path; set nexus_path on the parsed "
+                "stream entry so the chain entry path can be derived"
+            )
+        return rbv.nexus_path
 
     def add_context_binding(
         self,
@@ -197,8 +226,9 @@ class Instrument:
         :class:`~ess.livedata.config.value_log.ValueLog` subclass as
         ``workflow_key``: :meth:`apply_dynamic_transforms` discovers them
         by ``issubclass`` and routes the value into the NeXus
-        ``depends_on`` chain at ``workflow_key.transform_path`` via a
-        fused per-component patched-chain provider.
+        ``depends_on`` chain at the path derived from ``stream_name`` (see
+        :meth:`chain_patch_path`) via a fused per-component patched-chain
+        provider.
         """
         binding = ContextBinding(
             stream_name=stream_name,
@@ -219,8 +249,10 @@ class Instrument:
         instrument-scope chain-patch :class:`ContextBinding` (one whose
         ``workflow_key`` is a :class:`ValueLog` subclass) whose
         ``dependent_sources`` includes that source name, and groups the
-        ``(transform_path, workflow_key)`` pairs by component type. Each
-        group becomes a single fused provider that replaces essreduce's
+        ``(transform_path, workflow_key)`` pairs by component type. The
+        ``transform_path`` is derived from each binding's ``stream_name``
+        via :meth:`chain_patch_path`. Each group becomes a single fused
+        provider that replaces essreduce's
         ``NeXusTransformationChain[T, SampleRun]`` provider and writes the
         latest sample of each :class:`ValueLog` parameter into the chain.
 
@@ -254,7 +286,7 @@ class Instrument:
                 if source_name not in ci.dependent_sources:
                     continue
                 by_type.setdefault(component_type, {})[ci.stream_name] = (
-                    ci.workflow_key.transform_path,
+                    self.chain_patch_path(ci),
                     ci.workflow_key,
                 )
         for component_type, by_stream in by_type.items():
