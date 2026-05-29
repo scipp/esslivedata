@@ -94,7 +94,7 @@ class ParamWidget:
             )
 
         shared_options = {
-            'name': display_name,
+            'label': display_name,
             'description': description,
             'sizing_mode': 'stretch_width',
             'margin': (5, 5),

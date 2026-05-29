@@ -652,8 +652,8 @@ class WorkflowStatusWidget:
         button_text = 'Commit & Restart' if active else 'Start'
 
         commit_btn = pn.widgets.Button(
-            name=button_text,
-            button_type='primary',
+            label=button_text,
+            color='primary',
             margin=0,
         )
         commit_btn.on_click(lambda e: self._on_commit_click())
@@ -1062,8 +1062,8 @@ class WorkflowStatusListWidget:
         ]
 
         expand_all_btn = pn.widgets.Button(
-            name='Expand all',
-            button_type='light',
+            label='Expand all',
+            color='light',
             width=90,
             height=28,
             margin=(0, 4, 0, 0),
@@ -1072,8 +1072,8 @@ class WorkflowStatusListWidget:
         expand_all_btn.on_click(lambda e: self._expand_all())
 
         collapse_all_btn = pn.widgets.Button(
-            name='Collapse all',
-            button_type='light',
+            label='Collapse all',
+            color='light',
             width=90,
             height=28,
             margin=0,

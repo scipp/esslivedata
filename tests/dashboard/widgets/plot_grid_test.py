@@ -285,14 +285,14 @@ class TestCellSelection:
 
         # Get initial button state
         button_before = get_cell_button(grid, 0, 0)
-        initial_label = button_before.name if button_before else None
+        initial_label = button_before.label if button_before else None
 
         # Click the cell
         simulate_click(grid, 0, 0)
 
         # Button should now show different label
         button_after = get_cell_button(grid, 0, 0)
-        new_label = button_after.name if button_after else None
+        new_label = button_after.label if button_after else None
 
         assert initial_label != new_label
         assert new_label is not None

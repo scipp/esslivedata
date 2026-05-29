@@ -955,11 +955,11 @@ class TestWorkflowStatusListWidget:
         assert isinstance(header_row, pn.Row)
 
         # Header row should contain the expand/collapse buttons
-        button_names = [
-            obj.name for obj in header_row if isinstance(obj, pn.widgets.Button)
+        button_labels = [
+            obj.label for obj in header_row if isinstance(obj, pn.widgets.Button)
         ]
-        assert 'Expand all' in button_names
-        assert 'Collapse all' in button_names
+        assert 'Expand all' in button_labels
+        assert 'Collapse all' in button_labels
 
     def test_refresh_skipped_when_not_visible(
         self,

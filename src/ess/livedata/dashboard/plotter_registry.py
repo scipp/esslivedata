@@ -85,41 +85,6 @@ class DataRequirements:
         return True
 
 
-@dataclass
-class SpecRequirements:
-    """Requirements based on workflow spec metadata.
-
-    Allows plotters to declare dependencies on workflow spec features like
-    auxiliary sources (e.g., ROI support).
-    """
-
-    requires_aux_sources: list[type] = field(default_factory=list)
-
-    def validate_spec(self, aux_sources: type | object | None) -> bool:
-        """Check if spec meets these requirements.
-
-        Parameters
-        ----------
-        aux_sources:
-            The aux_sources from the workflow spec (an AuxSources instance or
-            type), or None if not defined.
-
-        Returns
-        -------
-        :
-            True if the spec meets the requirements, False otherwise.
-        """
-        if not self.requires_aux_sources:
-            return True
-        if aux_sources is None:
-            return False
-        # Support both type and instance checks
-        aux_type = aux_sources if isinstance(aux_sources, type) else type(aux_sources)
-        return any(
-            issubclass(aux_type, required) for required in self.requires_aux_sources
-        )
-
-
 class PlotterSpec(pydantic.BaseModel):
     """
     Specification for a plotter.
@@ -138,10 +103,6 @@ class PlotterSpec(pydantic.BaseModel):
     )
     data_requirements: DataRequirements = pydantic.Field(
         description="Requirements the data to be plotted must fulfill."
-    )
-    spec_requirements: SpecRequirements = pydantic.Field(
-        default_factory=SpecRequirements,
-        description="Requirements based on workflow spec metadata.",
     )
     category: PlotterCategory = pydantic.Field(
         default=PlotterCategory.DATA,
@@ -182,7 +143,6 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         description: str,
         data_requirements: DataRequirements,
         factory: PlotterFactory[P],
-        spec_requirements: SpecRequirements | None = None,
         category: PlotterCategory = PlotterCategory.DATA,
         params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]]
         | None = None,
@@ -197,7 +157,6 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             description=description,
             params=type_hints['params'],
             data_requirements=data_requirements,
-            spec_requirements=spec_requirements or SpecRequirements(),
             category=category,
         )
         self[name] = PlotterEntry(
@@ -209,8 +168,6 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
     ) -> dict[str, PlotterSpec]:
         """Get plotters compatible with the given data.
 
-        Note: This only checks data requirements, not spec requirements.
-        Use get_compatible_plotters_with_spec() when workflow spec is available.
         Only returns DATA category plotters.
         """
         return {
@@ -218,35 +175,6 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             for name, entry in self.items()
             if entry.spec.category == PlotterCategory.DATA
             and entry.spec.data_requirements.validate_data(data)
-        }
-
-    def get_compatible_plotters_with_spec(
-        self,
-        data: dict[Any, sc.DataArray],
-        aux_sources_type: type | None,
-    ) -> dict[str, PlotterSpec]:
-        """Get plotters compatible with both data and workflow spec.
-
-        Only returns DATA category plotters.
-
-        Parameters
-        ----------
-        data:
-            Dictionary mapping keys to DataArrays.
-        aux_sources_type:
-            The aux_sources type from the workflow spec, or None if not defined.
-
-        Returns
-        -------
-        :
-            Dictionary of compatible plotter names to their specifications.
-        """
-        return {
-            name: entry.spec
-            for name, entry in self.items()
-            if entry.spec.category == PlotterCategory.DATA
-            and entry.spec.data_requirements.validate_data(data)
-            and entry.spec.spec_requirements.validate_spec(aux_sources_type)
         }
 
     def get_specs(self) -> dict[str, PlotterSpec]:
