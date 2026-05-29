@@ -4,8 +4,9 @@
 
 Each plotter computes per-axis ``(lo, hi)`` targets from data on every
 ``compute()`` call. These tests assert that the targets match the data
-extent with the documented padding (5% linear, 1.1x log) and that
-``AUTOSCALE_AXES`` matches the axes actually populated.
+extent framed with the same per-element padding HoloViews would apply
+(images pad nothing, curves pad y only) and that ``AUTOSCALE_AXES``
+matches the axes actually populated.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
+from holoviews.core.util import range_pad
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
@@ -42,6 +44,7 @@ from ess.livedata.dashboard.plots import (
     ImagePlotter,
     LinePlotter,
     Overlay1DPlotter,
+    _hv_axis_padding,
 )
 from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 
@@ -56,13 +59,12 @@ def _key(source: str = 'src', output: str = 'out') -> ResultKey:
     )
 
 
-def _expected_linear(lo: float, hi: float) -> tuple[float, float]:
-    extent = hi - lo
-    return lo - 0.05 * extent, hi + 0.05 * extent
-
-
-def _expected_log(lo: float, hi: float) -> tuple[float, float]:
-    return lo / 1.1, hi * 1.1
+def _expected(
+    element: type, axis: str, lo: float, hi: float, *, log: bool = False
+) -> tuple[float, float]:
+    """Range an axis should get: data extent framed with HoloViews' padding."""
+    pad = dict(zip(('x', 'y', 'c'), _hv_axis_padding(element), strict=True))[axis]
+    return range_pad(lo, hi, pad, log)
 
 
 class TestLinePlotterRangeTargets:
@@ -85,8 +87,8 @@ class TestLinePlotterRangeTargets:
 
         targets = plotter.get_range_targets(key)
         assert set(targets) == {'x', 'y'}
-        np.testing.assert_allclose(targets['x'], _expected_linear(10.0, 30.0))
-        np.testing.assert_allclose(targets['y'], _expected_linear(2.0, 8.0))
+        np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', 10.0, 30.0))
+        np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', 2.0, 8.0))
 
     def test_targets_use_log_padding_when_logy(self):
         params = PlotParams1d()
@@ -100,8 +102,10 @@ class TestLinePlotterRangeTargets:
         plotter.compute({PRIMARY: {key: data}})
 
         targets = plotter.get_range_targets(key)
-        np.testing.assert_allclose(targets['x'], _expected_linear(10.0, 30.0))
-        np.testing.assert_allclose(targets['y'], _expected_log(2.0, 8.0))
+        np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', 10.0, 30.0))
+        np.testing.assert_allclose(
+            targets['y'], _expected(hv.Curve, 'y', 2.0, 8.0, log=True)
+        )
 
     def test_log_padding_stays_positive_for_tiny_values(self):
         params = PlotParams1d()
@@ -143,10 +147,11 @@ class TestImagePlotterRangeTargets:
 
         targets = plotter.get_range_targets(key)
         assert set(targets) == {'x', 'y', 'c'}
-        # x coord midpoints span [0, 3] -> bounds extended by half-pixel to [-0.5, 3.5]
-        np.testing.assert_allclose(targets['x'], _expected_linear(-0.5, 3.5))
-        np.testing.assert_allclose(targets['y'], _expected_linear(-0.5, 2.5))
-        np.testing.assert_allclose(targets['c'], _expected_linear(0.0, 11.0))
+        # Images pad nothing: x midpoints span [0, 3], extended by half-pixel
+        # to [-0.5, 3.5], with no further padding on any axis.
+        np.testing.assert_allclose(targets['x'], _expected(hv.Image, 'x', -0.5, 3.5))
+        np.testing.assert_allclose(targets['y'], _expected(hv.Image, 'y', -0.5, 2.5))
+        np.testing.assert_allclose(targets['c'], _expected(hv.Image, 'c', 0.0, 11.0))
 
     def test_targets_for_image_with_bin_edges(self):
         params = PlotParams2d()
@@ -167,11 +172,11 @@ class TestImagePlotterRangeTargets:
         plotter.compute({PRIMARY: {key: data}})
 
         targets = plotter.get_range_targets(key)
-        np.testing.assert_allclose(targets['x'], _expected_linear(0.0, 3.0))
-        np.testing.assert_allclose(targets['y'], _expected_linear(0.0, 2.0))
-        np.testing.assert_allclose(targets['c'], _expected_linear(0.0, 5.0))
+        np.testing.assert_allclose(targets['x'], _expected(hv.Image, 'x', 0.0, 3.0))
+        np.testing.assert_allclose(targets['y'], _expected(hv.Image, 'y', 0.0, 2.0))
+        np.testing.assert_allclose(targets['c'], _expected(hv.Image, 'c', 0.0, 5.0))
 
-    def test_targets_log_c_uses_multiplicative_padding(self):
+    def test_targets_log_c_excludes_nonpositive(self):
         params = PlotParams2d()
         params.plot_scale.color_scale = PlotScale.log
         plotter = ImagePlotter.from_params(params)
@@ -190,7 +195,9 @@ class TestImagePlotterRangeTargets:
         plotter.compute({PRIMARY: {key: data}})
 
         targets = plotter.get_range_targets(key)
-        np.testing.assert_allclose(targets['c'], _expected_log(1.0, 8.0))
+        np.testing.assert_allclose(
+            targets['c'], _expected(hv.Image, 'c', 1.0, 8.0, log=True)
+        )
 
 
 class TestOverlay1DPlotterRangeTargets:
@@ -219,8 +226,8 @@ class TestOverlay1DPlotterRangeTargets:
 
         targets = plotter.get_range_targets(key)
         assert set(targets) == {'x', 'y'}
-        np.testing.assert_allclose(targets['x'], _expected_linear(10.0, 40.0))
-        np.testing.assert_allclose(targets['y'], _expected_linear(-1.0, 7.0))
+        np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', 10.0, 40.0))
+        np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', -1.0, 7.0))
 
 
 class TestBarsPlotterRangeTargets:
@@ -260,7 +267,7 @@ class TestSlicerPlotterRangeTargets:
 
         targets = plotter.get_range_targets(key)
         assert set(targets) == {'c'}
-        np.testing.assert_allclose(targets['c'], _expected_linear(0.0, 399.0))
+        np.testing.assert_allclose(targets['c'], _expected(hv.Image, 'c', 0.0, 399.0))
 
     def test_targets_log_c_excludes_zeros(self):
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
@@ -281,9 +288,11 @@ class TestSlicerPlotterRangeTargets:
         plotter.compute({PRIMARY: {key: data}})
 
         targets = plotter.get_range_targets(key)
-        # Log scale excludes zero -> min positive value is 1.0; pad multiplicatively.
+        # Log scale excludes zero -> min positive value is 1.0; images pad nothing.
         assert targets['c'][0] > 0.0
-        np.testing.assert_allclose(targets['c'], _expected_log(1.0, 399.0))
+        np.testing.assert_allclose(
+            targets['c'], _expected(hv.Image, 'c', 1.0, 399.0, log=True)
+        )
 
 
 def _correlation_axis_data(times, values, unit='m'):

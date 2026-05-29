@@ -15,7 +15,13 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
-from .plots import Plotter, PresenterBase, _normalize_to_rate, _pad_range
+from .plots import (
+    Plotter,
+    PresenterBase,
+    _hv_axis_padding,
+    _normalize_to_rate,
+    _pad_range,
+)
 from .range_hook import Axis
 from .scipp_to_holoviews import to_holoviews
 
@@ -305,7 +311,8 @@ class SlicerPlotter(Plotter):
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         self._range_targets = {}
         if clim is not None:
-            padded = _pad_range(*clim, log=use_log_scale)
+            _, _, cpad = _hv_axis_padding(hv.Image)
+            padded = _pad_range(*clim, pad=cpad, log=use_log_scale)
             for key in data:
                 self._range_targets[key] = {'c': padded}
         # Pre-prepare 3D data (dtype conversion + log masking)

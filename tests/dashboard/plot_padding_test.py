@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for ``_pad_linear``, ``_pad_log``, ``_finite_min_max`` edge cases
-and ``Plotter.compute`` cleanup on mid-loop exceptions.
+"""Tests for ``_hv_axis_padding``, ``_pad_range``, ``_finite_min_max`` edge
+cases and ``Plotter.compute`` cleanup on mid-loop exceptions.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from ess.livedata.dashboard.plots import (
     LinePlotter,
     Plotter,
     _finite_min_max,
-    _pad_linear,
-    _pad_log,
+    _hv_axis_padding,
+    _pad_range,
 )
 
 hv.extension('bokeh')
@@ -36,44 +36,54 @@ def _key(source: str = 'src', output: str = 'out') -> ResultKey:
     )
 
 
-class TestPadLinear:
-    def test_zero_range_at_zero_returns_non_degenerate(self):
-        lo, hi = _pad_linear(0.0, 0.0)
-        assert lo < hi
+class TestHvAxisPadding:
+    """Per-axis padding is sourced from HoloViews' registered plot classes."""
 
-    def test_zero_range_at_five_scales_to_magnitude(self):
-        lo, hi = _pad_linear(5.0, 5.0)
-        assert lo < 5.0 < hi
-        # Symmetric around the value
-        assert pytest.approx(5.0 - lo) == hi - 5.0
+    def test_image_pads_nothing(self):
+        assert _hv_axis_padding(hv.Image) == (0, 0, 0)
 
-    def test_zero_range_at_large_value_scales_with_magnitude(self):
-        # |lo| * 0.05 = 50 > floor (0.5) so magnitude-based offset wins.
-        lo, hi = _pad_linear(1000.0, 1000.0)
+    def test_curve_pads_y_only(self):
+        xpad, ypad, _ = _hv_axis_padding(hv.Curve)
+        assert xpad == 0
+        assert ypad == pytest.approx(0.1)
+
+    def test_histogram_pads_both_axes(self):
+        xpad, ypad, _ = _hv_axis_padding(hv.Histogram)
+        assert xpad == pytest.approx(0.1)
+        assert ypad == pytest.approx(0.1)
+
+
+class TestPadRange:
+    def test_linear_pad_applied_as_span_fraction(self):
+        lo, hi = _pad_range(0.0, 10.0, pad=0.1, log=False)
+        assert pytest.approx(lo) == -1.0
+        assert pytest.approx(hi) == 11.0
+
+    def test_zero_pad_is_identity_on_linear(self):
+        assert _pad_range(0.0, 10.0, pad=0.0, log=False) == (0.0, 10.0)
+
+    def test_log_pad_stays_positive(self):
+        lo, hi = _pad_range(2.0, 8.0, pad=0.1, log=True)
+        assert 0.0 < lo < 2.0
+        assert hi > 8.0
+
+    def test_zero_pad_log_is_near_identity(self):
+        lo, hi = _pad_range(2.0, 8.0, pad=0.0, log=True)
+        assert pytest.approx(lo) == 2.0
+        assert pytest.approx(hi) == 8.0
+
+    def test_degenerate_linear_widens_to_floor(self):
+        lo, hi = _pad_range(0.0, 0.0, pad=0.0, log=False)
+        assert pytest.approx(lo) == -0.5
+        assert pytest.approx(hi) == 0.5
+
+    def test_degenerate_linear_scales_with_magnitude(self):
+        lo, hi = _pad_range(1000.0, 1000.0, pad=0.0, log=False)
         assert pytest.approx(hi - lo) == 100.0
 
-    def test_zero_range_at_negative_value(self):
-        lo, hi = _pad_linear(-3.0, -3.0)
-        assert lo < -3.0 < hi
-
-    def test_non_degenerate_uses_5_percent_pad(self):
-        lo, hi = _pad_linear(0.0, 10.0)
-        assert pytest.approx(lo) == -0.5
-        assert pytest.approx(hi) == 10.5
-
-
-class TestPadLog:
-    def test_positive_inputs_apply_multiplicative_pad(self):
-        lo, hi = _pad_log(2.0, 8.0)
-        assert pytest.approx(lo) == 2.0 / 1.1
-        assert pytest.approx(hi) == 8.0 * 1.1
-
-    def test_tiny_positive_inputs_stay_positive(self):
-        # _pad_log no longer guards; callers must filter. Verify behaviour
-        # for a tiny but positive lo: padded result is still positive.
-        lo, hi = _pad_log(1e-300, 1.0)
-        assert lo > 0.0
-        assert hi > 0.0
+    def test_degenerate_log_stays_positive(self):
+        lo, hi = _pad_range(2.0, 2.0, pad=0.0, log=True)
+        assert 0.0 < lo < 2.0 < hi
 
 
 class TestFiniteMinMax:
