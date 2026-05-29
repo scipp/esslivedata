@@ -202,8 +202,11 @@ def list_icons() -> list[str]:
     return sorted(_ICONS.keys())
 
 
-BOKEH_TOOLBAR_ICON_COLOR = '#5b5b5b'
-"""Approximate stroke color of Bokeh's built-in toolbar tool icons.
+BOKEH_TOOLBAR_ICON_COLOR = '#a1a6a9'
+"""Stroke color of Bokeh's built-in toolbar tool icons.
+
+This is Bokeh's ``--bokeh-icon-color`` default (the ``--icon-color`` CSS
+variable fallback in BokehJS' ``:host`` block).
 
 Data-URI icons render as ``<img>`` rather than inline SVG, so
 ``stroke="currentColor"`` does not inherit the surrounding text color and
