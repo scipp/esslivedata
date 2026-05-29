@@ -219,3 +219,24 @@ The original "Validation" bullet covered wire-name collisions only. Implementati
 ### Module placement: `ValueLog` lives in `config/`
 
 `ValueLog` was initially placed in `handlers/value_log.py`. Because `WorkflowSpec.context_bindings: list[DirectBindContextBinding]` requires pydantic forward-ref resolution to know about `ValueLog`, the placement created a `config/` → `handlers/` import. Final placement is `config/value_log.py` next to `ContextBinding`. `synthesise_provider` lives in `handlers/dynamic_transforms.py` (its only caller).
+
+## Addendum 2: ROI leaves the declaration model; spec scope retained without callables (2026-05-29)
+
+This ADR introduced `SpecContextBinding` — a `ContextBinding` subclass carrying `stream_resolver` and `seed_factory` — so ROI could be declared as a spec-scope context binding. Per the ADR 0002 addendum, ROI is no longer a gated context stream. With ROI gone, the spec-scope binding had no remaining user that needed those callables, and they were the only thing distinguishing spec scope from instrument scope.
+
+**Superseded:**
+
+- **`SpecContextBinding`, `stream_resolver`, `seed_factory`** — removed. Per-job wire-name suffixing and cold-start seeding were ROI-specific concerns; with ROI back as an auxiliary source they live where they belong (`DetectorROIAuxSources.render` does the `{job_id}/` prefix; no seed is needed). The factory builds ROI's `context_keys` from `roi_support`.
+- **"DetectorROIAuxSources is removed entirely"** and the ROI consequences in the original "Consequences" list — reversed. `DetectorROIAuxSources` returns (ROI-only; the LOKI `dynamic_transforms` entanglement it carried on `main` stays gone — motion is instrument-scope chain-patch).
+- **"Two record shapes via subclass split"** (Addendum 1) — was not implemented and is now moot. `ContextBinding` is a single concrete dataclass (`stream_name`, `workflow_key`, `dependent_sources`); chain-patch is discriminated by `issubclass(workflow_key, ValueLog)` (`_is_chain_patch`), not by type. There is no `DirectBindContextBinding` / `ChainPatchContextBinding`.
+
+The motivations in the original Context section (#1 `AuxSources` dual concern, #2 parallel declarations, #3 `Workflow.context_keys` protocol leak) were real, but the wins that justified the work were the **protocol-leak removal** and the **motion-declaration unification** — both motion-side. ROI was a misleading exemplar: it paid the most (resolver + seed + subclass) and gained the least.
+
+**Retained, refined** — one `ContextBinding` record, declarable at **two scopes**, both feeding the factory's `context_keys` and the job's gating set:
+
+- *Instrument scope* (`Instrument.add_context_binding`) — source properties (motion), instrument-default with `skip_instrument_contexts` opt-out. Chain-patch (`ValueLog`) is instrument-scope only.
+- *Spec scope* (`SpecHandle.add_context_binding`) — context that is a property of one workflow. **No callables**: the wire name equals `stream_name`, and there is no seed, so the gate stays closed until the producer publishes — correct for a context with no safe default. Spec-scope entries route by stream name in `gather_source_names` (no resolver special-case).
+
+`JobFactory.create` returns a `Job` directly. (The Job carries a single user-aux + context wire map plus a gating set; the "Job carries aux and context as separate maps" addendum's three-field shape was already collapsed earlier in the branch.)
+
+The spec-scope path has **no current user** — ROI was its only one. It is kept as the extension point for the motivating future case: a **sample-temperature** stream feeding one reduction workflow — gated (no safe default), a real shared Kafka stream (wire == `stream_name`), no seed. That case drops straight into `SpecHandle.add_context_binding` with neither callable.

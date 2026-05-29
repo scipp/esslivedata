@@ -87,3 +87,14 @@ A job that is time-active but context-gated is conceptually distinct from one wh
 - Warning emission for context-pending jobs is consolidated inside `JobManager`. There is no warning-message channel between the workflow execution unit and the job layer.
 - Tests at JobManager level cover: dynamic aux not gated; context aux with seed (ROI) ready from tick 1; context aux without seed (rotation) blocks then unblocks; primary dropped while gated.
 - The preprocessor → orchestrator → JobManager data path is unchanged. JobManager reads `input_stream_names` (the routing-combined view over user-selected aux and framework-injected context, see ADR 0003 "Job carries aux and context as separate maps") and `context_stream_names` for gating. Seeding goes through the existing `preprocess_messages` entry point.
+
+## Addendum 2: ROI is an auxiliary source, not a gated context stream (2026-05-29)
+
+The decision above treats ROI as a gated context input with a backend seed. Implementation experience showed this was wrong. ROI's Sciline providers already map a missing or empty request to an empty result — "no ROI selected" (`detector_view/roi.py`: `if rectangle_request is None or len(rectangle_request) == 0: return ...({})`). ROI therefore has no failure mode for the gate to prevent. Gating it only created the cold-start problem that the seed then solved, by injecting a value byte-equivalent to the absent message. The gate-plus-seed round-trip was a no-op dressed up as machinery.
+
+The following parts of this ADR are **superseded**:
+
+- **"ROI cold start"** and **"Backend seeding for defaulted context streams"** — removed. ROI is no longer gated and there is no seeding mechanism anywhere. `JobFactory.create` returns a `Job` (not a `(Job, seed_messages)` tuple); `JobManager` has no `on_schedule_seed` / `_seed_initial_context`; `MessagePreprocessor` has no `seed_messages`. The "context aux with seed (ROI) ready from tick 1" test case is dropped.
+- The **aux-vs-context** disambiguation is refined. The gate axis is not "`set_context` vs `accumulate`"; it is *"does this input tolerate absence?"*. Motion/geometry context does not — `None` crashes (bifrost) or yields silently-wrong geometry — so it is gated. ROI does — `None` == empty — so it is routed as an ordinary auxiliary source (`DetectorROIAuxSources`, job-prefixed) and never gated. ROI still flows through `set_context`; the detector-view factory wires those keys itself from `roi_support`.
+
+The **core decision stands unchanged**: the JobManager gates active jobs on the readiness of context streams that have *no safe default*. Motion (bifrost rotation, LOKI carriage) is the only current customer. See the ADR 0003 addendum for the declaration-model consequences.
