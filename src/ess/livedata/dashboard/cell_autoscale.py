@@ -197,8 +197,8 @@ class CellAutoscaleController:
 
         axis_icons: dict[Axis, tuple[str, str]] = {
             axis: (
-                get_icon_data_uri(f'lock-open-{axis}'),
-                get_icon_data_uri(f'lock-{axis}'),
+                get_icon_data_uri(f'autoscale-{axis}-on'),
+                get_icon_data_uri(f'autoscale-{axis}'),
             )
             for axis in self._axes
         }
