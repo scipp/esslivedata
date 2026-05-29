@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -652,7 +652,7 @@ class Plotter:
         """
         return self._range_targets.get(data_key)
 
-    def iter_range_targets(self):
+    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
         """Iterate ``(data_key, targets)`` pairs computed at the last ``compute()``.
 
         Empty when no ``compute()`` has happened yet or when the plotter's

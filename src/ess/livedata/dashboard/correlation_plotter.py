@@ -13,6 +13,7 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -264,7 +265,7 @@ class CorrelationHistogramPlotter:
         """Delegate per-axis target lookup to the inner renderer."""
         return self._renderer.get_range_targets(data_key)
 
-    def iter_range_targets(self):
+    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
         """Delegate per-key target iteration to the inner renderer."""
         return self._renderer.iter_range_targets()
 

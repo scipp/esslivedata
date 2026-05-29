@@ -1,20 +1,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""HoloViews hooks that drive per-axis range and color-mapper limits.
+"""Per-axis range and color-mapper handle access for HoloViews hooks.
 
-A hook is created once at plot compose time and re-invoked on every render;
-it reads the latest target range through a closure and writes it onto
-Bokeh's ``Range1d`` / ``LinearColorMapper`` handles directly.
-
-Handles are read from ``plot.handles`` on every render rather than cached:
-HoloViews swaps the Bokeh figure on kdim changes and Layout transitions,
-which would leave a cached handle pointing at a detached model. Mirrors the
-per-render lookup in ``flatten_plotter._make_hover_hook``.
+:class:`RangeHandles` resolves a plot's ``Range1d`` / ``LinearColorMapper``
+handles and writes ``(lo, hi)`` onto them. Handles are read from
+``plot.handles`` on every render rather than cached: HoloViews swaps the Bokeh
+figure on kdim changes and Layout transitions, which would leave a cached
+handle pointing at a detached model. Mirrors the per-render lookup in
+``flatten_plotter._make_hover_hook``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any, Literal
 
 Axis = Literal['x', 'y', 'c']
@@ -105,38 +102,3 @@ class RangeHandles:
             return False
         _ordered_write(handle, lo, hi, 'start', 'end')
         return True
-
-
-def make_range_hook(
-    axis: Axis,
-    get_target: Callable[[], tuple[float, float] | None],
-    get_enabled: Callable[[], bool],
-) -> Callable[[Any, Any], None]:
-    """Create a HoloViews hook that writes a per-axis range every render.
-
-    Parameters
-    ----------
-    axis:
-        Which axis this hook drives.
-    get_target:
-        Returns the current ``(lo, hi)`` target, or ``None`` when no target
-        is available yet.
-    get_enabled:
-        Returns whether the per-axis autoscale toggle is currently on.
-
-    Returns
-    -------
-    :
-        A hook function compatible with ``hv.Element.opts(hooks=[...])``.
-    """
-
-    def hook(plot: Any, element: Any) -> None:
-        del element
-        if not get_enabled():
-            return
-        target = get_target()
-        if target is None:
-            return
-        RangeHandles.write(plot, axis, *target)
-
-    return hook

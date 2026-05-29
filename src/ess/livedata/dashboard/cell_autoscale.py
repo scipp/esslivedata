@@ -131,9 +131,6 @@ class CellAutoscaleController:
         for plotter in self._plotters:
             if axis not in plotter.AUTOSCALE_AXES:
                 continue
-            # TODO: tighten the iter_range_targets() return type on Plotter so
-            # this loop has full static typing (blocked by other agent's work
-            # on plots.py).
             for _key, targets in plotter.iter_range_targets():
                 target = targets.get(axis)
                 if target is None:
@@ -256,6 +253,20 @@ class CellAutoscaleController:
                 if target is None:
                     continue
                 self._last_targets[axis] = target
+                # Write the exact (padded) data extent on every render the
+                # toggle is active for -- there is no hysteresis here, unlike
+                # the threshold-based predecessor. Each render where the extent
+                # actually moved emits a Range1d / color-mapper patch; Bokeh
+                # coalesces no-op writes (setting a property to its current
+                # value sends nothing), so a steady extent costs nothing on the
+                # wire. For live data whose min/max drifts every tick this
+                # means one small range patch per update and some range
+                # "breathing". That is intentional: an active autoscale toggle
+                # is meant to track the data, and pan/zoom is preserved by
+                # turning the toggle off (the write is then skipped entirely).
+                # If the per-tick patching or visual jitter proves problematic
+                # in practice, reintroduce a grow/shrink threshold here so the
+                # range only moves once the extent leaves a deadband.
                 RangeHandles.write(plot, axis, *target)
             elif axis == 'c' and (frozen := self._last_targets.get(axis)) is not None:
                 RangeHandles.write(plot, axis, *frozen)
