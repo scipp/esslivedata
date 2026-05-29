@@ -122,6 +122,43 @@ class TestLinePlotterRangeTargets:
         targets = plotter.get_range_targets(key)
         assert targets['y'][0] > 0.0
 
+    def test_y_extent_includes_error_whiskers(self):
+        plotter = LinePlotter.from_params(PlotParams1d())  # errors='bars' default
+        key = _key()
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[2.0, 5.0, 8.0],
+                variances=[1.0, 4.0, 1.0],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        # Whiskers are value +/- stddev: low 2-1=1, high 8+1=9.
+        targets = plotter.get_range_targets(key)
+        np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', 1.0, 9.0))
+
+    def test_y_extent_ignores_variances_when_errors_off(self):
+        params = PlotParams1d()
+        params.line.errors = 'none'
+        plotter = LinePlotter.from_params(params)
+        key = _key()
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[2.0, 5.0, 8.0],
+                variances=[1.0, 4.0, 1.0],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        targets = plotter.get_range_targets(key)
+        np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', 2.0, 8.0))
+
 
 class TestImagePlotterRangeTargets:
     def test_autoscale_axes_declared(self):

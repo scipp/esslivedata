@@ -140,6 +140,27 @@ def _finite_min_max(
     return float(finite.min()), float(finite.max())
 
 
+def _value_extent_with_errors(
+    data: sc.DataArray, *, show_errors: bool, log: bool
+) -> tuple[float, float] | None:
+    """Finite (min, max) of the y values, widened to the error whiskers.
+
+    When error bars / bands are shown they extend the rendered y-range to
+    ``value ± stddev`` (see ``HvConverter1d.error_bars`` / ``spread``), so the
+    extent must include those whiskers or autoscale would clip them. Mirrors
+    the range HoloViews itself derives for an ``ErrorBars`` / ``Spread``
+    element. Returns ``None`` when no value qualifies (see
+    :func:`_finite_min_max`).
+    """
+    values = data.values
+    if show_errors and data.variances is not None:
+        std = np.sqrt(data.variances)
+        values = np.concatenate(
+            [values.ravel(), (values - std).ravel(), (values + std).ravel()]
+        )
+    return _finite_min_max(values, log=log)
+
+
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
     """Normalize data to rate (per second) using start_time/end_time coords.
 
@@ -860,7 +881,9 @@ class LinePlotter(Plotter):
             coord_extent = _finite_min_max(coord_values, log=self._logx)
             if coord_extent is not None:
                 targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
-        value_extent = _finite_min_max(data.values, log=self._logy)
+        value_extent = _value_extent_with_errors(
+            data, show_errors=self._errors != 'none', log=self._logy
+        )
         if value_extent is not None:
             targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
         return targets
@@ -1158,7 +1181,9 @@ class Overlay1DPlotter(Plotter):
             coord_extent = _finite_min_max(coord_values, log=self._logx)
             if coord_extent is not None:
                 targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
-        value_extent = _finite_min_max(data.values, log=self._logy)
+        value_extent = _value_extent_with_errors(
+            data, show_errors=self._errors != 'none', log=self._logy
+        )
         if value_extent is not None:
             targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
         return targets
