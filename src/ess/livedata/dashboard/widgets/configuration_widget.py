@@ -74,7 +74,7 @@ class ConfigurationWidget:
         sorted_options = dict(sorted(options.items()))
 
         return pn.widgets.MultiChoice(
-            name="Source Names",
+            label="Source Names",
             options=sorted_options,
             value=sorted(initial_source_names),
             placeholder="Select source names to apply workflow to",
@@ -101,8 +101,8 @@ class ConfigurationWidget:
         ]
 
         select_all_btn = pn.widgets.Button(
-            name='Select all',
-            button_type='light',
+            label='Select all',
+            color='light',
             width=90,
             height=26,
             margin=(0, 4, 0, 0),
@@ -111,8 +111,8 @@ class ConfigurationWidget:
         select_all_btn.on_click(lambda _: self._select_all_sources())
 
         select_none_btn = pn.widgets.Button(
-            name='Select none',
-            button_type='light',
+            label='Select none',
+            color='light',
             width=90,
             height=26,
             margin=0,
@@ -527,12 +527,10 @@ class ConfigurationModal:
         self._panel = ConfigurationPanel(config=config)
 
         # Create action buttons
-        self._start_button = pn.widgets.Button(
-            name=start_button_text, button_type="primary"
-        )
+        self._start_button = pn.widgets.Button(label=start_button_text, color="primary")
         self._start_button.on_click(self._on_start_clicked)
 
-        self._cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
+        self._cancel_button = pn.widgets.Button(label="Cancel", color="light")
         self._cancel_button.on_click(self._on_cancel_clicked)
 
         # Create modal with panel + buttons
@@ -626,7 +624,7 @@ class AuxSourcesWidget:
                 initial_values.get(name, inp.default) if initial_values else inp.default
             )
             self._select_widgets[name] = pn.widgets.Select(
-                name=inp.title or name,
+                label=inp.title or name,
                 options=options,
                 value=initial,
                 sizing_mode='stretch_width',

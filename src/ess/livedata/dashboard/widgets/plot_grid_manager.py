@@ -269,10 +269,10 @@ class PlotGridManager:
 
         # Mode selector (Template or Upload)
         self._mode_selector = pn.widgets.RadioButtonGroup(
-            name='Source',
+            label='Source',
             options=[_MODE_TEMPLATE, _MODE_UPLOAD],
             value=_MODE_TEMPLATE,
-            button_type='default',
+            color='default',
             margin=(5, 0),
         )
         self._mode_selector.param.watch(self._on_mode_changed, 'value')
@@ -280,7 +280,7 @@ class PlotGridManager:
         # Template selector (visible in Template mode)
         template_options = [_NO_TEMPLATE, *self._templates.keys()]
         self._template_selector = pn.widgets.Select(
-            name='Template',
+            label='Template',
             options=template_options,
             value=_NO_TEMPLATE,
             sizing_mode='stretch_width',
@@ -290,16 +290,16 @@ class PlotGridManager:
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
-            name='Grid Title',
+            label='Grid Title',
             value='New Grid',
             placeholder='Enter grid title',
             margin=(5, 0),
         )
         self._nrows_input = pn.widgets.IntInput(
-            name='Rows', value=3, start=2, end=6, margin=(5, 0)
+            label='Rows', value=3, start=2, end=6, margin=(5, 0)
         )
         self._ncols_input = pn.widgets.IntInput(
-            name='Columns', value=3, start=2, end=6, margin=(5, 0)
+            label='Columns', value=3, start=2, end=6, margin=(5, 0)
         )
 
         # Watch for rows/cols changes to update preview
@@ -308,17 +308,17 @@ class PlotGridManager:
 
         # Add grid button (visible in normal mode)
         self._add_button = pn.widgets.Button(
-            name='Add Grid', button_type='primary', margin=(5, 0)
+            label='Add Grid', color='primary', margin=(5, 0)
         )
         self._add_button.on_click(self._on_add_grid)
 
         # Edit mode buttons (visible in edit mode)
         self._save_button = pn.widgets.Button(
-            name='Save Changes', button_type='primary', visible=False, margin=(5, 0)
+            label='Save Changes', color='primary', visible=False, margin=(5, 0)
         )
         self._save_button.on_click(self._on_save_changes)
         self._copy_button = pn.widgets.Button(
-            name='Save as Copy', button_type='default', visible=False, margin=(5, 0)
+            label='Save as Copy', color='default', visible=False, margin=(5, 0)
         )
         self._copy_button.on_click(self._on_save_as_copy)
 

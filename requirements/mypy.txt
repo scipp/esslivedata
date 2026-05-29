@@ -6,11 +6,13 @@
 #    requirements upgrade
 #
 -r test.txt
-librt==0.8.1
+ast-serialize==0.5.0
     # via mypy
-mypy==1.20.0
+librt==0.11.0
+    # via mypy
+mypy==2.1.0
     # via -r mypy.in
 mypy-extensions==1.1.0
     # via mypy
-pathspec==1.0.4
+pathspec==1.1.1
     # via mypy

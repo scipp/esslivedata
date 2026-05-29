@@ -34,7 +34,7 @@ comm==0.2.3
     #   ipywidgets
 debugpy==1.8.20
     # via ipykernel
-decorator==5.2.1
+decorator==5.3.1
     # via ipython
 defusedxml==0.7.1
     # via nbconvert
@@ -56,7 +56,7 @@ ipykernel==7.2.0
     # via -r docs.in
 ipympl==0.10.0
     # via -r docs.in
-ipython==9.10.1
+ipython==9.13.0
     # via
     #   -r docs.in
     #   ipykernel
@@ -69,7 +69,7 @@ ipywidgets==8.1.8
     #   ipydatawidgets
     #   ipympl
     #   pythreejs
-jedi==0.19.2
+jedi==0.20.0
     # via ipython
 jsonschema==4.26.0
     # via nbformat
@@ -90,21 +90,21 @@ jupyterlab-pygments==0.3.0
     # via nbconvert
 jupyterlab-widgets==3.0.16
     # via ipywidgets
-markdown-it-py==4.0.0
+markdown-it-py==4.2.0
     # via
     #   mdit-py-plugins
     #   myst-parser
-matplotlib-inline==0.2.1
+matplotlib-inline==0.2.2
     # via
     #   ipykernel
     #   ipython
-mdit-py-plugins==0.5.0
+mdit-py-plugins==0.6.1
     # via myst-parser
 mdurl==0.1.2
     # via markdown-it-py
-mistune==3.2.0
+mistune==3.2.1
     # via nbconvert
-myst-parser==5.0.0
+myst-parser==5.1.0
     # via -r docs.in
 nbclient==0.10.4
     # via nbconvert
@@ -119,11 +119,11 @@ nbsphinx==0.9.8
     # via -r docs.in
 nest-asyncio==1.6.0
     # via ipykernel
-pandas==3.0.2
+pandas==3.0.3
     # via -r docs.in
 pandocfilters==1.5.1
     # via nbconvert
-parso==0.8.6
+parso==0.8.7
     # via jedi
 pexpect==4.9.0
     # via ipython
@@ -133,15 +133,16 @@ psutil==7.2.2
     # via
     #   -r docs.in
     #   ipykernel
+    #   ipython
 ptyprocess==0.7.0
     # via pexpect
 pure-eval==0.2.3
     # via stack-data
-pyarrow==23.0.1
+pyarrow==24.0.0
     # via -r docs.in
-pydantic-settings==2.13.1
+pydantic-settings==2.14.1
     # via autodoc-pydantic
-pydata-sphinx-theme==0.17.0
+pydata-sphinx-theme==0.18.0
     # via -r docs.in
 pygments==2.20.0
     # via
@@ -169,9 +170,9 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-snowballstemmer==3.0.1
+snowballstemmer==3.1.0
     # via sphinx
-soupsieve==2.8.3
+soupsieve==2.8.4
     # via beautifulsoup4
 sphinx==9.0.4
     # via
@@ -198,7 +199,7 @@ sphinxcontrib-htmlhelp==2.1.0
     # via sphinx
 sphinxcontrib-jsmath==1.0.1
     # via sphinx
-sphinxcontrib-mermaid==2.0.1
+sphinxcontrib-mermaid==2.0.2
     # via -r docs.in
 sphinxcontrib-qthelp==2.0.0
     # via sphinx
@@ -212,7 +213,7 @@ tornado==6.5.5
     # via
     #   ipykernel
     #   jupyter-client
-traitlets==5.14.3
+traitlets==5.15.0
     # via
     #   ipykernel
     #   ipympl
@@ -229,7 +230,7 @@ traitlets==5.14.3
     #   traittypes
 traittypes==0.2.3
     # via ipydatawidgets
-wcwidth==0.6.0
+wcwidth==0.7.0
     # via prompt-toolkit
 webencodings==0.5.1
     # via

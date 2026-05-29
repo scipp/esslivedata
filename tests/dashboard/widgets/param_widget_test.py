@@ -216,7 +216,7 @@ class TestWidgetLabelsAndDescriptions:
 
         widget = ParamWidget(TestModel)
 
-        assert widget.widgets["my_field_name"].name == "MyFieldName"
+        assert widget.widgets["my_field_name"].label == "MyFieldName"
 
     def test_field_with_explicit_title_uses_title(self):
         class TestModel(pydantic.BaseModel):
@@ -224,7 +224,7 @@ class TestWidgetLabelsAndDescriptions:
 
         widget = ParamWidget(TestModel)
 
-        assert widget.widgets["x_axis_source"].name == "X Axis"
+        assert widget.widgets["x_axis_source"].label == "X Axis"
 
     def test_field_without_title_falls_back_to_camel_case(self):
         class TestModel(pydantic.BaseModel):
@@ -232,7 +232,7 @@ class TestWidgetLabelsAndDescriptions:
 
         widget = ParamWidget(TestModel)
 
-        assert widget.widgets["x_axis_source"].name == "XAxisSource"
+        assert widget.widgets["x_axis_source"].label == "XAxisSource"
 
     def test_field_description_used(self):
         class TestModel(pydantic.BaseModel):

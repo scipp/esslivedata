@@ -30,9 +30,7 @@ cells:
         fix_height: false
         height: 400
       window:
-        mode: latest
-        window_duration_seconds: 1.0
-        aggregation: auto
+        mode: window
       plot_scale:
         x_scale: linear
         y_scale: linear
@@ -62,9 +60,7 @@ cells:
         fix_height: false
         height: 400
       window:
-        mode: latest
-        window_duration_seconds: 1.0
-        aggregation: auto
+        mode: window
       plot_scale:
         x_scale: linear
         y_scale: linear

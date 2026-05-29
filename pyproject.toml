@@ -34,7 +34,7 @@ dependencies = [
   "confluent_kafka",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.4.0",
+  "essreduce>=26.5.0",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -47,12 +47,12 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = [
-    "essdiffraction>=26.4.0",
+    "essdiffraction>=26.5.0",
     "essreflectometry>=26.4.0",
     "esssans",
     "essspectroscopy>=26.3.0",
     "holoviews",
-    "panel",
+    "panel>=1.9",
     "param",
     "pytest",
     "pytest-benchmark",
@@ -62,7 +62,7 @@ bifrost = [
     "essspectroscopy>=26.3.0",
 ]
 dream = [
-    "essdiffraction>=26.4.0",
+    "essdiffraction>=26.5.0",
 ]
 dummy = []
 estia = [
@@ -81,7 +81,7 @@ tbl = []
 dashboard = [
   "bokeh",
   "holoviews",
-  "panel",
+  "panel>=1.9",
   "param",
 ]
 
