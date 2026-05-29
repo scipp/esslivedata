@@ -41,13 +41,10 @@ def gather_source_names(
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
-        # Spec-level ContextBinding entries without a resolver are routed by
-        # name (ROI-style resolvers materialise per-job wire names that
-        # ``gather_source_names`` cannot resolve at service-startup time;
-        # they route via a dedicated topic registered elsewhere).
+        # Spec-level ContextBinding entries are routed by stream name (the
+        # wire name equals the stream name).
         for ci in reg.context_bindings:
-            if ci.stream_resolver is None:
-                names.add(ci.stream_name)
+            names.add(ci.stream_name)
     # Instrument-level ContextBinding entries: include when any spec hosted by
     # this service shares a source with the binding's ``dependent_sources``.
     for ci in instrument.context_bindings:

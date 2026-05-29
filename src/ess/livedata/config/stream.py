@@ -111,12 +111,13 @@ class ContextBinding:
       bindings by ``issubclass(workflow_key, ValueLog)`` and synthesises
       a fused per-component patched-chain provider.
 
-    Per-job runtime behavior — wire-name suffixing, cold-start seeding —
-    lives on the spec-scope wrapper
-    :class:`ess.livedata.handlers.workflow_factory.SpecContextBinding`,
-    which extends this class. Instrument-scope entries never carry such
-    callables; their wire name is the declared :attr:`stream_name` and
-    they have no cold-start seed.
+    The same record is declared at two scopes: instrument scope
+    (:meth:`Instrument.add_context_binding`, for source properties such as
+    motion) and spec scope
+    (:meth:`ess.livedata.handlers.workflow_factory.SpecHandle.add_context_binding`,
+    for context that is a property of one workflow). Both feed the gate and
+    ``set_context``; the wire name is always the declared :attr:`stream_name`
+    and there is no cold-start seed.
     """
 
     stream_name: str

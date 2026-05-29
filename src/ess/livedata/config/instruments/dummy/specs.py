@@ -10,9 +10,9 @@ import scipp as sc
 from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
+    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
-    add_roi_context_bindings,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -65,10 +65,10 @@ panel_0_view_handle = instrument.register_spec(
     title='Panel 0',
     description='',
     source_names=['panel_0'],
+    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
 )
-add_roi_context_bindings(panel_0_view_handle)
 
 # Register area detector view spec
 area_panel_view_handle = instrument.register_spec(

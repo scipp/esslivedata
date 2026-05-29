@@ -165,27 +165,6 @@ class TestGatherSourceNames:
         handle.add_context_binding(stream_name='carriage', workflow_key=object)
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'carriage'}
 
-    def test_spec_context_binding_with_resolver_is_not_picked_up(self) -> None:
-        """Job-scoped (resolver-bearing) entries route via a dedicated topic,
-        not via ``gather_source_names`` — the wire name can only be resolved
-        per-job and not at namespace-startup time.
-        """
-        instrument = Instrument(name="test", detector_names=["det_a"])
-        handle = instrument.register_spec(
-            group=DETECTORS,
-            name="view",
-            version=1,
-            title="View",
-            source_names=["det_a"],
-            outputs=DefaultOutputs,
-        )
-        handle.add_context_binding(
-            stream_name='roi',
-            workflow_key=object,
-            stream_resolver=lambda jid, name: f"{jid}/{name}",
-        )
-        assert gather_source_names(instrument, "detector_data") == {'det_a'}
-
 
 class TestResolveStreamNames:
     def test_known_names_pass_through(self, infra_kwargs: dict) -> None:

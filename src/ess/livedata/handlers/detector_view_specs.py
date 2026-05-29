@@ -25,12 +25,11 @@ from ..config import models
 from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     DETECTORS,
+    AuxSources,
     JobId,
     OutputView,
     WorkflowOutputsBase,
 )
-from ..core.message import Message, StreamId, StreamKind
-from ..core.timestamp import Timestamp
 from ..handlers.workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
@@ -480,49 +479,52 @@ def make_detector_view_params(
 ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
 
 
-def _roi_rectangle_seed(job_id: JobId) -> Message:
-    """Cold-start "no rectangle ROI selected" message for a job's ROI context.
+class DetectorROIAuxSources(AuxSources):
+    """Auxiliary source spec for ROI configuration in detector workflows.
 
-    Byte-identical to what the dashboard publishes when the user deletes the
-    last rectangle ROI; pre-seeded at ``schedule_job`` time so the gate opens
-    immediately. See ADR 0002.
+    Subscribes to the supported ROI geometry streams (rectangle, polygon).
+    :meth:`render` prefixes each stream name with the ``job_id`` so every job
+    instance owns its own ROI configuration stream.
+
+    ROI is an auxiliary source, not a gated context binding: the ROI providers
+    treat a missing or empty request as "no ROI selected" (an empty result),
+    so there is nothing to gate on and no cold-start seed is required. The
+    detector-view factory wires the ROI streams into ``set_context`` itself
+    (see :meth:`DetectorViewFactory.make_workflow`).
     """
-    return Message(
-        timestamp=Timestamp.from_ns(0),
-        stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{job_id}/roi_rectangle"),
-        value=models.RectangleROI.to_concatenated_data_array({}),
-    )
 
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                'roi_rectangle': 'roi_rectangle',
+                'roi_polygon': 'roi_polygon',
+            }
+        )
 
-def _roi_polygon_seed(job_id: JobId) -> Message:
-    """Cold-start "no polygon ROI selected" message for a job's ROI context."""
-    return Message(
-        timestamp=Timestamp.from_ns(0),
-        stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{job_id}/roi_polygon"),
-        value=models.PolygonROI.to_concatenated_data_array({}),
-    )
+    def render(
+        self,
+        job_id: JobId,
+        selections: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Render ROI stream names with a job-specific prefix.
 
+        Parameters
+        ----------
+        job_id:
+            Job identifier containing source_name and job_number.
+        selections:
+            Ignored — ROI streams are always job-specific.
 
-def add_roi_context_bindings(handle: SpecHandle) -> None:
-    """Declare the rectangle/polygon ROI context bindings for a detector-view spec.
-
-    The wire-stream resolver prefixes the stream name with the JobId so each
-    job instance owns its ROI configuration stream.
-    """
-    from .detector_view.types import ROIPolygonRequest, ROIRectangleRequest
-
-    handle.add_context_binding(
-        stream_name='roi_rectangle',
-        workflow_key=ROIRectangleRequest,
-        stream_resolver=lambda job_id, name: f"{job_id}/{name}",
-        seed_factory=_roi_rectangle_seed,
-    )
-    handle.add_context_binding(
-        stream_name='roi_polygon',
-        workflow_key=ROIPolygonRequest,
-        stream_resolver=lambda job_id, name: f"{job_id}/{name}",
-        seed_factory=_roi_polygon_seed,
-    )
+        Returns
+        -------
+        :
+            Mapping from ROI geometry keys to job-specific stream names
+            (e.g. ``'{job_id}/roi_rectangle'``).
+        """
+        return {
+            'roi_rectangle': f"{job_id}/roi_rectangle",
+            'roi_polygon': f"{job_id}/roi_polygon",
+        }
 
 
 def register_detector_view_spec(
@@ -622,10 +624,10 @@ def register_detector_view_spec(
         title=title,
         description=description,
         source_names=source_names,
+        aux_sources=DetectorROIAuxSources(),
         params=make_detector_view_params(spectrum_view=spectrum_view),
         outputs=make_detector_view_outputs(
             roi_support=True, spectrum_view=spectrum_view
         ),
     )
-    add_roi_context_bindings(handle)
     return handle

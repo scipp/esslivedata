@@ -44,7 +44,7 @@ class FakeJobFactory(JobFactory):
         """Pass-through implementation for tests."""
         return result
 
-    def create(self, *, job_id: JobId, config: WorkflowConfig) -> tuple[Job, list]:
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         # For testing, treat every declared aux as a context binding — the
         # scenario most production workflows with aux expose. Tests that
         # need a dynamic-aux scenario construct the Job directly.
@@ -62,7 +62,7 @@ class FakeJobFactory(JobFactory):
         )
 
         self.created_jobs.append((job_id, config))
-        return job, []
+        return job
 
 
 @pytest.fixture
@@ -1364,7 +1364,7 @@ class TestJobFactoryRender:
         )
 
         # Create job
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         # Verify that render() was called and result was used
         # The job should have the rendered aux source names with source prefix
@@ -1415,7 +1415,7 @@ class TestJobFactoryRender:
         )
 
         # Create job
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         # Default render should preserve the original names
         assert set(job.input_stream_names) == {'monitor1', 'monitor2'}
@@ -1451,7 +1451,7 @@ class TestJobFactoryRender:
         config = WorkflowConfig(identifier=spec.get_id(), job_id=job_id)
 
         # Should not raise, should create job with empty aux sources
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
         assert job.input_stream_names == []
 
     def test_job_factory_with_empty_aux_source_names(self) -> None:
@@ -1489,7 +1489,7 @@ class TestJobFactoryRender:
             identifier=spec.get_id(), aux_source_names={}, job_id=job_id
         )
 
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
         # Empty dict triggers model defaults, so should use 'monitor1'
         assert job.input_stream_names == ['monitor1']
 
@@ -1543,13 +1543,13 @@ class TestJobFactoryRender:
             job_id=job_id_1,  # Will be overridden in factory.create call
         )
 
-        job1, _ = factory.create(job_id=job_id_1, config=config)
+        job1 = factory.create(job_id=job_id_1, config=config)
         config2 = WorkflowConfig(
             identifier=spec.get_id(),
             aux_source_names={'roi': 'roi_rectangle'},
             job_id=job_id_2,
         )
-        job2, _ = factory.create(job_id=job_id_2, config=config2)
+        job2 = factory.create(job_id=job_id_2, config=config2)
 
         # Each job should have source-specific stream name
         assert job1.input_stream_names == ['detector1/roi_rectangle']
@@ -1608,7 +1608,7 @@ class TestJobFactoryRender:
             identifier=spec.get_id(), aux_source_names={}, job_id=job_id
         )
 
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         # Should use default 'monitor1' and render it with source prefix
         assert job.input_stream_names == ['detector1/monitor1']
@@ -1647,11 +1647,12 @@ def _build_instrument_with_streams():
 
 
 class TestJobFactoryContextBinding:
-    """ADR 0003: JobFactory.create merges instrument + spec ContextBinding records.
+    """JobFactory.create merges instrument- and spec-scope ContextBinding records.
 
-    Source of context_keys, wire-stream names, and cold-start seeds. The legacy
-    ``Workflow.context_keys`` / ``AuxSources.initial_context_messages`` paths
-    have been retired in B4.
+    Both scopes feed the factory's ``context_keys`` and the job's
+    ``gating_streams``. The wire name equals the declared ``stream_name`` (no
+    per-job suffixing) and there is no cold-start seed — gated context streams
+    have no safe default, so the gate stays closed until the producer publishes.
     """
 
     def test_instrument_context_binding_populates_context_keys(self) -> None:
@@ -1681,17 +1682,15 @@ class TestJobFactoryContextBinding:
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
 
-        job, seeds = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         assert captured['ck'] == {'rot': _CtxKeyA}
-        # Wire stream (no resolver) is unchanged: missing with no available
-        # streams, satisfied as soon as 'rot' becomes available.
+        # Wire stream equals stream_name: missing with no available streams,
+        # satisfied as soon as 'rot' becomes available.
         assert job.missing_context(set()) == {'rot'}
         assert job.missing_context({'rot'}) == set()
         # The wire stream is routed to the workflow alongside user-selected aux.
         assert 'rot' in job.input_stream_names
-        # No seed_factory declared → no cold-start messages.
-        assert seeds == []
 
     def test_instrument_context_binding_filters_by_source(self) -> None:
         instrument = _build_instrument_with_streams()
@@ -1719,22 +1718,18 @@ class TestJobFactoryContextBinding:
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
 
-        job, seeds = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         assert job.missing_context(set()) == set()
-        assert seeds == []
 
-    def test_spec_context_binding_with_resolver_and_seed_opens_gate(self) -> None:
-        """Cold-start seed for a spec-level ContextBinding opens the gate at tick 1.
+    def test_spec_context_binding_populates_context_keys_and_gates(self) -> None:
+        """A spec-scope ContextBinding feeds context_keys and gates the job.
 
-        Mirrors the ROI scenario: a job-scoped resolver materialises the wire
-        name and a ``seed_factory`` produces the cold-start message. The
-        JobManager's ``_seed_initial_context`` forwards the seeds AND marks the
-        wire-stream names as already-seen, so the first job tick is not gated
-        on them.
+        The future sample-temperature shape: a context stream that is a
+        property of one workflow (declared per-spec, not per-source). The wire
+        name equals the stream_name, the value is delivered via set_context,
+        and the job gates on it until the producer publishes — no seed.
         """
-        from ess.livedata.core.message import Message, StreamKind
-
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1744,25 +1739,7 @@ class TestJobFactoryContextBinding:
             source_names=['detector1'],
             outputs=SimpleTestOutputs,
         )
-
-        def _resolver(jid: JobId, name: str) -> str:
-            return f"{jid}/{name}"
-
-        def _seed(jid: JobId) -> Message:
-            return Message(
-                timestamp=Timestamp.from_ns(0),
-                stream=StreamId(
-                    kind=StreamKind.LIVEDATA_ROI, name=_resolver(jid, 'roi')
-                ),
-                value=sc.scalar(0.0),
-            )
-
-        handle.add_context_binding(
-            stream_name='roi',
-            workflow_key=_CtxKeyA,
-            stream_resolver=_resolver,
-            seed_factory=_seed,
-        )
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyA)
 
         captured: dict[str, dict[str, type]] = {}
 
@@ -1775,68 +1752,12 @@ class TestJobFactoryContextBinding:
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
 
-        job, seeds = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
-        # Workflow-facing key uses the unresolved stream_name.
-        assert captured['ck'] == {'roi': _CtxKeyA}
-        # Wire name carries the JobId prefix.
-        wire = f"{job_id}/roi"
-        assert job.missing_context(set()) == {wire}
-        assert job.missing_context({wire}) == set()
-        assert len(seeds) == 1
-        assert seeds[0].stream.name == wire
-
-    def test_schedule_job_seeds_and_marks_streams_seen(self) -> None:
-        """schedule_job fires the seed callback and marks streams in _seen.
-
-        End-to-end through JobManager: a spec-level ContextBinding with a
-        seed_factory contributes its wire name to ``_seen_context_streams``
-        immediately, so a subsequent tick with no producer activity passes the
-        gate.
-        """
-        from ess.livedata.core.message import Message, StreamKind
-
-        instrument = _build_instrument_with_streams()
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            description='',
-            source_names=['detector1'],
-            outputs=SimpleTestOutputs,
-        )
-
-        def _seed(jid: JobId) -> Message:
-            return Message(
-                timestamp=Timestamp.from_ns(0),
-                stream=StreamId(kind=StreamKind.LIVEDATA_ROI, name=f"{jid}/roi"),
-                value=sc.scalar(0.0),
-            )
-
-        handle.add_context_binding(
-            stream_name='roi',
-            workflow_key=_CtxKeyA,
-            stream_resolver=lambda jid, name: f"{jid}/{name}",
-            seed_factory=_seed,
-        )
-
-        @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            return FakeProcessor(context_keys=context_keys)
-
-        seeded: list[list[Message]] = []
-        factory = JobFactory(instrument, service_name='data_reduction')
-        manager = JobManager(factory, on_schedule_seed=seeded.append)
-
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
-        manager.schedule_job(config)
-
-        assert len(seeded) == 1
-        wire = f"{job_id}/roi"
-        assert {m.stream.name for m in seeded[0]} == {wire}
-        # Internal bookkeeping: gate already considers the stream seen.
-        assert wire in manager._seen_context_streams[job_id]
+        assert captured['ck'] == {'temp': _CtxKeyA}
+        assert job.missing_context(set()) == {'temp'}
+        assert job.missing_context({'temp'}) == set()
+        assert 'temp' in job.input_stream_names
 
     def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
         """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
@@ -1871,7 +1792,7 @@ class TestJobFactoryContextBinding:
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
 
-        job, _ = factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
         # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
         assert captured['ck'] == {'temp': _CtxKeyB}
@@ -1941,7 +1862,7 @@ class ThreadTrackingProcessor(FakeProcessor):
 
 
 class ThreadTrackingJobFactory(FakeJobFactory):
-    def create(self, *, job_id: JobId, config: WorkflowConfig) -> tuple[Job, list]:
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         processor = ThreadTrackingProcessor()
         self.processors[job_id] = processor
         job = Job(
@@ -1952,7 +1873,7 @@ class ThreadTrackingJobFactory(FakeJobFactory):
             aux_streams=config.aux_source_names,
         )
         self.created_jobs.append((job_id, config))
-        return job, []
+        return job
 
 
 def _make_workflow_config(source_name: str) -> WorkflowConfig:

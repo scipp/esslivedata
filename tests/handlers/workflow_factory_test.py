@@ -967,8 +967,6 @@ class TestSpecHandleAddContextBinding:
         assert entry.stream_name == 'roi'
         assert entry.workflow_key is _CtxKey
         assert entry.dependent_sources == frozenset({'det1', 'det2'})
-        assert entry.stream_resolver is None
-        assert entry.seed_factory is None
 
     def test_explicit_dependent_sources_override_default(self) -> None:
         factory, handle = self._register(source_names=['det1', 'det2'])
@@ -991,26 +989,6 @@ class TestSpecHandleAddContextBinding:
         entries = factory.registration(handle.workflow_id).context_bindings
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
         assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
-
-    def test_passes_through_resolver_and_seed_factory(self) -> None:
-        factory, handle = self._register(source_names=['det1'])
-
-        def resolver(job_id: JobId, name: str) -> str:
-            return f'{job_id}/{name}'
-
-        def seed(job_id: JobId) -> object:
-            return job_id
-
-        handle.add_context_binding(
-            stream_name='roi',
-            workflow_key=_CtxKey,
-            stream_resolver=resolver,
-            seed_factory=seed,
-        )
-
-        [entry] = factory.registration(handle.workflow_id).context_bindings
-        assert entry.stream_resolver is resolver
-        assert entry.seed_factory is seed
 
     def test_skip_instrument_contexts_sets_registration_flag(self) -> None:
         factory, handle = self._register(source_names=['det1'])

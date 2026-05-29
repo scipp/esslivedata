@@ -35,7 +35,9 @@ from .types import (
     GeometricViewConfig,
     LogicalViewConfig,
     ROIPolygonReadback,
+    ROIPolygonRequest,
     ROIRectangleReadback,
+    ROIRectangleRequest,
     ROISpectra,
     SpectrumView,
     SpectrumViewTransform,
@@ -118,7 +120,9 @@ class DetectorViewFactory:
             from instrument-specific params.
         context_keys:
             Resolved ``ContextBinding`` mapping (stream_name → workflow_key)
-            for this job. Wires ROI inputs and other parameter context.
+            for this job — instrument-scope motion/geometry context. ROI
+            context is added here internally (it is an auxiliary source, not
+            a context binding) when ``roi_support`` is set.
 
         Returns
         -------
@@ -242,6 +246,15 @@ class DetectorViewFactory:
                     'roi_spectra_current': ROISpectra[Current],
                     'roi_rectangle': ROIRectangleReadback,
                     'roi_polygon': ROIPolygonReadback,
+                }
+            )
+            # ROI requests are auxiliary context streams delivered via
+            # set_context; the routing layer remaps the per-job wire names
+            # ('{job_id}/roi_rectangle') back to these field names.
+            context_keys.update(
+                {
+                    'roi_rectangle': ROIRectangleRequest,
+                    'roi_polygon': ROIPolygonRequest,
                 }
             )
             window_outputs = (

@@ -506,7 +506,7 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.handlers.detector_view_specs import (
-            add_roi_context_bindings,
+            DetectorROIAuxSources,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -523,11 +523,10 @@ class Instrument:
             title=title,
             description=description,
             source_names=list(source_names),
+            aux_sources=DetectorROIAuxSources() if roi_support else None,
             params=params,
             outputs=outputs,
         )
-        if roi_support:
-            add_roi_context_bindings(handle)
         self._logical_view_handles[name] = handle
         self._logical_views.append(
             LogicalViewConfig(
@@ -750,11 +749,8 @@ class Instrument:
 
         - **Instrument-vs-spec.** For every (spec, source) pair where both
           instrument-level and spec-level :class:`ContextBinding` entries
-          apply, the resolved wire-stream names must be unique. Resolvers
-          (see :class:`SpecContextBinding`) are assumed to be name-suffixing
-          of the ``(job_id, stream_name)`` pair; we treat the unresolved
-          ``stream_name`` as the collision key, which is sound for the
-          resolvers in use today (ROI's ``f"{job_id}/{name}"``).
+          apply, the ``stream_name`` (which equals the wire name) must be
+          unique across the two scopes.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single

@@ -6,17 +6,15 @@ import dataclasses
 import inspect
 import typing
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ess.livedata.config.stream import ContextBinding
 from ess.livedata.config.workflow_spec import (
-    JobId,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.core.message import Message
 from ess.livedata.core.timestamp import Timestamp
 
 
@@ -35,30 +33,6 @@ class Workflow(Protocol):
     def clear(self) -> None: ...
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SpecContextBinding(ContextBinding):
-    """Spec-scope context binding with per-job runtime callables.
-
-    Lives next to :class:`WorkflowFactory` because the optional callables
-    reference :class:`JobId` and :class:`Message` — runtime concepts that
-    the declarative :mod:`config.workflow_spec` layer must not depend on.
-
-    :attr:`stream_resolver`, when set, maps ``(job_id, stream_name)`` to
-    the wire stream name used by routing and the gate. Resolvers are
-    assumed to be pure name-suffixing operations on ``stream_name``; the
-    registration-time collision check relies on this purity. Leaving it
-    unset means the wire name equals :attr:`stream_name`.
-
-    :attr:`seed_factory`, when set, produces the cold-start
-    :class:`Message` fired at ``schedule_job`` time so the accumulator
-    exists before any external producer publishes. Used for spec-level
-    inputs with a meaningful "no message yet" default (currently ROI).
-    """
-
-    stream_resolver: Callable[[JobId, str], str] | None = field(default=None)
-    seed_factory: Callable[[JobId], Message] | None = field(default=None)
-
-
 @dataclass(frozen=True)
 class WorkflowRegistration:
     """Per-workflow record held by :class:`WorkflowFactory`.
@@ -68,14 +42,14 @@ class WorkflowRegistration:
     :class:`ContextBinding` declarations, and the opt-out flag for
     instrument-scope context bindings. Keeping these alongside the factory
     (rather than on :class:`WorkflowSpec`) preserves the spec as a purely
-    declarative model and keeps runtime-coupled types
-    (:class:`JobId`, :class:`Message`) out of :mod:`config.workflow_spec`.
+    declarative model and keeps the workflow-key imports out of
+    :mod:`config.workflow_spec`.
     """
 
     spec: WorkflowSpec
     service: str
     factory: Callable[..., Workflow] | None = None
-    context_bindings: tuple[SpecContextBinding, ...] = ()
+    context_bindings: tuple[ContextBinding, ...] = ()
     skip_instrument_contexts: bool = False
 
 
@@ -104,15 +78,22 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
-        stream_resolver: Callable[[JobId, str], str] | None = None,
-        seed_factory: Callable[[JobId], Message] | None = None,
     ) -> None:
-        """Append a spec-level :class:`SpecContextBinding` to the registration.
+        """Append a spec-scope :class:`ContextBinding` to the registration.
 
         Late-bound from ``factories.py`` to keep workflow-key imports out of
         ``specs.py``. When ``dependent_sources`` is None, defaults to the
         spec's ``source_names`` — the binding applies uniformly across the
         spec.
+
+        Spec scope is for context streams that are a property of *this
+        workflow* rather than of the source — e.g. a sample-temperature
+        sensor feeding one reduction. The stream value is delivered to
+        ``workflow_key`` via ``set_context`` and the job gates on it (see
+        ADR 0002); the wire name equals ``stream_name`` (no per-job
+        suffixing) and there is no cold-start seed, so the gate stays
+        closed until the producer publishes — the correct behaviour for a
+        context with no safe default.
 
         Chain-patch contexts (``workflow_key`` is a
         :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
@@ -128,8 +109,6 @@ class SpecHandle:
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=dependent_sources,
-            stream_resolver=stream_resolver,
-            seed_factory=seed_factory,
         )
 
     def skip_instrument_contexts(self) -> None:
@@ -272,8 +251,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None,
-        stream_resolver: Callable[[JobId, str], str] | None,
-        seed_factory: Callable[[JobId], Message] | None,
     ) -> None:
         # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
         # would be silent-wrong: Instrument.apply_dynamic_transforms reads
@@ -292,12 +269,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             sources = frozenset(reg.spec.source_names)
         else:
             sources = frozenset(dependent_sources)
-        new_input = SpecContextBinding(
+        new_input = ContextBinding(
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
-            stream_resolver=stream_resolver,
-            seed_factory=seed_factory,
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)

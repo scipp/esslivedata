@@ -21,10 +21,9 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.handlers.workflow_factory import SpecContextBinding
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import Message, RunStart, RunStop, StreamId
+from .message import RunStart, RunStop, StreamId
 from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -135,16 +134,13 @@ class JobFactory:
 
         return result
 
-    def create(
-        self, *, job_id: JobId, config: WorkflowConfig
-    ) -> tuple[Job, list[Message]]:
-        """Build a Job and its cold-start context seed messages.
+    def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
+        """Build a Job from its workflow config.
 
-        Returns the constructed :class:`Job` together with the list of
-        :class:`Message` objects produced by the matching ``ContextBinding``
-        ``seed_factory`` hooks. ``JobManager.schedule_job`` forwards the seeds
-        to the preprocessor and marks the corresponding wire stream names as
-        already-seen for the gate (see ADR 0002).
+        Resolves the matching instrument- and spec-scope ``ContextBinding``
+        declarations for this ``(spec, source)`` and populates the job's
+        ``context_keys`` (wired into ``set_context``) and ``gating_streams``
+        (the JobManager gates the job until each is available; see ADR 0002).
         """
         workflow_id = config.identifier
         if workflow_id is None:
@@ -184,22 +180,10 @@ class JobFactory:
             if job_id.source_name in ci.dependent_sources
         ]
         context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
-        wire_for = {
-            ci.stream_name: (
-                ci.stream_resolver(job_id, ci.stream_name)
-                if isinstance(ci, SpecContextBinding) and ci.stream_resolver is not None
-                else ci.stream_name
-            )
-            for ci in matching
-        }
-        context_stream_names = set(wire_for.values())
-        seed_messages = [
-            ci.seed_factory(job_id)
-            for ci in matching
-            if isinstance(ci, SpecContextBinding) and ci.seed_factory is not None
-        ]
+        # Context wire names equal their stream names — no per-job suffixing.
+        context_streams = {ci.stream_name for ci in matching}
 
-        aux_streams = {**rendered_aux_names, **wire_for}
+        aux_streams = {**rendered_aux_names, **{name: name for name in context_streams}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         stream_processor = factory.create(
@@ -208,16 +192,15 @@ class JobFactory:
             aux_source_names=aux_streams,
             context_keys=context_keys,
         )
-        job = Job(
+        return Job(
             job_id=job_id,
             workflow_id=workflow_id,
             processor=stream_processor,
             source_names=[job_id.source_name],
             aux_streams=aux_streams,
-            gating_streams=context_stream_names,
+            gating_streams=context_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )
-        return job, seed_messages
 
 
 class JobManager:
@@ -225,8 +208,6 @@ class JobManager:
         self,
         job_factory: JobFactory,
         job_threads: int = 1,
-        *,
-        on_schedule_seed: Callable[[list[Message]], None] | None = None,
     ) -> None:
         self.service_name = 'data_reduction'
         self._last_update: int = 0
@@ -241,21 +222,16 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
-        # Per-job set of context-aux stream names whose accumulator has
-        # produced a value at any prior tick (or via initial seed). Used by
-        # the context gate (ADR 0002) so we don't have to refill cached
-        # context into ``WorkflowData.data`` every tick.
+        # Per-job set of context stream names whose accumulator has produced
+        # a value at any prior tick. Used by the context gate (ADR 0002) so we
+        # don't have to refill cached context into ``WorkflowData.data`` every
+        # tick.
         self._seen_context_streams: dict[JobId, set[str]] = {}
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
             ThreadPoolExecutor(max_workers=job_threads) if job_threads > 1 else None
         )
-        # See ADR 0002 / ADR 0003. Invoked from ``schedule_job`` with the
-        # cold-start context messages produced by the matching ``ContextBinding``
-        # ``seed_factory`` hooks. The orchestrator wires this to
-        # ``MessagePreprocessor.seed_messages``.
-        self._on_schedule_seed = on_schedule_seed
 
     @property
     def all_jobs(self) -> list[Job]:
@@ -310,7 +286,7 @@ class JobManager:
         Schedule a new job based on the provided configuration.
         """
         job_id = config.job_id
-        job, seed_messages = self._job_factory.create(job_id=job_id, config=config)
+        job = self._job_factory.create(job_id=job_id, config=config)
         self._job_schedules[job_id] = config.schedule
         self._job_states[job_id] = JobState.scheduled
         self._scheduled_jobs[job_id] = job
@@ -320,22 +296,7 @@ class JobManager:
             workflow_id=str(config.identifier),
             schedule=str(config.schedule),
         )
-        self._seed_initial_context(job_id, seed_messages)
         return job_id
-
-    def _seed_initial_context(self, job_id: JobId, messages: list[Message]) -> None:
-        """Forward cold-start context seeds and mark their wire streams as seen.
-
-        See ADR 0002. ``ContextBinding`` declarations with a ``seed_factory``
-        produce messages that populate the preprocessor before any external
-        producer publishes; the gate then opens on tick one for those streams.
-        """
-        if self._on_schedule_seed is None or not messages:
-            return
-        self._on_schedule_seed(messages)
-        self._seen_context_streams.setdefault(job_id, set()).update(
-            msg.stream.name for msg in messages
-        )
 
     def stop_job(self, job_id: JobId) -> None:
         """Stop a job and remove it from the system."""

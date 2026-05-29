@@ -142,13 +142,12 @@ def make_test_params():
 
 
 def make_roi_context_keys() -> dict[str, type]:
-    """Return the ROI ``context_keys`` JobFactory would supply for a view spec.
+    """Return the ROI ``context_keys`` for a detector-view spec.
 
-    Detector-view specs that support ROI declare ``ContextBinding`` records for
-    ``roi_rectangle`` and ``roi_polygon`` (see
-    ``detector_view_specs.add_roi_context_bindings``); JobFactory materialises
-    these into a ``context_keys`` mapping when calling the factory. Tests that
-    drive ``make_workflow`` directly emulate that step by reusing this helper.
+    ROI-supporting views wire ``roi_rectangle`` and ``roi_polygon`` into
+    ``set_context``; :meth:`DetectorViewFactory.make_workflow` adds these keys
+    itself when ``roi_support`` is set. Tests that drive ``make_workflow``
+    directly and want to assert on the ROI context keys reuse this helper.
     """
     from ess.livedata.handlers.detector_view.types import (
         ROIPolygonRequest,
