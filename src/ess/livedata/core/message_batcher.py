@@ -189,7 +189,18 @@ class SimpleMessageBatcher(MessageBatcher):
 
 ESCALATION_OVERLOAD_THRESHOLD = 2
 ESCALATION_HALF_STEPS = 2
-DEESCALATION_HEADROOM_RATIO = 0.75
+# A batch is "underloaded" (de-escalation candidate) when its processing time is
+# below this fraction of the window; the stable "dead zone" is therefore
+# [ratio, 1.0] in utilisation.  De-escalating one half-step shrinks the window by
+# 1/sqrt(2), i.e. raises utilisation by the consecutive-level ratio.  For every
+# workload to have a stable level (utilisation landing in the dead zone at *some*
+# level) the dead zone must span one such step: ratio <= 1 / (level ratio).  The
+# nominal ratio is sqrt(2) ~ 1.414, but pulse-quantization rounds windows so the
+# widest consecutive ratio is ~1.43 (e.g. round(14*sqrt(2))/14 = 20/14).  Hence
+# ratio <= 1/1.43 ~ 0.70.  A larger value (e.g. 0.75) leaves a gap where a
+# workload is underloaded at every escalated level yet overloaded one step down,
+# causing steady oscillation.
+DEESCALATION_HEADROOM_RATIO = 0.70
 DEESCALATION_UNDERLOAD_THRESHOLD = 3
 DEESCALATION_IDLE_WINDOWS = 3
 

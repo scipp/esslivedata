@@ -24,7 +24,7 @@ cells:
       plot_aspect:
         aspect_type: Free
       window:
-        mode: latest
+        mode: window
 - geometry:
     row: 1
     col: 0

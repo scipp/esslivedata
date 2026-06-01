@@ -276,21 +276,6 @@ class DashboardBase(ServiceBase, ABC):
             """
         ]
 
-    @property
-    def server(self):
-        """Get the Panel server for WSGI deployment."""
-        return pn.serve(
-            self.create_layout,
-            port=self._port,
-            show=False,
-            autoreload=False,
-            dev=self._dev,
-            basic_auth=self._basic_auth_password,
-            cookie_secret=self._basic_auth_cookie_secret,
-            login_template=_LOGIN_TEMPLATE,
-            logout_template=_LOGOUT_TEMPLATE,
-        )
-
     def _start_impl(self) -> None:
         """Start the dashboard service."""
         self._services.start()
@@ -305,7 +290,7 @@ class DashboardBase(ServiceBase, ABC):
                 self.create_layout,
                 port=self._port,
                 show=False,
-                autoreload=True,
+                autoreload=self._dev,
                 dev=self._dev,
                 basic_auth=self._basic_auth_password,
                 cookie_secret=self._basic_auth_cookie_secret,
