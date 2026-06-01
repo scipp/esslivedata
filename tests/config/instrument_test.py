@@ -19,6 +19,10 @@ from ess.livedata.config.workflow_spec import (
     JobId,
     WorkflowOutputsBase,
 )
+from ess.livedata.handlers.dynamic_transforms import (
+    apply_dynamic_transforms,
+    wire_dynamic_transforms,
+)
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
     WorkflowFactory,
@@ -448,7 +452,7 @@ class TestContextBindings:
         """Two chain-patch entries for one stream must declare the same
         :class:`ValueLog` subclass.
 
-        :meth:`apply_dynamic_transforms` indexes bindings by ``stream_name``
+        ``apply_dynamic_transforms`` indexes bindings by ``stream_name``
         per component type; conflicting subclasses would silently collapse
         with last-write-wins semantics.
         """
@@ -616,10 +620,10 @@ class _FakePipeline:
         self.inserted.append(provider)
 
 
-class TestInstrumentApplyDynamicTransforms:
-    """``Instrument.apply_dynamic_transforms`` patches a workflow's
+class TestApplyDynamicTransforms:
+    """``apply_dynamic_transforms`` patches a pipeline's
     ``NeXusTransformationChain[T, SampleRun]`` provider for every matching
-    instrument-scope chain-patch :class:`ContextBinding`."""
+    instrument-scope chain-patch binding."""
 
     def _make_instrument(self) -> Instrument:
         return Instrument(
@@ -644,7 +648,9 @@ class TestInstrumentApplyDynamicTransforms:
     def test_no_matching_binding_is_noop(self) -> None:
         instrument = self._make_instrument()
         workflow = _FakePipeline()
-        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        apply_dynamic_transforms(
+            workflow, instrument.chain_patch_bindings, {'det1': object}
+        )
         assert workflow.inserted == []
 
     def test_inserts_provider_for_matching_binding(self) -> None:
@@ -661,7 +667,9 @@ class TestInstrumentApplyDynamicTransforms:
         )
 
         workflow = _FakePipeline()
-        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        apply_dynamic_transforms(
+            workflow, instrument.chain_patch_bindings, {'det1': object}
+        )
         assert len(workflow.inserted) == 1
 
     def test_direct_bind_binding_is_skipped(self) -> None:
@@ -673,7 +681,9 @@ class TestInstrumentApplyDynamicTransforms:
         )
 
         workflow = _FakePipeline()
-        instrument.apply_dynamic_transforms(workflow, {'det1': object})
+        apply_dynamic_transforms(
+            workflow, instrument.chain_patch_bindings, {'det1': object}
+        )
         assert workflow.inserted == []
 
     def test_groups_bindings_by_component_type(self) -> None:
@@ -699,7 +709,11 @@ class TestInstrumentApplyDynamicTransforms:
 
         workflow = _FakePipeline()
         # One component_type per matching source — two separate inserts.
-        instrument.apply_dynamic_transforms(workflow, {'det1': object, 'det2': type})
+        apply_dynamic_transforms(
+            workflow,
+            instrument.chain_patch_bindings,
+            {'det1': object, 'det2': type},
+        )
         assert len(workflow.inserted) == 2
 
 
@@ -709,21 +723,20 @@ class _FakeDynamicWorkflow:
     def __init__(self, dynamic_keys: dict) -> None:
         self._dynamic_keys = dynamic_keys
         self.pipeline = _FakePipeline()
-        self.patched = False
 
     @property
     def dynamic_keys(self) -> dict:
         return self._dynamic_keys
 
-    def patch_pipeline(self, patch) -> None:
-        self.patched = True
-        patch(self.pipeline)
+    @property
+    def base_pipeline(self) -> _FakePipeline:
+        return self.pipeline
 
 
-class TestInstrumentWireDynamicTransforms:
-    """``Instrument.wire_dynamic_transforms`` derives the component map from a
-    workflow's own ``dynamic_keys`` and patches its pipeline, so factories need
-    not restate the source → component-type mapping."""
+class TestWireDynamicTransforms:
+    """``wire_dynamic_transforms`` derives the component map from a workflow's
+    own ``dynamic_keys`` and patches its pipeline, so factories need not restate
+    the source → component-type mapping."""
 
     def _make_instrument(self) -> Instrument:
         return Instrument(
@@ -757,9 +770,8 @@ class TestInstrumentWireDynamicTransforms:
         self._rot_log_binding(instrument, source='det1')
 
         workflow = _FakeDynamicWorkflow({'det1': NeXusData[NXdetector, SampleRun]})
-        instrument.wire_dynamic_transforms(workflow, {})
+        wire_dynamic_transforms(workflow, instrument.chain_patch_bindings, {})
 
-        assert workflow.patched
         assert len(workflow.pipeline.inserted) == 1
 
     def test_resolves_aux_role_to_actual_stream_name(self) -> None:
@@ -771,7 +783,9 @@ class TestInstrumentWireDynamicTransforms:
         self._rot_log_binding(instrument, source='actual_mon')
 
         workflow = _FakeDynamicWorkflow({'mon_role': NeXusData[NXdetector, SampleRun]})
-        instrument.wire_dynamic_transforms(workflow, {'mon_role': 'actual_mon'})
+        wire_dynamic_transforms(
+            workflow, instrument.chain_patch_bindings, {'mon_role': 'actual_mon'}
+        )
 
         assert len(workflow.pipeline.inserted) == 1
 
@@ -780,15 +794,15 @@ class TestInstrumentWireDynamicTransforms:
         self._rot_log_binding(instrument, source='det1')
 
         workflow = _FakeDynamicWorkflow({'det1': int})
-        instrument.wire_dynamic_transforms(workflow, {})
+        wire_dynamic_transforms(workflow, instrument.chain_patch_bindings, {})
 
-        assert not workflow.patched
+        assert workflow.pipeline.inserted == []
 
     def test_non_supporting_workflow_is_noop(self) -> None:
         instrument = self._make_instrument()
         self._rot_log_binding(instrument, source='det1')
-        # An object without dynamic_keys/patch_pipeline must not raise.
-        instrument.wire_dynamic_transforms(object(), {})
+        # An object without dynamic_keys/base_pipeline must not raise.
+        wire_dynamic_transforms(object(), instrument.chain_patch_bindings, {})
 
 
 class TestInstrumentRegisterSpec:

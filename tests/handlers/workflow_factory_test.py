@@ -1077,7 +1077,7 @@ class TestSpecHandleAddContextBinding:
         """A :class:`ValueLog` ``workflow_key`` at spec scope is rejected.
 
         Chain-patching is read only from instrument scope by
-        :meth:`Instrument.apply_dynamic_transforms`; a spec-scope ValueLog
+        :attr:`Instrument.chain_patch_bindings`; a spec-scope ValueLog
         would route the f144 value to a Sciline parameter that no provider
         consumes — silent-wrong.
         """

@@ -107,8 +107,8 @@ class ContextBinding:
       chain entry to patch is derived from :attr:`stream_name` (the
       RBV substream's ``nexus_path``) by
       :meth:`Instrument.chain_patch_path`.
-      :meth:`Instrument.apply_dynamic_transforms` discovers these
-      bindings by ``issubclass(workflow_key, ValueLog)`` and synthesises
+      :attr:`Instrument.chain_patch_bindings` collects these bindings by
+      ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
       a fused per-component patched-chain provider.
 
     The same record is declared at two scopes: instrument scope
@@ -121,6 +121,26 @@ class ContextBinding:
     """
 
     stream_name: str
+    workflow_key: Any
+    dependent_sources: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChainPatchBinding:
+    """A chain-patch :class:`ContextBinding` resolved for transform wiring.
+
+    Carries the binding's pre-resolved NeXus transform path (see
+    :meth:`ess.livedata.config.instrument.Instrument.chain_patch_path`)
+    alongside its :attr:`dependent_sources` and ``ValueLog`` ``workflow_key``.
+    Resolving the path up front lets the wiring step in
+    :mod:`ess.livedata.handlers.dynamic_transforms` run as a pure function of
+    this self-contained data, without re-consulting the instrument's stream
+    topology. The :attr:`stream_name` is retained as the dedup key when
+    grouping patches per component type.
+    """
+
+    stream_name: str
+    transform_path: str
     workflow_key: Any
     dependent_sources: frozenset[str]
 

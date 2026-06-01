@@ -1811,7 +1811,7 @@ class TestJobFactoryContextBinding:
         A chain-patch ContextBinding contributes its :class:`ValueLog`
         subclass to the factory's ``context_keys``; the transform path is
         derived from the binding's ``stream_name`` and consumed by
-        :meth:`Instrument.apply_dynamic_transforms`.
+        ``dynamic_transforms.apply_dynamic_transforms``.
         """
         from ess.livedata.config.value_log import ValueLog
 

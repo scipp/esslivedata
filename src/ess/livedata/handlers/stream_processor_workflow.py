@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -106,21 +106,24 @@ class StreamProcessorWorkflow(Workflow):
         Exposed so the routing layer can derive the NeXus component type of
         each input (the first type-arg of a ``NeXusData[Component, Run]`` key)
         and wire f144-driven dynamic transforms without the factory restating
-        that mapping. See :meth:`Instrument.wire_dynamic_transforms`.
+        that mapping. See
+        :func:`ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`.
         """
         return dict(self._dynamic_keys)
 
-    def patch_pipeline(self, patch: Callable[[sciline.Pipeline], None]) -> None:
-        """Apply ``patch`` to the base pipeline in place, before the graph is built.
+    @property
+    def base_pipeline(self) -> sciline.Pipeline:
+        """The unbuilt base pipeline, exposed for pre-build patching.
 
         Raises if the wrapped ``StreamProcessor`` has already been built: the
-        pipeline is baked into the pruned/precomputed graph at construction.
+        pipeline is baked into the pruned/precomputed graph at construction, so
+        patches must land before :meth:`build`.
         """
         if self._stream_processor is not None:
             raise RuntimeError(
                 "Cannot patch the pipeline after the StreamProcessor is built."
             )
-        patch(self._base_workflow)
+        return self._base_workflow
 
     def build(self) -> None:
         """Build the wrapped ``StreamProcessor``. Idempotent; no-op if built.

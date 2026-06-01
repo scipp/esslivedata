@@ -290,7 +290,7 @@ class TestDeferredContextInjection:
         )
         assert workflow.dynamic_keys == {'streamed': Streamed}
 
-    def test_patch_pipeline_runs_before_build(self, base_workflow_with_context):
+    def test_base_pipeline_exposed_before_build(self, base_workflow_with_context):
         workflow = StreamProcessorWorkflow(
             base_workflow_with_context,
             dynamic_keys={'streamed': Streamed},
@@ -298,11 +298,9 @@ class TestDeferredContextInjection:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
-        seen: list[sciline.Pipeline] = []
-        workflow.patch_pipeline(seen.append)
-        assert seen == [workflow._base_workflow]
+        assert workflow.base_pipeline is workflow._base_workflow
 
-    def test_patch_pipeline_after_build_raises(self, base_workflow_with_context):
+    def test_base_pipeline_after_build_raises(self, base_workflow_with_context):
         workflow = StreamProcessorWorkflow(
             base_workflow_with_context,
             dynamic_keys={'streamed': Streamed},
@@ -312,7 +310,7 @@ class TestDeferredContextInjection:
         )
         workflow.build()
         with pytest.raises(RuntimeError, match='after the StreamProcessor'):
-            workflow.patch_pipeline(lambda _wf: None)
+            _ = workflow.base_pipeline
 
     def test_build_is_idempotent(self, base_workflow_with_context):
         workflow = StreamProcessorWorkflow(

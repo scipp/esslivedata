@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import sciline
-
     from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 
 import pydantic
@@ -18,11 +16,10 @@ import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import (
     SpecHandle,
-    SupportsDynamicTransforms,
     WorkflowFactory,
 )
 
-from .stream import ContextBinding, Device, F144Stream, Stream
+from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
 
@@ -228,11 +225,10 @@ class Instrument:
 
         Chain-patching bindings (live geometry from motion logs) pass a
         :class:`~ess.livedata.config.value_log.ValueLog` subclass as
-        ``workflow_key``: :meth:`apply_dynamic_transforms` discovers them
-        by ``issubclass`` and routes the value into the NeXus
-        ``depends_on`` chain at the path derived from ``stream_name`` (see
-        :meth:`chain_patch_path`) via a fused per-component patched-chain
-        provider.
+        ``workflow_key``: :attr:`chain_patch_bindings` collects them by
+        ``issubclass`` and resolves the NeXus ``depends_on`` chain path from
+        ``stream_name`` (see :meth:`chain_patch_path`) so the wiring step can
+        route the value via a fused per-component patched-chain provider.
         """
         binding = ContextBinding(
             stream_name=stream_name,
@@ -242,111 +238,30 @@ class Instrument:
         self._validate_binding_stream_name(binding)
         self.context_bindings.append(binding)
 
-    def apply_dynamic_transforms(
-        self,
-        workflow: sciline.Pipeline,
-        components: Mapping[str, type],
-    ) -> None:
-        """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
+    @property
+    def chain_patch_bindings(self) -> list[ChainPatchBinding]:
+        """Instrument-scope chain-patch bindings resolved for transform wiring.
 
-        For each ``(source_name, component_type)`` entry, selects every
-        instrument-scope chain-patch :class:`ContextBinding` (one whose
-        ``workflow_key`` is a :class:`ValueLog` subclass) whose
-        ``dependent_sources`` includes that source name, and groups the
-        ``(transform_path, workflow_key)`` pairs by component type. The
-        ``transform_path`` is derived from each binding's ``stream_name``
-        via :meth:`chain_patch_path`. Each group becomes a single fused
-        provider that replaces essreduce's
-        ``NeXusTransformationChain[T, SampleRun]`` provider and writes the
-        latest sample of each :class:`ValueLog` parameter into the chain.
+        Selects every instrument-scope chain-patch :class:`ContextBinding` (one
+        whose ``workflow_key`` is a :class:`ValueLog` subclass) and resolves its
+        NeXus transform path via :meth:`chain_patch_path`. Spec-scope bindings
+        are not consulted: chain-patch contexts are required to live at
+        instrument scope.
 
-        Spec-scope ``ContextBinding`` records are not consulted:
-        chain-patch contexts are required to live at instrument scope.
-
-        Parameters
-        ----------
-        workflow:
-            Sciline pipeline to patch in place.
-        components:
-            ``source_name -> component_type`` for the essreduce-loaded NeXus
-            components whose ``depends_on`` chain might need patching (e.g.
-            ``{'loki_detector_0': NXdetector,
-            aux_source_names['incident_monitor']: Incident, ...}``). Callers
-            own alias resolution: source names are the actual on-disk names,
-            not aliases. Components with no matching binding are no-ops.
+        The result is self-contained data the routing layer hands to
+        :func:`~ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`,
+        so the wiring step needs no access to the instrument's stream topology.
         """
-        from ess.livedata.handlers.dynamic_transforms import add_dynamic_transforms
-
-        # Dedup by stream_name: repeat ``add_context_binding`` calls (e.g. when
-        # ``load_factories`` runs twice in a long-lived process or across tests)
-        # leave duplicate entries in ``context_bindings``; passing the same
-        # binding twice would create a provider with duplicate-typed parameters
-        # and Sciline rejects that.
-        by_type: dict[type, dict[str, tuple[str, type]]] = {}
-        for source_name, component_type in components.items():
-            for ci in self.context_bindings:
-                if not _is_chain_patch(ci):
-                    continue
-                if source_name not in ci.dependent_sources:
-                    continue
-                by_type.setdefault(component_type, {})[ci.stream_name] = (
-                    self.chain_patch_path(ci),
-                    ci.workflow_key,
-                )
-        for component_type, by_stream in by_type.items():
-            add_dynamic_transforms(
-                workflow,
-                component_type=component_type,
-                bindings=list(by_stream.values()),
+        return [
+            ChainPatchBinding(
+                stream_name=ci.stream_name,
+                transform_path=self.chain_patch_path(ci),
+                workflow_key=ci.workflow_key,
+                dependent_sources=ci.dependent_sources,
             )
-
-    def wire_dynamic_transforms(
-        self,
-        workflow: object,
-        aux_source_names: Mapping[str, str],
-    ) -> None:
-        """Wire f144-driven dynamic transforms into a workflow before its build.
-
-        Derives the ``{source_name: component_type}`` map from the workflow's
-        own ``dynamic_keys`` — each ``NeXusData[Component, Run]`` key carries the
-        component type as its first type-arg — and patches the pipeline via
-        :meth:`apply_dynamic_transforms`. This avoids restating the mapping in
-        the factory (which would duplicate ``dynamic_keys`` and is a recurring
-        source of factory-author error).
-
-        The ``dynamic_keys`` *wire* name is the actual on-disk source name for
-        the primary source and the aux *role* for auxiliary inputs;
-        ``aux_source_names`` (role → rendered stream) resolves the latter to
-        the on-disk names that :meth:`apply_dynamic_transforms` matches against
-        ``dependent_sources``. Wire names that are neither (synthetic inputs)
-        therefore cannot be wired — acceptable today as no such input carries a
-        chain-patch binding. Non-``NeXusData`` dynamic keys are ignored.
-
-        Parameters
-        ----------
-        workflow:
-            The not-yet-built workflow whose pipeline is patched in place.
-        aux_source_names:
-            Rendered ``role -> stream`` mapping for this job's aux sources.
-        """
-        from typing import get_args, get_origin
-
-        from ess.reduce.nexus.types import NeXusData
-
-        # Workflows that don't expose a typed pipeline (e.g. non-StreamProcessor
-        # workflows) have nothing to wire.
-        if not isinstance(workflow, SupportsDynamicTransforms):
-            return
-
-        components = {
-            aux_source_names.get(wire, wire): get_args(key)[0]
-            for wire, key in workflow.dynamic_keys.items()
-            if get_origin(key) is NeXusData
-        }
-        if components:
-            workflow.patch_pipeline(
-                lambda pipeline: self.apply_dynamic_transforms(pipeline, components)
-            )
+            for ci in self.context_bindings
+            if _is_chain_patch(ci)
+        ]
 
     @property
     def nexus_file(self) -> str:
@@ -754,9 +669,9 @@ class Instrument:
         """Raise if chain-patch ``(stream_name, workflow_key)`` is not bijective.
 
         Sciline keys identify parameters by class, and
-        :meth:`apply_dynamic_transforms` dedups bindings by ``stream_name``
-        with last-write-wins semantics. Both directions must therefore be
-        unique:
+        :func:`~ess.livedata.handlers.dynamic_transforms.apply_dynamic_transforms`
+        dedups bindings by ``stream_name`` with last-write-wins semantics. Both
+        directions must therefore be unique:
 
         - Two streams sharing one :class:`ValueLog` subclass would silently
           collapse into a single Sciline node, merging unrelated streams.
