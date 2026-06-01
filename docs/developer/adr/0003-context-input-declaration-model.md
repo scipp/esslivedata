@@ -67,7 +67,7 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
   straight into `set_context`.
 - **NXtransformations chain patch.** `workflow_key` is a `ValueLog` subclass. The
   value is patched into the NeXus `depends_on` chain rather than bound directly.
-  `Instrument.apply_dynamic_transforms` discovers these by
+  `wire_dynamic_transforms` discovers these by
   `issubclass(workflow_key, ValueLog)`. The chain entry to patch is *derived* from
   `stream_name` (the f144 substream's `nexus_path`) via `Instrument.chain_patch_path`
   — there is no separate `transform_path` field, keeping a single source of truth in
@@ -131,9 +131,9 @@ not import `handlers`. Each chain-patch binding declares its own `ValueLog` subc
 giving it a distinct Sciline parameter so multiple dynamic transforms can coexist on
 one workflow without colliding.
 
-`Instrument.apply_dynamic_transforms(workflow, components)` selects the chain-patch
+`wire_dynamic_transforms(workflow, bindings, aux_source_names)` selects the chain-patch
 bindings matching each `(source, component_type)`, groups them by component type, and
-builds one fused per-component provider (`add_dynamic_transforms` /
+builds one fused per-component provider (`build_patched_chain_provider` /
 `synthesise_provider` in `handlers/dynamic_transforms.py`) that replaces essreduce's
 `NeXusTransformationChain[T, SampleRun]` provider and writes the latest sample of each
 `ValueLog` parameter into the chain. The same seam works for the detector-view factory
@@ -200,8 +200,8 @@ single source of truth and a binding cannot disagree with the stream it patches.
   (`stream_name`, `workflow_key`, `dependent_sources`). `ValueLog` lives in
   `config/value_log.py`.
 - `Instrument` carries `context_bindings: list[ContextBinding]` and
-  `add_context_binding(...)`; `apply_dynamic_transforms(workflow, components)` patches
-  chain-patch bindings into the pipeline.
+  `add_context_binding(...)`; `wire_dynamic_transforms(workflow, bindings, aux_source_names)`
+  patches chain-patch bindings into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.
 - `JobFactory.create` merges instrument + spec bindings, passes `context_keys` to the

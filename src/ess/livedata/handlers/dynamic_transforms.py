@@ -11,14 +11,13 @@ latest sample from a live f144 stream — otherwise essreduce's
 :func:`build_patched_chain_provider` synthesises a per-component-type provider
 that consumes one :class:`ValueLog` parameter per binding and writes the
 latest sample into the corresponding transformation along the chain.
-:func:`add_dynamic_transforms` inserts the provider into the workflow.
 
 :func:`wire_dynamic_transforms` is the routing-layer entry point: it derives
-the ``source -> component_type`` map from a workflow's own ``dynamic_keys`` and
-applies the patches for a list of pre-resolved :class:`ChainPatchBinding`
-records. The bindings are self-contained data (the instrument resolves them via
-:attr:`Instrument.chain_patch_bindings`), so this module needs no reference to
-the instrument or its stream topology.
+the ``source -> component_type`` map from a workflow's own ``dynamic_keys``,
+groups the matching :class:`ChainPatchBinding` records by component type, and
+inserts one fused provider per type. The bindings are self-contained data (the
+instrument resolves them via :attr:`Instrument.chain_patch_bindings`), so this
+module needs no reference to the instrument or its stream topology.
 """
 
 from __future__ import annotations
@@ -148,72 +147,6 @@ def build_patched_chain_provider(
     )
 
 
-def add_dynamic_transforms(
-    workflow: sciline.Pipeline,
-    *,
-    component_type: type,
-    bindings: list[tuple[str, type[ValueLog]]],
-) -> None:
-    """Patch ``workflow`` to drive matching NXlog placeholders from f144 streams.
-
-    Inserts a fused single-step provider built by
-    :func:`build_patched_chain_provider` that consumes one :class:`ValueLog`
-    parameter per binding and writes the latest sample into the corresponding
-    transformation along the chain. No-op when ``bindings`` is empty.
-    """
-    if not bindings:
-        return
-    workflow.insert(build_patched_chain_provider(component_type, bindings))
-
-
-def apply_dynamic_transforms(
-    pipeline: sciline.Pipeline,
-    bindings: Iterable[ChainPatchBinding],
-    components: Mapping[str, type],
-) -> None:
-    """Patch ``pipeline`` to drive matching NXlog placeholders from f144 streams.
-
-    For each ``(source_name, component_type)`` entry, selects every
-    :class:`ChainPatchBinding` whose ``dependent_sources`` includes that source
-    name, groups the ``(transform_path, workflow_key)`` pairs by component type,
-    and inserts one fused provider per type via :func:`add_dynamic_transforms`.
-
-    Grouping by ``stream_name`` dedups two ways: repeat instrument bindings that
-    resolve to the same stream, and a single binding whose ``dependent_sources``
-    spans several sources of the same component type — either would otherwise
-    yield a provider with duplicate-typed parameters, which Sciline rejects.
-
-    Parameters
-    ----------
-    pipeline:
-        Sciline pipeline to patch in place.
-    bindings:
-        Pre-resolved chain-patch bindings (see
-        :attr:`Instrument.chain_patch_bindings`).
-    components:
-        ``source_name -> component_type`` for the essreduce-loaded NeXus
-        components whose ``depends_on`` chain might need patching. Source names
-        are the actual on-disk names, not aliases. Components with no matching
-        binding are no-ops.
-    """
-    bindings = list(bindings)
-    by_type: dict[type, dict[str, tuple[str, type]]] = {}
-    for source_name, component_type in components.items():
-        for binding in bindings:
-            if source_name not in binding.dependent_sources:
-                continue
-            by_type.setdefault(component_type, {})[binding.stream_name] = (
-                binding.transform_path,
-                binding.workflow_key,
-            )
-    for component_type, by_stream in by_type.items():
-        add_dynamic_transforms(
-            pipeline,
-            component_type=component_type,
-            bindings=list(by_stream.values()),
-        )
-
-
 def wire_dynamic_transforms(
     workflow: object,
     bindings: Iterable[ChainPatchBinding],
@@ -223,19 +156,27 @@ def wire_dynamic_transforms(
 
     Derives the ``{source_name: component_type}`` map from the workflow's own
     ``dynamic_keys`` — each ``NeXusData[Component, Run]`` key carries the
-    component type as its first type-arg — and patches the pipeline via
-    :func:`apply_dynamic_transforms`. This avoids restating the mapping in the
-    factory (which would duplicate ``dynamic_keys`` and is a recurring source of
+    component type as its first type-arg — then, for every binding whose
+    ``dependent_sources`` includes a derived source, groups the
+    ``(transform_path, workflow_key)`` pairs by component type and inserts one
+    fused provider per type (built by :func:`build_patched_chain_provider`).
+
+    Deriving the map from ``dynamic_keys`` avoids restating it in the factory
+    (which would duplicate ``dynamic_keys`` and is a recurring source of
     factory-author error).
+
+    Grouping by ``stream_name`` dedups two ways: repeat instrument bindings that
+    resolve to the same stream, and a single binding whose ``dependent_sources``
+    spans several sources of the same component type — either would otherwise
+    yield a provider with duplicate-typed parameters, which Sciline rejects.
 
     The ``dynamic_keys`` *wire* name is the actual on-disk source name for the
     primary source and the aux *role* for auxiliary inputs; ``aux_source_names``
-    (role → rendered stream) resolves the latter to the on-disk names that
-    :func:`apply_dynamic_transforms` matches against ``dependent_sources``. Wire
-    names that are neither (synthetic inputs) therefore cannot be wired —
-    acceptable today as no such input carries a chain-patch binding.
-    Non-``NeXusData`` dynamic keys are ignored, as are workflows that do not
-    expose a typed pipeline.
+    (role → rendered stream) resolves the latter to the on-disk names matched
+    against ``dependent_sources``. Wire names that are neither (synthetic inputs)
+    therefore cannot be wired — acceptable today as no such input carries a
+    chain-patch binding. Non-``NeXusData`` dynamic keys are ignored, as are
+    workflows that do not expose a typed pipeline.
 
     Parameters
     ----------
@@ -248,10 +189,22 @@ def wire_dynamic_transforms(
     """
     if not isinstance(workflow, SupportsDynamicTransforms):
         return
+    bindings = list(bindings)
     components = {
         aux_source_names.get(wire, wire): get_args(key)[0]
         for wire, key in workflow.dynamic_keys.items()
         if get_origin(key) is NeXusData
     }
-    if components:
-        apply_dynamic_transforms(workflow.base_pipeline, bindings, components)
+    by_type: dict[type, dict[str, tuple[str, type]]] = {}
+    for source_name, component_type in components.items():
+        for binding in bindings:
+            if source_name not in binding.dependent_sources:
+                continue
+            by_type.setdefault(component_type, {})[binding.stream_name] = (
+                binding.transform_path,
+                binding.workflow_key,
+            )
+    for component_type, by_stream in by_type.items():
+        workflow.base_pipeline.insert(
+            build_patched_chain_provider(component_type, list(by_stream.values()))
+        )

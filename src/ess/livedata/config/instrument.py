@@ -669,7 +669,7 @@ class Instrument:
         """Raise if chain-patch ``(stream_name, workflow_key)`` is not bijective.
 
         Sciline keys identify parameters by class, and
-        :func:`~ess.livedata.handlers.dynamic_transforms.apply_dynamic_transforms`
+        :func:`~ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`
         dedups bindings by ``stream_name`` with last-write-wins semantics. Both
         directions must therefore be unique:
 
