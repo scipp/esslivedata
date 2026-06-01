@@ -129,12 +129,20 @@ class SpecHandle:
     def skip_instrument_contexts(self) -> None:
         """Opt this spec out of all instrument-scope context-stream bindings.
 
-        Use from ``specs.py`` when this spec consumes a source whose
-        instrument declaration carries context (motion, geometry, etc.) but
-        this spec does not need the value — e.g. a counts-only ratemeter on
-        a moving detector. The spec is removed from the gate and from the
-        resolved context for those streams. Spec-scope bindings (declared
-        via :meth:`add_context_binding`) are unaffected.
+        Use when this spec consumes a source whose instrument declaration
+        carries context (motion, geometry, etc.) but this spec does not need
+        the value — e.g. a counts-only ratemeter on a moving detector. The
+        spec is removed from the gate and from the resolved context for those
+        streams. Spec-scope bindings (declared via :meth:`add_context_binding`)
+        are unaffected.
+
+        Call this from ``factories.py``, co-located with the
+        :meth:`Instrument.add_context_binding` it negates: the opt-out has no
+        meaning without the instrument-scope binding it cancels, and the
+        rationale (does this workflow consume the geometry value?) is
+        implementation knowledge that lives with the factory. The call needs
+        no workflow-key import, so the ``specs.py`` import constraint does not
+        apply.
         """
         self._factory._set_skip_instrument_contexts(self.workflow_id)
 

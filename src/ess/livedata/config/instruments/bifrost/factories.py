@@ -71,8 +71,8 @@ def setup_factories(instrument: Instrument) -> None:
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
     # on the cut-workflow graph. Direct-bind (no chain patch) — declared at
     # instrument scope so every spec consuming ``unified_detector`` picks them
-    # up; non-consumers (detector view, ratemeter) opt out via
-    # ``skip_instrument_contexts`` in ``specs.py``.
+    # up. Non-consumers opt out below, co-located with the bindings they negate:
+    # the detector view sums over banks and the ratemeter is counts-only.
     instrument.add_context_binding(
         stream_name='detector_tank_angle_r0',
         dependent_sources={'unified_detector'},
@@ -83,6 +83,8 @@ def setup_factories(instrument: Instrument) -> None:
         dependent_sources={'unified_detector'},
         workflow_key=SampleAngle[SampleRun],
     )
+    specs.detector_ratemeter_handle.skip_instrument_contexts()
+    specs.unified_detector_view_handle.skip_instrument_contexts()
 
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow

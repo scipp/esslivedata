@@ -107,6 +107,11 @@ Motion is a property of the *source*, but not every spec on that source consumes
 geometry value (LOKI `tube_view`, bifrost `detector_ratemeter`, the bifrost detector
 view). Such a spec declares `SpecHandle.skip_instrument_contexts()`, which drops
 instrument-scope bindings for that spec's jobs (spec-scope bindings are unaffected).
+The opt-out is called from `factories.py`, co-located with the
+`Instrument.add_context_binding` it negates: the flag is meaningless without the
+binding it cancels, and the rationale is implementation knowledge. It needs no
+workflow-key import, so — unlike `add_context_binding` — its placement is not forced
+by the `specs.py` import constraint; co-location is a legibility choice.
 
 Instrument scope as the default — with an opt-out — is chosen over spec scope as the
 default deliberately. Spec-scope-by-default makes "added a new spec on the source,
