@@ -150,7 +150,6 @@ def build_patched_chain_provider(
 def wire_dynamic_transforms(
     workflow: object,
     bindings: Iterable[ChainPatchBinding],
-    aux_source_names: Mapping[str, str],
 ) -> None:
     """Wire f144-driven dynamic transforms into a workflow before its build.
 
@@ -163,20 +162,17 @@ def wire_dynamic_transforms(
 
     Deriving the map from ``dynamic_keys`` avoids restating it in the factory
     (which would duplicate ``dynamic_keys`` and is a recurring source of
-    factory-author error).
+    factory-author error). ``dynamic_keys`` is keyed by on-disk stream name
+    (aux roles are resolved at workflow construction), so each wire name matches
+    directly against ``dependent_sources``.
 
     Grouping by ``stream_name`` dedups two ways: repeat instrument bindings that
     resolve to the same stream, and a single binding whose ``dependent_sources``
     spans several sources of the same component type — either would otherwise
     yield a provider with duplicate-typed parameters, which Sciline rejects.
 
-    The ``dynamic_keys`` *wire* name is the actual on-disk source name for the
-    primary source and the aux *role* for auxiliary inputs; ``aux_source_names``
-    (role → rendered stream) resolves the latter to the on-disk names matched
-    against ``dependent_sources``. Wire names that are neither (synthetic inputs)
-    therefore cannot be wired — acceptable today as no such input carries a
-    chain-patch binding. Non-``NeXusData`` dynamic keys are ignored, as are
-    workflows that do not expose a typed pipeline.
+    Non-``NeXusData`` dynamic keys are ignored, as are workflows that do not
+    expose a typed pipeline.
 
     Parameters
     ----------
@@ -184,15 +180,13 @@ def wire_dynamic_transforms(
         The not-yet-built workflow whose pipeline is patched in place.
     bindings:
         Pre-resolved chain-patch bindings for the owning instrument.
-    aux_source_names:
-        Rendered ``role -> stream`` mapping for this job's aux sources.
     """
     if not isinstance(workflow, SupportsDynamicTransforms):
         return
     bindings = list(bindings)
     components = {
-        aux_source_names.get(wire, wire): get_args(key)[0]
-        for wire, key in workflow.dynamic_keys.items()
+        source: get_args(key)[0]
+        for source, key in workflow.dynamic_keys.items()
         if get_origin(key) is NeXusData
     }
     by_type: dict[type, dict[str, tuple[str, type]]] = {}

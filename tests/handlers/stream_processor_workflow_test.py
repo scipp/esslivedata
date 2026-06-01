@@ -71,6 +71,41 @@ class TestStreamProcessorWorkflow:
         )
         assert workflow is not None
 
+    def test_aux_source_names_resolves_dynamic_wire_names_to_on_disk(
+        self, base_workflow_with_context
+    ):
+        """Aux roles in dynamic_keys are resolved to on-disk stream names.
+
+        Factories declare aux inputs by stable role; construction normalises the
+        wire name to the on-disk stream so the workflow consumes data keyed the
+        same way it arrives. Names absent from ``aux_source_names`` (the primary
+        source) pass through unchanged.
+        """
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed_role': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            aux_source_names={'streamed_role': 'on_disk_stream'},
+            accumulators=(ProcessedStreamed,),
+        )
+
+        assert workflow.dynamic_keys == {'on_disk_stream': Streamed}
+
+        # The resolved name is what accumulate routes on: data keyed by the
+        # on-disk stream name reaches the workflow.
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'on_disk_stream': Streamed(3)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        assert workflow.finalize()['output'] == Output(13)  # 3 + 5 * 2
+
     def test_accumulate_and_finalize(self, base_workflow_with_context):
         """Test the basic accumulate and finalize workflow."""
         workflow = StreamProcessorWorkflow(

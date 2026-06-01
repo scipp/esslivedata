@@ -131,7 +131,7 @@ not import `handlers`. Each chain-patch binding declares its own `ValueLog` subc
 giving it a distinct Sciline parameter so multiple dynamic transforms can coexist on
 one workflow without colliding.
 
-`wire_dynamic_transforms(workflow, bindings, aux_source_names)` selects the chain-patch
+`wire_dynamic_transforms(workflow, bindings)` selects the chain-patch
 bindings matching each `(source, component_type)`, groups them by component type, and
 builds one fused per-component provider (`build_patched_chain_provider` /
 `synthesise_provider` in `handlers/dynamic_transforms.py`) that replaces essreduce's
@@ -200,7 +200,7 @@ single source of truth and a binding cannot disagree with the stream it patches.
   (`stream_name`, `workflow_key`, `dependent_sources`). `ValueLog` lives in
   `config/value_log.py`.
 - `Instrument` carries `context_bindings: list[ContextBinding]` and
-  `add_context_binding(...)`; `wire_dynamic_transforms(workflow, bindings, aux_source_names)`
+  `add_context_binding(...)`; `wire_dynamic_transforms(workflow, bindings)`
   patches chain-patch bindings into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.

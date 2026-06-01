@@ -641,12 +641,17 @@ class TestJob:
 
 
 class TestJobAuxSourceMapping:
-    """Tests for auxiliary source name mapping (field names vs stream names)."""
+    """Tests for auxiliary source routing into the workflow."""
 
-    def test_aux_sources_dict_remaps_keys_to_field_names(
+    def test_aux_data_passes_through_by_stream_name(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test that aux_data keys are remapped from stream names to field names."""
+        """aux_data reaches the workflow keyed by on-disk stream name.
+
+        Aux roles are resolved to stream names at workflow construction, so the
+        Job performs no remapping: incoming stream-named data is forwarded as-is,
+        and the role names never reappear.
+        """
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
@@ -659,44 +664,6 @@ class TestJobAuxSourceMapping:
             },
         )
 
-        # Send data with stream names (monitor1, monitor2)
-        data = JobData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # Stream name
-                "monitor2": sc.scalar(20.0),  # Stream name
-            },
-        )
-        job.add(data)
-
-        # Verify workflow received data with field names
-        # (incident_monitor, transmission_monitor)
-        assert len(fake_processor.accumulate_calls) == 1
-        accumulated = fake_processor.accumulate_calls[0]
-        assert "detector1" in accumulated
-        assert "incident_monitor" in accumulated  # Field name, not monitor1
-        assert "transmission_monitor" in accumulated  # Field name, not monitor2
-        assert "monitor1" not in accumulated  # Stream name should not appear
-        assert "monitor2" not in accumulated  # Stream name should not appear
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-        assert accumulated["transmission_monitor"] == sc.scalar(20.0)
-
-    def test_aux_sources_when_field_names_equal_stream_names(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test case where field names and stream names are identical."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_streams={"monitor1": "monitor1", "monitor2": "monitor2"},
-        )
-
-        # Send data with stream names
         data = JobData(
             start_time=Timestamp.from_ns(100),
             end_time=Timestamp.from_ns(200),
@@ -708,13 +675,14 @@ class TestJobAuxSourceMapping:
         )
         job.add(data)
 
-        # Verify workflow received data with same keys (field names == stream names)
         assert len(fake_processor.accumulate_calls) == 1
         accumulated = fake_processor.accumulate_calls[0]
-        assert "monitor1" in accumulated
-        assert "monitor2" in accumulated
+        assert accumulated["detector1"] == sc.scalar(100.0)
         assert accumulated["monitor1"] == sc.scalar(10.0)
         assert accumulated["monitor2"] == sc.scalar(20.0)
+        # The Job does not remap to roles.
+        assert "incident_monitor" not in accumulated
+        assert "transmission_monitor" not in accumulated
 
     def test_input_stream_names_returns_stream_names(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
@@ -775,10 +743,10 @@ class TestJobAuxSourceMapping:
 
         assert job.input_stream_names == []
 
-    def test_partial_aux_data_with_dict_mapping(
+    def test_partial_aux_data_passes_through(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test that only available aux data is remapped and passed."""
+        """Only the aux streams present in a batch are forwarded."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
@@ -791,58 +759,16 @@ class TestJobAuxSourceMapping:
             },
         )
 
-        # Send data with only one of the two aux sources
+        # Send data with only one of the two aux streams.
         data = JobData(
             start_time=Timestamp.from_ns(100),
             end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # Only monitor1, not monitor2
-            },
+            aux_data={"monitor1": sc.scalar(10.0)},
         )
         job.add(data)
 
-        # Verify only the available aux data is passed with correct field name
         assert len(fake_processor.accumulate_calls) == 1
         accumulated = fake_processor.accumulate_calls[0]
-        assert "incident_monitor" in accumulated
-        assert "transmission_monitor" not in accumulated
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-
-    def test_stream_multiplexing_to_multiple_fields(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test that one stream can be multiplexed to multiple field names."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_streams={
-                "incident_monitor": "monitor1",  # Both fields map to same stream
-                "normalization_monitor": "monitor1",
-            },
-        )
-
-        # Send data with the multiplexed stream
-        data = JobData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # One stream
-            },
-        )
-        job.add(data)
-
-        # Verify workflow received data with both field names pointing to same value
-        assert len(fake_processor.accumulate_calls) == 1
-        accumulated = fake_processor.accumulate_calls[0]
-        assert "detector1" in accumulated
-        assert "incident_monitor" in accumulated
-        assert "normalization_monitor" in accumulated
-        assert "monitor1" not in accumulated  # Stream name should not appear
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-        assert accumulated["normalization_monitor"] == sc.scalar(10.0)
-        assert len(accumulated) == 3  # detector1 + 2 field names
+        assert accumulated["monitor1"] == sc.scalar(10.0)
+        assert "monitor2" not in accumulated

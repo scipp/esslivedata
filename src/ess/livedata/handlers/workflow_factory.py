@@ -406,9 +406,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
             if context_keys:
                 workflow.add_context_keys(context_keys)
-            wire_dynamic_transforms(
-                workflow, chain_patch_bindings, aux_source_names or {}
-            )
+            wire_dynamic_transforms(workflow, chain_patch_bindings)
             workflow.build()
         elif context_keys:
             raise TypeError(

@@ -225,13 +225,13 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         aux_streams:
-            Field-name to stream-name mapping for every non-primary input —
-            user-selected ``AuxSources`` and framework-routed
-            ``ContextBinding`` wire streams both live here. The distinction
-            between the two only matters at registration / factory time;
-            once a Job is constructed, both kinds are remapped the same way
-            in :meth:`add`. Multiplexing (one stream → many fields) is
-            supported; ``AuxSources`` rejects it where undesired.
+            Role to on-disk stream-name mapping for every non-primary input —
+            user-selected ``AuxSources`` and framework-routed ``ContextBinding``
+            wire streams both live here. Only the stream names (the values)
+            matter to a running job: they are the streams it subscribes to (see
+            :attr:`input_stream_names`), and incoming data already arrives keyed
+            by stream name — the same key the workflow expects, so :meth:`add`
+            needs no remapping.
         gating_streams:
             Subset of ``aux_streams.values()`` whose value must be
             available before the workflow runs. The :class:`JobManager`
@@ -249,10 +249,6 @@ class Job:
         self._reset_on_run_transition = reset_on_run_transition
         self._aux_streams: dict[str, str] = aux_streams or {}
         self._gating_streams: set[str] = gating_streams or set()
-
-        self._stream_to_fields: dict[str, list[str]] = {}
-        for field_name, stream_name in self._aux_streams.items():
-            self._stream_to_fields.setdefault(stream_name, []).append(field_name)
 
     @property
     def job_id(self) -> JobId:
@@ -300,17 +296,11 @@ class Job:
 
     def add(self, data: JobData) -> JobReply:
         try:
-            # Remap aux_data keys from stream names to field names for the workflow
-            # Handle multiplexing: one stream may map to multiple fields
-            remapped_aux_data = {}
-            for stream_name, value in data.aux_data.items():
-                field_names = self._stream_to_fields.get(stream_name, [stream_name])
-                for field_name in field_names:
-                    remapped_aux_data[field_name] = value
-
-            # Pass data to workflow with field names (not stream names)
+            # Primary and aux data are both keyed by on-disk stream name, which
+            # is exactly how the workflow's dynamic/context keys are keyed (aux
+            # roles are resolved at workflow construction). No remapping needed.
             self._processor.accumulate(
-                {**data.primary_data, **remapped_aux_data},
+                {**data.primary_data, **data.aux_data},
                 start_time=data.start_time,
                 end_time=data.end_time,
             )

@@ -36,6 +36,7 @@ class StreamProcessorWorkflow(Workflow):
         dynamic_keys: dict[str, sciline.typing.Key],
         context_keys: dict[str, sciline.typing.Key] | None = None,
         target_keys: dict[str, sciline.typing.Key],
+        aux_source_names: Mapping[str, str] | None = None,
         window_outputs: Iterable[str] = (),
         **kwargs: Any,
     ) -> None:
@@ -45,9 +46,19 @@ class StreamProcessorWorkflow(Workflow):
         base_workflow:
             The sciline Pipeline to wrap.
         dynamic_keys:
-            Mapping from stream names to sciline keys for dynamic inputs.
-            Dynamic inputs are accumulated across calls via
-            ``StreamProcessor.accumulate()``.
+            Mapping from wire name to sciline key for dynamic inputs. Dynamic
+            inputs are accumulated across calls via
+            ``StreamProcessor.accumulate()``. Factories declare the primary
+            input by its on-disk ``source_name`` and auxiliary inputs by their
+            stable *role* (e.g. ``'incident_monitor'``); ``aux_source_names``
+            resolves the roles so that, after construction, the stored mapping
+            is uniformly keyed by on-disk stream name — the name incoming data
+            arrives under.
+        aux_source_names:
+            Rendered ``role -> on-disk stream`` mapping for this job's aux
+            sources. Normalises aux roles in ``dynamic_keys`` to on-disk stream
+            names. Names absent from the map (the primary source, synthetic
+            inputs) pass through unchanged.
         context_keys:
             Mapping from stream names to sciline keys for context bindings.
             Context inputs update pipeline parameters via
@@ -74,7 +85,10 @@ class StreamProcessorWorkflow(Workflow):
             Additional arguments passed to StreamProcessor.
         """
         self._base_workflow = base_workflow
-        self._dynamic_keys = dynamic_keys
+        resolved = aux_source_names or {}
+        self._dynamic_keys = {
+            resolved.get(name, name): key for name, key in dynamic_keys.items()
+        }
         self._context_keys = dict(context_keys) if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
@@ -101,12 +115,13 @@ class StreamProcessorWorkflow(Workflow):
 
     @property
     def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
-        """Mapping from stream/wire name to sciline key for dynamic inputs.
+        """Mapping from on-disk stream name to sciline key for dynamic inputs.
 
-        Exposed so the routing layer can derive the NeXus component type of
-        each input (the first type-arg of a ``NeXusData[Component, Run]`` key)
-        and wire f144-driven dynamic transforms without the factory restating
-        that mapping. See
+        Aux roles are already resolved to on-disk names at construction, so the
+        routing layer can match each wire name directly against a binding's
+        ``dependent_sources`` and derive the NeXus component type (the first
+        type-arg of a ``NeXusData[Component, Run]`` key) to wire f144-driven
+        dynamic transforms. See
         :func:`ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`.
         """
         return dict(self._dynamic_keys)

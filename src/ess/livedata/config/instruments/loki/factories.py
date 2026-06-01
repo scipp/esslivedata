@@ -250,6 +250,7 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name),
+            aux_source_names=aux_source_names,
             target_keys=target_keys,
             accumulators=_accumulators,
         )
