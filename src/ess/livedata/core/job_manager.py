@@ -202,7 +202,7 @@ class JobFactory:
             workflow_id=workflow_id,
             processor=stream_processor,
             source_names=[job_id.source_name],
-            aux_streams=aux_streams,
+            input_streams=set(aux_streams.values()),
             gating_streams=context_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
         )

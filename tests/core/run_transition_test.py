@@ -134,6 +134,8 @@ class TestDeferredRunTransitionReset:
             workflow_id=_workflow_id('timeseries'),
             processor=processor,
             source_names=['log1'],
+            input_streams=set(),
+            gating_streams=set(),
             reset_on_run_transition=False,
         )
         factory = FakeJobFactory()
@@ -159,6 +161,8 @@ class TestDeferredRunTransitionReset:
             workflow_id=_workflow_id('reduction'),
             processor=proc_reset,
             source_names=['det1'],
+            input_streams=set(),
+            gating_streams=set(),
             reset_on_run_transition=True,
         )
         job_keep = Job(
@@ -166,6 +170,8 @@ class TestDeferredRunTransitionReset:
             workflow_id=_workflow_id('timeseries'),
             processor=proc_keep,
             source_names=['log1'],
+            input_streams=set(),
+            gating_streams=set(),
             reset_on_run_transition=False,
         )
 

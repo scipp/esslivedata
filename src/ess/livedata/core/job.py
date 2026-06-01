@@ -207,8 +207,8 @@ class Job:
         workflow_id: WorkflowId,
         processor: Workflow,
         source_names: list[str],
-        aux_streams: dict[str, str] | None = None,
-        gating_streams: set[str] | None = None,
+        input_streams: set[str],
+        gating_streams: set[str],
         reset_on_run_transition: bool = True,
     ) -> None:
         """
@@ -224,19 +224,18 @@ class Job:
             The Workflow instance that will process data for this job.
         source_names:
             The names of the primary data sources for this job.
-        aux_streams:
-            Role to on-disk stream-name mapping for every non-primary input —
-            user-selected ``AuxSources`` and framework-routed ``ContextBinding``
-            wire streams both live here. Only the stream names (the values)
-            matter to a running job: they are the streams it subscribes to (see
-            :attr:`input_stream_names`), and incoming data already arrives keyed
-            by stream name — the same key the workflow expects, so :meth:`add`
-            needs no remapping.
+        input_streams:
+            On-disk stream names of every non-primary input the job subscribes
+            to (see :attr:`input_stream_names`) — user-selected ``AuxSources``
+            and framework-routed ``ContextBinding`` wire streams alike. Incoming
+            data already arrives keyed by stream name — the same key the
+            workflow expects, so :meth:`add` needs no remapping. The role→stream
+            mapping is consumed at workflow construction; only the names matter
+            here.
         gating_streams:
-            Subset of ``aux_streams.values()`` whose value must be
-            available before the workflow runs. The :class:`JobManager`
-            gates the job on these per ADR 0002. Defaults to the empty
-            set — no gating.
+            Subset of ``input_streams`` whose value must be available before the
+            workflow runs. The :class:`JobManager` gates the job on these per
+            ADR 0002.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         """
@@ -247,8 +246,8 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
-        self._aux_streams: dict[str, str] = aux_streams or {}
-        self._gating_streams: set[str] = gating_streams or set()
+        self._input_streams: set[str] = input_streams
+        self._gating_streams: set[str] = gating_streams
 
     @property
     def job_id(self) -> JobId:
@@ -271,9 +270,9 @@ class Job:
         return self._source_names
 
     @property
-    def input_stream_names(self) -> list[str]:
+    def input_stream_names(self) -> set[str]:
         """Every non-primary stream name this job consumes."""
-        return list(self._aux_streams.values())
+        return self._input_streams
 
     def missing_context(self, available: set[str]) -> set[str]:
         """

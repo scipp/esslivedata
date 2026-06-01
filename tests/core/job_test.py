@@ -116,7 +116,8 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
         workflow_id=sample_workflow_id,
         processor=fake_processor,
         source_names=["test_source"],
-        aux_streams={"aux_source": "aux_source"},
+        input_streams={"aux_source"},
+        gating_streams=set(),
     )
 
 
@@ -282,6 +283,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Make processor fail
@@ -308,6 +311,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         data = JobData(
@@ -357,6 +362,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return a DataArray
@@ -398,6 +405,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return DataArrays: one with existing time coords,
@@ -447,6 +456,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Timeseries-like output: data indexed by wall-clock timestamps
@@ -483,6 +494,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         fake_processor.data = {
@@ -516,6 +529,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return a DataArray
@@ -543,6 +558,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Add some data successfully
@@ -578,6 +595,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Add some data successfully
@@ -628,6 +647,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Cause an error
@@ -663,10 +684,8 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_streams={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
         data = JobData(
@@ -699,28 +718,27 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_streams={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
-        assert set(job.input_stream_names) == {"monitor1", "monitor2"}
+        assert job.input_stream_names == {"monitor1", "monitor2"}
 
-    def test_aux_sources_empty_dict(
+    def test_empty_input_streams(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test handling of empty aux_streams dict."""
+        """Test handling of empty input_streams."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_streams={},
+            input_streams=set(),
+            gating_streams=set(),
         )
 
-        assert job.input_stream_names == []
+        assert job.input_stream_names == set()
 
         data = JobData(
             start_time=Timestamp.from_ns(100),
@@ -733,21 +751,6 @@ class TestJobAuxSourceMapping:
         # Should work fine with no aux data
         assert len(fake_processor.accumulate_calls) == 1
 
-    def test_aux_sources_none(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test handling of None aux_streams."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_streams=None,
-        )
-
-        assert job.input_stream_names == []
-
     def test_partial_aux_data_passes_through(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
@@ -758,10 +761,8 @@ class TestJobAuxSourceMapping:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_streams={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
         # Send data with only one of the two aux streams.
