@@ -71,25 +71,23 @@ class TestStreamProcessorWorkflow:
         )
         assert workflow is not None
 
-    def test_aux_source_names_resolves_dynamic_wire_names_to_on_disk(
-        self, base_workflow_with_context
-    ):
-        """Aux roles in dynamic_keys are resolved to on-disk stream names.
+    def test_build_resolves_aux_wire_names_to_on_disk(self, base_workflow_with_context):
+        """``build`` resolves aux roles in dynamic_keys to on-disk stream names.
 
-        Factories declare aux inputs by stable role; construction normalises the
-        wire name to the on-disk stream so the workflow consumes data keyed the
-        same way it arrives. Names absent from ``aux_source_names`` (the primary
-        source) pass through unchanged.
+        Factories declare aux inputs by stable role; the routing layer passes
+        ``aux_source_names`` to :meth:`build`, which normalises the wire name to
+        the on-disk stream so the workflow consumes data keyed the same way it
+        arrives. Names absent from the map (the primary source) pass through.
         """
         workflow = StreamProcessorWorkflow(
             base_workflow_with_context,
             dynamic_keys={'streamed_role': Streamed},
             context_keys={'context': Context},
             target_keys={'output': Output},
-            aux_source_names={'streamed_role': 'on_disk_stream'},
             accumulators=(ProcessedStreamed,),
         )
 
+        workflow.build(aux_source_names={'streamed_role': 'on_disk_stream'})
         assert workflow.dynamic_keys == {'on_disk_stream': Streamed}
 
         # The resolved name is what accumulate routes on: data keyed by the

@@ -945,7 +945,9 @@ class FakeContextWorkflow:
         self.chain_patch_bindings: list = []
         self.built = False
 
-    def build(self, *, context_keys=None, chain_patch_bindings=()) -> None:
+    def build(
+        self, *, context_keys=None, chain_patch_bindings=(), aux_source_names=None
+    ) -> None:
         if context_keys:
             self.context_keys.update(context_keys)
         self.chain_patch_bindings = list(chain_patch_bindings)

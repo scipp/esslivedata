@@ -251,7 +251,6 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             _configure_powder_workflow(source_name, params, aux_source_names),
             dynamic_keys=_powder_dynamic_keys(source_name),
-            aux_source_names=aux_source_names,
             target_keys=_focussed_target_keys,
             accumulators=_powder_accumulators,
         )
@@ -270,7 +269,6 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_powder_dynamic_keys(source_name),
-            aux_source_names=aux_source_names,
             target_keys={
                 **_focussed_target_keys,
                 'i_of_dspacing': powder.types.IntensityDspacing[SampleRun],
