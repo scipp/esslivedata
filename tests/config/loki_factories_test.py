@@ -9,9 +9,9 @@ def test_setup_factories_declares_detector_carriage_context_binding() -> None:
     """The rear bank's f144 carriage stream is declared at instrument scope.
 
     Declared as a chain-patch :class:`ContextBinding` on ``loki_detector_0`` only
-    (``workflow_key`` is :class:`specs.DetectorCarriageLog`, a :class:`ValueLog`
+    (``workflow_key`` is :class:`factories.DetectorCarriageLog`, a :class:`ValueLog`
     subclass); specs consuming that source pick it up by default and
-    non-consumers (tube_view, i_of_q) opt out via ``skip_instrument_contexts``.
+    non-consumers (tube_view) opt out via ``skip_instrument_contexts``.
     """
     instrument = specs.instrument
     factories.setup_factories(instrument)
@@ -20,7 +20,7 @@ def test_setup_factories_declares_detector_carriage_context_binding() -> None:
         ci
         for ci in instrument.context_bindings
         if ci.stream_name == 'detector_carriage'
-        and ci.workflow_key is specs.DetectorCarriageLog
+        and ci.workflow_key is factories.DetectorCarriageLog
         and ci.dependent_sources == frozenset({'loki_detector_0'})
     ]
     assert matching, instrument.context_bindings

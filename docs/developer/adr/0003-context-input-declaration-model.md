@@ -29,7 +29,11 @@ were spread across several mechanisms with three sharp edges:
 
 A standing constraint shapes the solution: the dashboard imports workflow `specs.py`
 to generate UI, so `specs.py` must stay free of workflow-key imports — the dashboard
-must not depend on instrument-specific Sciline pipelines.
+must not depend on instrument-specific Sciline pipelines. The hard requirement is the
+absence of heavy science-package imports, but the rule is applied as written: even a
+dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses a
+`config`-layer type) is declared in `factories.py`, co-located with the
+`add_context_binding` that consumes it, rather than in `specs.py`.
 
 ### Param-dependent context — explicit non-goal
 

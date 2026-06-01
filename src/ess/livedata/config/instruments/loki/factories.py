@@ -3,9 +3,19 @@
 """LOKI instrument factory implementations."""
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.value_log import ValueLog
 
 from . import specs
 from .specs import SansWorkflowParams, TransmissionMode
+
+
+class DetectorCarriageLog(ValueLog):
+    """Per-binding Sciline key for the LOKI rear-bank carriage f144 NXlog.
+
+    Drives the ``detector_carriage`` transformation in ``loki_detector_0``'s
+    ``depends_on`` chain. Distinct subclass so multiple dynamic transforms
+    on a workflow remain distinguishable in Sciline.
+    """
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -59,7 +69,7 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.add_context_binding(
         stream_name='detector_carriage',
         dependent_sources={'loki_detector_0'},
-        workflow_key=specs.DetectorCarriageLog,
+        workflow_key=DetectorCarriageLog,
     )
     specs.tube_view_handle.skip_instrument_contexts()
 
