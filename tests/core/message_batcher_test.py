@@ -565,11 +565,39 @@ class TestAdaptiveMessageBatcher:
         _escalate_to_level(batcher, 2)
         assert batcher.state.level == 2
 
-        # Report underloaded batches (processing < 75% of 4s window)
+        # Report underloaded batches (processing < 70% of 4s window)
         underloaded_time = batcher.batch_length_s * DEESCALATION_HEADROOM_RATIO - 0.1
         for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD):
             batcher.report_batch(100, processing_time_s=underloaded_time)
 
+        assert batcher.state.level == 1
+
+    def test_transition_report_classified_against_new_window(self):
+        """Documents issue #877, Finding 2: the first report after a level
+        change is classified against the *new* window, although the inner
+        batcher's active batch was built with the *old* one.
+
+        After escalating 1s->2s, a batch that was overloaded at its old 1s
+        window (processing 1.1s) is counted as underloaded against the new 2s
+        threshold (1.1 < 0.70 * 2.0), so it contributes a spurious de-escalation
+        vote: two further genuine underloads then suffice to de-escalate, rather
+        than the three an old-window-aware classifier would require.
+
+        In isolation this only wastes one report — the next steady cycle resets
+        the counter — so it is left as a documented limitation.  The faithful
+        fix is to classify each report against the window its batch ran under.
+        """
+        batcher = AdaptiveMessageBatcher(base_batch_length_s=1.0, max_level=3)
+        for _ in range(ESCALATION_OVERLOAD_THRESHOLD):
+            batcher.report_batch(100, processing_time_s=1.1)
+        assert batcher.state.level == 2
+
+        # Transition batch: 1.1s was an overload at the old 1s window, but is
+        # mis-counted as underload #1 here.
+        batcher.report_batch(100, processing_time_s=1.1)
+        batcher.report_batch(100, processing_time_s=0.2)
+        assert batcher.state.level == 2, "precondition: not yet de-escalated"
+        batcher.report_batch(100, processing_time_s=0.2)
         assert batcher.state.level == 1
 
     def test_does_not_deescalate_without_enough_headroom(self):
@@ -579,7 +607,7 @@ class TestAdaptiveMessageBatcher:
         assert batcher.state.level == 2
         window = batcher.batch_length_s
 
-        # Processing at 80% of window — above headroom threshold (75%)
+        # Processing at 80% of window — above headroom threshold (70%)
         for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD * 3):
             batcher.report_batch(100, processing_time_s=window * 0.8)
 
