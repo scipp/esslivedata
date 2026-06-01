@@ -7,7 +7,7 @@ import inspect
 import typing
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from ess.livedata.config.stream import ContextBinding
 from ess.livedata.config.workflow_spec import (
@@ -31,6 +31,22 @@ class Workflow(Protocol):
     ) -> None: ...
     def finalize(self) -> dict[str, Any]: ...
     def clear(self) -> None: ...
+
+
+@runtime_checkable
+class SupportsContext(Protocol):
+    """A :class:`Workflow` whose context bindings are injected after creation.
+
+    Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` consume context
+    bindings (motion/geometry/ROI). The resolved bindings are not known to the
+    factory; the routing layer (:meth:`WorkflowFactory.create`) merges them in
+    via :meth:`add_context_keys` and then realizes the workflow via
+    :meth:`build`. Factories therefore need not thread ``context_keys`` through
+    their signature.
+    """
+
+    def add_context_keys(self, context_keys: Mapping[str, Any]) -> None: ...
+    def build(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -305,8 +321,9 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Rendered auxiliary source names (already resolved by JobFactory).
         context_keys:
             Resolved ``ContextBinding`` mapping (stream_name → workflow_key).
-            Forwarded to factories that opt in by declaring ``context_keys``
-            in their signature.
+            Injected into the workflow *after* the factory returns it (see
+            :class:`SupportsContext`), so factories do not declare
+            ``context_keys`` in their signature.
         """
         workflow_id = config.identifier
         if workflow_id not in self._registrations:
@@ -352,7 +369,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         # each argument by declaring it in their signature. For example, factories
         # that need to configure NeXus name keys from aux source selections declare
         # `aux_source_names: dict[str, str]`; factories whose aux sources are
-        # routed as raw values (e.g., via context_keys) can omit it.
+        # routed as raw values (e.g., via context bindings) can omit it.
         kwargs = {}
         if 'source_name' in sig.parameters:
             kwargs['source_name'] = source_name
@@ -360,11 +377,22 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['params'] = workflow_params
         if 'aux_source_names' in sig.parameters:
             kwargs['aux_source_names'] = aux_source_names or {}
-        if 'context_keys' in sig.parameters:
-            kwargs['context_keys'] = context_keys or {}
 
-        # Call factory with appropriate arguments
-        if kwargs:
-            return factory(**kwargs)
-        else:
-            return factory()
+        workflow = factory(**kwargs) if kwargs else factory()
+
+        # Context bindings are injected after creation rather than threaded
+        # through the factory signature: whether a workflow consumes context is
+        # a property of the produced workflow, not of the factory. Eagerly
+        # ``build()`` here so graph validation and precompute happen at job
+        # creation (we pay the startup cost now).
+        if isinstance(workflow, SupportsContext):
+            if context_keys:
+                workflow.add_context_keys(context_keys)
+            workflow.build()
+        elif context_keys:
+            raise TypeError(
+                f"Workflow '{workflow_id}' resolved context bindings "
+                f"{sorted(context_keys)} but the produced workflow "
+                f"{type(workflow).__name__} does not consume context."
+            )
+        return workflow

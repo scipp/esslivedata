@@ -103,7 +103,6 @@ class DetectorViewFactory:
         source_name: str,
         params: DetectorViewParams,
         lookup_table_filename: str | None = None,
-        context_keys: dict[str, type] | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -118,18 +117,16 @@ class DetectorViewFactory:
             Path to lookup table file. Required for 'wavelength' coordinate mode.
             The caller (instrument factory) is responsible for resolving this
             from instrument-specific params.
-        context_keys:
-            Resolved ``ContextBinding`` mapping (stream_name → workflow_key)
-            for this job — instrument-scope motion/geometry context. ROI
-            context is added here internally (it is an auxiliary source, not
-            a context binding) when ``roi_support`` is set.
 
         Returns
         -------
         :
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
+            Instrument- and spec-scope context bindings are injected by the
+            routing layer after creation; ROI context (an auxiliary source,
+            not a context binding) is set here when ``roi_support`` is set.
         """
-        context_keys = dict(context_keys or {})
+        context_keys: dict[str, type] = {}
         mode = params.coordinate_mode.mode
 
         # Validate wavelength mode requirements

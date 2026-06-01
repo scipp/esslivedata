@@ -139,22 +139,3 @@ def make_test_params():
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
     return DetectorViewParams()
-
-
-def make_roi_context_keys() -> dict[str, type]:
-    """Return the ROI ``context_keys`` for a detector-view spec.
-
-    ROI-supporting views wire ``roi_rectangle`` and ``roi_polygon`` into
-    ``set_context``; :meth:`DetectorViewFactory.make_workflow` adds these keys
-    itself when ``roi_support`` is set. Tests that drive ``make_workflow``
-    directly and want to assert on the ROI context keys reuse this helper.
-    """
-    from ess.livedata.handlers.detector_view.types import (
-        ROIPolygonRequest,
-        ROIRectangleRequest,
-    )
-
-    return {
-        'roi_rectangle': ROIRectangleRequest,
-        'roi_polygon': ROIPolygonRequest,
-    }

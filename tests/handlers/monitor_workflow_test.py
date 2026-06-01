@@ -318,23 +318,8 @@ class TestCreateMonitorWorkflow:
                 lookup_table_filename='/path/to/lookup.h5',
             )
 
-    def test_context_keys_forwarded_to_stream_processor(self, toa_edges):
-        """Test that context_keys are passed through to StreamProcessorWorkflow."""
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
-
-        context_keys = {'position': sc.Variable}
-        workflow = create_monitor_workflow(
-            'monitor_1', toa_edges, context_keys=context_keys
-        )
-        assert isinstance(workflow, StreamProcessorWorkflow)
-        # Verify context_keys are stored on the workflow (private state — the
-        # public protocol no longer surfaces this).
-        assert workflow._context_keys == context_keys
-
-    def test_without_context_keys_still_works(self, toa_edges):
-        """Test that omitting context_keys preserves existing behavior."""
+    def test_context_keys_injected_after_creation(self, toa_edges):
+        """Context bindings are injected post-creation, not via the factory."""
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
@@ -342,6 +327,10 @@ class TestCreateMonitorWorkflow:
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
+
+        context_keys = {'position': sc.Variable}
+        workflow.add_context_keys(context_keys)
+        assert workflow._context_keys == context_keys
 
 
 class TestMonitorWorkflowIntegration:

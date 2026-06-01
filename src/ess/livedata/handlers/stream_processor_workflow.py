@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -58,6 +58,13 @@ class StreamProcessorWorkflow(Workflow):
             retains its previous value. If ``set_context`` was never called
             for a key and the underlying sciline pipeline has no default for
             it, ``finalize()`` will raise an ``UnsatisfiedGraphError``.
+            A factory passes only its own internal context here (e.g. ROI);
+            instrument- and spec-scope bindings resolved by the routing layer
+            are merged in afterwards via :meth:`add_context_keys`, which is
+            why construction of the wrapped ``StreamProcessor`` is deferred
+            until :meth:`build` (or first use). The keys must be finalized
+            before the graph is built because ``StreamProcessor`` bakes them
+            into the pruned/precomputed pipeline at construction.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -66,19 +73,53 @@ class StreamProcessorWorkflow(Workflow):
         **kwargs:
             Additional arguments passed to StreamProcessor.
         """
+        self._base_workflow = base_workflow
         self._dynamic_keys = dynamic_keys
-        self._context_keys = context_keys if context_keys else {}
+        self._context_keys = dict(context_keys) if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
+        self._kwargs = kwargs
         self._current_start_time: Timestamp | None = None
         self._current_end_time: Timestamp | None = None
+        self._stream_processor: streaming.StreamProcessor | None = None
+
+    def add_context_keys(self, context_keys: Mapping[str, sciline.typing.Key]) -> None:
+        """Merge additional context bindings before the graph is built.
+
+        Called by the routing layer (``WorkflowFactory.create``) to inject
+        instrument- and spec-scope context bindings resolved per job, so
+        factories need not thread ``context_keys`` through their signature.
+
+        Raises if the wrapped ``StreamProcessor`` has already been built: its
+        context keys are fixed at construction and cannot change afterwards.
+        """
+        if self._stream_processor is not None:
+            raise RuntimeError(
+                "Cannot add context keys after the StreamProcessor is built."
+            )
+        self._context_keys = {**self._context_keys, **context_keys}
+
+    def build(self) -> None:
+        """Build the wrapped ``StreamProcessor``. Idempotent; no-op if built.
+
+        Materializing eagerly (rather than on first ``accumulate``) keeps
+        graph validation and the static-node precompute at job-creation time.
+        """
+        if self._stream_processor is not None:
+            return
         self._stream_processor = streaming.StreamProcessor(
-            base_workflow,
+            self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
             context_keys=tuple(self._context_keys.values()),
             target_keys=tuple(self._target_keys.values()),
-            **kwargs,
+            **self._kwargs,
         )
+
+    @property
+    def _processor(self) -> streaming.StreamProcessor:
+        self.build()
+        assert self._stream_processor is not None  # noqa: S101  # narrows type after build()
+        return self._stream_processor
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
@@ -115,12 +156,12 @@ class StreamProcessorWorkflow(Workflow):
             if key in data
         }
         if context:
-            self._stream_processor.set_context(context)
+            self._processor.set_context(context)
         if dynamic:
-            self._stream_processor.accumulate(dynamic)
+            self._processor.accumulate(dynamic)
 
     def finalize(self) -> dict[str, Any]:
-        targets = self._stream_processor.finalize()
+        targets = self._processor.finalize()
         results = {name: targets[key] for name, key in self._target_keys.items()}
 
         # Add time coords to window outputs
@@ -143,7 +184,7 @@ class StreamProcessorWorkflow(Workflow):
         return results
 
     def clear(self) -> None:
-        self._stream_processor.clear()
+        self._processor.clear()
         self._current_start_time = None
         self._current_end_time = None
 
@@ -152,4 +193,4 @@ class StreamProcessorWorkflow(Workflow):
 
         See :py:meth:`ess.reduce.streaming.StreamProcessor.visualize` for parameters.
         """
-        return self._stream_processor.visualize(**kwargs)
+        return self._processor.visualize(**kwargs)

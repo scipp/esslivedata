@@ -228,6 +228,71 @@ class TestStreamProcessorWorkflow:
         assert result == {'output': Output(27)}
 
 
+class TestDeferredContextInjection:
+    """Context keys are injectable after construction; the inner processor is
+    built lazily so the routing layer can merge bindings post-creation."""
+
+    def test_context_keys_injected_after_construction(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.add_context_keys({'context': Context})
+
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        # context (5) * static (2) = 10, streamed (10) + 10 = 20
+        assert workflow.finalize() == {'output': Output(20)}
+
+    def test_add_context_keys_merges_with_construction_keys(
+        self, base_workflow_with_context
+    ):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.add_context_keys({'extra': Static})
+        assert workflow._context_keys == {'context': Context, 'extra': Static}
+
+    def test_add_context_keys_after_build_raises(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='after the StreamProcessor is built'):
+            workflow.add_context_keys({'extra': Static})
+
+    def test_build_is_idempotent(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        processor = workflow._stream_processor
+        workflow.build()
+        assert workflow._stream_processor is processor
+
+
 # Types for window_outputs tests (need DataArray for assign_coords)
 InputData = NewType('InputData', sc.DataArray)
 CurrentOutput = NewType('CurrentOutput', sc.DataArray)

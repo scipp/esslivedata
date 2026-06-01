@@ -97,9 +97,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.projection_handle.attach_factory()
     def _detector_view_workflow_factory(
-        source_name: str,
-        params: DreamDetectorViewParams,
-        context_keys: dict[str, type],
+        source_name: str, params: DreamDetectorViewParams
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
         lookup_table_filename = None
@@ -109,10 +107,7 @@ def setup_factories(instrument: Instrument) -> None:
             )
 
         return _detector_view_factory.make_workflow(
-            source_name,
-            params,
-            lookup_table_filename=lookup_table_filename,
-            context_keys=context_keys,
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
 
     # Monitor workflow factory with DREAM-specific TOF configuration

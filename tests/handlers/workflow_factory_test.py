@@ -937,6 +937,78 @@ class _OtherCtxKey:
     pass
 
 
+class FakeContextWorkflow:
+    """Minimal ``SupportsContext`` workflow for create() injection tests."""
+
+    def __init__(self) -> None:
+        self.context_keys: dict[str, type] = {}
+        self.built = False
+
+    def add_context_keys(self, context_keys) -> None:
+        self.context_keys.update(context_keys)
+
+    def build(self) -> None:
+        self.built = True
+
+    def accumulate(self, data, *, start_time, end_time) -> None: ...
+    def finalize(self) -> dict:
+        return {}
+
+    def clear(self) -> None: ...
+
+
+class TestContextKeyInjection:
+    """``create()`` injects resolved context bindings after the factory returns."""
+
+    def _register(self, factory_func) -> tuple[WorkflowFactory, WorkflowId]:
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument='test-instrument', name='test-workflow', version=1
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='test-workflow',
+            description='Test',
+            params=None,
+            group=REDUCTION,
+        )
+        factory.register_spec(spec).attach_factory()(factory_func)
+        return factory, workflow_id
+
+    def _config(self, workflow_id: WorkflowId) -> WorkflowConfig:
+        return WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name='any', job_number=uuid.uuid4()),
+        )
+
+    def test_context_keys_injected_and_built_eagerly(self) -> None:
+        factory, workflow_id = self._register(lambda: FakeContextWorkflow())
+        workflow = factory.create(
+            source_name='any',
+            config=self._config(workflow_id),
+            context_keys={'rot': _CtxKey},
+        )
+        assert workflow.context_keys == {'rot': _CtxKey}
+        assert workflow.built is True
+
+    def test_build_called_even_without_context_keys(self) -> None:
+        factory, workflow_id = self._register(lambda: FakeContextWorkflow())
+        workflow = factory.create(source_name='any', config=self._config(workflow_id))
+        assert workflow.context_keys == {}
+        assert workflow.built is True
+
+    def test_context_keys_on_non_context_workflow_raises(self) -> None:
+        factory, workflow_id = self._register(make_dummy_workflow)
+        with pytest.raises(TypeError, match='does not consume context'):
+            factory.create(
+                source_name='any',
+                config=self._config(workflow_id),
+                context_keys={'rot': _CtxKey},
+            )
+
+
 class TestSpecHandleAddContextBinding:
     """Cover :meth:`SpecHandle.add_context_binding` defaults and append semantics."""
 

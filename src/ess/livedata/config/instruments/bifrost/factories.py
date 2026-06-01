@@ -149,20 +149,16 @@ def setup_factories(instrument: Instrument) -> None:
 
     def _make_cut_stream_processor(
         workflow: sciline.Pipeline,
-        context_keys: dict[str, type],
     ) -> StreamProcessorWorkflow:
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-            context_keys=context_keys,
             target_keys={'cut_data': CutData[SampleRun]},
             accumulators=(CutData[SampleRun],),
         )
 
     @specs.qmap_handle.attach_factory()
-    def _qmap_workflow(
-        params: BifrostQMapParams, context_keys: dict[str, type]
-    ) -> StreamProcessorWorkflow:
+    def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         q_bins = params.q_edges.get_edges()
         q_cut = CutAxis(
@@ -180,11 +176,11 @@ def setup_factories(instrument: Instrument) -> None:
         )
         wf[CutAxis1] = q_cut
         wf[CutAxis2] = energy_cut
-        return _make_cut_stream_processor(wf, context_keys)
+        return _make_cut_stream_processor(wf)
 
     @specs.elastic_qmap_handle.attach_factory()
     def _elastic_qmap_workflow(
-        params: BifrostElasticQMapParams, context_keys: dict[str, type]
+        params: BifrostElasticQMapParams,
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         # Convert axis1 to CutAxis
@@ -199,11 +195,11 @@ def setup_factories(instrument: Instrument) -> None:
         axis2 = CutAxis.from_q_vector(output=dim2, vec=vec2, bins=edges2)
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
-        return _make_cut_stream_processor(wf, context_keys)
+        return _make_cut_stream_processor(wf)
 
     @specs.elastic_qmap_custom_handle.attach_factory()
     def _custom_elastic_qmap_workflow(
-        params: BifrostCustomElasticQMapParams, context_keys: dict[str, type]
+        params: BifrostCustomElasticQMapParams,
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         # Convert axis1 to CutAxis
@@ -220,7 +216,7 @@ def setup_factories(instrument: Instrument) -> None:
         axis2 = CutAxis.from_q_vector(output=name2, vec=vec2, bins=edges2)
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
-        return _make_cut_stream_processor(wf, context_keys)
+        return _make_cut_stream_processor(wf)
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:

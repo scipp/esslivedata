@@ -1671,12 +1671,13 @@ class TestJobFactoryContextBinding:
             dependent_sources=['detector1'],
         )
 
-        captured: dict[str, dict[str, type]] = {}
+        captured: dict[str, FakeProcessor] = {}
 
         @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            captured['ck'] = context_keys
-            return FakeProcessor(context_keys=context_keys)
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
@@ -1684,7 +1685,9 @@ class TestJobFactoryContextBinding:
 
         job = factory.create(job_id=job_id, config=config)
 
-        assert captured['ck'] == {'rot': _CtxKeyA}
+        # context_keys injected post-creation and the workflow built eagerly.
+        assert captured['proc'].context_keys == {'rot': _CtxKeyA}
+        assert captured['proc'].build_calls == 1
         # Wire stream equals stream_name: missing with no available streams,
         # satisfied as soon as 'rot' becomes available.
         assert job.missing_context(set()) == {'rot'}
@@ -1710,8 +1713,8 @@ class TestJobFactoryContextBinding:
         )
 
         @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            return FakeProcessor(context_keys=context_keys)
+        def _factory() -> FakeProcessor:
+            return FakeProcessor()
 
         factory = JobFactory(instrument, service_name='data_reduction')
         # Job on detector1: outside dependent_sources → no context.
@@ -1741,12 +1744,13 @@ class TestJobFactoryContextBinding:
         )
         handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyA)
 
-        captured: dict[str, dict[str, type]] = {}
+        captured: dict[str, FakeProcessor] = {}
 
         @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            captured['ck'] = context_keys
-            return FakeProcessor(context_keys=context_keys)
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
@@ -1754,7 +1758,7 @@ class TestJobFactoryContextBinding:
 
         job = factory.create(job_id=job_id, config=config)
 
-        assert captured['ck'] == {'temp': _CtxKeyA}
+        assert captured['proc'].context_keys == {'temp': _CtxKeyA}
         assert job.missing_context(set()) == {'temp'}
         assert job.missing_context({'temp'}) == set()
         assert 'temp' in job.input_stream_names
@@ -1781,12 +1785,13 @@ class TestJobFactoryContextBinding:
         handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
         handle.skip_instrument_contexts()
 
-        captured: dict[str, dict[str, type]] = {}
+        captured: dict[str, FakeProcessor] = {}
 
         @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            captured['ck'] = context_keys
-            return FakeProcessor(context_keys=context_keys)
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
@@ -1795,7 +1800,7 @@ class TestJobFactoryContextBinding:
         job = factory.create(job_id=job_id, config=config)
 
         # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
-        assert captured['ck'] == {'temp': _CtxKeyB}
+        assert captured['proc'].context_keys == {'temp': _CtxKeyB}
         assert job.missing_context(set()) == {'temp'}
 
     def test_chain_patch_context_binding_delivers_value_log_in_context_keys(
@@ -1828,12 +1833,13 @@ class TestJobFactoryContextBinding:
             workflow_key=_RotLog,
         )
 
-        captured: dict[str, dict] = {}
+        captured: dict[str, FakeProcessor] = {}
 
         @handle.attach_factory()
-        def _factory(context_keys: dict[str, type]) -> FakeProcessor:
-            captured['ck'] = context_keys
-            return FakeProcessor(context_keys=context_keys)
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
@@ -1841,7 +1847,7 @@ class TestJobFactoryContextBinding:
 
         factory.create(job_id=job_id, config=config)
 
-        assert captured['ck'] == {'rot': _RotLog}
+        assert captured['proc'].context_keys == {'rot': _RotLog}
 
 
 class ThreadTrackingProcessor(FakeProcessor):
