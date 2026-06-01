@@ -28,8 +28,8 @@ class TimeseriesOutputs(WorkflowOutputsBase):
             sc.scalar(0.0),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
-        title='Delta',
-        description='New timeseries data since last update.',
+        title='Update',
+        description='New value updates since the last frame.',
     )
 
 
@@ -58,8 +58,11 @@ def register_timeseries_workflow_specs(
         group=TIMESERIES,
         name='timeseries_data',
         version=1,
-        title="Timeseries data",
-        description="Accumulated log data as timeseries.",
+        title="Readings",
+        description=(
+            "Time-stamped value updates from a single device or sensor. "
+            "Plot the latest value, or accumulate updates into a timeseries."
+        ),
         source_names=source_names,
         outputs=TimeseriesOutputs,
         reset_on_run_transition=False,
