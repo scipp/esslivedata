@@ -360,6 +360,41 @@ class TestDeferredContextInjection:
         workflow.build()
         assert workflow._stream_processor is processor
 
+    def test_build_injects_context_keys(self, base_workflow_with_context):
+        """``build`` merges context keys supplied at build time, not construction."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build(context_keys={'context': Context})
+
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(3)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        assert workflow.finalize()['output'] == Output(13)  # 3 + 5 * 2
+
+    def test_build_after_built_rejects_bindings(self, base_workflow_with_context):
+        """Re-supplying bindings after the graph is built fails fast."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='already built'):
+            workflow.build(context_keys={'extra': Static})
+
 
 # Types for window_outputs tests (need DataArray for assign_coords)
 InputData = NewType('InputData', sc.DataArray)

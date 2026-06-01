@@ -57,10 +57,14 @@ class FakeProcessor(Workflow):
         self.should_fail_finalize = False
         self.fail_finalize_when_empty = False
 
-    def add_context_keys(self, context_keys: dict[str, Any]) -> None:
-        self.context_keys.update(context_keys)
-
-    def build(self) -> None:
+    def build(
+        self,
+        *,
+        context_keys: dict[str, Any] | None = None,
+        chain_patch_bindings=(),
+    ) -> None:
+        if context_keys:
+            self.context_keys.update(context_keys)
         self.build_calls += 1
 
     def accumulate(

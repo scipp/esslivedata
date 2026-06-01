@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import graphviz
 
+    from ess.livedata.config.stream import ChainPatchBinding
+
 import sciline
 import sciline.typing
 from ess.reduce import streaming
@@ -17,6 +19,7 @@ from ess.reduce import streaming
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.core.timestamp import Timestamp
 
+from .dynamic_transforms import wire_dynamic_transforms
 from .workflow_factory import Workflow
 
 
@@ -140,14 +143,34 @@ class StreamProcessorWorkflow(Workflow):
             )
         return self._base_workflow
 
-    def build(self) -> None:
-        """Build the wrapped ``StreamProcessor``. Idempotent; no-op if built.
+    def build(
+        self,
+        *,
+        context_keys: Mapping[str, sciline.typing.Key] | None = None,
+        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+    ) -> None:
+        """Materialize the wrapped ``StreamProcessor`` from its inputs.
 
-        Materializing eagerly (rather than on first ``accumulate``) keeps
-        graph validation and the static-node precompute at job-creation time.
+        Injects the routing layer's per-job bindings — ``context_keys`` merged
+        into the ``set_context`` parameters and ``chain_patch_bindings`` wired as
+        f144-driven dynamic transforms — then constructs the ``StreamProcessor``,
+        baking them into the pruned/precomputed graph. Building eagerly (rather
+        than on first ``accumulate``) keeps graph validation and the static-node
+        precompute at job-creation time.
+
+        Idempotent: a second call is a no-op and must not supply bindings, since
+        they could no longer take effect once the graph is built.
         """
+        bindings = list(chain_patch_bindings)
         if self._stream_processor is not None:
+            if context_keys or bindings:
+                raise RuntimeError(
+                    "Cannot inject bindings: the StreamProcessor is already built."
+                )
             return
+        if context_keys:
+            self.add_context_keys(context_keys)
+        wire_dynamic_transforms(self, bindings)
         self._stream_processor = streaming.StreamProcessor(
             self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),

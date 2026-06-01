@@ -35,18 +35,23 @@ class Workflow(Protocol):
 
 @runtime_checkable
 class SupportsContext(Protocol):
-    """A :class:`Workflow` whose context bindings are injected after creation.
+    """A :class:`Workflow` realized after creation with routing-resolved bindings.
 
-    Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` consume context
-    bindings (motion/geometry/ROI). The resolved bindings are not known to the
-    factory; the routing layer (:meth:`WorkflowFactory.create`) merges them in
-    via :meth:`add_context_keys` and then realizes the workflow via
-    :meth:`build`. Factories therefore need not thread ``context_keys`` through
-    their signature.
+    Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` defer building
+    their graph so the routing layer (:meth:`WorkflowFactory.create`) can inject
+    per-job bindings the factory does not know: context streams (motion/geometry/
+    ROI) and f144-driven chain-patch transforms. :meth:`build` takes both and
+    materializes the workflow in one call, so the caller need not sequence
+    separate configuration steps. Factories therefore need not thread these
+    through their signature.
     """
 
-    def add_context_keys(self, context_keys: Mapping[str, Any]) -> None: ...
-    def build(self) -> None: ...
+    def build(
+        self,
+        *,
+        context_keys: Mapping[str, Any] | None = None,
+        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -329,17 +334,15 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Rendered auxiliary source names (already resolved by JobFactory).
         context_keys:
             Resolved ``ContextBinding`` mapping (stream_name → workflow_key).
-            Injected into the workflow *after* the factory returns it (see
-            :class:`SupportsContext`), so factories do not declare
-            ``context_keys`` in their signature.
+            Passed to :meth:`SupportsContext.build` *after* the factory returns
+            the workflow, so factories do not declare ``context_keys`` in their
+            signature.
         chain_patch_bindings:
             Pre-resolved instrument-scope chain-patch bindings (see
-            :attr:`Instrument.chain_patch_bindings`). Wired into the
-            (context-injected, not-yet-built) workflow's pipeline before
-            :meth:`build` via
-            :func:`~ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`.
-            Only applied to workflows that defer their build
-            (:class:`SupportsContext`).
+            :attr:`Instrument.chain_patch_bindings`). Passed to
+            :meth:`SupportsContext.build`, which wires them as f144-driven
+            dynamic transforms while materializing the graph. Only applied to
+            workflows that defer their build (:class:`SupportsContext`).
         """
         workflow_id = config.identifier
         if workflow_id not in self._registrations:
@@ -402,12 +405,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         # ``build()`` here so graph validation and precompute happen at job
         # creation (we pay the startup cost now).
         if isinstance(workflow, SupportsContext):
-            from .dynamic_transforms import wire_dynamic_transforms
-
-            if context_keys:
-                workflow.add_context_keys(context_keys)
-            wire_dynamic_transforms(workflow, chain_patch_bindings)
-            workflow.build()
+            workflow.build(
+                context_keys=context_keys,
+                chain_patch_bindings=chain_patch_bindings,
+            )
         elif context_keys:
             raise TypeError(
                 f"Workflow '{workflow_id}' resolved context bindings "

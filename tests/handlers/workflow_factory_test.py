@@ -942,12 +942,13 @@ class FakeContextWorkflow:
 
     def __init__(self) -> None:
         self.context_keys: dict[str, type] = {}
+        self.chain_patch_bindings: list = []
         self.built = False
 
-    def add_context_keys(self, context_keys) -> None:
-        self.context_keys.update(context_keys)
-
-    def build(self) -> None:
+    def build(self, *, context_keys=None, chain_patch_bindings=()) -> None:
+        if context_keys:
+            self.context_keys.update(context_keys)
+        self.chain_patch_bindings = list(chain_patch_bindings)
         self.built = True
 
     def accumulate(self, data, *, start_time, end_time) -> None: ...
