@@ -21,6 +21,7 @@ from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
+from .freeze_watchdog import FreezeWatchdog
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .notification_queue import NotificationQueue
@@ -97,6 +98,9 @@ class DashboardServices:
         self._stop_event = threading.Event()
         self._update_interval = 0.2  # seconds
 
+        # Self-capturing watchdog for CPU-spin freezes
+        self._watchdog = FreezeWatchdog()
+
         # Setup all services
         self._setup_data_infrastructure()
         self._setup_workflow_management()
@@ -106,6 +110,7 @@ class DashboardServices:
 
     def start(self) -> None:
         """Start background tasks (message polling and orchestrator updates)."""
+        self._watchdog.start()
         self._transport.start()
         self._start_update_thread()
 
@@ -113,6 +118,7 @@ class DashboardServices:
         """Stop background tasks (message polling and orchestrator updates)."""
         self._stop_update_thread()
         self._transport.stop()
+        self._watchdog.stop()
 
     def _start_update_thread(self) -> None:
         """Start the background thread that runs orchestrator updates."""
