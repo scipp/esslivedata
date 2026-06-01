@@ -703,6 +703,94 @@ class TestInstrumentApplyDynamicTransforms:
         assert len(workflow.inserted) == 2
 
 
+class _FakeDynamicWorkflow:
+    """SupportsDynamicTransforms stand-in exposing typed dynamic_keys."""
+
+    def __init__(self, dynamic_keys: dict) -> None:
+        self._dynamic_keys = dynamic_keys
+        self.pipeline = _FakePipeline()
+        self.patched = False
+
+    @property
+    def dynamic_keys(self) -> dict:
+        return self._dynamic_keys
+
+    def patch_pipeline(self, patch) -> None:
+        self.patched = True
+        patch(self.pipeline)
+
+
+class TestInstrumentWireDynamicTransforms:
+    """``Instrument.wire_dynamic_transforms`` derives the component map from a
+    workflow's own ``dynamic_keys`` and patches its pipeline, so factories need
+    not restate the source → component-type mapping."""
+
+    def _make_instrument(self) -> Instrument:
+        return Instrument(
+            name='inst',
+            detector_names=['det1'],
+            streams={
+                'rot': F144Stream(
+                    source='rot',
+                    topic='topic',
+                    units='deg',
+                    nexus_path='/entry/instrument/rot/value',
+                ),
+            },
+        )
+
+    def _rot_log_binding(self, instrument: Instrument, *, source: str) -> None:
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
+        instrument.add_context_binding(
+            stream_name='rot', dependent_sources=[source], workflow_key=_RotLog
+        )
+
+    def test_derives_component_type_from_dynamic_keys(self) -> None:
+        from ess.reduce.nexus.types import NeXusData, SampleRun
+        from scippnexus import NXdetector
+
+        instrument = self._make_instrument()
+        self._rot_log_binding(instrument, source='det1')
+
+        workflow = _FakeDynamicWorkflow({'det1': NeXusData[NXdetector, SampleRun]})
+        instrument.wire_dynamic_transforms(workflow, {})
+
+        assert workflow.patched
+        assert len(workflow.pipeline.inserted) == 1
+
+    def test_resolves_aux_role_to_actual_stream_name(self) -> None:
+        from ess.reduce.nexus.types import NeXusData, SampleRun
+        from scippnexus import NXdetector
+
+        instrument = self._make_instrument()
+        # Binding is keyed by the actual on-disk source, not the aux role.
+        self._rot_log_binding(instrument, source='actual_mon')
+
+        workflow = _FakeDynamicWorkflow({'mon_role': NeXusData[NXdetector, SampleRun]})
+        instrument.wire_dynamic_transforms(workflow, {'mon_role': 'actual_mon'})
+
+        assert len(workflow.pipeline.inserted) == 1
+
+    def test_ignores_non_nexusdata_dynamic_keys(self) -> None:
+        instrument = self._make_instrument()
+        self._rot_log_binding(instrument, source='det1')
+
+        workflow = _FakeDynamicWorkflow({'det1': int})
+        instrument.wire_dynamic_transforms(workflow, {})
+
+        assert not workflow.patched
+
+    def test_non_supporting_workflow_is_noop(self) -> None:
+        instrument = self._make_instrument()
+        self._rot_log_binding(instrument, source='det1')
+        # An object without dynamic_keys/patch_pipeline must not raise.
+        instrument.wire_dynamic_transforms(object(), {})
+
+
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""
 

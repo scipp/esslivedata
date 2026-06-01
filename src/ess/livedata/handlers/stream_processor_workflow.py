@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -98,6 +98,29 @@ class StreamProcessorWorkflow(Workflow):
                 "Cannot add context keys after the StreamProcessor is built."
             )
         self._context_keys = {**self._context_keys, **context_keys}
+
+    @property
+    def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
+        """Mapping from stream/wire name to sciline key for dynamic inputs.
+
+        Exposed so the routing layer can derive the NeXus component type of
+        each input (the first type-arg of a ``NeXusData[Component, Run]`` key)
+        and wire f144-driven dynamic transforms without the factory restating
+        that mapping. See :meth:`Instrument.wire_dynamic_transforms`.
+        """
+        return dict(self._dynamic_keys)
+
+    def patch_pipeline(self, patch: Callable[[sciline.Pipeline], None]) -> None:
+        """Apply ``patch`` to the base pipeline in place, before the graph is built.
+
+        Raises if the wrapped ``StreamProcessor`` has already been built: the
+        pipeline is baked into the pruned/precomputed graph at construction.
+        """
+        if self._stream_processor is not None:
+            raise RuntimeError(
+                "Cannot patch the pipeline after the StreamProcessor is built."
+            )
+        patch(self._base_workflow)
 
     def build(self) -> None:
         """Build the wrapped ``StreamProcessor``. Idempotent; no-op if built.

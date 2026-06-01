@@ -92,7 +92,6 @@ def setup_factories(instrument: Instrument) -> None:
                 flip_x=True,
             ),
         },
-        instrument=instrument,
     )
 
     @specs.projection_handle.attach_factory()

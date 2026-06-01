@@ -49,6 +49,22 @@ class SupportsContext(Protocol):
     def build(self) -> None: ...
 
 
+@runtime_checkable
+class SupportsDynamicTransforms(Protocol):
+    """A :class:`Workflow` whose NeXus inputs can be wired for dynamic transforms.
+
+    Exposes the typed ``dynamic_keys`` (so the routing layer can read each
+    input's NeXus component type) and a :meth:`patch_pipeline` hook to mutate
+    the underlying pipeline before it is built. Used by
+    :meth:`Instrument.wire_dynamic_transforms` to drive f144-fed NXlog
+    placeholders without the factory restating the component mapping.
+    """
+
+    @property
+    def dynamic_keys(self) -> Mapping[str, Any]: ...
+    def patch_pipeline(self, patch: Callable[[Any], None]) -> None: ...
+
+
 @dataclass(frozen=True)
 class WorkflowRegistration:
     """Per-workflow record held by :class:`WorkflowFactory`.
@@ -307,6 +323,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         config: WorkflowConfig,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
+        prepare: Callable[[Workflow], None] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -324,6 +341,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Injected into the workflow *after* the factory returns it (see
             :class:`SupportsContext`), so factories do not declare
             ``context_keys`` in their signature.
+        prepare:
+            Optional hook invoked on the (context-injected, not-yet-built)
+            workflow before :meth:`build`. Used by the routing layer to wire
+            instrument-scope dynamic transforms (see
+            :meth:`Instrument.wire_dynamic_transforms`). Only invoked for
+            workflows that defer their build (:class:`SupportsContext`).
         """
         workflow_id = config.identifier
         if workflow_id not in self._registrations:
@@ -388,6 +411,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         if isinstance(workflow, SupportsContext):
             if context_keys:
                 workflow.add_context_keys(context_keys)
+            if prepare is not None:
+                prepare(workflow)
             workflow.build()
         elif context_keys:
             raise TypeError(

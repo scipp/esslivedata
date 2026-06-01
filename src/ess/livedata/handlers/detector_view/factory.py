@@ -9,8 +9,6 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.unwrap import LookupTableFilename
@@ -50,9 +48,6 @@ from .workflow import (
     create_base_workflow,
 )
 
-if TYPE_CHECKING:
-    from ess.livedata.config.instrument import Instrument
-
 
 class DetectorViewFactory:
     """
@@ -75,10 +70,6 @@ class DetectorViewFactory:
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
-    instrument:
-        The instrument the factory is registered for. Used to apply
-        any matching dynamic-transform bindings to the detector's chain
-        via :meth:`Instrument.apply_dynamic_transforms`.
     """
 
     def __init__(
@@ -86,11 +77,9 @@ class DetectorViewFactory:
         *,
         data_source: DetectorDataSource,
         view_config: ViewConfig | dict[str, ViewConfig],
-        instrument: Instrument,
     ) -> None:
         self._data_source = data_source
         self._view_config = view_config
-        self._instrument = instrument
 
     def _get_config(self, source_name: str) -> ViewConfig:
         """Get the view config for a given source."""
@@ -260,11 +249,6 @@ class DetectorViewFactory:
                 'counts_in_toa_range',
                 'roi_spectra_current',
             )
-
-        # Wire dynamic detector geometry: matching instrument-scope transformation
-        # bindings are applied to the detector's transformation chain. A no-op
-        # when no binding covers ``source_name``.
-        self._instrument.apply_dynamic_transforms(workflow, {source_name: NXdetector})
 
         cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(

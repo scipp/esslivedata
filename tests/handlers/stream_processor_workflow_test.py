@@ -279,6 +279,41 @@ class TestDeferredContextInjection:
         with pytest.raises(RuntimeError, match='after the StreamProcessor is built'):
             workflow.add_context_keys({'extra': Static})
 
+    def test_dynamic_keys_exposed_for_transform_wiring(
+        self, base_workflow_with_context
+    ):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        assert workflow.dynamic_keys == {'streamed': Streamed}
+
+    def test_patch_pipeline_runs_before_build(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        seen: list[sciline.Pipeline] = []
+        workflow.patch_pipeline(seen.append)
+        assert seen == [workflow._base_workflow]
+
+    def test_patch_pipeline_after_build_raises(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='after the StreamProcessor'):
+            workflow.patch_pipeline(lambda _wf: None)
+
     def test_build_is_idempotent(self, base_workflow_with_context):
         workflow = StreamProcessorWorkflow(
             base_workflow_with_context,

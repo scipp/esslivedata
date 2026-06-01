@@ -186,11 +186,18 @@ class JobFactory:
         aux_streams = {**rendered_aux_names, **{name: name for name in context_streams}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
+        # ``prepare`` wires instrument-scope dynamic (f144-driven) transforms into
+        # the workflow's pipeline before it is built; the component mapping is
+        # derived from the workflow's own dynamic_keys (see
+        # Instrument.wire_dynamic_transforms).
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
             aux_source_names=aux_streams,
             context_keys=context_keys,
+            prepare=lambda wf: self._instrument.wire_dynamic_transforms(
+                wf, aux_streams
+            ),
         )
         return Job(
             job_id=job_id,

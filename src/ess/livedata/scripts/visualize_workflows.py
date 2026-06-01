@@ -87,6 +87,9 @@ def main() -> None:
                 source_name=source_name,
                 config=config,
                 aux_source_names=aux_source_names,
+                prepare=lambda wf, aux=aux_source_names: (
+                    instrument.wire_dynamic_transforms(wf, aux or {})
+                ),
             )
         except Exception as e:
             logger.warning(

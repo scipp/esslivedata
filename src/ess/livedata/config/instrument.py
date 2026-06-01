@@ -16,7 +16,11 @@ import pydantic
 import scipp as sc
 import scippnexus as snx
 
-from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
+from ess.livedata.handlers.workflow_factory import (
+    SpecHandle,
+    SupportsDynamicTransforms,
+    WorkflowFactory,
+)
 
 from .stream import ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
@@ -294,6 +298,54 @@ class Instrument:
                 workflow,
                 component_type=component_type,
                 bindings=list(by_stream.values()),
+            )
+
+    def wire_dynamic_transforms(
+        self,
+        workflow: object,
+        aux_source_names: Mapping[str, str],
+    ) -> None:
+        """Wire f144-driven dynamic transforms into a workflow before its build.
+
+        Derives the ``{source_name: component_type}`` map from the workflow's
+        own ``dynamic_keys`` — each ``NeXusData[Component, Run]`` key carries the
+        component type as its first type-arg — and patches the pipeline via
+        :meth:`apply_dynamic_transforms`. This avoids restating the mapping in
+        the factory (which would duplicate ``dynamic_keys`` and is a recurring
+        source of factory-author error).
+
+        The ``dynamic_keys`` *wire* name is the actual on-disk source name for
+        the primary source and the aux *role* for auxiliary inputs;
+        ``aux_source_names`` (role → rendered stream) resolves the latter to
+        the on-disk names that :meth:`apply_dynamic_transforms` matches against
+        ``dependent_sources``. Wire names that are neither (synthetic inputs)
+        therefore cannot be wired — acceptable today as no such input carries a
+        chain-patch binding. Non-``NeXusData`` dynamic keys are ignored.
+
+        Parameters
+        ----------
+        workflow:
+            The not-yet-built workflow whose pipeline is patched in place.
+        aux_source_names:
+            Rendered ``role -> stream`` mapping for this job's aux sources.
+        """
+        from typing import get_args, get_origin
+
+        from ess.reduce.nexus.types import NeXusData
+
+        # Workflows that don't expose a typed pipeline (e.g. non-StreamProcessor
+        # workflows) have nothing to wire.
+        if not isinstance(workflow, SupportsDynamicTransforms):
+            return
+
+        components = {
+            aux_source_names.get(wire, wire): get_args(key)[0]
+            for wire, key in workflow.dynamic_keys.items()
+            if get_origin(key) is NeXusData
+        }
+        if components:
+            workflow.patch_pipeline(
+                lambda pipeline: self.apply_dynamic_transforms(pipeline, components)
             )
 
     @property
@@ -662,7 +714,6 @@ class Instrument:
                 factory = DetectorViewFactory(
                     data_source=InstrumentDetectorSource(self),
                     view_config=view_config,
-                    instrument=self,
                 )
                 handle.attach_factory()(factory.make_workflow)
 

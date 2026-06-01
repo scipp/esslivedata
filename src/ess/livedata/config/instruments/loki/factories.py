@@ -111,7 +111,6 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
-        instrument=instrument,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
@@ -213,20 +212,6 @@ def setup_factories(instrument: Instrument) -> None:
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()
-
-        # Drive every NXlog placeholder on the loaded components'
-        # depends_on chains from the matching f144 streams (#922).
-        # Components without a matching binding are no-ops; monitor
-        # placeholders not yet covered are tracked in
-        # ``tests/config/motion_binding_test.py``'s ``_KNOWN_ORPHAN_NXLOGS``.
-        instrument.apply_dynamic_transforms(
-            wf,
-            {
-                source_name: NXdetector,
-                aux_source_names['incident_monitor']: Incident,
-                aux_source_names['transmission_monitor']: Transmission,
-            },
-        )
 
         target_keys: dict[str, sciline.typing.Key] = {
             'i_of_q': IntensityQ[SampleRun],

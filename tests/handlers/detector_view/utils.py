@@ -5,15 +5,9 @@
 import numpy as np
 import scipp as sc
 
-from ess.livedata.config.instrument import Instrument
 from ess.livedata.handlers.detector_view.data_source import DetectorNumberSource
 from ess.livedata.handlers.detector_view.factory import DetectorViewFactory
 from ess.livedata.handlers.detector_view.types import LogicalViewConfig
-
-
-def make_test_instrument() -> Instrument:
-    """Create a bare Instrument for tests that don't exercise motion bindings."""
-    return Instrument(name='test')
 
 
 def make_fake_nexus_detector_data(
@@ -130,7 +124,6 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
     return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
         view_config=LogicalViewConfig(transform=logical_transform),
-        instrument=make_test_instrument(),
     )
 
 
