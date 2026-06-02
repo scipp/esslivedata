@@ -142,16 +142,41 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
     from ess.livedata.handlers.wavelength_lut_workflow import (
-        create_chopperless_wavelength_lut_workflow,
+        create_wavelength_lut_workflow,
+        make_chopper_setpoint_keys,
     )
     from ess.livedata.handlers.wavelength_lut_workflow_specs import (
         WavelengthLutParams,
+        delay_setpoint_stream,
+        speed_setpoint_stream,
     )
+
+    # The wavelength LUT consumes each chopper's rotation-speed and delay
+    # setpoints as Sciline context. Declared spec-scope — only this workflow
+    # consumes choppers — so dependent_sources defaults to the spec's own
+    # synthetic ``chopper_cascade`` source. The same key objects back both the
+    # bindings (fed via set_context, gated at the JobManager) and the
+    # DiskChoppers provider the factory inserts, so each value reaches the
+    # right provider parameter.
+    _chopper_setpoint_keys = {
+        chopper: make_chopper_setpoint_keys(chopper) for chopper in instrument.choppers
+    }
+    for chopper, keys in _chopper_setpoint_keys.items():
+        specs.wavelength_lut_handle.add_context_binding(
+            stream_name=speed_setpoint_stream(chopper), workflow_key=keys.speed
+        )
+        specs.wavelength_lut_handle.add_context_binding(
+            stream_name=delay_setpoint_stream(chopper), workflow_key=keys.delay
+        )
 
     @specs.wavelength_lut_handle.attach_factory()
     def _wavelength_lut_workflow_factory(params: WavelengthLutParams):
-        """Factory for LOKI's chopperless wavelength lookup-table workflow."""
-        return create_chopperless_wavelength_lut_workflow(params=params)
+        """Factory for LOKI's wavelength lookup-table workflow."""
+        return create_wavelength_lut_workflow(
+            params=params,
+            setpoint_keys=_chopper_setpoint_keys,
+            nexus_filename=str(_nexus_geometry_filename),
+        )
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):

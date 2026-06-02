@@ -23,6 +23,34 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
 
 
+def speed_setpoint_stream(chopper: str) -> str:
+    """Internal stream name of a chopper's clean rotation-speed setpoint f144.
+
+    A real upstream PV (subscribed from Kafka). Consumed by the LUT workflow
+    as context and cached by :class:`ChopperSynthesizer` to detect changes.
+    """
+    return f'{chopper}/rotation_speed_setpoint'
+
+
+def delay_readback_stream(chopper: str) -> str:
+    """Internal stream name of a chopper's noisy delay readback f144.
+
+    A real upstream PV (subscribed from Kafka). Plateau-detected by
+    :class:`ChopperSynthesizer`; not consumed by the LUT workflow directly.
+    """
+    return f'{chopper}/delay'
+
+
+def delay_setpoint_stream(chopper: str) -> str:
+    """Internal stream name of a chopper's synthesized delay setpoint.
+
+    Emitted in-process by :class:`ChopperSynthesizer` once the delay readback
+    plateaus. Not a Kafka topic. Consumed by the LUT workflow as context — the
+    locked plateau value, not the noisy readback, is what the cascade fires on.
+    """
+    return f'{chopper}/delay_setpoint'
+
+
 class Pulse(pydantic.BaseModel):
     """Source pulse properties.
 

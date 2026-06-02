@@ -16,6 +16,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.stream import F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     AuxInput,
@@ -30,11 +31,16 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+    delay_readback_stream,
+    delay_setpoint_stream,
     register_wavelength_lut_workflow_spec,
 )
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
+
+#: Disk choppers feeding the wavelength-LUT cascade, in beam order.
+LOKI_CHOPPERS = ['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2']
 
 
 class TransmissionMode(StrEnum):
@@ -181,6 +187,17 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
 streams = name_streams(PARSED_STREAMS)
 
+# The ChopperSynthesizer (timeseries service) plateau-detects each chopper's
+# noisy delay readback and injects a synthetic ``<chopper>/delay_setpoint``
+# f144. It is not a Kafka topic (topic/source left None keep it out of the
+# StreamLUT), but must be a declared stream so the preprocessor accepts it with
+# the delay's unit — the LUT workflow consumes it as context and
+# ``DiskChopper.from_nexus`` needs the unit.
+for _chopper in LOKI_CHOPPERS:
+    streams[delay_setpoint_stream(_chopper)] = F144Stream(
+        units=streams[delay_readback_stream(_chopper)].units
+    )
+
 # Create instrument
 instrument = Instrument(
     name='loki',
@@ -192,6 +209,7 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
+    choppers=LOKI_CHOPPERS,
     streams=streams,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
@@ -273,8 +291,8 @@ tube_view_handle = instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register the chopperless wavelength lookup-table spec. The factory is attached
-# in factories.py.
+# Register the wavelength lookup-table spec. The factory and the per-chopper
+# setpoint context bindings are attached in factories.py.
 wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec

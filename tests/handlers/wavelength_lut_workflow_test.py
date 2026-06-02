@@ -1,21 +1,29 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for the chopperless wavelength lookup-table workflow."""
+"""Tests for the wavelength lookup-table workflow (chopperless and chopper)."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import h5py
 import numpy as np
 import pytest
 import scipp as sc
+import scippnexus as snx
 from scipp.testing import assert_identical
 
 from ess.livedata.handlers.wavelength_lut_workflow import (
     create_chopperless_wavelength_lut_workflow,
+    create_wavelength_lut_workflow,
+    make_chopper_setpoint_keys,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
+    delay_setpoint_stream,
+    speed_setpoint_stream,
 )
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 
@@ -77,6 +85,140 @@ class TestWavelengthLutWorkflow:
         assert first is not second
         assert first.dims == second.dims
         assert first.unit == second.unit
+
+
+def _write_chopper_nexus(path: Path, names: list[str], *, source_z: float = -25.0):
+    """Build a minimal NeXus file with NXdisk_chopper groups + NXsource.
+
+    Static fields (slit_edges, radius, axle position) are populated; streamed
+    quantities are length-0 NXlog placeholders, matching what
+    ``make_geometry_nexus.py`` writes for real instruments.
+    """
+    with snx.File(path, 'w') as root:
+        entry = root.create_class('entry', snx.NXentry)
+        instrument = entry.create_class('instrument', snx.NXinstrument)
+
+        source = instrument.create_class('source', snx.NXsource)
+        source.create_field('depends_on', sc.scalar('transformations/t1'))
+        src_tr = source.create_class('transformations', snx.NXtransformations)
+        src_t1 = src_tr.create_field('t1', sc.scalar(source_z, unit='m'))
+        src_t1.attrs['depends_on'] = '.'
+        src_t1.attrs['transformation_type'] = 'translation'
+        src_t1.attrs['vector'] = sc.vector([0.0, 0.0, 1.0]).value
+
+        for i, name in enumerate(names):
+            chop = instrument.create_class(name, snx.NXdisk_chopper)
+            chop.create_field('depends_on', sc.scalar('transformations/t1'))
+            transformations = chop.create_class(
+                'transformations', snx.NXtransformations
+            )
+            t1 = transformations.create_field(
+                't1', sc.scalar(-15.0 + 2.0 * i, unit='m')
+            )
+            t1.attrs['depends_on'] = '.'
+            t1.attrs['transformation_type'] = 'translation'
+            t1.attrs['vector'] = sc.vector([0.0, 0.0, 1.0]).value
+            chop.create_field(
+                'slit_edges', sc.array(dims=['dim_0'], values=[0.0, 90.0], unit='deg')
+            )
+            chop.create_field('radius', sc.scalar(0.35, unit='m'))
+
+    with h5py.File(path, 'a') as f:
+        for name in names:
+            for log_name, dtype, unit in [
+                ('rotation_speed', 'float64', 'Hz'),
+                ('rotation_speed_setpoint', 'float64', 'Hz'),
+                ('delay', 'float64', 'ns'),
+                ('top_dead_center', 'int64', 'ns'),
+            ]:
+                grp = f[f'/entry/instrument/{name}'].create_group(log_name)
+                grp.attrs['NX_class'] = 'NXlog'
+                t = grp.create_dataset('time', shape=(0,), dtype='int64')
+                t.attrs['units'] = 'ns'
+                t.attrs['start'] = '1970-01-01T00:00:00Z'
+                if log_name != 'top_dead_center':
+                    v = grp.create_dataset('value', shape=(0,), dtype=dtype)
+                    v.attrs['units'] = unit
+
+
+def _nxlog(value: float, unit: str | None) -> sc.DataArray:
+    """A cumulative NXlog timeseries, as ``set_context`` delivers it."""
+    t = sc.epoch(unit='ns') + sc.arange('time', 3, unit='ns')
+    return sc.DataArray(
+        sc.full(value=value, sizes={'time': 3}, unit=unit), coords={'time': t}
+    )
+
+
+def _run_chopper_lut(
+    geom: Path, names: list[str], setpoints: dict[str, tuple[float, float]]
+) -> sc.DataArray:
+    """Build the chopper LUT workflow, feed setpoint context + trigger, finalize.
+
+    ``setpoints`` maps chopper name to ``(speed_hz, delay_ns)``. Choppers absent
+    from ``setpoints`` get no context value (simulating a not-yet-locked chopper).
+    """
+    keys = {name: make_chopper_setpoint_keys(name) for name in names}
+    wf = create_wavelength_lut_workflow(
+        params=_params(), setpoint_keys=keys, nexus_filename=str(geom)
+    )
+    context_keys = {}
+    for name in names:
+        context_keys[speed_setpoint_stream(name)] = keys[name].speed
+        context_keys[delay_setpoint_stream(name)] = keys[name].delay
+    wf.build(context_keys=context_keys)
+
+    data = dict(_trigger())
+    for name, (speed, delay) in setpoints.items():
+        data[speed_setpoint_stream(name)] = _nxlog(speed, 'Hz')
+        data[delay_setpoint_stream(name)] = _nxlog(delay, 'ns')
+    wf.accumulate(data, start_time=0, end_time=1)
+    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+
+
+@pytest.fixture
+def two_chopper_geometry(tmp_path: Path) -> Path:
+    path = tmp_path / 'two_choppers.nxs'
+    _write_chopper_nexus(path, ['chopper1', 'chopper2'])
+    return path
+
+
+class TestMultiChopperWorkflow:
+    def test_all_choppers_locked_produces_table(
+        self, two_chopper_geometry: Path
+    ) -> None:
+        names = ['chopper1', 'chopper2']
+        table = _run_chopper_lut(
+            two_chopper_geometry,
+            names,
+            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 1_000_000.0)},
+        )
+        assert table.dims == ('distance', 'event_time_offset')
+        assert table.unit == sc.units.angstrom
+        assert np.isfinite(table.values).any()
+
+    def test_delay_setpoint_changes_geometry(self, two_chopper_geometry: Path) -> None:
+        names = ['chopper1', 'chopper2']
+        a = _run_chopper_lut(
+            two_chopper_geometry,
+            names,
+            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 0.0)},
+        )
+        b = _run_chopper_lut(
+            two_chopper_geometry,
+            names,
+            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 2_000_000.0)},
+        )
+        # A different delay setpoint yields a different table.
+        assert not np.array_equal(np.nan_to_num(a.values), np.nan_to_num(b.values))
+
+    def test_missing_chopper_in_artifact_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / 'one_chopper.nxs'
+        _write_chopper_nexus(path, ['chopper1'])
+        keys = {n: make_chopper_setpoint_keys(n) for n in ['chopper1', 'chopper2']}
+        with pytest.raises(ValueError, match=r'missing.*chopper2'):
+            create_wavelength_lut_workflow(
+                params=_params(), setpoint_keys=keys, nexus_filename=str(path)
+            )
 
 
 class TestDa00RoundTrip:

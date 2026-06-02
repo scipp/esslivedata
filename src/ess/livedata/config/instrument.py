@@ -123,6 +123,18 @@ class Instrument:
     name: str
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
+    #: Disk-chopper component names (as in the NeXus geometry artifact). Single
+    #: source of truth for the wavelength-LUT factory (which assembles
+    #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
+    #: the ``ChopperSynthesizer`` wired into the timeseries service.
+    choppers: list[str] = field(default_factory=list)
+    #: Plateau-detection tolerance for chopper delay readbacks, in the delay
+    #: stream's own unit (ns for LOKI). Used by ``ChopperSynthesizer`` for both
+    #: noise rejection (rolling-window std must be below this) and change
+    #: detection (drift since the last lock). 1 us is a tight default suitable
+    #: for sub-degree phase tracking on typical ESS choppers; loosen
+    #: per-instrument once real readback noise is measured.
+    chopper_delay_atol: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
     context_bindings: list[ContextBinding] = field(default_factory=list)
