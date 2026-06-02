@@ -305,6 +305,67 @@ _WINDOW_DESCRIPTION = (
 )
 
 
+_TIMESERIES_DOWNSAMPLING_DESCRIPTION = (
+    "Controls how much detail this plot shows over the lifetime of the run. "
+    "Performance depends on the total number of points displayed: too many "
+    "and the plot - and the rest of the dashboard - becomes sluggish."
+    "<br><br>"
+    "The plot keeps a trailing <em>Recent</em> window at <em>Fine Period</em> "
+    "resolution, plus a coarser band at <em>Coarse Period</em> that extends "
+    "the rest of the run's history (set <em>Coarse Period</em> to 0 to drop "
+    "older data instead)."
+    "<br><br>"
+    "Aim to keep the total under a few thousand points for smooth plots. "
+    "Some examples for a 1 Hz source: the defaults (1 s / 1 h / 5 min) stay "
+    "near 4 000 points regardless of run length; raising <em>Recent "
+    "Window</em> to 12 h at 1 s <em>Fine Period</em> adds about 43 000 points "
+    "- likely too many; for week-long runs, a <em>Coarse Period</em> of 1 h "
+    "keeps the count below 4 000."
+)
+
+
+class TimeseriesDownsamplingParams(pydantic.BaseModel):
+    """Parameters controlling timeseries downsampling and update throttling."""
+
+    fine_period_seconds: float = pydantic.Field(
+        default=1.0,
+        description=(
+            "Sample period for the Recent Window, and minimum interval between "
+            "plot updates. Larger values reduce points and update frequency."
+        ),
+        title="Fine Period (s)",
+        gt=0.0,
+    )
+    recent_seconds: float = pydantic.Field(
+        default=3600.0,
+        description=(
+            "Length of the trailing window kept at <em>Fine Period</em> "
+            "resolution. Older data falls into the <em>Coarse Period</em> band "
+            "(or is dropped if Coarse Period is 0)."
+        ),
+        title="Recent Window (s)",
+        ge=0.0,
+    )
+    coarse_period_seconds: float = pydantic.Field(
+        default=300.0,
+        description=(
+            "Coarser sample period for data older than the Recent Window. "
+            "Set to 0 to drop older data entirely."
+        ),
+        title="Coarse Period (s)",
+        ge=0.0,
+    )
+
+
+class PlotParamsTimeseries(PlotDisplayParams1d):
+    """Parameters for the timeseries plotter (downsampling + display)."""
+
+    downsampling: TimeseriesDownsamplingParams = pydantic.Field(
+        default_factory=TimeseriesDownsamplingParams,
+        description=_TIMESERIES_DOWNSAMPLING_DESCRIPTION,
+    )
+
+
 class PlotParams1d(PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 

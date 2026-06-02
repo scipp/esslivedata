@@ -2227,3 +2227,113 @@ class TestRateNormalizationIntegration:
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
+
+
+def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.DataArray:
+    """Timeseries shaped like FullHistoryExtractor output: 1-D datetime64 time
+    coord plus scalar start_time / end_time coords."""
+    times_ns = (np.arange(n_points, dtype=np.int64) * int(period_s * 1e9)).astype(
+        'datetime64[ns]'
+    )
+    time_var = sc.array(dims=['time'], values=times_ns)
+    return sc.DataArray(
+        data=sc.array(
+            dims=['time'], values=np.arange(n_points, dtype=np.float64), unit='K'
+        ),
+        coords={
+            'time': time_var,
+            'start_time': time_var[0],
+            'end_time': time_var[-1],
+        },
+    )
+
+
+class TestTimeseriesDownsamplingAndThrottle:
+    """Downsampling + throttle in LinePlotter.from_timeseries_params."""
+
+    def test_compute_downsamples_long_history(self, data_key):
+        from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
+
+        plotter = plots.LinePlotter.from_timeseries_params(PlotParamsTimeseries())
+        data = _make_timeseries_data_array(50_000)
+        plotter.compute({'primary': {data_key: data}})
+        # Just confirms compute ran without raising; the downsample helper is
+        # tested directly in timeseries_downsample_test.py.
+        assert plotter.has_cached_state()
+
+    def test_second_compute_within_period_is_skipped(self, data_key):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsTimeseries,
+            TimeseriesDownsamplingParams,
+        )
+
+        params = PlotParamsTimeseries(
+            downsampling=TimeseriesDownsamplingParams(
+                fine_period_seconds=10.0,
+                recent_seconds=3600.0,
+                coarse_period_seconds=0.0,
+            )
+        )
+        plotter = plots.LinePlotter.from_timeseries_params(params)
+
+        data1 = _make_timeseries_data_array(100)
+        plotter.compute({'primary': {data_key: data1}})
+        first_state = plotter.get_cached_state()
+
+        # 5 s more data — under the 10 s period, should skip.
+        data2 = _make_timeseries_data_array(105)
+        plotter.compute({'primary': {data_key: data2}})
+        assert plotter.get_cached_state() is first_state
+
+        # 10 s more data — at/over the period, should recompute.
+        data3 = _make_timeseries_data_array(110)
+        plotter.compute({'primary': {data_key: data3}})
+        assert plotter.get_cached_state() is not first_state
+
+    def test_first_compute_always_runs(self, data_key):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsTimeseries,
+            TimeseriesDownsamplingParams,
+        )
+
+        params = PlotParamsTimeseries(
+            downsampling=TimeseriesDownsamplingParams(fine_period_seconds=3600.0)
+        )
+        plotter = plots.LinePlotter.from_timeseries_params(params)
+        data = _make_timeseries_data_array(5)
+        plotter.compute({'primary': {data_key: data}})
+        assert plotter.has_cached_state()
+
+    def test_throttle_uses_data_time_not_wall_clock(self, data_key):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsTimeseries,
+            TimeseriesDownsamplingParams,
+        )
+
+        params = PlotParamsTimeseries(
+            downsampling=TimeseriesDownsamplingParams(fine_period_seconds=10.0)
+        )
+        plotter = plots.LinePlotter.from_timeseries_params(params)
+
+        data = _make_timeseries_data_array(100)
+        plotter.compute({'primary': {data_key: data}})
+        # Calling compute() with the same data many times must not recompute.
+        first_state = plotter.get_cached_state()
+        for _ in range(10):
+            plotter.compute({'primary': {data_key: data}})
+        assert plotter.get_cached_state() is first_state
+
+    def test_non_timeseries_factories_unchanged(self, data_key):
+        """from_params / from_display_params keep their non-throttling behaviour."""
+        from ess.livedata.dashboard.plot_params import PlotParams1d
+
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        plotter.compute({'primary': {data_key: data}})
+        first_state = plotter.get_cached_state()
+        plotter.compute({'primary': {data_key: data}})
+        # No throttle path: recomputes unconditionally, fresh cached state object.
+        assert plotter.get_cached_state() is not first_state

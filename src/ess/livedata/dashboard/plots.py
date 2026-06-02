@@ -25,13 +25,30 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
+    PlotParamsTimeseries,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
     TickParams,
+    TimeseriesDownsamplingParams,
 )
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
+from .timeseries_downsample import downsample_timeseries
+
+
+def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
+    """Latest time-coord value across the primary dict, as int64 nanoseconds.
+
+    Caller is the timeseries plotter, so each DataArray has a non-empty
+    datetime64 ``time`` coord (guaranteed by FullHistoryExtractor).
+    """
+    if not primary:
+        return None
+    return max(
+        int(np.datetime64(da.coords['time'].values[-1], 'ns').astype('int64'))
+        for da in primary.values()
+    )
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
@@ -637,6 +654,8 @@ class LinePlotter(Plotter):
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
             **self._make_tick_opts(tick_params),
         }
+        self._downsampling: TimeseriesDownsamplingParams | None = None
+        self._last_compute_data_time_ns: int | None = None
 
     @classmethod
     def from_display_params(
@@ -660,6 +679,70 @@ class LinePlotter(Plotter):
         return cls.from_display_params(
             params, normalize_to_rate=params.rate.normalize_to_rate
         )
+
+    @classmethod
+    def from_timeseries_params(cls, params: PlotParamsTimeseries):
+        """Create LinePlotter for the timeseries plotter, with downsampling on.
+
+        Downsampling and update throttling live at the plotter rather than at
+        the extractor: the subscription still pulls the full-history, and
+        per-plot config can change without re-subscribing.
+        """
+        instance = cls.from_display_params(params)
+        instance._downsampling = params.downsampling
+        return instance
+
+    def compute(
+        self,
+        data: dict[str, dict[ResultKey, sc.DataArray]],
+        *,
+        title_resolver: TitleResolver | None = None,
+        **kwargs,
+    ) -> None:
+        """Compute plot state, with timeseries throttling and downsampling.
+
+        For non-timeseries instances (``_downsampling is None``) this just
+        delegates to ``Plotter.compute``.
+
+        For timeseries instances the call short-circuits when the new data's
+        latest timestamp is less than ``fine_period_seconds`` past the timestamp
+        seen at the last compute that actually ran. Returning early skips
+        ``_set_cached_state``, which leaves presenters non-dirty and prevents
+        the downstream ``pipe.send`` / Bokeh patch / WebSocket flush /
+        browser repaint. When the call does proceed, every primary DataArray
+        is reduced via ``downsample_timeseries`` before delegating to the
+        standard plot path.
+        """
+        if self._downsampling is None:
+            super().compute(data, title_resolver=title_resolver, **kwargs)
+            return
+        primary = data.get(PRIMARY, {})
+        latest_ns = _latest_time_ns(primary)
+        if self._should_skip_for_throttle(latest_ns):
+            return
+        downsampled = {
+            key: downsample_timeseries(
+                da,
+                fine_period_seconds=self._downsampling.fine_period_seconds,
+                recent_seconds=self._downsampling.recent_seconds,
+                coarse_period_seconds=self._downsampling.coarse_period_seconds,
+            )
+            for key, da in primary.items()
+        }
+        data_for_super = {**data, PRIMARY: downsampled}
+        super().compute(data_for_super, title_resolver=title_resolver, **kwargs)
+        if latest_ns is not None:
+            self._last_compute_data_time_ns = latest_ns
+
+    def _should_skip_for_throttle(self, latest_ns: int | None) -> bool:
+        if (
+            latest_ns is None
+            or self._last_compute_data_time_ns is None
+            or self._downsampling is None
+        ):
+            return False
+        period_ns = int(self._downsampling.fine_period_seconds * 1e9)
+        return (latest_ns - self._last_compute_data_time_ns) < period_ns
 
     def plot(
         self,
