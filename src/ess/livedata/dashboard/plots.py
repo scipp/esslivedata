@@ -52,6 +52,7 @@ def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
         for da in primary.values()
     )
 
+
 # Used only to widen a zero-width range (see _ensure_span); the per-axis
 # padding fraction itself comes from HoloViews (see _hv_axis_padding).
 _DEGENERATE_PAD = 0.05
@@ -887,7 +888,6 @@ class LinePlotter(Plotter):
         if value_extent is not None:
             targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
         return targets
-
 
     def plot(
         self,
