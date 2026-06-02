@@ -94,11 +94,11 @@ spec-scope bindings filtered by source membership and returns
 `{stream_name: workflow_key}`:
 
 ```python
-instrument_inputs = [] if registration.skip_instrument_contexts \
+instrument_bindings = [] if registration.skip_instrument_contexts \
     else self.context_bindings
-return {ci.stream_name: ci.workflow_key
-        for ci in (*instrument_inputs, *registration.context_bindings)
-        if source_name in ci.dependent_sources}
+return {binding.stream_name: binding.workflow_key
+        for binding in (*instrument_bindings, *registration.context_bindings)
+        if source_name in binding.dependent_sources}
 ```
 
 `JobFactory.create` calls it once per job. The result goes to the factory as

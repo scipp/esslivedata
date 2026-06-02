@@ -43,15 +43,16 @@ def gather_source_names(
                 names.update(aux_input.choices)
         # Spec-level ContextBinding entries are routed by stream name (the
         # wire name equals the stream name).
-        for ci in reg.context_bindings:
-            names.add(ci.stream_name)
+        for binding in reg.context_bindings:
+            names.add(binding.stream_name)
     # Instrument-level ContextBinding entries: include when any spec hosted by
     # this service shares a source with the binding's ``dependent_sources``.
-    for ci in instrument.context_bindings:
+    for binding in instrument.context_bindings:
         if any(
-            set(reg.spec.source_names) & ci.dependent_sources for reg in service_regs
+            set(reg.spec.source_names) & binding.dependent_sources
+            for reg in service_regs
         ):
-            names.add(ci.stream_name)
+            names.add(binding.stream_name)
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

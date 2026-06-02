@@ -31,12 +31,12 @@ from .workflow_spec import (
 )
 
 
-def _is_chain_patch(ci: ContextBinding) -> bool:
+def _is_chain_patch(binding: ContextBinding) -> bool:
     """A context binding whose ``workflow_key`` is a chain-patching.
 
     ValueLog subclass.
     """
-    key = ci.workflow_key
+    key = binding.workflow_key
     return isinstance(key, type) and issubclass(key, ValueLog)
 
 
@@ -261,13 +261,13 @@ class Instrument:
         """
         return [
             ChainPatchBinding(
-                stream_name=ci.stream_name,
-                transform_path=self.chain_patch_path(ci),
-                workflow_key=ci.workflow_key,
-                dependent_sources=ci.dependent_sources,
+                stream_name=binding.stream_name,
+                transform_path=self.chain_patch_path(binding),
+                workflow_key=binding.workflow_key,
+                dependent_sources=binding.dependent_sources,
             )
-            for ci in self.context_bindings
-            if _is_chain_patch(ci)
+            for binding in self.context_bindings
+            if _is_chain_patch(binding)
         ]
 
     def resolve_context_keys(
@@ -285,13 +285,13 @@ class Instrument:
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
             return {}
-        instrument_inputs = (
+        instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
         return {
-            ci.stream_name: ci.workflow_key
-            for ci in (*instrument_inputs, *registration.context_bindings)
-            if source_name in ci.dependent_sources
+            binding.stream_name: binding.workflow_key
+            for binding in (*instrument_bindings, *registration.context_bindings)
+            if source_name in binding.dependent_sources
         }
 
     @property
@@ -715,29 +715,29 @@ class Instrument:
         """
         by_key: dict[type, str] = {}
         by_stream: dict[str, type] = {}
-        all_inputs = list(self.context_bindings)
+        all_bindings = list(self.context_bindings)
         for reg in self.workflow_factory.registrations():
-            all_inputs.extend(reg.context_bindings)
-        for ci in all_inputs:
-            if not _is_chain_patch(ci):
+            all_bindings.extend(reg.context_bindings)
+        for binding in all_bindings:
+            if not _is_chain_patch(binding):
                 continue
-            previous_stream = by_key.get(ci.workflow_key)
-            if previous_stream is not None and previous_stream != ci.stream_name:
+            previous_stream = by_key.get(binding.workflow_key)
+            if previous_stream is not None and previous_stream != binding.stream_name:
                 raise ValueError(
-                    f"ValueLog subclass {ci.workflow_key.__name__!r} is shared "
-                    f"by streams {previous_stream!r} and {ci.stream_name!r}; "
+                    f"ValueLog subclass {binding.workflow_key.__name__!r} is shared "
+                    f"by streams {previous_stream!r} and {binding.stream_name!r}; "
                     "each chain-patch context must declare its own ValueLog "
                     "subclass to avoid Sciline node collisions"
                 )
-            previous_key = by_stream.get(ci.stream_name)
-            if previous_key is not None and previous_key is not ci.workflow_key:
+            previous_key = by_stream.get(binding.stream_name)
+            if previous_key is not None and previous_key is not binding.workflow_key:
                 raise ValueError(
-                    f"Stream {ci.stream_name!r} has conflicting chain-patch "
+                    f"Stream {binding.stream_name!r} has conflicting chain-patch "
                     f"declarations: ValueLog subclasses "
-                    f"{previous_key.__name__!r} and {ci.workflow_key.__name__!r}"
+                    f"{previous_key.__name__!r} and {binding.workflow_key.__name__!r}"
                 )
-            by_key[ci.workflow_key] = ci.stream_name
-            by_stream[ci.stream_name] = ci.workflow_key
+            by_key[binding.workflow_key] = binding.stream_name
+            by_stream[binding.stream_name] = binding.workflow_key
 
     def _validate_context_binding_wire_name_collisions(self) -> None:
         """Raise if context-stream wire names collide.
@@ -759,19 +759,19 @@ class Instrument:
             aux_field_names: set[str] = (
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
             )
-            instrument_inputs = (
+            instrument_bindings = (
                 [] if reg.skip_instrument_contexts else self.context_bindings
             )
             for source in spec.source_names:
                 instrument_names: set[str] = {
-                    ci.stream_name
-                    for ci in instrument_inputs
-                    if source in ci.dependent_sources
+                    binding.stream_name
+                    for binding in instrument_bindings
+                    if source in binding.dependent_sources
                 }
                 spec_names: set[str] = {
-                    ci.stream_name
-                    for ci in reg.context_bindings
-                    if source in ci.dependent_sources
+                    binding.stream_name
+                    for binding in reg.context_bindings
+                    if source in binding.dependent_sources
                 }
                 scope_collisions = instrument_names & spec_names
                 if scope_collisions:
