@@ -32,21 +32,21 @@ class TestDownsampleTimeseries:
         data = _make_timeseries(60)  # 1 min at 1 Hz
         result = downsample_timeseries(
             data,
-            period_seconds=1.0,
+            fine_period_seconds=1.0,
             recent_seconds=3600.0,
-            floor_period_seconds=300.0,
+            coarse_period_seconds=300.0,
         )
         assert result.sizes['time'] == 60
         assert sc.identical(result, data)
 
-    def test_recent_only_when_floor_disabled(self):
-        # 2 h of data, recent window 1 h, floor=0 → drop older
+    def test_recent_only_when_coarse_disabled(self):
+        # 2 h of data, recent window 1 h, coarse=0 → drop older
         data = _make_timeseries(7200)
         result = downsample_timeseries(
             data,
-            period_seconds=1.0,
+            fine_period_seconds=1.0,
             recent_seconds=3600.0,
-            floor_period_seconds=0.0,
+            coarse_period_seconds=0.0,
         )
         # ~3600 recent samples at period=1s. Boundary inclusion may add one.
         assert result.sizes['time'] in (3600, 3601)
@@ -56,28 +56,28 @@ class TestDownsampleTimeseries:
         assert result.values[-1] == data.values[-1]
         assert result.values[0] >= 3599
 
-    def test_floor_band_for_long_run(self):
-        # 1 day @ 1 Hz = 86400 points, recent_seconds=3600, floor=300s.
-        # Soft window: recent length is 3600-3900 s; floor: ~275 buckets.
+    def test_coarse_band_for_long_run(self):
+        # 1 day @ 1 Hz = 86400 points, recent_seconds=3600, coarse=300s.
+        # Soft window: recent length is 3600-3900 s; coarse: ~275 buckets.
         data = _make_timeseries(86400)
         result = downsample_timeseries(
             data,
-            period_seconds=1.0,
+            fine_period_seconds=1.0,
             recent_seconds=3600.0,
-            floor_period_seconds=300.0,
+            coarse_period_seconds=300.0,
         )
         n = result.sizes['time']
         assert 3850 <= n <= 4200, n
         # Last sample is always preserved.
         assert result.coords['time'].values[-1] == data.coords['time'].values[-1]
 
-    def test_period_seconds_strides_recent_band(self):
+    def test_fine_period_seconds_strides_recent_band(self):
         data = _make_timeseries(100)  # 100 s @ 1 Hz
         result = downsample_timeseries(
             data,
-            period_seconds=10.0,
+            fine_period_seconds=10.0,
             recent_seconds=100.0,
-            floor_period_seconds=0.0,
+            coarse_period_seconds=0.0,
         )
         # ~10 stride buckets in 100s; bucket 0 is end-anchored, includes latest.
         assert 10 <= result.sizes['time'] <= 11
@@ -88,9 +88,9 @@ class TestDownsampleTimeseries:
         data = _make_timeseries(100)
         result = downsample_timeseries(
             data,
-            period_seconds=10.0,
+            fine_period_seconds=10.0,
             recent_seconds=95.0,
-            floor_period_seconds=0.0,
+            coarse_period_seconds=0.0,
         )
         assert result.values[-1] == data.values[-1]
         assert result.coords['time'].values[-1] == data.coords['time'].values[-1]
@@ -99,9 +99,9 @@ class TestDownsampleTimeseries:
         data = _make_timeseries(60)
         result = downsample_timeseries(
             data,
-            period_seconds=10.0,
+            fine_period_seconds=10.0,
             recent_seconds=60.0,
-            floor_period_seconds=0.0,
+            coarse_period_seconds=0.0,
         )
         # 1-D start_time and end_time coords stay aligned with the time dim.
         assert 'start_time' in result.coords
@@ -122,9 +122,9 @@ class TestDownsampleTimeseries:
         )
         result = downsample_timeseries(
             data,
-            period_seconds=10.0,
+            fine_period_seconds=10.0,
             recent_seconds=100.0,
-            floor_period_seconds=0.0,
+            coarse_period_seconds=0.0,
         )
         assert result.variances is not None
         assert result.variances.shape == result.values.shape
@@ -134,9 +134,9 @@ class TestDownsampleTimeseries:
             data = _make_timeseries(n)
             result = downsample_timeseries(
                 data,
-                period_seconds=1.0,
+                fine_period_seconds=1.0,
                 recent_seconds=3600.0,
-                floor_period_seconds=300.0,
+                coarse_period_seconds=300.0,
             )
             assert result.sizes['time'] == n
 
@@ -144,9 +144,9 @@ class TestDownsampleTimeseries:
         data = sc.DataArray(sc.array(dims=['x'], values=np.arange(10.0)))
         result = downsample_timeseries(
             data,
-            period_seconds=1.0,
+            fine_period_seconds=1.0,
             recent_seconds=3600.0,
-            floor_period_seconds=300.0,
+            coarse_period_seconds=300.0,
         )
         assert sc.identical(result, data)
 
@@ -157,9 +157,9 @@ def test_downsampling_caps_output_size(n: int):
     data = _make_timeseries(n)
     result = downsample_timeseries(
         data,
-        period_seconds=1.0,
+        fine_period_seconds=1.0,
         recent_seconds=3600.0,
-        floor_period_seconds=300.0,
+        coarse_period_seconds=300.0,
     )
     assert result.sizes['time'] < 5000
 
@@ -167,14 +167,14 @@ def test_downsampling_caps_output_size(n: int):
 def test_kept_samples_stable_between_cutoff_crossings():
     """Epoch-anchored grid: existing kept samples don't move between ticks.
 
-    Picks two consecutive sizes that do not straddle a floor-period quantum
+    Picks two consecutive sizes that do not straddle a coarse-period quantum
     crossing; the second output must extend the first by exactly the newly
     arrived sample.
     """
     kwargs = {
-        "period_seconds": 1.0,
+        "fine_period_seconds": 1.0,
         "recent_seconds": 3600.0,
-        "floor_period_seconds": 300.0,
+        "coarse_period_seconds": 300.0,
     }
     # Tick from n=7202 to n=7203: latest=7201 -> 7202; raw_cutoff 3601 -> 3602.
     # Quantized to 300 stays at 3600. No quantum crossing.

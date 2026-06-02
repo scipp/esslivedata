@@ -2249,7 +2249,7 @@ def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.Data
 
 
 class TestTimeseriesDownsamplingAndThrottle:
-    """LinePlotter.from_timeseries_params: downsampling + period_seconds throttle."""
+    """Downsampling + throttle in LinePlotter.from_timeseries_params."""
 
     def test_compute_downsamples_long_history(self, data_key):
         from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
@@ -2269,7 +2269,9 @@ class TestTimeseriesDownsamplingAndThrottle:
 
         params = PlotParamsTimeseries(
             downsampling=TimeseriesDownsamplingParams(
-                period_seconds=10.0, recent_seconds=3600.0, floor_period_seconds=0.0
+                fine_period_seconds=10.0,
+                recent_seconds=3600.0,
+                coarse_period_seconds=0.0,
             )
         )
         plotter = plots.LinePlotter.from_timeseries_params(params)
@@ -2295,7 +2297,7 @@ class TestTimeseriesDownsamplingAndThrottle:
         )
 
         params = PlotParamsTimeseries(
-            downsampling=TimeseriesDownsamplingParams(period_seconds=3600.0)
+            downsampling=TimeseriesDownsamplingParams(fine_period_seconds=3600.0)
         )
         plotter = plots.LinePlotter.from_timeseries_params(params)
         data = _make_timeseries_data_array(5)
@@ -2309,7 +2311,7 @@ class TestTimeseriesDownsamplingAndThrottle:
         )
 
         params = PlotParamsTimeseries(
-            downsampling=TimeseriesDownsamplingParams(period_seconds=10.0)
+            downsampling=TimeseriesDownsamplingParams(fine_period_seconds=10.0)
         )
         plotter = plots.LinePlotter.from_timeseries_params(params)
 

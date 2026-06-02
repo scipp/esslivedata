@@ -705,7 +705,7 @@ class LinePlotter(Plotter):
         delegates to ``Plotter.compute``.
 
         For timeseries instances the call short-circuits when the new data's
-        latest timestamp is less than ``period_seconds`` past the timestamp
+        latest timestamp is less than ``fine_period_seconds`` past the timestamp
         seen at the last compute that actually ran. Returning early skips
         ``_set_cached_state``, which leaves presenters non-dirty and prevents
         the downstream ``pipe.send`` / Bokeh patch / WebSocket flush /
@@ -723,9 +723,9 @@ class LinePlotter(Plotter):
         downsampled = {
             key: downsample_timeseries(
                 da,
-                period_seconds=self._downsampling.period_seconds,
+                fine_period_seconds=self._downsampling.fine_period_seconds,
                 recent_seconds=self._downsampling.recent_seconds,
-                floor_period_seconds=self._downsampling.floor_period_seconds,
+                coarse_period_seconds=self._downsampling.coarse_period_seconds,
             )
             for key, da in primary.items()
         }
@@ -741,7 +741,7 @@ class LinePlotter(Plotter):
             or self._downsampling is None
         ):
             return False
-        period_ns = int(self._downsampling.period_seconds * 1e9)
+        period_ns = int(self._downsampling.fine_period_seconds * 1e9)
         return (latest_ns - self._last_compute_data_time_ns) < period_ns
 
     def plot(
