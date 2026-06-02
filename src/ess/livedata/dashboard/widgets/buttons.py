@@ -51,8 +51,9 @@ def create_tool_button_stylesheet(
         RGBA color for the hover background.
     selector:
         CSS selector for the button element. Default is 'button' for regular
-        Panel buttons. Use ':host(.solid) button.bk-btn.bk-btn-primary' for
-        FileDownload widgets.
+        Panel buttons. Use ':host(.solid) button.bk-btn.bk-btn-default' for
+        FileDownload widgets (Panel 1.9+ always sets button_type='default' on
+        the Bokeh model regardless of the color parameter).
     hover_selector:
         CSS selector for the hover state. If None, defaults to '{selector}:hover'.
     include_anchor_styles:
@@ -186,12 +187,12 @@ def create_download_button(
     :
         Panel FileDownload widget styled as a tool button.
     """
-    # FileDownload uses different CSS selectors than regular Button
-    # and has an anchor element inside that needs centering
+    # FileDownload uses a different CSS selector than regular Button (always
+    # bk-btn-default regardless of color=) and has an anchor that needs centering.
     stylesheet = create_tool_button_stylesheet(
         button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color=ButtonStyles.PRIMARY_HOVER,
-        selector=':host(.solid) button.bk-btn.bk-btn-primary',
+        selector=':host(.solid) button.bk-btn.bk-btn-default',
         include_anchor_styles=True,
     )
 
@@ -204,7 +205,6 @@ def create_download_button(
         icon=get_icon('download'),
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        color='primary',
         sizing_mode='fixed',
         margin=0,
         embed=False,  # Generate content on click, not upfront
