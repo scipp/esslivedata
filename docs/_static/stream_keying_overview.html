@@ -200,7 +200,7 @@
     </tr>
     <tr>
       <td><strong>Context</strong></td>
-      <td>Slowly-varying <em>parameters</em> of the reduction: motion / geometry positions, ROI, sample temperature</td>
+      <td>Slowly-varying <em>parameters</em> of the reduction: motion / geometry positions, sample temperature</td>
       <td>A framework-routed <code>ContextBinding</code> (stream-named)</td>
       <td class="mono"><code>set_context()</code> &mdash; latest value, persistent</td>
       <td>yes</td>
@@ -209,6 +209,8 @@
 </table>
 
 <p><strong>Auxiliary vs. context.</strong> Both are non-primary, but they answer different questions. An auxiliary input is more <em>data to reduce</em>: it is <em>accumulated</em>, so each batch adds to a running total and an empty batch is harmless. A context input is a <em>parameter</em> of the reduction: it is injected with <code>set_context()</code> and is <strong>stateful</strong> &mdash; a value set in one batch persists into every later batch until overwritten, and a batch carrying no new value leaves the parameter unchanged. Because a run with an uninitialized parameter would crash or silently misattribute its output, the <code>JobManager</code> <em>gates</em> the job until each context stream has produced a value (ADR&nbsp;0002); auxiliary inputs never gate.</p>
+
+<p><strong>ROI is a deliberate hybrid.</strong> It is declared as an <code>AuxSources</code> &mdash; a user-selectable input, so its stream binding is chosen at translation 2 like other auxiliary inputs &mdash; but the factory feeds it through <code>set_context()</code> rather than <code>accumulate()</code>, and it does <em>not</em> gate. &ldquo;No ROI selected&rdquo; is a safe default (an empty request), so there is no readiness to wait on (ADR&nbsp;0002). It is not a <code>ContextBinding</code>.</p>
 
 <p><strong>The primary is the degenerate case.</strong> It is a logical slot too &mdash; named by its sciline key, <code>NeXusData[NXdetector, Run]</code> &mdash; but its stream binding is the job&rsquo;s identity (<code>source_name</code>) rather than a user-selectable role, so translation 2 is the identity function and the factory keys it directly, without <code>aux_source_names</code>. Context inputs likewise carry no role: their wire name <em>equals</em> their stream name. Translation 2 therefore touches only auxiliary inputs.</p>
 
