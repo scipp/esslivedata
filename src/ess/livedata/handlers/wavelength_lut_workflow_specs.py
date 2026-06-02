@@ -101,19 +101,6 @@ class LtotalRange(RangeModel):
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
-class Simulation(pydantic.BaseModel):
-    """Simulation knobs."""
-
-    num_simulated_neutrons: int = pydantic.Field(
-        default=1_000_000,
-        ge=1_000,
-        description=(
-            "Neutrons in simulation. Lower for faster turnaround during "
-            "commissioning or tests."
-        ),
-    )
-
-
 class WavelengthLutParams(pydantic.BaseModel):
     """User-facing parameters for the wavelength lookup-table workflow."""
 
@@ -136,11 +123,6 @@ class WavelengthLutParams(pydantic.BaseModel):
         title='Time resolution',
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
-    )
-    simulation: Simulation = pydantic.Field(
-        title='Simulation',
-        description='Simulation knobs.',
-        default_factory=Simulation,
     )
 
 

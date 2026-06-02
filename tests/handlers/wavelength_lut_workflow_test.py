@@ -28,10 +28,8 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 
 
-def _params(*, neutrons: int = 50_000) -> WavelengthLutParams:
-    p = WavelengthLutParams()
-    p.simulation.num_simulated_neutrons = neutrons
-    return p
+def _params() -> WavelengthLutParams:
+    return WavelengthLutParams()
 
 
 def _trigger() -> dict[str, sc.DataArray]:
@@ -187,10 +185,12 @@ class TestMultiChopperWorkflow:
         self, two_chopper_geometry: Path
     ) -> None:
         names = ['chopper1', 'chopper2']
+        # Frequencies are negative: ESS choppers rotate anti-clockwise. A positive
+        # frequency drives the analytical chopper-cascade into a degenerate frame.
         table = _run_chopper_lut(
             two_chopper_geometry,
             names,
-            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 1_000_000.0)},
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 1_000_000.0)},
         )
         assert table.dims == ('distance', 'event_time_offset')
         assert table.unit == sc.units.angstrom
@@ -201,12 +201,12 @@ class TestMultiChopperWorkflow:
         a = _run_chopper_lut(
             two_chopper_geometry,
             names,
-            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 0.0)},
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
         )
         b = _run_chopper_lut(
             two_chopper_geometry,
             names,
-            {'chopper1': (14.0, 0.0), 'chopper2': (14.0, 2_000_000.0)},
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 2_000_000.0)},
         )
         # A different delay setpoint yields a different table.
         assert not np.array_equal(np.nan_to_num(a.values), np.nan_to_num(b.values))

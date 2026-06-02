@@ -42,7 +42,7 @@ def app(caplog: pytest.LogCaptureFixture) -> LivedataApp:
 
 def _config_message() -> workflow_spec.WorkflowConfig:
     workflow_id = _get_workflow_id('dummy', WAVELENGTH_LUT_OUTPUT)
-    params = {'simulation': {'num_simulated_neutrons': 50_000}}
+    params = {}
     config = workflow_spec.WorkflowConfig(
         identifier=workflow_id, params=params, job_id=_job_id(CHOPPER_CASCADE_SOURCE)
     )

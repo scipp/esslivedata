@@ -2,8 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Wavelength lookup-table workflow.
 
-Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` as a livedata
-``Workflow`` via :class:`StreamProcessorWorkflow`. The synthetic
+Builds a Sciline pipeline from :func:`ess.reduce.unwrap.lut.providers` in
+*analytical* mode (chopper-cascade polygon geometry, no neutron simulation) and
+wraps it as a livedata ``Workflow`` via :class:`StreamProcessorWorkflow`. The
+synthetic
 ``chopper_cascade`` trigger is a sciline dynamic key consumed by a provider
 that produces ``DiskChoppers``; its value is ignored — only its arrival
 drives a recompute (the trigger is the job's ``allow_bypass`` primary).
@@ -40,15 +42,13 @@ from ess.reduce.nexus.types import (
     RawChoppers,
     SampleRun,
 )
+from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
     DistanceResolution,
     LookupTable,
-    LookupTableWorkflow,
     LtotalRange,
-    NumberOfSimulatedNeutrons,
     PulsePeriod,
     PulseStride,
-    SourcePosition,
     TimeResolution,
 )
 from scippneutron.chopper import DiskChopper
@@ -71,6 +71,11 @@ _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
 # beam-crossing point, so this is zero. Production NeXus files carry no
 # ``beam_position`` field, so it is injected here.
 _BEAM_POSITION = sc.scalar(0.0, unit='deg')
+
+#: Component the standalone table is parametrised by. The table is not tied to a
+#: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
+#: LookupTable) and does not appear in the published array.
+_LUT_COMPONENT = snx.NXdetector
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
 #: cumulative ``ToNXlog`` timeseries for the synthetic ``chopper_cascade``
@@ -166,7 +171,9 @@ def _empty_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
     return DiskChoppers[AnyRun](sc.DataGroup({}))
 
 
-def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
+def _attach_provenance(
+    table: LookupTable[AnyRun, _LUT_COMPONENT], params: ParamsKey
+) -> WavelengthLut:
     """Attach the four scalar input parameters as 0-D coords on the result.
 
     Makes the published da00 message self-describing: a consumer can
@@ -186,17 +193,18 @@ def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
 def _build_pipeline(
     params: WavelengthLutParams, *, source_position: sc.Variable
 ) -> sciline.Pipeline:
-    wf = LookupTableWorkflow()
+    wf = GenericUnwrapWorkflow(
+        run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
+    )
     wf[PulsePeriod] = params.pulse.get_period()
-    wf[PulseStride] = int(params.pulse.stride)
+    wf[PulseStride[AnyRun]] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
-    wf[LtotalRange] = (
+    wf[LtotalRange[AnyRun, _LUT_COMPONENT]] = (
         params.distance_range.get_start(),
         params.distance_range.get_stop(),
     )
-    wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
-    wf[SourcePosition] = source_position
+    wf[Position[snx.NXsource, AnyRun]] = source_position
     wf[ParamsKey] = params
     wf.insert(_attach_provenance)
     return wf
