@@ -165,23 +165,11 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        # Match ContextBinding records by source membership.
-        # ``skip_instrument_contexts`` filters out instrument-scope entries —
-        # a spec that explicitly declares a binding cannot opt out of it via
-        # the flag.
-        instrument_inputs = (
-            []
-            if registration.skip_instrument_contexts
-            else self._instrument.context_bindings
+        context_keys = self._instrument.resolve_context_keys(
+            workflow_id, job_id.source_name
         )
-        matching = [
-            ci
-            for ci in (*instrument_inputs, *registration.context_bindings)
-            if job_id.source_name in ci.dependent_sources
-        ]
-        context_keys = {ci.stream_name: ci.workflow_key for ci in matching}
         # Context wire names equal their stream names — no per-job suffixing.
-        context_streams = {ci.stream_name for ci in matching}
+        context_streams = set(context_keys)
 
         aux_streams = {**rendered_aux_names, **{name: name for name in context_streams}}
 

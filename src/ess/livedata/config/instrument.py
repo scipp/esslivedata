@@ -21,7 +21,14 @@ from ess.livedata.handlers.workflow_factory import (
 
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
-from .workflow_spec import DETECTORS, REDUCTION, AuxSources, WorkflowGroup, WorkflowSpec
+from .workflow_spec import (
+    DETECTORS,
+    REDUCTION,
+    AuxSources,
+    WorkflowGroup,
+    WorkflowId,
+    WorkflowSpec,
+)
 
 
 def _is_chain_patch(ci: ContextBinding) -> bool:
@@ -262,6 +269,30 @@ class Instrument:
             for ci in self.context_bindings
             if _is_chain_patch(ci)
         ]
+
+    def resolve_context_keys(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+
+        Matches instrument- and spec-scope :class:`ContextBinding` records whose
+        ``dependent_sources`` include ``source_name`` and returns
+        ``{stream_name: workflow_key}``. ``skip_instrument_contexts`` filters out
+        instrument-scope entries — a spec that explicitly declares a binding
+        cannot opt out of it via the flag. Context wire names equal their stream
+        names, so the returned keys double as the set of gating context streams.
+        """
+        registration = self.workflow_factory.registration(workflow_id)
+        if registration is None:
+            return {}
+        instrument_inputs = (
+            [] if registration.skip_instrument_contexts else self.context_bindings
+        )
+        return {
+            ci.stream_name: ci.workflow_key
+            for ci in (*instrument_inputs, *registration.context_bindings)
+            if source_name in ci.dependent_sources
+        }
 
     @property
     def nexus_file(self) -> str:

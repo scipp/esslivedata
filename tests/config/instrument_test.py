@@ -605,6 +605,62 @@ class TestContextBindings:
         # No exception.
         instrument._validate_context_binding_wire_name_collisions()
 
+    def test_resolve_context_keys_matches_instrument_binding_by_source(self):
+        instrument = Instrument(
+            name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1', 'det2'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+            'rot': _Key
+        }
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det2') == {}
+
+    def test_resolve_context_keys_honours_skip_instrument_contexts(self):
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+        handle.skip_instrument_contexts()
+
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {}
+
+    def test_resolve_context_keys_includes_spec_scope_binding(self):
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.skip_instrument_contexts()
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+            'rot': _Key
+        }
+
 
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""
