@@ -63,8 +63,8 @@ It is a single concrete dataclass — no subclasses, no resolver/seed callables.
 flavours share the record, discriminated by the *type* of `workflow_key`:
 
 - **Direct parameter.** `workflow_key` is an arbitrary Sciline key (e.g.
-  `InstrumentAngle[SampleRun]`, `ROIRectangleRequest`). The stream value is fed
-  straight into `set_context`.
+  `InstrumentAngle[SampleRun]`). The stream value is fed straight into
+  `set_context`.
 - **NXtransformations chain patch.** `workflow_key` is a `ValueLog` subclass. The
   value is patched into the NeXus `depends_on` chain rather than bound directly.
   `wire_dynamic_transforms` discovers these by
@@ -89,19 +89,22 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 
 ### Resolution at job creation
 
-`JobFactory.create` merges instrument- and spec-scope bindings filtered by source
-membership, then builds the factory input and the gate set:
+`Instrument.resolve_context_keys(workflow_id, source_name)` merges instrument- and
+spec-scope bindings filtered by source membership and returns
+`{stream_name: workflow_key}`:
 
 ```python
 instrument_inputs = [] if registration.skip_instrument_contexts \
-    else instrument.context_bindings
-matching = [ci for ci in (*instrument_inputs, *registration.context_bindings)
-            if job_id.source_name in ci.dependent_sources]
-context_keys     = {ci.stream_name: ci.workflow_key for ci in matching}
-context_streams  = {ci.stream_name for ci in matching}   # wire name == stream_name
+    else self.context_bindings
+return {ci.stream_name: ci.workflow_key
+        for ci in (*instrument_inputs, *registration.context_bindings)
+        if source_name in ci.dependent_sources}
 ```
 
-`context_keys` goes to the factory; `context_streams` becomes `Job.gating_streams`.
+`JobFactory.create` calls it once per job. The result goes to the factory as
+`context_keys`; its key set becomes `Job.gating_streams` (context wire names equal their
+stream names). The merge lives on `Instrument` rather than inlined in `JobFactory` so
+workflow visualization can resolve the same keys without constructing a job.
 `JobFactory.create` returns a bare `Job`. `AuxSources` is slimmed to dynamic,
 user-selectable aux only — no context-flavoured entries, no `initial_context_messages`.
 
@@ -131,13 +134,20 @@ not import `handlers`. Each chain-patch binding declares its own `ValueLog` subc
 giving it a distinct Sciline parameter so multiple dynamic transforms can coexist on
 one workflow without colliding.
 
-`wire_dynamic_transforms(workflow, bindings)` selects the chain-patch
-bindings matching each `(source, component_type)`, groups them by component type, and
-builds one fused per-component provider (`build_patched_chain_provider` /
-`synthesise_provider` in `handlers/dynamic_transforms.py`) that replaces essreduce's
+`Instrument.chain_patch_bindings` selects the instrument-scope chain-patch
+`ContextBinding` records (those whose `workflow_key` is a `ValueLog` subclass),
+resolves each one's NeXus transform path via `Instrument.chain_patch_path`, and returns
+them as `ChainPatchBinding` records — a *resolved form* of the declaration, not a second
+declaration type, carrying `transform_path` alongside the `ValueLog` key and
+`dependent_sources`. `wire_dynamic_transforms(workflow, bindings)` is then a pure
+function over those records: it reads each input's component type off the workflow's own
+`dynamic_keys`, groups the matching bindings by component type, and builds one fused
+per-component provider (`build_patched_chain_provider` / `synthesise_provider` in
+`handlers/dynamic_transforms.py`) that replaces essreduce's
 `NeXusTransformationChain[T, SampleRun]` provider and writes the latest sample of each
-`ValueLog` parameter into the chain. The same seam works for the detector-view factory
-and for a pre-built `LokiWorkflow()`.
+`ValueLog` parameter into the chain. Resolving the path up front keeps the wiring step
+free of any reference to the instrument's stream topology. The same seam works for the
+detector-view factory and for a pre-built `LokiWorkflow()`.
 
 ### Routing pickup
 
@@ -153,11 +163,14 @@ indefinitely.
 
 ### Workflow protocol stays pure
 
-`Workflow.context_keys` is removed from the protocol. SPW accepts `context_keys` as a
-constructor argument and that is the end of the dict's journey. `AreaDetectorView` and
-`TimeseriesStreamProcessor` lose their empty-stub property. The `Workflow` protocol
-reduces to `accumulate`, `finalize`, `clear`; context handling is an SPW-internal
-concern, opaque to `Job` and `JobManager`.
+`Workflow.context_keys` is removed from the protocol. The routing layer injects the
+resolved `context_keys` via `SupportsContext.build` *after* the factory returns the
+workflow, so factories never declare `context_keys` in their signature; SPW defers
+constructing the wrapped `StreamProcessor` until `build` so the keys can be merged
+before the graph is baked (the uniform-keying and deferred-build seam is settled in
+ADR 0004). `AreaDetectorView` and `TimeseriesStreamProcessor` lose their empty-stub
+property. The `Workflow` protocol reduces to `accumulate`, `finalize`, `clear`;
+context handling is an SPW-internal concern, opaque to `Job` and `JobManager`.
 
 ## Alternatives considered
 
@@ -197,20 +210,23 @@ single source of truth and a binding cannot disagree with the stream it patches.
 ## Consequences
 
 - `ContextBinding` lives in `config/stream.py` as a single concrete dataclass
-  (`stream_name`, `workflow_key`, `dependent_sources`). `ValueLog` lives in
-  `config/value_log.py`.
+  (`stream_name`, `workflow_key`, `dependent_sources`). Its resolved chain-patch
+  form `ChainPatchBinding` (adding `transform_path`) lives alongside it; `ValueLog`
+  lives in `config/value_log.py`.
 - `Instrument` carries `context_bindings: list[ContextBinding]` and
-  `add_context_binding(...)`; `wire_dynamic_transforms(workflow, bindings)`
-  patches chain-patch bindings into the pipeline.
+  `add_context_binding(...)`, and exposes `chain_patch_bindings` (the resolved
+  `ChainPatchBinding` records); `wire_dynamic_transforms(workflow, bindings)` patches
+  those into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.
-- `JobFactory.create` merges instrument + spec bindings, passes `context_keys` to the
-  factory, sets `Job.gating_streams`, and returns a bare `Job`.
+- `Instrument.resolve_context_keys` merges instrument + spec bindings; `JobFactory.create`
+  calls it, hands `context_keys` to the factory (injected via `SupportsContext.build`,
+  ADR 0004), sets `Job.gating_streams`, and returns a bare `Job`.
 - `AuxSources` is dynamic, user-selectable aux only. ROI remains an `AuxSources`
   (`DetectorROIAuxSources`, job-prefixed per job) — it is not a context binding, since
   ADR 0002 routes ROI as aux rather than gating it.
-- `Workflow.context_keys` is removed from the protocol; SPW keeps its constructor arg,
-  other implementations drop the stub.
+- `Workflow.context_keys` is removed from the protocol; SPW receives the routing
+  layer's `context_keys` via `build` (ADR 0004), other implementations drop the stub.
 - `gather_source_names` includes context bindings so the namespace subscribes to gated
   streams. Without it the gate never opens for motion.
 - Validators enforce the record's invariants: chain-patch `(stream_name, workflow_key)`
