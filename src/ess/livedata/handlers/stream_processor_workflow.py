@@ -48,15 +48,14 @@ class StreamProcessorWorkflow(Workflow):
         base_workflow:
             The sciline Pipeline to wrap.
         dynamic_keys:
-            Mapping from wire name to sciline key for dynamic inputs. Dynamic
-            inputs are accumulated across calls via
-            ``StreamProcessor.accumulate()``. Factories declare the primary
-            input by its on-disk ``source_name`` and auxiliary inputs by their
-            stable *role* (e.g. ``'incident_monitor'``); the routing layer
-            resolves the roles to on-disk stream names at :meth:`build` (via its
-            ``aux_source_names`` argument), so by the time the graph runs the
-            mapping is uniformly keyed by on-disk stream name — the name
-            incoming data arrives under.
+            Mapping from on-disk stream name to sciline key for dynamic inputs.
+            Dynamic inputs are accumulated across calls via
+            ``StreamProcessor.accumulate()``. Factories key every entry by the
+            on-disk stream name incoming data arrives under: the primary input
+            by its ``source_name`` and auxiliary inputs by resolving their role
+            through the ``aux_source_names`` map the factory receives (e.g.
+            ``aux_source_names['incident_monitor']``). The role space therefore
+            never enters this mapping.
         context_keys:
             Mapping from stream names to sciline keys for context bindings.
             Context inputs update pipeline parameters via
@@ -110,12 +109,9 @@ class StreamProcessorWorkflow(Workflow):
 
     @property
     def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
-        """Mapping from wire name to sciline key for dynamic inputs.
+        """Mapping from on-disk stream name to sciline key for dynamic inputs.
 
-        Keyed by the factory's declared wire names until :meth:`build` resolves
-        aux roles to on-disk stream names; thereafter (and at runtime) it is
-        uniformly keyed by on-disk stream name. :meth:`build` reads it after
-        resolution to match each wire name against a binding's
+        :meth:`build` reads it to match each stream name against a binding's
         ``dependent_sources`` and derive the NeXus component type (the first
         type-arg of a ``NeXusData[Component, Run]`` key) for f144-driven dynamic
         transforms. See
@@ -142,34 +138,26 @@ class StreamProcessorWorkflow(Workflow):
         *,
         context_keys: Mapping[str, sciline.typing.Key] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
-        aux_source_names: Mapping[str, str] | None = None,
     ) -> None:
         """Materialize the wrapped ``StreamProcessor`` from its inputs.
 
-        Injects the routing layer's per-job bindings — ``aux_source_names``
-        resolves aux-role wire names in ``dynamic_keys`` to on-disk stream names,
-        ``context_keys`` merge into the ``set_context`` parameters, and
-        ``chain_patch_bindings`` wire as f144-driven dynamic transforms — then
-        constructs the ``StreamProcessor``, baking them into the pruned/
-        precomputed graph. Building eagerly (rather than on first ``accumulate``)
-        keeps graph validation and the static-node precompute at job-creation
-        time.
+        Injects the routing layer's per-job bindings — ``context_keys`` merge
+        into the ``set_context`` parameters and ``chain_patch_bindings`` wire as
+        f144-driven dynamic transforms — then constructs the ``StreamProcessor``,
+        baking them into the pruned/precomputed graph. Building eagerly (rather
+        than on first ``accumulate``) keeps graph validation and the static-node
+        precompute at job-creation time.
 
         Idempotent: a second call is a no-op and must not supply bindings, since
         they could no longer take effect once the graph is built.
         """
         bindings = list(chain_patch_bindings)
         if self._stream_processor is not None:
-            if context_keys or bindings or aux_source_names:
+            if context_keys or bindings:
                 raise RuntimeError(
                     "Cannot inject bindings: the StreamProcessor is already built."
                 )
             return
-        if aux_source_names:
-            self._dynamic_keys = {
-                aux_source_names.get(name, name): key
-                for name, key in self._dynamic_keys.items()
-            }
         if context_keys:
             self.add_context_keys(context_keys)
         wire_dynamic_transforms(self, bindings)

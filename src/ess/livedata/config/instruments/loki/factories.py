@@ -197,11 +197,15 @@ def setup_factories(instrument: Instrument) -> None:
             out
         )
 
-    def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
+    def _dynamic_keys(
+        source_name: str, aux_source_names: dict[str, str]
+    ) -> dict[str, sciline.typing.Key]:
         return {
             source_name: NeXusData[NXdetector, SampleRun],
-            'incident_monitor': NeXusData[Incident, SampleRun],
-            'transmission_monitor': NeXusData[Transmission, SampleRun],
+            aux_source_names['incident_monitor']: NeXusData[Incident, SampleRun],
+            aux_source_names['transmission_monitor']: NeXusData[
+                Transmission, SampleRun
+            ],
         }
 
     _accumulators = (
@@ -249,7 +253,7 @@ def setup_factories(instrument: Instrument) -> None:
 
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys=_dynamic_keys(source_name),
+            dynamic_keys=_dynamic_keys(source_name, aux_source_names),
             target_keys=target_keys,
             accumulators=_accumulators,
         )

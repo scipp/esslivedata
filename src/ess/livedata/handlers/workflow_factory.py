@@ -40,11 +40,12 @@ class SupportsContext(Protocol):
     Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` defer building
     their graph so the routing layer (:meth:`WorkflowFactory.create`) can inject
     per-job bindings the factory does not know: context streams (motion/geometry/
-    ROI), f144-driven chain-patch transforms, and the rendered ``aux_source_names``
-    that resolve aux-role wire names to on-disk stream names. :meth:`build` takes
-    all three and materializes the workflow in one call, so the caller need not
-    sequence separate configuration steps and factories need not thread these
-    through their signature.
+    ROI) and f144-driven chain-patch transforms. :meth:`build` takes both and
+    materializes the workflow in one call, so the caller need not sequence
+    separate configuration steps and factories need not thread these through
+    their signature. (Aux-role resolution is not among these: factories key
+    ``dynamic_keys`` by on-disk stream name directly, via the
+    ``aux_source_names`` map passed to the factory.)
     """
 
     def build(
@@ -52,7 +53,6 @@ class SupportsContext(Protocol):
         *,
         context_keys: Mapping[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
-        aux_source_names: Mapping[str, str] | None = None,
     ) -> None: ...
 
 
@@ -410,7 +410,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             workflow.build(
                 context_keys=context_keys,
                 chain_patch_bindings=chain_patch_bindings,
-                aux_source_names=aux_source_names or {},
             )
         elif context_keys:
             raise TypeError(
