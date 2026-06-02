@@ -296,14 +296,14 @@ class DefaultPresenter(PresenterBase):
         """Create a DynamicMap that passes through pre-computed elements.
 
         Static styling is applied once on the DynamicMap (see
-        :meth:`Plotter._style_opts`) rather than per element on every tick.
+        :meth:`Plotter.style_opts`) rather than per element on every tick.
         """
 
         def passthrough(data):
             return data
 
         dmap = hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
-        return dmap.opts(*self._plotter._style_opts())
+        return dmap.opts(*self._plotter.style_opts())
 
 
 class StaticPresenter(PresenterBase):
@@ -691,7 +691,7 @@ class Plotter:
         """
         return iter(self._range_targets.items())
 
-    def _style_opts(self) -> list[hv.Options]:
+    def style_opts(self) -> list[hv.Options]:
         """Static HoloViews opts applied once on the presenter's DynamicMap.
 
         Hoisting styling here keeps ``compute()`` a pure data->element transform:
@@ -948,10 +948,10 @@ class LinePlotter(Plotter):
 
         return base
 
-    def _style_opts(self) -> list[hv.Options]:
+    def style_opts(self) -> list[hv.Options]:
         return [
             *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            *super()._style_opts(),
+            *super().style_opts(),
         ]
 
 
@@ -1050,18 +1050,18 @@ class ImagePlotter(Plotter):
         if targets:
             self._range_targets[data_key] = targets
 
-        # base_opts are declared once in _style_opts(); only the data-dependent clim
+        # base_opts are declared once in style_opts(); only the data-dependent clim
         # guard (log scale with all-NaN data) must be set per element here.
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
             return histogram.opts(clim=clim)
         return histogram
 
-    def _style_opts(self) -> list[hv.Options]:
+    def style_opts(self) -> list[hv.Options]:
         return [
             *_typed_opts(
                 (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
             ),
-            *super()._style_opts(),
+            *super().style_opts(),
         ]
 
 
@@ -1133,10 +1133,10 @@ class BarsPlotter(Plotter):
             label=label,
         )
 
-    def _style_opts(self) -> list[hv.Options]:
+    def style_opts(self) -> list[hv.Options]:
         return [
             hv.opts.Bars(**self._bars_opts, **self._sizing_opts),
-            *super()._style_opts(),
+            *super().style_opts(),
         ]
 
 
@@ -1310,9 +1310,9 @@ class Overlay1DPlotter(Plotter):
             return elements[0]
         return hv.Overlay(elements)
 
-    def _style_opts(self) -> list[hv.Options]:
+    def style_opts(self) -> list[hv.Options]:
         # Per-slice ``color`` stays on the elements in plot(); the rest is static.
         return [
             *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            *super()._style_opts(),
+            *super().style_opts(),
         ]

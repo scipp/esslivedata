@@ -98,7 +98,7 @@ class SlicerPresenter(PresenterBase):
 
     def _style_opts(self) -> list[hv.Options]:
         """Static styling declared once on the DynamicMap (see
-        :meth:`Plotter._style_opts`); the data-dependent clim stays per slice."""
+        :meth:`Plotter.style_opts`); the data-dependent clim stays per slice."""
         return _typed_opts(
             (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
         )
