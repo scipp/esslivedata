@@ -100,8 +100,8 @@ class ContextBinding:
     Two flavors share this record:
 
     - **Direct parameter.** ``workflow_key`` is an arbitrary Sciline key
-      (e.g. ``InstrumentAngle[SampleRun]``, ``ROIRectangleRequest``).
-      The stream value is fed straight into ``set_context``.
+      (e.g. ``InstrumentAngle[SampleRun]``). The stream value is fed
+      straight into ``set_context``.
     - **NXtransformations chain patch.** ``workflow_key`` is a
       :class:`~ess.livedata.config.value_log.ValueLog` subclass. The
       chain entry to patch is derived from :attr:`stream_name` (the
