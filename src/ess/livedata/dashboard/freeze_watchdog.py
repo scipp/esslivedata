@@ -76,6 +76,15 @@ class FreezeWatchdog:
         the buildup is visible in the journal long before any hard freeze.
     metrics_interval_seconds:
         Spacing between diagnostic metric log lines.
+    census_source:
+        Optional callable returning a heavyweight leak census (a single pass
+        over the live object graph). When provided it is logged every
+        ``census_interval_seconds`` as ``dashboard_leak_census``. The census
+        holds the GIL for the duration of its scan, so it runs at a much slower
+        cadence than the lightweight metrics. Used to identify *what* retains
+        the growing HoloViews custom-options store.
+    census_interval_seconds:
+        Spacing between leak census log lines.
     """
 
     def __init__(
@@ -89,6 +98,8 @@ class FreezeWatchdog:
         cpu_source: Callable[[], float] = _process_cpu_seconds,
         metrics_source: Callable[[], Mapping[str, object]] | None = None,
         metrics_interval_seconds: float | None = None,
+        census_source: Callable[[], Mapping[str, object]] | None = None,
+        census_interval_seconds: float | None = None,
     ) -> None:
         env = os.environ.get
         self._threshold = cpu_threshold_cores or float(
@@ -110,6 +121,11 @@ class FreezeWatchdog:
             env('LIVEDATA_WATCHDOG_METRICS_SECONDS', '60')
         )
         self._last_metrics = 0.0
+        self._census_source = census_source
+        self._census_interval = census_interval_seconds or float(
+            env('LIVEDATA_WATCHDOG_CENSUS_SECONDS', '600')
+        )
+        self._last_census = 0.0
         # The C-timer backstop fires if the daemon thread is itself starved for
         # this long (a native GIL hold). Comfortably longer than the sample
         # interval so it never fires during healthy operation.
@@ -160,6 +176,7 @@ class FreezeWatchdog:
             faulthandler.dump_traceback_later(self._backstop)
 
             self._maybe_log_metrics(now, cores)
+            self._maybe_log_census(now)
 
             if cores < self._threshold:
                 high_since = None
@@ -188,6 +205,20 @@ class FreezeWatchdog:
             logger.exception("dashboard_diagnostics_failed")
             return
         logger.info("dashboard_diagnostics", cpu_cores=round(cores, 2), **metrics)
+
+    def _maybe_log_census(self, now: float) -> None:
+        """Emit the heavyweight leak census at the configured (slow) cadence."""
+        if self._census_source is None:
+            return
+        if now - self._last_census < self._census_interval:
+            return
+        self._last_census = now
+        try:
+            census = dict(self._census_source())
+        except Exception:
+            logger.exception("dashboard_leak_census_failed")
+            return
+        logger.info("dashboard_leak_census", **census)
 
     def _dump(self, *, cores: float, stalled: float, dump: int) -> None:
         """Record the freeze and dump all thread stacks for diagnosis."""

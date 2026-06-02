@@ -24,6 +24,7 @@ from .data_service import DataService
 from .freeze_watchdog import FreezeWatchdog
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
+from .leak_census import collect_leak_census
 from .notification_queue import NotificationQueue
 from .orchestrator import Orchestrator
 from .plot_data_service import PlotDataService
@@ -120,7 +121,10 @@ class DashboardServices:
 
         # Self-capturing watchdog for CPU-spin freezes; also logs diagnostics
         # that track the slow state growth driving the gradual lag onset.
-        self._watchdog = FreezeWatchdog(metrics_source=_collect_diagnostics)
+        self._watchdog = FreezeWatchdog(
+            metrics_source=_collect_diagnostics,
+            census_source=collect_leak_census,
+        )
 
         # Setup all services
         self._setup_data_infrastructure()

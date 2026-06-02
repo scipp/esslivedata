@@ -124,3 +124,36 @@ def test_no_metrics_without_source() -> None:
     finally:
         wd.stop()
     # Nothing to assert beyond not raising; absence of a source is a no-op.
+
+
+def test_census_source_is_logged_periodically() -> None:
+    calls: list[int] = []
+
+    def census() -> dict[str, int]:
+        calls.append(len(calls))
+        return {'store_n': len(calls)}
+
+    wd = RecordingWatchdog(
+        sample_seconds=0.02,
+        census_interval_seconds=0.001,
+        cpu_source=lambda: 0.0,
+        census_source=census,
+    )
+    wd.start()
+    try:
+        _wait_until(lambda: len(calls) >= 3)
+    finally:
+        wd.stop()
+    assert len(calls) >= 3
+
+
+def test_no_census_without_source() -> None:
+    # Default (no census_source) must not attempt to run the census.
+    wd = RecordingWatchdog(
+        sample_seconds=0.02, census_interval_seconds=0.001, cpu_source=lambda: 0.0
+    )
+    wd.start()
+    try:
+        time.sleep(0.1)
+    finally:
+        wd.stop()
