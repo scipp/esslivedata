@@ -685,7 +685,7 @@ class LinePlotter(Plotter):
         """Create LinePlotter for the timeseries plotter, with downsampling on.
 
         Downsampling and update throttling live at the plotter rather than at
-        the extractor: the subscription stays a plain full-history pull, and
+        the extractor: the subscription still pulls the full-history, and
         per-plot config can change without re-subscribing.
         """
         instance = cls.from_display_params(params)
@@ -720,13 +720,12 @@ class LinePlotter(Plotter):
         latest_ns = _latest_time_ns(primary)
         if self._should_skip_for_throttle(latest_ns):
             return
-        ds = self._downsampling
         downsampled = {
             key: downsample_timeseries(
                 da,
-                period_seconds=ds.period_seconds,
-                recent_seconds=ds.recent_seconds,
-                floor_period_seconds=ds.floor_period_seconds,
+                period_seconds=self._downsampling.period_seconds,
+                recent_seconds=self._downsampling.recent_seconds,
+                floor_period_seconds=self._downsampling.floor_period_seconds,
             )
             for key, da in primary.items()
         }

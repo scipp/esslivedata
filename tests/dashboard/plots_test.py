@@ -2313,11 +2313,12 @@ class TestTimeseriesDownsamplingAndThrottle:
         )
         plotter = plots.LinePlotter.from_timeseries_params(params)
 
-        plotter.compute({'primary': {data_key: _make_timeseries_data_array(100)}})
+        data = _make_timeseries_data_array(100)
+        plotter.compute({'primary': {data_key: data}})
         # Calling compute() with the same data many times must not recompute.
         first_state = plotter.get_cached_state()
         for _ in range(10):
-            plotter.compute({'primary': {data_key: _make_timeseries_data_array(100)}})
+            plotter.compute({'primary': {data_key: data}})
         assert plotter.get_cached_state() is first_state
 
     def test_non_timeseries_factories_unchanged(self, data_key):

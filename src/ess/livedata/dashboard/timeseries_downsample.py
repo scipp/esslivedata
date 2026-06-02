@@ -60,10 +60,9 @@ def downsample_timeseries(
     :
         New DataArray with the same dims/coords structure but fewer points.
     """
-    if concat_dim not in data.dims:
+    if concat_dim not in data.dims or concat_dim not in data.coords:
         return data
-    n = data.sizes[concat_dim]
-    if n < 2 or concat_dim not in data.coords:
+    if data.sizes[concat_dim] < 2:
         return data
 
     times = data.coords[concat_dim].to(unit='ns', copy=False)
