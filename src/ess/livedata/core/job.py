@@ -274,6 +274,15 @@ class Job:
         """Every non-primary stream name this job consumes."""
         return self._input_streams
 
+    @property
+    def gating_streams(self) -> set[str]:
+        """Context stream names whose value must be available before running.
+
+        See :meth:`missing_context` and
+        :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        return self._gating_streams
+
     def missing_context(self, available: set[str]) -> set[str]:
         """
         Gating-stream names that have no value available yet.

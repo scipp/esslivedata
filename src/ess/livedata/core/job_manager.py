@@ -513,6 +513,27 @@ class JobManager:
                 self._job_states[job.job_id] = JobState.active
         return gated
 
+    def peek_gated_context_streams(self) -> set[str]:
+        """Context stream names of active jobs currently gated on context.
+
+        The orchestrator refills these from the preprocessor's context cache
+        each tick so that, when the final gating stream finally arrives, the
+        gate-opening batch carries *every* context value at once. Without this,
+        a context stream seen during the gated window (e.g. one chopper's
+        setpoint) is never re-presented and lands at ``set_context`` as the
+        essreduce ``None`` seed, crashing the workflow.
+
+        Steady-state (ungated) active jobs are excluded: refilling their cached
+        context every tick would re-fire ``set_context`` and force eager
+        downstream recompute on unchanged values. See ``peek_pending_streams``
+        and :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        names: set[str] = set()
+        for job in self.active_jobs:
+            if self._job_states.get(job.job_id) == JobState.pending_context:
+                names.update(job.gating_streams)
+        return names
+
     def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
         # Track primary data updates only after successful add, so that a
         # failed push does not trigger a finalize attempt on empty accumulators.

@@ -299,6 +299,73 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
     assert len(sink.messages) >= 1
 
 
+@pytest.mark.slow
+def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression: a context stream seen while gated must survive to finalize.
+
+    Bifrost qmap gates on two rotation context streams. When they arrive on
+    *separate* ticks, the first (``detector_tank_angle_r0``) is seen while the
+    job is still gated on the second (``rotation_stage``). The JobManager marks
+    it seen but the gated job is skipped, so its value never reaches
+    ``set_context`` on that tick. Unless the orchestrator re-presents it from
+    the preprocessor's context cache when the gate finally opens, it stays at
+    the essreduce ``None`` seed and the workflow crashes
+    (``'NoneType' object has no attribute 'ndim'``) — producing no output.
+
+    The sibling test publishes both streams in one tick and so never exercises
+    this path. See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+    """
+    caplog.set_level(logging.INFO)
+    app = make_reduction_app(instrument='bifrost')
+    sink = app.sink
+    service = app.service
+    workflow_id, spec = _get_workflow_from_registry('bifrost', 'qmap')
+
+    source_name = first_source_name['bifrost']
+    aux_source_names = (
+        spec.aux_sources.get_defaults() if spec.aux_sources is not None else {}
+    )
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id,
+        aux_source_names=aux_source_names,
+        job_id=_job_id(source_name),
+    )
+    app.publish_config_message(workflow_config)
+    service.step()
+    sink.messages.clear()
+
+    def _publish_rotation(device: str, time: int) -> None:
+        # The device synthesizer emits on the parent device name only once all
+        # three substreams have arrived in a tick.
+        for substream, value in (
+            ('target_value', 0.0),
+            ('idle_flag', 1),
+            ('value', 0.0),
+        ):
+            app.publish_log_message(
+                source_name=f'{device}/{substream}', time=time, value=value
+            )
+
+    # Tick 1: only the first rotation context arrives. The job is still gated
+    # on the second, so this value is seen-but-not-delivered.
+    _publish_rotation('detector_tank_angle_r0', time=4)
+    service.step()
+    assert len(sink.messages) == 0
+
+    # Tick 2: the second rotation context arrives and the gate opens. The first
+    # context must be refilled from the cache so both reach set_context at once.
+    _publish_rotation('rotation_stage', time=5)
+    service.step()
+
+    # Tick 3: events now produce output — proving neither context landed as None.
+    sink.messages.clear()
+    app.publish_events(size=2000, time=6)
+    service.step()
+    assert len(sink.messages) >= 1
+
+
 def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     app = make_reduction_app(instrument='dummy')

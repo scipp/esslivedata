@@ -2264,3 +2264,61 @@ class TestContextStreamGate:
         assert "stream_b" in status.warning_message
         assert "stream_c" in status.warning_message
         assert "stream_a" not in status.warning_message
+
+    def test_peek_gated_context_streams_exposes_gated_jobs_context(
+        self, fake_job_factory
+    ):
+        """A gated job's full context is exposed for cache refill.
+
+        While a job is gated, the orchestrator must refill *all* its context
+        streams from the preprocessor cache each tick — including ones already
+        seen — so the gate-opening batch carries every value at once. A value
+        seen during the gated window but not re-presented would reach
+        ``set_context`` as the essreduce ``None`` seed and crash at finalize.
+        """
+        manager = JobManager(fake_job_factory)
+        config = _make_config(
+            "src",
+            name="multi_aux",
+            aux_source_names={"a": "stream_a", "b": "stream_b"},
+        )
+        job_id = manager.schedule_job(config)
+
+        # No active jobs yet: nothing to refill.
+        assert manager.peek_gated_context_streams() == set()
+
+        # Tick 1: stream_a arrives, stream_b missing -> gated.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="stream_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+        # Both context streams are exposed, so the already-seen stream_a is
+        # re-presented on the tick stream_b finally arrives.
+        assert manager.peek_gated_context_streams() == {"stream_a", "stream_b"}
+
+        # Tick 2: stream_b arrives (orchestrator would also refill stream_a) -> open.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(200),
+                end_time=Timestamp.from_ns(300),
+                data={
+                    StreamId(name="stream_a"): sc.scalar(10.0),
+                    StreamId(name="stream_b"): sc.scalar(20.0),
+                },
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        # Ungated active jobs are not refilled (avoids eager set_context recompute).
+        assert manager.peek_gated_context_streams() == set()
+        # Both context values reached the workflow in one batch.
+        processor = fake_job_factory.processors[job_id]
+        assert "stream_a" in processor.data
+        assert "stream_b" in processor.data

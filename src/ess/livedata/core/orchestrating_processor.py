@@ -242,6 +242,15 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # once). Lets the empty-batch branch run jobs from cached context
         # alone.
         needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
+        # Active jobs still gated on context need their already-seen context
+        # refilled from the cache so the gate-opening batch carries every value
+        # at once (otherwise a context stream seen during the gated window is
+        # never re-presented and finalizes as None). Only on non-empty ticks:
+        # the gate opens only when a new context stream arrives (a non-empty
+        # batch), and refilling on idle ticks would defeat the idle-sleep below
+        # and spin the CPU while a job waits on context that never comes.
+        if message_batch is not None:
+            needed |= self._job_manager.peek_gated_context_streams()
         missing = needed - {s.name for s in workflow_data.data}
         if missing:
             workflow_data.data.update(self._message_preprocessor.get_context(missing))
