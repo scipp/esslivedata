@@ -135,6 +135,9 @@ class RectanglesReadbackPlotter(Plotter):
             show_legend=False,
         )
 
+    def _style_opts(self) -> list[hv.Options]:
+        return [hv.opts.Rectangles(**self._sizing_opts), *super()._style_opts()]
+
     def _to_hv_data(
         self, rois: dict[int, RectangleROI]
     ) -> list[tuple[float, float, float, float, str]]:
@@ -238,6 +241,9 @@ class PolygonsReadbackPlotter(Plotter):
             line_width=style.line_width,
             show_legend=False,
         )
+
+    def _style_opts(self) -> list[hv.Options]:
+        return [hv.opts.Polygons(**self._sizing_opts), *super()._style_opts()]
 
     def _to_hv_data(self, rois: dict[int, PolygonROI]) -> list[dict[str, Any]]:
         """

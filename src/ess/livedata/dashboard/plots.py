@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import holoviews as hv
 import numpy as np
@@ -185,6 +185,16 @@ def _identity(x: str) -> str:
     return x
 
 
+def _typed_opts(element_types: Iterable[type], **options: Any) -> list[hv.Options]:
+    """Build per-element-type ``Options`` for declaring style once on a DynamicMap.
+
+    ``responsive`` and most plot options are invalid on ``Layout``, so styling
+    hoisted onto a DynamicMap must be keyed to concrete leaf element types rather
+    than applied generically.
+    """
+    return [getattr(hv.opts, t.__name__)(**options) for t in element_types]
+
+
 @dataclass(frozen=True)
 class TitleResolver:
     """Resolves raw source and output names to human-readable display titles.
@@ -283,12 +293,17 @@ class DefaultPresenter(PresenterBase):
     """
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
-        """Create a DynamicMap that passes through pre-computed elements."""
+        """Create a DynamicMap that passes through pre-computed elements.
+
+        Static styling is applied once on the DynamicMap (see
+        :meth:`Plotter._style_opts`) rather than per element on every tick.
+        """
 
         def passthrough(data):
             return data
 
-        return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
+        dmap = hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
+        return dmap.opts(*self._plotter._style_opts())
 
 
 class StaticPresenter(PresenterBase):
@@ -587,29 +602,23 @@ class Plotter:
             self._range_targets = {}
             plots = [
                 hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                    text_align='center', text_baseline='middle'
+                    text_align='center', text_baseline='middle', **self._sizing_opts
                 )
             ]
 
         if len(plots) == 0:
             plots = [
                 hv.Text(0.5, 0.5, 'No data').opts(
-                    text_align='center', text_baseline='middle'
+                    text_align='center', text_baseline='middle', **self._sizing_opts
                 )
             ]
 
-        plots = [self._apply_generic_options(p) for p in plots]
-
         if self.layout_params.combine_mode == 'overlay':
-            result = hv.Overlay(plots).opts(shared_axes=True)
+            result = hv.Overlay(plots)
         elif len(plots) == 1:
             result = plots[0]
         else:
-            result = (
-                hv.Layout(plots)
-                .opts(shared_axes=False)
-                .cols(self.layout_params.layout_columns)
-            )
+            result = hv.Layout(plots).cols(self.layout_params.layout_columns)
 
         # Add time interval and lag indicator as plot title
         time_info = _compute_time_info(data)
@@ -682,9 +691,16 @@ class Plotter:
         """
         return iter(self._range_targets.items())
 
-    def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
-        """Apply generic options like aspect ratio to a plot element."""
-        return plot_element.opts(**self._sizing_opts)
+    def _style_opts(self) -> list[hv.Options]:
+        """Static HoloViews opts applied once on the presenter's DynamicMap.
+
+        Hoisting styling here keeps ``compute()`` a pure data->element transform:
+        the per-tick build emits bare elements and styling is declared once at
+        render time, rather than minting an entry in the process-global option
+        store for every element on every tick. Subclasses extend this with opts
+        for their leaf element types; the base provides the container-level opts.
+        """
+        return [hv.opts.Overlay(shared_axes=True), hv.opts.Layout(shared_axes=False)]
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
@@ -715,6 +731,15 @@ _LINE1D_ELEMENT: dict[str, type] = {
     'histogram': hv.Histogram,
 }
 _LINE1D_HISTOGRAM_FALLBACK = 'line'
+# Every leaf element type a 1-D line plot may render (base modes plus error
+# displays), for declaring style opts once on the DynamicMap.
+_LINE1D_LEAF_ELEMENTS: tuple[type, ...] = (
+    hv.Curve,
+    hv.Scatter,
+    hv.Histogram,
+    hv.ErrorBars,
+    hv.Spread,
+)
 
 
 def _resolve_line1d_mode(
@@ -907,10 +932,8 @@ class LinePlotter(Plotter):
         converter = HvConverter1d(
             da, value_label=output_display_name, dim_label=dim_label
         )
-        opts = dict(self._base_opts)
-
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
-        base = base_method(label=label).opts(**opts)
+        base = base_method(label=label)
 
         if da.variances is not None and self._errors != 'none':
             if mode == 'histogram':
@@ -921,13 +944,15 @@ class LinePlotter(Plotter):
                     dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-            error_element = error_method(label=label).opts(**opts, **self._sizing_opts)
-            # Apply sizing opts to child elements individually. Bokeh needs
-            # responsive/aspect on each element to size the figure correctly;
-            # applying them only to the composite Overlay is not sufficient.
-            return base.opts(**self._sizing_opts) * error_element
+            return base * error_method(label=label)
 
         return base
+
+    def _style_opts(self) -> list[hv.Options]:
+        return [
+            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
+            *super()._style_opts(),
+        ]
 
 
 class ImagePlotter(Plotter):
@@ -1025,11 +1050,19 @@ class ImagePlotter(Plotter):
         if targets:
             self._range_targets[data_key] = targets
 
-        opts = dict(self._base_opts)
-        # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
+        # base_opts are declared once in _style_opts(); only the data-dependent clim
+        # guard (log scale with all-NaN data) must be set per element here.
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
-            opts['clim'] = clim
-        return histogram.opts(**opts)
+            return histogram.opts(clim=clim)
+        return histogram
+
+    def _style_opts(self) -> list[hv.Options]:
+        return [
+            *_typed_opts(
+                (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
+            ),
+            *super()._style_opts(),
+        ]
 
 
 class BarsPlotter(Plotter):
@@ -1055,6 +1088,12 @@ class BarsPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._horizontal = horizontal
+        self._bars_opts: dict[str, Any] = {
+            'invert_axes': horizontal,
+            'show_legend': False,
+            'toolbar': None,
+            'yrotation' if horizontal else 'xrotation': 45 if horizontal else 25,
+        }
 
     @classmethod
     def from_params(cls, params: PlotParamsBars):
@@ -1087,18 +1126,18 @@ class BarsPlotter(Plotter):
         vdim = hv.Dimension(
             data_key.output_name or 'values', label=vdim_label, unit=unit
         )
-        bars = hv.Bars(
+        return hv.Bars(
             [(bar_label, value)],
             kdims=['source'],
             vdims=[vdim],
             label=label,
         )
-        opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
-        if self._horizontal:
-            opts['yrotation'] = 45
-        else:
-            opts['xrotation'] = 25
-        return cast(hv.Bars, bars.opts(**opts))
+
+    def _style_opts(self) -> list[hv.Options]:
+        return [
+            hv.opts.Bars(**self._bars_opts, **self._sizing_opts),
+            *super()._style_opts(),
+        ]
 
 
 class Overlay1DPlotter(Plotter):
@@ -1211,7 +1250,7 @@ class Overlay1DPlotter(Plotter):
         slice_size = data.sizes[slice_dim]
 
         if slice_size == 0:
-            return hv.Curve([]).opts(**self._base_opts)
+            return hv.Curve([])
 
         actual_mode, plot_data = _resolve_line1d_mode(
             self._mode, data, dim=data.dims[1]
@@ -1245,7 +1284,7 @@ class Overlay1DPlotter(Plotter):
                 slice_data, value_label=output_display_name, dim_label=dim_label
             )
             base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
-            base = base_method(label=curve_label).opts(color=color, **self._base_opts)
+            base = base_method(label=curve_label).opts(color=color)
 
             if slice_data.variances is not None and self._errors != 'none':
                 if use_histogram:
@@ -1261,16 +1300,19 @@ class Overlay1DPlotter(Plotter):
                         mid, value_label=output_display_name, dim_label=dim_label
                     )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-                error_el = error_method(label=curve_label).opts(
-                    color=color,
-                    **self._base_opts,
-                    **self._sizing_opts,
-                )
-                elements.append(base.opts(**self._sizing_opts))
+                error_el = error_method(label=curve_label).opts(color=color)
+                elements.append(base)
                 elements.append(error_el)
             else:
-                elements.append(base.opts(**self._sizing_opts))
+                elements.append(base)
 
         if len(elements) == 1:
             return elements[0]
-        return hv.Overlay(elements).opts(shared_axes=True)
+        return hv.Overlay(elements)
+
+    def _style_opts(self) -> list[hv.Options]:
+        # Per-slice ``color`` stays on the elements in plot(); the rest is static.
+        return [
+            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
+            *super()._style_opts(),
+        ]
