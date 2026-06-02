@@ -34,7 +34,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import structlog
 
@@ -68,6 +68,14 @@ class FreezeWatchdog:
     cpu_source:
         Callable returning cumulative process CPU seconds. Injectable for
         testing; defaults to :func:`_process_cpu_seconds`.
+    metrics_source:
+        Optional callable returning a mapping of diagnostic metrics. When
+        provided, the metrics are logged every ``metrics_interval_seconds`` as
+        ``dashboard_diagnostics``. Used to track slow-growing state (e.g. the
+        HoloViews custom-options store) that drives the gradual lag onset, so
+        the buildup is visible in the journal long before any hard freeze.
+    metrics_interval_seconds:
+        Spacing between diagnostic metric log lines.
     """
 
     def __init__(
@@ -79,6 +87,8 @@ class FreezeWatchdog:
         dump_interval_seconds: float | None = None,
         max_dumps: int | None = None,
         cpu_source: Callable[[], float] = _process_cpu_seconds,
+        metrics_source: Callable[[], Mapping[str, object]] | None = None,
+        metrics_interval_seconds: float | None = None,
     ) -> None:
         env = os.environ.get
         self._threshold = cpu_threshold_cores or float(
@@ -95,6 +105,11 @@ class FreezeWatchdog:
         )
         self._max_dumps = max_dumps or int(env('LIVEDATA_WATCHDOG_MAX_DUMPS', '10'))
         self._cpu_source = cpu_source
+        self._metrics_source = metrics_source
+        self._metrics_interval = metrics_interval_seconds or float(
+            env('LIVEDATA_WATCHDOG_METRICS_SECONDS', '60')
+        )
+        self._last_metrics = 0.0
         # The C-timer backstop fires if the daemon thread is itself starved for
         # this long (a native GIL hold). Comfortably longer than the sample
         # interval so it never fires during healthy operation.
@@ -144,6 +159,8 @@ class FreezeWatchdog:
             faulthandler.cancel_dump_traceback_later()
             faulthandler.dump_traceback_later(self._backstop)
 
+            self._maybe_log_metrics(now, cores)
+
             if cores < self._threshold:
                 high_since = None
                 continue
@@ -157,6 +174,20 @@ class FreezeWatchdog:
             dumps += 1
             last_dump = now
             self._dump(cores=cores, stalled=stalled, dump=dumps)
+
+    def _maybe_log_metrics(self, now: float, cores: float) -> None:
+        """Emit injected diagnostic metrics at the configured cadence."""
+        if self._metrics_source is None:
+            return
+        if now - self._last_metrics < self._metrics_interval:
+            return
+        self._last_metrics = now
+        try:
+            metrics = dict(self._metrics_source())
+        except Exception:
+            logger.exception("dashboard_diagnostics_failed")
+            return
+        logger.info("dashboard_diagnostics", cpu_cores=round(cores, 2), **metrics)
 
     def _dump(self, *, cores: float, stalled: float, dump: int) -> None:
         """Record the freeze and dump all thread stacks for diagnosis."""

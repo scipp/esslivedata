@@ -39,6 +39,26 @@ from .workflow_controller import WorkflowController
 logger = structlog.get_logger(__name__)
 
 
+def _collect_diagnostics() -> dict[str, object]:
+    """Process-health metrics for the freeze diagnostics log.
+
+    ``hv_custom_options`` is the size of the process-global HoloViews
+    custom-options store. Per-recompute cost scales with it (``id_offset`` does
+    an O(N) scan over its keys on every ``.opts()`` call), so a monotonic climb
+    here is the signature of the leak that drives the gradual lag. Thread count
+    and GC stats corroborate slow state growth.
+    """
+    import gc
+
+    from holoviews.core.options import Store
+
+    return {
+        'hv_custom_options': len(Store._custom_options.get('bokeh', {})),
+        'threads': threading.active_count(),
+        'gc_gen2_collections': gc.get_stats()[2]['collections'],
+    }
+
+
 class DashboardServices:
     """
     Manages dashboard service setup and dependencies.
@@ -98,8 +118,9 @@ class DashboardServices:
         self._stop_event = threading.Event()
         self._update_interval = 0.2  # seconds
 
-        # Self-capturing watchdog for CPU-spin freezes
-        self._watchdog = FreezeWatchdog()
+        # Self-capturing watchdog for CPU-spin freezes; also logs diagnostics
+        # that track the slow state growth driving the gradual lag onset.
+        self._watchdog = FreezeWatchdog(metrics_source=_collect_diagnostics)
 
         # Setup all services
         self._setup_data_infrastructure()

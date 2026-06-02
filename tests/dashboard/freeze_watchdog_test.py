@@ -89,3 +89,38 @@ def test_stop_is_idempotent_and_joins() -> None:
     wd.start()
     wd.stop()
     wd.stop()  # second stop must not raise
+
+
+def test_metrics_source_is_logged_periodically() -> None:
+    calls: list[int] = []
+
+    def metrics() -> dict[str, int]:
+        calls.append(len(calls))
+        return {'hv_custom_options': len(calls)}
+
+    # Idle CPU (never dumps); metrics still emitted on the sample cadence.
+    wd = RecordingWatchdog(
+        sample_seconds=0.02,
+        metrics_interval_seconds=0.001,
+        cpu_source=lambda: 0.0,
+        metrics_source=metrics,
+    )
+    wd.start()
+    try:
+        _wait_until(lambda: len(calls) >= 3)
+    finally:
+        wd.stop()
+    assert len(calls) >= 3
+
+
+def test_no_metrics_without_source() -> None:
+    # Default (no metrics_source) must not attempt to log diagnostics.
+    wd = RecordingWatchdog(
+        sample_seconds=0.02, metrics_interval_seconds=0.001, cpu_source=lambda: 0.0
+    )
+    wd.start()
+    try:
+        time.sleep(0.1)
+    finally:
+        wd.stop()
+    # Nothing to assert beyond not raising; absence of a source is a no-op.
