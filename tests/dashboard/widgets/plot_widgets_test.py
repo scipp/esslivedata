@@ -150,7 +150,9 @@ class TestGetPlotCellDisplayInfo:
 _GEO = CellGeometry(row=0, col=0, row_span=1, col_span=1)
 
 
-def _make_layer(workflow_id, source_names, view_name='result', plot_name='lines'):
+def _make_layer(
+    workflow_id, source_names, view_name='image', plot_name='lines', params=None
+):
     from uuid import uuid4
 
     config = PlotConfig(
@@ -162,65 +164,165 @@ def _make_layer(workflow_id, source_names, view_name='result', plot_name='lines'
             )
         },
         plot_name=plot_name,
+        params=params if params is not None else _FakeParams(),
+    )
+    return Layer(layer_id=LayerId(uuid4()), config=config)
+
+
+def _make_static_layer(name, plot_name='rectangle'):
+    """A static overlay: single primary source with empty source_names."""
+    from uuid import uuid4
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=WorkflowId(instrument='test', name='static', version=1),
+                source_names=[],
+                view_name=name,
+            )
+        },
+        plot_name=plot_name,
         params=_FakeParams(),
     )
     return Layer(layer_id=LayerId(uuid4()), config=config)
 
 
+class _XYOutputs(WorkflowOutputsBase):
+    image: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['x'], shape=[0], unit='counts'),
+            coords={'x': sc.arange('x', 0, unit='m')},
+        ),
+        title='Image',
+    )
+    roi: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['x'], shape=[0], unit='counts'),
+            coords={'x': sc.arange('x', 0, unit='m')},
+        ),
+        title='ROI',
+    )
+
+
 class TestDeriveCellTitle:
     @staticmethod
-    def _wf():
-        return WorkflowId(instrument='test', name='wf', version=1)
+    def _wf(name='wf'):
+        return WorkflowId(instrument='test', name=name, version=1)
 
-    def test_shared_single_source_uses_source_title(self) -> None:
+    @staticmethod
+    def _registry(wf):
+        spec = WorkflowSpec(
+            instrument='test',
+            name=wf.name,
+            version=1,
+            title='Detector XY Projection',
+            description='D',
+            outputs=_XYOutputs,
+            params=None,
+            source_names=['Front Right'],
+            group=REDUCTION,
+        )
+        return {wf: spec}
+
+    def test_single_layer_uses_full_display_title(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['Front Right'])])
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection &rarr; Image (Front Right)'
+        )
+
+    def test_shared_workflow_and_source_varying_output_drops_output(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
-            layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s1'])],
+            layers=[
+                _make_layer(wf, ['Front Right'], view_name='image'),
+                _make_layer(wf, ['Front Right'], view_name='roi'),
+            ],
         )
-        title = derive_cell_title(cell, {}, get_source_title=lambda s: f'Title:{s}')
-        assert title == 'Title:s1'
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection (Front Right)'
+        )
 
-    def test_shared_common_among_multi_source_layers(self) -> None:
+    def test_shared_output_multi_layer_flags_extra_layers(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
-            layers=[_make_layer(wf, ['s1', 's2']), _make_layer(wf, ['s1', 's3'])],
+            layers=[
+                _make_layer(wf, ['Front Right'], view_name='image'),
+                _make_layer(wf, ['Front Right'], view_name='image'),
+            ],
         )
-        assert derive_cell_title(cell, {}) == 's1'
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection &rarr; Image (Front Right) (+1 more)'
+        )
 
-    def test_single_layer_single_source_uses_source(self) -> None:
-        cell = PlotCell(geometry=_GEO, layers=[_make_layer(self._wf(), ['s1'])])
-        assert derive_cell_title(cell, {}) == 's1'
+    def test_source_title_callback_applied(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['s1'])])
+        title = derive_cell_title(
+            cell, self._registry(wf), get_source_title=lambda s: f'Title:{s}'
+        )
+        assert title == 'Detector XY Projection &rarr; Image (Title:s1)'
 
-    def test_disjoint_sources_multi_layer_uses_first_layer_title(self) -> None:
+    def test_varying_source_is_dropped(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
             layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s2'])],
         )
-        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, {})
-        assert derive_cell_title(cell, {}) == f'{first_title} (+1 more layer)'
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection &rarr; Image (+1 more)'
+        )
 
-    def test_three_disjoint_layers_pluralizes_suffix(self) -> None:
+    def test_single_layer_multi_source_drops_source(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['s1', 's2'])])
+        title = derive_cell_title(cell, self._registry(wf))
+        assert title == 'Detector XY Projection &rarr; Image'
+        assert 'sources' not in title
+
+    def test_shared_window_is_shown(self) -> None:
+        wf = self._wf()
+        params = _FakeParams(window=WindowParams(mode=WindowMode.since_start))
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['Front Right'], params=params)],
+        )
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection &rarr; Image (Front Right, since run start)'
+        )
+
+    def test_multiple_workflows_fall_back_to_first_layer(self) -> None:
+        wf_a = self._wf('a')
+        wf_b = self._wf('b')
+        registry = {**self._registry(wf_a), **self._registry(wf_b)}
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf_a, ['Front Right']), _make_layer(wf_b, ['s2'])],
+        )
+        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, registry)
+        assert derive_cell_title(cell, registry) == f'{first_title} (+1 more)'
+
+    def test_static_layers_excluded_from_derivation(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
-            layers=[
-                _make_layer(wf, ['s1']),
-                _make_layer(wf, ['s2']),
-                _make_layer(wf, ['s3']),
-            ],
+            layers=[_make_layer(wf, ['Front Right']), _make_static_layer('Box')],
         )
-        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, {})
-        assert derive_cell_title(cell, {}) == f'{first_title} (+2 more layers)'
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection &rarr; Image (Front Right)'
+        )
 
-    def test_single_layer_multi_source_falls_back_to_display_title(self) -> None:
-        cell = PlotCell(
-            geometry=_GEO,
-            layers=[_make_layer(self._wf(), ['s1', 's2'], view_name='current')],
-        )
-        assert '2 sources' in derive_cell_title(cell, {})
+    def test_only_static_layers_uses_first_static_title(self) -> None:
+        cell = PlotCell(geometry=_GEO, layers=[_make_static_layer('Box')])
+        assert derive_cell_title(cell, {}) == 'Rectangle &rarr; Box'
 
     def test_empty_cell_returns_empty(self) -> None:
         cell = PlotCell(geometry=_GEO, layers=[])
