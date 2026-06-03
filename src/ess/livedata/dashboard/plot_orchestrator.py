@@ -946,7 +946,6 @@ class PlotOrchestrator:
     def _run_compute(
         self,
         layer_id: LayerId,
-        plotter: Any,
         data: dict[str, dict[ResultKey, Any]],
     ) -> None:
         """
@@ -1030,7 +1029,7 @@ class PlotOrchestrator:
             # Static overlay: create plot immediately without subscription.
             plotter = self._create_and_register_plotter(layer_id, config)
             if plotter is not None:
-                self._run_compute(layer_id, plotter, {})
+                self._run_compute(layer_id, {})
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
             self._persist_to_store()
@@ -1110,7 +1109,7 @@ class PlotOrchestrator:
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(layer_id, plotter, data),
+                on_data=lambda data: self._run_compute(layer_id, data),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:

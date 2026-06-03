@@ -172,12 +172,15 @@ class LayerStateMachine:
             return
 
         self._state = LayerState.WAITING_FOR_DATA
-        self._plotter = plotter
         self._error_message = None
         self._version += 1
-        # Drop any input stashed for a previous plotter; the new plotter's
-        # subscription will repopulate when its first delta arrives.
+        # Swap the plotter and drop any input stashed for the previous plotter
+        # atomically under the gate lock. Otherwise a concurrent 0→1
+        # set_active could flush the old plotter's pending input through the
+        # new plotter. The new plotter's subscription repopulates the stash
+        # when its first delta arrives.
         with self._gate_lock:
+            self._plotter = plotter
             self._pending = None
             self._dirty = False
 
