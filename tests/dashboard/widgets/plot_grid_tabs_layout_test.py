@@ -46,12 +46,17 @@ hv.extension('bokeh')
 class FakePlotter:
     """Minimal plotter whose cached state can be set to any HoloViews object."""
 
-    def __init__(self, cached_state=None):
+    def __init__(self, cached_state=None, time_bounds=None):
         self._cached_state = cached_state
+        self._time_bounds = time_bounds
         self._presenters: list[FakePresenter] = []
 
     def get_cached_state(self):
         return self._cached_state
+
+    @property
+    def time_bounds(self):
+        return self._time_bounds
 
     def has_cached_state(self):
         return self._cached_state is not None
@@ -243,3 +248,112 @@ class TestPollHandlesLayoutPlotters:
             assert session_layer.last_seen_version != new_version
         finally:
             plot_grid_tabs._get_session_composed_plot = original
+
+
+class TestFreshnessIndicator:
+    """The titlebar freshness pane reflects the plotter's time bounds."""
+
+    def test_poll_populates_freshness_pane(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """A poll on the active grid fills the cell's freshness pane with lag."""
+        import time
+
+        from ess.livedata.core.timestamp import Timestamp
+        from ess.livedata.dashboard.plots import TimeBounds
+
+        now_ns = time.time_ns()
+        bounds = TimeBounds(
+            min_end=Timestamp.from_ns(now_ns - int(2e9)),
+            min_start=Timestamp.from_ns(now_ns - int(3e9)),
+            max_end=Timestamp.from_ns(now_ns - int(1e9)),
+        )
+        plotter = FakePlotter(cached_state=_make_layout(), time_bounds=bounds)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+
+        plot_grid_tabs._poll_for_plot_updates()
+
+        panes = list(plot_grid_tabs._cell_freshness_panes.values())
+        assert len(panes) == 1
+        # Pill styling present, with the full range in the hover tooltip.
+        assert 'border-radius' in panes[0].object
+        assert 'Lag:' in panes[0].object
+
+        # The per-layer time pane shows the full range + lag.
+        layer_panes = list(plot_grid_tabs._layer_time_panes.values())
+        assert len(layer_panes) == 1
+        assert 'Lag:' in layer_panes[0].object
+
+    def test_multilayer_each_layer_pane_populated(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """Both layers in a multi-layer cell get their time pane populated."""
+        import time
+
+        from ess.livedata.core.timestamp import Timestamp
+        from ess.livedata.dashboard.plots import TimeBounds
+
+        now_ns = time.time_ns()
+        bounds = TimeBounds(
+            min_end=Timestamp.from_ns(now_ns - int(2e9)),
+            min_start=Timestamp.from_ns(now_ns - int(3e9)),
+            max_end=Timestamp.from_ns(now_ns - int(1e9)),
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+
+        cell_id = CellId(uuid4())
+        l1, l2 = LayerId(uuid4()), LayerId(uuid4())
+
+        def cfg(view):
+            return PlotConfig(
+                data_sources={
+                    'primary': DataSourceConfig(
+                        workflow_id=WorkflowId(instrument='test', name='wf', version=1),
+                        source_names=['src'],
+                        view_name=view,
+                    )
+                },
+                plot_name='image',
+                params=_Params(),
+            )
+
+        cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            layers=[
+                Layer(layer_id=l1, config=cfg('a')),
+                Layer(layer_id=l2, config=cfg('b')),
+            ],
+        )
+        plot_orchestrator.peek_grid(grid_id).cells[cell_id] = cell
+        for lid in (l1, l2):
+            plot_data_service.job_started(
+                lid, FakePlotter(cached_state=_make_layout(), time_bounds=bounds)
+            )
+            plot_data_service.data_arrived(lid)
+
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert 'Lag:' in plot_grid_tabs._layer_time_panes[l1].object
+        assert 'Lag:' in plot_grid_tabs._layer_time_panes[l2].object
+        # The cell pill must still show with two layers.
+        pill_panes = list(plot_grid_tabs._cell_freshness_panes.values())
+        assert len(pill_panes) == 1
+        assert 'border-radius' in pill_panes[0].object
+
+    def test_hidden_grid_does_not_update_freshness(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """Freshness is only refreshed for the active grid tab."""
+        plotter = FakePlotter(cached_state=_make_layout(), time_bounds=None)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        # Leave a non-plot static tab active so the grid is hidden.
+        plot_grid_tabs.tabs.active = 0
+        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+
+        plot_grid_tabs._poll_for_plot_updates()
+
+        for pane in plot_grid_tabs._cell_freshness_panes.values():
+            assert pane.object in ('', None)

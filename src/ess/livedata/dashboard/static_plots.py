@@ -110,6 +110,11 @@ class StaticPlotter(ABC):
         """Get the last computed state, or None if not yet computed."""
         return self._cached_state
 
+    @property
+    def time_bounds(self) -> None:
+        """Static plots carry no time data, so they never contribute lag."""
+        return None
+
     def has_cached_state(self) -> bool:
         """Check if state has been computed."""
         return self._cached_state is not None

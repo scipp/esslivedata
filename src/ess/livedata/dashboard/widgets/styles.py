@@ -42,6 +42,21 @@ class Colors:
     TAB_ACTIVE_BG = "#e8f4f8"
 
 
+class FreshnessPill:
+    """Color bands for the titlebar freshness/lag pill, by data staleness.
+
+    Each band is ``(background, text, dot)``. Thresholds are in seconds of lag
+    (now minus the oldest data's end time).
+    """
+
+    FRESH = ("rgba(40, 167, 69, 0.16)", "#1e7e34", StatusColors.SUCCESS)
+    STALE = ("rgba(255, 193, 7, 0.18)", "#946c00", StatusColors.WARNING)
+    OLD = ("rgba(220, 53, 69, 0.16)", "#b21f2d", StatusColors.ERROR)
+
+    FRESH_MAX_SECONDS = 5.0
+    STALE_MAX_SECONDS = 30.0
+
+
 class ErrorBox:
     """Colors for error alert boxes (Bootstrap-style danger alert)."""
 

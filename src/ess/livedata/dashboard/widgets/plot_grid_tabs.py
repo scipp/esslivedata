@@ -17,6 +17,7 @@ import panel as pn
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.core.timestamp import Timestamp
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..data_roles import PRIMARY
@@ -36,6 +37,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
+from ..plots import TimeBounds, format_time_info, merge_time_bounds
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
@@ -44,8 +46,12 @@ from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import (
     create_cell_titlebar,
+    create_freshness_pane,
+    create_layer_time_pane,
     create_layer_toolbar,
     derive_cell_title,
+    format_freshness_html,
+    format_layer_time_html,
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
@@ -162,6 +168,17 @@ class PlotGridTabs:
         # previous controller (with its now-detached tools) is garbage
         # collected. Cleaned up when the cell goes away or its layers do.
         self._session_autoscale_controllers: dict[CellId, CellAutoscaleController] = {}
+
+        # Per-session, per-cell freshness/lag indicator panes in the titlebar.
+        # Updated in place via ``.object`` on each poll where new data arrived,
+        # keeping the lag display off the HoloViews plot title. Recreated on cell
+        # rebuild; swept when the cell goes away.
+        self._cell_freshness_panes: dict[CellId, pn.pane.HTML] = {}
+
+        # Per-session, per-layer time-range panes in the layer toolbars (revealed
+        # by the toolbar-visibility toggle). Updated in place via ``.object``;
+        # recreated on cell rebuild, swept when the layer goes away.
+        self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 3 if system_status_widget else 2
@@ -622,6 +639,9 @@ class PlotGridTabs:
         for cid in list(self._session_autoscale_controllers):
             if cid not in active_cell_ids:
                 self._drop_autoscale_controller(cid)
+        for cid in list(self._cell_freshness_panes):
+            if cid not in active_cell_ids:
+                del self._cell_freshness_panes[cid]
 
     def _drop_autoscale_controller(self, cell_id: CellId) -> None:
         """Pop the controller for ``cell_id`` and dispose it (if any).
@@ -869,12 +889,16 @@ class PlotGridTabs:
             source_config = overlay_sources[(view_name, plotter_name)]
             self._create_overlay_layer(cell_id, source_config, view_name, plotter_name)
 
+        freshness_pane = create_freshness_pane()
+        self._cell_freshness_panes[cell_id] = freshness_pane
+
         return create_cell_titlebar(
             title=title,
             has_user_title=has_user_title,
             on_edit_title_callback=on_edit_title,
             toolbars_visible=cell_id in self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
+            freshness_pane=freshness_pane,
             on_add_callback=on_add,
             on_overlay_selected=on_overlay,
             available_overlays=overlay_specs,
@@ -940,12 +964,16 @@ class PlotGridTabs:
 
                 return on_gear
 
+            time_pane = create_layer_time_pane()
+            self._layer_time_panes[layer_id] = time_pane
+
             toolbar = create_layer_toolbar(
                 on_gear_callback=make_gear_callback(layer_id),
                 on_close_callback=make_close_callback(layer_id),
                 title=title,
                 description=description,
                 stopped=stopped,
+                time_pane=time_pane,
             )
             toolbars.append(toolbar)
 
@@ -1198,6 +1226,11 @@ class PlotGridTabs:
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
+        # Per-layer time bounds for active-grid cells, to drive the freshness
+        # indicator (per cell) and the per-layer time-range panes. Collected
+        # here to avoid a second pass over the states.
+        cell_time_bounds: dict[CellId, list[TimeBounds | None]] = {}
+        layer_time_bounds: dict[LayerId, TimeBounds | None] = {}
         active_grid_id = self._get_active_grid_id()
 
         for grid_id, plot_grid in self._grid_widgets.items():
@@ -1222,6 +1255,15 @@ class PlotGridTabs:
                         )
                         continue
 
+                    if is_active:
+                        bounds = (
+                            state.plotter.time_bounds
+                            if state.plotter is not None
+                            else None
+                        )
+                        cell_time_bounds.setdefault(cell_id, []).append(bounds)
+                        layer_time_bounds[layer_id] = bounds
+
                     # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
                     if session_layer is None:
@@ -1243,6 +1285,9 @@ class PlotGridTabs:
         for layer_id in list(self._session_layers.keys()):
             if layer_id not in seen_layer_ids:
                 del self._session_layers[layer_id]
+        for layer_id in list(self._layer_time_panes):
+            if layer_id not in seen_layer_ids:
+                del self._layer_time_panes[layer_id]
 
         # Rebuild affected cells.
         # Defer insertion to allow Bokeh to process any pending model updates
@@ -1264,6 +1309,45 @@ class PlotGridTabs:
                     sl = self._session_layers.get(layer.layer_id)
                     if sl is not None:
                         sl.last_seen_version = versions_to_apply[layer.layer_id]
+
+        # Refresh the freshness/lag indicator for active-grid cells. Runs after
+        # rebuilds so cells recreated this poll update their fresh pane handle.
+        # Lag is recomputed against the current wall clock every poll, so a
+        # stalled stream visibly grows stale rather than freezing.
+        for cell_id, bounds_list in cell_time_bounds.items():
+            self._update_freshness_pane(cell_id, bounds_list)
+        for layer_id, bounds in layer_time_bounds.items():
+            self._update_layer_time_pane(layer_id, bounds)
+
+    def _update_freshness_pane(
+        self, cell_id: CellId, bounds_list: list[TimeBounds | None]
+    ) -> None:
+        """Update a cell's titlebar freshness pane from its layers' time bounds."""
+        pane = self._cell_freshness_panes.get(cell_id)
+        if pane is None:
+            return
+        merged = merge_time_bounds(bounds_list)
+        if merged is None:
+            html = ''
+        else:
+            now = Timestamp.now()
+            html = format_freshness_html(
+                merged.lag_seconds(now), tooltip=format_time_info(merged, now=now)
+            )
+        if pane.object != html:
+            pane.object = html
+
+    def _update_layer_time_pane(
+        self, layer_id: LayerId, bounds: TimeBounds | None
+    ) -> None:
+        """Update a layer toolbar's time-range pane from its time bounds."""
+        pane = self._layer_time_panes.get(layer_id)
+        if pane is None:
+            return
+        text = format_time_info(bounds) if bounds is not None else ''
+        html = format_layer_time_html(text)
+        if pane.object != html:
+            pane.object = html
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and clean up session state."""

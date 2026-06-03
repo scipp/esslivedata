@@ -13,7 +13,7 @@ from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_params import WindowMode
 from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
 from .icons import get_icon
-from .styles import Colors, HoverColors, StatusColors
+from .styles import Colors, FreshnessPill, HoverColors, StatusColors
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotCell, PlotConfig
@@ -109,6 +109,7 @@ def create_layer_toolbar(
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
+    time_pane: pn.pane.HTML | None = None,
 ) -> pn.Row:
     """
     Create a per-layer toolbar row with title and gear/close buttons.
@@ -130,6 +131,9 @@ def create_layer_toolbar(
         Optional description shown as tooltip when hovering over the title.
     stopped:
         If True, adds a visual indicator (border) showing workflow has ended.
+    time_pane:
+        Optional pane showing this layer's data time range/lag, placed right of
+        the title and updated in place by the caller.
 
     Returns
     -------
@@ -188,9 +192,12 @@ def create_layer_toolbar(
         styles['border'] = f'2px solid {Colors.TEXT}'
         styles['border-radius'] = '4px'
 
+    middle: list = [time_pane] if time_pane is not None else []
+
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
+        *middle,
         gear_button,
         close_button,
         sizing_mode='stretch_width',
@@ -216,8 +223,101 @@ def _cell_title_html(title: str, has_user_title: bool) -> str:
     else:
         style = f'font-size:12.5px;color:{Colors.TEXT_MUTED};font-style:italic;'
     return (
-        f'<span style="{style}white-space:nowrap;overflow:hidden;'
+        f'<span style="{style}line-height:{ButtonStyles.TOOL_BUTTON_SIZE}px;'
+        f'white-space:nowrap;overflow:hidden;'
         f'text-overflow:ellipsis;display:block;">{title}</span>'
+    )
+
+
+def _freshness_band(lag_seconds: float) -> tuple[str, str, str]:
+    """Return the ``(background, text, dot)`` pill colors for a lag in seconds."""
+    if lag_seconds < FreshnessPill.FRESH_MAX_SECONDS:
+        return FreshnessPill.FRESH
+    if lag_seconds < FreshnessPill.STALE_MAX_SECONDS:
+        return FreshnessPill.STALE
+    return FreshnessPill.OLD
+
+
+def _format_lag_short(lag_seconds: float) -> str:
+    """Compact lag label, e.g. "2.3s", "41s", "3m"."""
+    if lag_seconds < 10:
+        return f'{lag_seconds:.1f}s'
+    if lag_seconds < 60:
+        return f'{lag_seconds:.0f}s'
+    return f'{lag_seconds / 60:.0f}m'
+
+
+def format_freshness_html(lag_seconds: float | None, tooltip: str = '') -> str:
+    """Render the titlebar freshness/lag pill, color-banded by staleness.
+
+    Parameters
+    ----------
+    lag_seconds:
+        Data lag in seconds, or None to render nothing (no timing data).
+    tooltip:
+        Full time-range text shown on hover (the pill itself shows only the
+        compact lag).
+    """
+    if lag_seconds is None:
+        return ''
+    background, text_color, dot_color = _freshness_band(lag_seconds)
+    pill_style = (
+        f'display:inline-flex;align-items:center;gap:5px;height:20px;'
+        f'padding:0 8px;border-radius:10px;font-size:11px;'
+        f'font-variant-numeric:tabular-nums;white-space:nowrap;'
+        f'background:{background};color:{text_color};'
+    )
+    dot_style = (
+        f'width:7px;height:7px;border-radius:50%;flex:none;background:{dot_color};'
+    )
+    if tooltip:
+        from html import escape
+
+        title_attr = f' title="{escape(tooltip)}"'
+    else:
+        title_attr = ''
+    return (
+        f'<span style="{pill_style}"{title_attr}>'
+        f'<span style="{dot_style}"></span>{_format_lag_short(lag_seconds)}</span>'
+    )
+
+
+def create_freshness_pane() -> pn.pane.HTML:
+    """Create the titlebar freshness/lag pane, updated in place via ``.object``.
+
+    Content sizes to the pill; ``align='center'`` (``align-self:center``)
+    vertically centers it against the title and buttons in the row.
+    """
+    return pn.pane.HTML(
+        '',
+        align='center',
+        margin=(0, 6),
+        styles={'flex': '0 0 auto'},
+    )
+
+
+def format_layer_time_html(text: str) -> str:
+    """Render a per-layer time-range/lag label (muted, tabular nums)."""
+    if not text:
+        return ''
+    style = (
+        f'font-size:11px;color:{Colors.TEXT_MUTED};white-space:nowrap;'
+        'font-variant-numeric:tabular-nums;'
+    )
+    return f'<span style="{style}">{text}</span>'
+
+
+def create_layer_time_pane() -> pn.pane.HTML:
+    """Create a per-layer time-range pane, updated in place via ``.object``.
+
+    Content sizes to the text; ``align='center'`` (``align-self:center``)
+    vertically centers it against the layer title and buttons in the row.
+    """
+    return pn.pane.HTML(
+        '',
+        align='center',
+        margin=(0, 6),
+        styles={'flex': '0 0 auto'},
     )
 
 
@@ -265,6 +365,7 @@ def create_cell_titlebar(
     on_edit_title_callback: Callable[[], None],
     toolbars_visible: bool,
     on_toggle_toolbars_callback: Callable[[bool], None],
+    freshness_pane: pn.pane.HTML | None = None,
     on_add_callback: Callable[[], None] | None = None,
     on_overlay_selected: Callable[[str, str], None] | None = None,
     available_overlays: list[tuple[str, str, str]] | None = None,
@@ -289,6 +390,9 @@ def create_cell_titlebar(
         Current visibility of the per-layer toolbars; sets the toggle icon.
     on_toggle_toolbars_callback:
         Invoked with the new visibility state when the toggle is clicked.
+    freshness_pane:
+        Optional pane showing the data freshness/lag indicator, placed between
+        the title and the action buttons. Updated in place by the caller.
     on_add_callback:
         Optional callback to add a layer (opens modal). If None, no add button.
     on_overlay_selected:
@@ -306,6 +410,7 @@ def create_cell_titlebar(
     title_pane = pn.pane.HTML(
         _cell_title_html(title, has_user_title),
         sizing_mode='stretch_width',
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
         margin=(0, 4),
         styles={'overflow': 'hidden', 'min-width': '0'},
     )
@@ -332,8 +437,13 @@ def create_cell_titlebar(
         )
     right_buttons.extend([edit_button, toggle_button])
 
+    # Freshness pill sits at the far left; the stretch title fills the middle and
+    # pushes the action buttons to the right.
+    left: list = [freshness_pane] if freshness_pane is not None else []
+
     margin = ButtonStyles.CELL_MARGIN
     return pn.Row(
+        *left,
         title_pane,
         *right_buttons,
         sizing_mode='stretch_width',
@@ -396,10 +506,10 @@ def _format_window_info(params) -> str:
     Format window parameters into a human-readable string.
 
     Only ``since_start`` produces a label here. For window mode the actual time
-    range comes from the data and is displayed by ``_compute_time_info`` at
-    render time; the configured ``window_duration_seconds`` is a target, not a
-    truth, so showing it in the static title would lie when backend cadence
-    exceeds the requested lookback.
+    range comes from the data and is shown by the titlebar freshness indicator
+    (see ``_compute_time_bounds``); the configured ``window_duration_seconds`` is
+    a target, not a truth, so showing it in the static title would lie when
+    backend cadence exceeds the requested lookback.
     """
     window = getattr(params, 'window', None)
     if window is None:
