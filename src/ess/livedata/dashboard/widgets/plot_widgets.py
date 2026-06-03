@@ -110,14 +110,16 @@ def create_layer_toolbar(
     description: str | None = None,
     stopped: bool = False,
     time_pane: pn.pane.HTML | None = None,
-) -> pn.Row:
+) -> pn.Row | pn.Column:
     """
-    Create a per-layer toolbar row with title and gear/close buttons.
+    Create a per-layer toolbar with title and gear/close buttons.
 
     The toolbar displays an optional title on the left (with tooltip for
     description) and gear/close buttons on the right, using flexbox layout
-    to avoid overlap with Bokeh's plot toolbar. Cell-level actions (add layer,
-    rename, toolbar visibility) live on the cell titlebar, not here.
+    to avoid overlap with Bokeh's plot toolbar. When a ``time_pane`` is given
+    it is placed on its own line below, so the time info does not compete with
+    the title for horizontal space. Cell-level actions (add layer, rename,
+    toolbar visibility) live on the cell titlebar, not here.
 
     Parameters
     ----------
@@ -192,18 +194,28 @@ def create_layer_toolbar(
         styles['border'] = f'2px solid {Colors.TEXT}'
         styles['border-radius'] = '4px'
 
-    middle: list = [time_pane] if time_pane is not None else []
-
-    return pn.Row(
+    button_row = pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        *middle,
         gear_button,
         close_button,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        margin=(margin, margin, margin, margin),
         align='end',
+    )
+
+    if time_pane is None:
+        button_row.margin = (margin, margin, margin, margin)
+        button_row.styles = styles
+        return button_row
+
+    # Time info goes on its own line below the title/buttons row to avoid
+    # competing with the title for horizontal space.
+    return pn.Column(
+        button_row,
+        time_pane,
+        sizing_mode='stretch_width',
+        margin=(margin, margin, margin, margin),
         styles=styles,
     )
 
@@ -310,13 +322,13 @@ def format_layer_time_html(text: str) -> str:
 def create_layer_time_pane() -> pn.pane.HTML:
     """Create a per-layer time-range pane, updated in place via ``.object``.
 
-    Content sizes to the text; ``align='center'`` (``align-self:center``)
-    vertically centers it against the layer title and buttons in the row.
+    Placed on its own line below the layer title/buttons row; indented and
+    pulled up close to the title so it visually belongs to it.
     """
     return pn.pane.HTML(
         '',
-        align='center',
-        margin=(0, 6),
+        align='start',
+        margin=(-4, 6, 0, 14),
         styles={'flex': '0 0 auto'},
     )
 

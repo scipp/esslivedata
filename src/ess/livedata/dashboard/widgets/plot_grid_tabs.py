@@ -908,7 +908,7 @@ class PlotGridTabs:
         self,
         cell: PlotCell,
         layer_states: dict[LayerId, LayerStateMachine],
-    ) -> list[pn.Row]:
+    ) -> list[pn.Row | pn.Column]:
         """
         Create per-layer toolbars (title + gear/close) for all layers in a cell.
 
