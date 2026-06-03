@@ -565,6 +565,126 @@ class TestPollForPlotUpdates:
         assert session_layer.components is original_components
 
 
+class TestComposeMixedLayers:
+    """Composition of cells mixing dynamic and static (overlay) layers."""
+
+    def test_static_layer_does_not_break_autoscale_controller(
+        self, plot_grid_tabs, plot_data_service
+    ):
+        """A static overlay layer must not be fed to the autoscale controller.
+
+        Static plotters are not ``Plotter`` subclasses and lack
+        ``AUTOSCALE_AXES``; mixing one with a dynamic layer previously raised
+        ``AttributeError`` while building the cell's ``CellAutoscaleController``.
+        """
+        from uuid import uuid4
+
+        import holoviews as hv
+
+        from ess.livedata.config.workflow_spec import WorkflowId
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plot_orchestrator import (
+            CellGeometry,
+            DataSourceConfig,
+            Layer,
+            PlotCell,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import WindowParams
+        from ess.livedata.dashboard.plots import PresenterBase
+        from ess.livedata.dashboard.range_hook import Axis
+        from ess.livedata.dashboard.session_layer import SessionLayer
+        from ess.livedata.dashboard.static_plots import (
+            LinesCoordinates,
+            LinesPlotter,
+            VLinesParams,
+        )
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
+
+        class _DynamicPresenter(PresenterBase):
+            def present(self, pipe):
+                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
+
+        class _DynamicPlotter:
+            AUTOSCALE_AXES: frozenset[Axis] = frozenset({'x', 'y'})
+
+            def __init__(self):
+                self._cached_state = None
+                self._presenters = []
+
+            def compute(self, data):
+                self._cached_state = data
+
+            def get_cached_state(self):
+                return self._cached_state
+
+            def has_cached_state(self):
+                return self._cached_state is not None
+
+            def create_presenter(self):
+                presenter = _DynamicPresenter(self)
+                self._presenters.append(presenter)
+                return presenter
+
+            def iter_range_targets(self):
+                return iter(())
+
+        wf = WorkflowId(instrument='test', name='wf', version=1)
+        geo = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+        dynamic_config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=['s1'], view_name='result'
+                )
+            },
+            plot_name='lines',
+            params=WindowParams(),
+        )
+        static_config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=[], view_name='guides'
+                )
+            },
+            plot_name='vlines',
+            params=WindowParams(),
+        )
+        assert static_config.is_static()
+
+        dynamic_layer = Layer(layer_id=LayerId(uuid4()), config=dynamic_config)
+        static_layer = Layer(layer_id=LayerId(uuid4()), config=static_config)
+        cell = PlotCell(geometry=geo, layers=[dynamic_layer, static_layer])
+
+        dynamic_plotter = _DynamicPlotter()
+        dynamic_plotter.compute(hv.Curve([1, 2, 3]))
+        static_plotter = LinesPlotter.vlines(
+            VLinesParams(geometry=LinesCoordinates(positions='10, 20'))
+        )
+        static_plotter.compute({})
+
+        for layer, plotter in (
+            (dynamic_layer, dynamic_plotter),
+            (static_layer, static_plotter),
+        ):
+            plot_data_service.job_started(layer.layer_id, plotter)
+            plot_data_service.data_arrived(layer.layer_id)
+            state = plot_data_service.get(layer.layer_id)
+            session_layer = SessionLayer(
+                layer_id=layer.layer_id, last_seen_version=state.version
+            )
+            session_layer.ensure_components(state)
+            plot_grid_tabs._session_layers[layer.layer_id] = session_layer
+
+        cell_id = CellId(uuid4())
+        result = plot_grid_tabs._get_session_composed_plot(cell_id, cell)
+
+        assert result is not None
+        # The dynamic layer still drives autoscale; controller was built.
+        assert cell_id in plot_grid_tabs._session_autoscale_controllers
+
+
 class TestDisabledGridTabs:
     """Tests for disabled grid handling in PlotGridTabs."""
 

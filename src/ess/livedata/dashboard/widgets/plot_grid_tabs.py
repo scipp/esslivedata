@@ -985,7 +985,9 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
-                if state.plotter is not None:
+                # Static overlays (vlines/hlines/rectangles) are not Plotters
+                # and carry no autoscale axes; exclude them from the controller.
+                if state.plotter is not None and not layer.config.is_static():
                     cell_plotters.append(state.plotter)
 
             dmap = session_layer.dmap
