@@ -645,9 +645,9 @@ def derive_cell_title(
     Derive a default cell title from its layers.
 
     Uses the source title when a single source is shared across all non-static
-    layers (the common monitoring case). Otherwise falls back to the single
-    layer's display title, or a generic ``"N layers"`` placeholder for
-    multi-layer cells the user is expected to rename.
+    layers (the common monitoring case). Otherwise falls back to the first
+    layer's display title, suffixed with ``" (+N more layers)"`` for
+    multi-layer cells.
 
     Parameters
     ----------
@@ -678,10 +678,12 @@ def derive_cell_title(
             source = next(iter(common))
             return get_source_title(source) if get_source_title else source
 
+    first_title, _ = get_plot_cell_display_info(
+        layers[0].config, workflow_registry, get_source_title
+    )
     if len(layers) == 1:
-        title, _ = get_plot_cell_display_info(
-            layers[0].config, workflow_registry, get_source_title
-        )
-        return title
+        return first_title
 
-    return f'{len(layers)} layers'
+    extra = len(layers) - 1
+    suffix = 'layer' if extra == 1 else 'layers'
+    return f'{first_title} (+{extra} more {suffix})'

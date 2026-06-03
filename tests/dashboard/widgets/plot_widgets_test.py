@@ -193,13 +193,27 @@ class TestDeriveCellTitle:
         cell = PlotCell(geometry=_GEO, layers=[_make_layer(self._wf(), ['s1'])])
         assert derive_cell_title(cell, {}) == 's1'
 
-    def test_disjoint_sources_multi_layer_falls_back_to_count(self) -> None:
+    def test_disjoint_sources_multi_layer_uses_first_layer_title(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
             layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s2'])],
         )
-        assert derive_cell_title(cell, {}) == '2 layers'
+        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, {})
+        assert derive_cell_title(cell, {}) == f'{first_title} (+1 more layer)'
+
+    def test_three_disjoint_layers_pluralizes_suffix(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[
+                _make_layer(wf, ['s1']),
+                _make_layer(wf, ['s2']),
+                _make_layer(wf, ['s3']),
+            ],
+        )
+        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, {})
+        assert derive_cell_title(cell, {}) == f'{first_title} (+2 more layers)'
 
     def test_single_layer_multi_source_falls_back_to_display_title(self) -> None:
         cell = PlotCell(
