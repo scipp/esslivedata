@@ -27,27 +27,25 @@ from ess.livedata.services.timeseries import make_timeseries_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
 
-def _get_service_builder(namespace: str):
-    """Get the service builder function for a given namespace."""
+def _get_service_builder(service: str | None):
+    """Get the service builder function for a given backend service name."""
     builders = {
         'detector_data': make_detector_service_builder,
         'monitor_data': make_monitor_service_builder,
         'data_reduction': make_reduction_service_builder,
         'timeseries': make_timeseries_service_builder,
     }
-    return builders.get(namespace)
+    return builders.get(service) if service is not None else None
 
 
 def _get_source_name_for_workflow(
-    instrument_name: str, workflow_spec: workflow_spec.WorkflowSpec
+    instrument_name: str, spec: workflow_spec.WorkflowSpec, service: str | None
 ) -> str:
     """Get an appropriate source name for the workflow."""
-    if workflow_spec.source_names:
-        return workflow_spec.source_names[0]
-    # Fallback mappings for namespaces without explicit source_names
-    namespace = workflow_spec.group.name
-    if namespace == 'timeseries':
-        # Timeseries workflows don't need a specific source
+    if spec.source_names:
+        return spec.source_names[0]
+    # Fallback for services without explicit source_names
+    if service == 'timeseries':
         return 'timeseries'
     return 'unknown'
 
@@ -65,9 +63,10 @@ def _collect_workflow_outputs_for_validation():
 
         for workflow_id in instrument.workflow_factory:
             spec = instrument.workflow_factory[workflow_id]
-            builder_fn = _get_service_builder(spec.group.name)
+            service = instrument.workflow_factory.get_service(workflow_id)
+            builder_fn = _get_service_builder(service)
             if builder_fn is None:
-                # Skip workflows in unknown namespaces
+                # Skip workflows hosted by unknown services
                 continue
 
             output_names = list(spec.outputs.model_fields.keys())
@@ -138,18 +137,19 @@ def test_workflow_outputs_match_declared_model(
 
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
+    service = instrument.workflow_factory.get_service(workflow_id)
 
-    # Get the appropriate service builder for this namespace
-    builder_fn = _get_service_builder(spec.group.name)
+    # Get the appropriate service builder for this workflow's backend service
+    builder_fn = _get_service_builder(service)
     if builder_fn is None:
-        pytest.skip(f"No service builder for namespace '{spec.group.name}'")
+        pytest.skip(f"No service builder for service '{service}'")
 
     # Create the service
     builder = builder_fn(instrument=instrument_name)
     app = LivedataApp.from_service_builder(builder)
 
     # Configure the workflow
-    source_name = _get_source_name_for_workflow(instrument_name, spec)
+    source_name = _get_source_name_for_workflow(instrument_name, spec, service)
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id,
         job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
@@ -157,14 +157,14 @@ def test_workflow_outputs_match_declared_model(
     app.publish_config_message(workflow_config)
     app.service.step()
 
-    # Publish fake events to trigger workflow execution
-    # Different namespaces need different event types
-    if spec.group.name in ('detector_data', 'data_reduction'):
+    # Publish fake events to trigger workflow execution; different services
+    # consume different message types.
+    if service in ('detector_data', 'data_reduction'):
         app.publish_events(size=1000, time=1)
-    if spec.group.name in ('monitor_data', 'data_reduction'):
+    if service in ('monitor_data', 'data_reduction'):
         app.publish_monitor_events(size=500, time=1)
-    if spec.group.name == 'timeseries':
-        # Timeseries needs log data
+    if service == 'timeseries':
+        # Timeseries service consumes log data
         app.publish_log_message(source_name='proton_charge', time=1.0, value=100.0)
 
     # Run the service to process events and produce output

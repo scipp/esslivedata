@@ -8,7 +8,7 @@ import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import TIMESERIES, WorkflowOutputsBase
+from ..config.workflow_spec import REDUCTION, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 from ..parameter_models import LengthUnit, RangeModel, TimeUnit
 
@@ -149,21 +149,23 @@ def register_wavelength_lut_workflow_spec(
 ) -> SpecHandle:
     """Register the wavelength lookup-table workflow spec for ``instrument``.
 
-    Hosted by the ``timeseries`` service alongside per-source timeseries
-    workflows: both are f144-driven, share the same source/preprocessor
-    plumbing, and (in v1) the chopper PVs feeding the synthesizer are
-    themselves f144 streams that the timeseries service can plot. The
-    ``ChopperSynthesizer`` emitting the synthetic primary trigger is a
-    temporary stand-in for an upstream-side ``chopper_cascade_reached``
-    f144 stream; once the producer publishes that directly, the wrapper
-    drops out and this is just another timeseries workflow.
+    Grouped under :data:`REDUCTION` for the UI — it is a reduction input,
+    not a per-device timeseries — but hosted by the ``timeseries`` service
+    (explicit ``service`` override below). Both are f144-driven and share
+    the same source/preprocessor plumbing; in v1 the chopper PVs feeding
+    the synthesizer are themselves f144 streams that the timeseries
+    service can plot. The ``ChopperSynthesizer`` emitting the synthetic
+    primary trigger is a temporary stand-in for an upstream-side
+    ``chopper_cascade_reached`` f144 stream; once the producer publishes
+    that directly, the wrapper drops out.
 
     The workflow's only ``source_name`` is the synthetic ``chopper_cascade``
     stream emitted by ``ChopperSynthesizer``. The factory must be attached
     later via the returned handle.
     """
     return instrument.register_spec(
-        group=TIMESERIES,
+        group=REDUCTION,
+        service='timeseries',
         name=WAVELENGTH_LUT_OUTPUT,
         version=1,
         title='Wavelength lookup table',

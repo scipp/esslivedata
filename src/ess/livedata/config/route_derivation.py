@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 
 def gather_source_names(
     instrument: Instrument,
-    namespace: str,
+    service: str,
 ) -> set[str]:
-    """Collect internal stream names that specs in ``namespace`` depend on.
+    """Collect internal stream names that specs hosted by ``service`` depend on.
 
     :class:`Device` references are expanded into the underlying substream
     names, since devices are synthesised in-process from those substreams
@@ -25,12 +25,17 @@ def gather_source_names(
     ----------
     instrument:
         Instrument whose workflow specs to inspect.
-    namespace:
-        Only consider specs in this namespace (e.g. ``'detector_data'``).
+    service:
+        Only consider specs hosted by this backend service (e.g.
+        ``'detector_data'``). Services and display groups are decoupled:
+        a spec's :attr:`WorkflowSpec.group` controls UI categorisation
+        while the per-spec ``service`` override on registration controls
+        which service runs it.
     """
     names: set[str] = set()
-    for spec in instrument.workflow_factory.values():
-        if spec.group.name != namespace:
+    factory = instrument.workflow_factory
+    for wid, spec in factory.items():
+        if factory.get_service(wid) != service:
             continue
         names.update(spec.source_names)
         if spec.aux_sources:
@@ -92,9 +97,9 @@ def resolve_stream_names(
 def scope_stream_mapping(
     instrument: Instrument,
     stream_mapping: StreamMapping,
-    namespace: str,
+    service: str,
 ) -> StreamMapping:
-    """Return a stream mapping scoped to the streams needed by ``namespace``.
+    """Return a stream mapping scoped to the streams needed by ``service``.
 
     Combines :func:`gather_source_names`, :func:`resolve_stream_names`, and
     :meth:`StreamMapping.filtered` into a single call.
@@ -105,9 +110,10 @@ def scope_stream_mapping(
         Instrument whose workflow specs to inspect.
     stream_mapping:
         The full (unfiltered) stream mapping.
-    namespace:
-        Only consider specs in this namespace (e.g. ``'detector_data'``).
+    service:
+        Only consider specs hosted by this backend service (e.g.
+        ``'detector_data'``).
     """
-    needed = gather_source_names(instrument, namespace)
+    needed = gather_source_names(instrument, service)
     needed = resolve_stream_names(needed, instrument, stream_mapping)
     return stream_mapping.filtered(needed)
