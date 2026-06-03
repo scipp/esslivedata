@@ -508,12 +508,14 @@ class PlotGridTabs:
             name='Cell title',
             value=current_title if has_user_title else '',
             placeholder='Leave empty to use the derived title',
+            description='Leave empty to use the derived title.',
             sizing_mode='stretch_width',
         )
         save_button = pn.widgets.Button(name='Save', button_type='primary')
         cancel_button = pn.widgets.Button(name='Cancel')
         modal = pn.Modal(
             pn.Column(
+                pn.pane.Markdown('### Configure cell', margin=(0, 0, 5, 0)),
                 text,
                 pn.Row(
                     pn.Spacer(sizing_mode='stretch_width'),
@@ -522,7 +524,7 @@ class PlotGridTabs:
                 ),
                 sizing_mode='stretch_width',
             ),
-            name='Rename cell',
+            name='Configure cell',
             margin=20,
             width=420,
         )
