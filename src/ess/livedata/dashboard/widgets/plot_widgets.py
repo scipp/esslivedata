@@ -656,29 +656,17 @@ def derive_cell_title(
     """
     Derive a default cell title from its layers.
 
-    Static layers (decorative overlays) are excluded from the derivation; they
-    never drive or break the title. The title is built from the non-static
-    layers as ``Workflow &rarr; Output (Source, window)``, where each segment is
-    shown only when it resolves to a single concrete value across all layers. A
-    varying output, source, or window is omitted rather than summarised: a bare
-    count (``2 outputs``, ``3 sources``) adds nothing a default title can act
-    on, and the per-source/per-output breakdown is already visible in the plot.
+    Deliberately minimal: the title is the first non-static layer's workflow
+    title, plus ``" (Source)"`` when the cell's layers reference a single source
+    (a single source is otherwise not shown by plot labels). Output names and
+    window info are omitted -- base-workflow output names (``Image``,
+    ``Histogram``) are implied by the workflow, window/freshness lives in the
+    titlebar indicator, and per-source breakdown is visible in the plot. When
+    this default is too coarse (e.g. distinct reduction outputs sharing a
+    workflow), the user sets an explicit cell title.
 
-    The ``" (+N more)"`` suffix is not a layer count: it corrects titles that
-    would otherwise read as single-layer. A shared output keeps the ``&rarr;
-    Output`` segment, so the dropped varying source/window makes a multi-layer
-    cell render identically to a single layer -- the suffix flips that bit. A
-    varying output drops the segment entirely, a shape only a composite can
-    produce, so no suffix is added there. ``N`` counts data layers only; static
-    overlays are never reflected in the title.
-
-    Special cases:
-
-    - No non-static layers: an empty cell yields ``''``; a cell with only static
-      overlays uses the first static layer's title.
-    - Multiple distinct workflows cannot merge into a single ``Workflow &rarr;
-      ...`` shape, so the first non-static layer's full title is used, suffixed
-      with ``" (+N more)"`` for the remaining layers.
+    Static layers (decorative overlays) are excluded. A cell with only static
+    overlays uses the first static layer's title; an empty cell yields ``''``.
 
     Parameters
     ----------
@@ -703,44 +691,13 @@ def derive_cell_title(
         )
         return title
 
-    if len({layer.config.workflow_id for layer in layers}) > 1:
-        first_title, _ = get_plot_cell_display_info(
-            layers[0].config, workflow_registry, get_source_title
-        )
-        return f'{first_title} (+{len(layers) - 1} more)'
+    workflow_title, _ = get_workflow_display_info(
+        workflow_registry, layers[0].config.workflow_id, None
+    )
 
-    workflow_id = layers[0].config.workflow_id
-    workflow_title, _ = get_workflow_display_info(workflow_registry, workflow_id, None)
-
-    title = workflow_title
-    output_shown = False
-    views = {layer.config.view_name for layer in layers}
-    if len(views) == 1:
-        _, output_title = get_workflow_display_info(
-            workflow_registry, workflow_id, next(iter(views))
-        )
-        if output_title:
-            title = f'{workflow_title} &rarr; {output_title}'
-            output_shown = True
-
-    details = []
     sources = {s for layer in layers for s in layer.config.source_names}
     if len(sources) == 1:
         source = next(iter(sources))
-        details.append(get_source_title(source) if get_source_title else source)
-
-    windows = {_format_window_info(layer.config.params) for layer in layers}
-    if len(windows) == 1 and (window_info := next(iter(windows))):
-        details.append(window_info)
-
-    if details:
-        title = f'{title} ({", ".join(details)})'
-
-    # A shared output keeps the "&rarr; Output" segment, so the dropped varying
-    # source/window makes a multi-layer cell render identically to a single
-    # layer. Flag the extra layers so the two are distinguishable. When the
-    # output varies the segment is absent, which already marks the cell as a
-    # composite, so no suffix is needed there.
-    if output_shown and len(layers) > 1:
-        title = f'{title} (+{len(layers) - 1} more)'
-    return title
+        source_title = get_source_title(source) if get_source_title else source
+        return f'{workflow_title} ({source_title})'
+    return workflow_title

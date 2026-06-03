@@ -224,15 +224,15 @@ class TestDeriveCellTitle:
         )
         return {wf: spec}
 
-    def test_single_layer_uses_full_display_title(self) -> None:
+    def test_single_layer_single_source(self) -> None:
         wf = self._wf()
         cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['Front Right'])])
         assert (
             derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection &rarr; Image (Front Right)'
+            == 'Detector XY Projection (Front Right)'
         )
 
-    def test_shared_workflow_and_source_varying_output_drops_output(self) -> None:
+    def test_output_name_is_not_shown(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
@@ -241,24 +241,10 @@ class TestDeriveCellTitle:
                 _make_layer(wf, ['Front Right'], view_name='roi'),
             ],
         )
-        assert (
-            derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection (Front Right)'
-        )
-
-    def test_shared_output_multi_layer_flags_extra_layers(self) -> None:
-        wf = self._wf()
-        cell = PlotCell(
-            geometry=_GEO,
-            layers=[
-                _make_layer(wf, ['Front Right'], view_name='image'),
-                _make_layer(wf, ['Front Right'], view_name='image'),
-            ],
-        )
-        assert (
-            derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection &rarr; Image (Front Right) (+1 more)'
-        )
+        title = derive_cell_title(cell, self._registry(wf))
+        assert title == 'Detector XY Projection (Front Right)'
+        assert 'Image' not in title
+        assert 'ROI' not in title
 
     def test_source_title_callback_applied(self) -> None:
         wf = self._wf()
@@ -266,39 +252,22 @@ class TestDeriveCellTitle:
         title = derive_cell_title(
             cell, self._registry(wf), get_source_title=lambda s: f'Title:{s}'
         )
-        assert title == 'Detector XY Projection &rarr; Image (Title:s1)'
+        assert title == 'Detector XY Projection (Title:s1)'
 
-    def test_varying_source_is_dropped(self) -> None:
+    def test_multiple_sources_drop_source(self) -> None:
         wf = self._wf()
         cell = PlotCell(
             geometry=_GEO,
             layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s2'])],
         )
-        assert (
-            derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection &rarr; Image (+1 more)'
-        )
+        assert derive_cell_title(cell, self._registry(wf)) == 'Detector XY Projection'
 
     def test_single_layer_multi_source_drops_source(self) -> None:
         wf = self._wf()
         cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['s1', 's2'])])
-        title = derive_cell_title(cell, self._registry(wf))
-        assert title == 'Detector XY Projection &rarr; Image'
-        assert 'sources' not in title
+        assert derive_cell_title(cell, self._registry(wf)) == 'Detector XY Projection'
 
-    def test_shared_window_is_shown(self) -> None:
-        wf = self._wf()
-        params = _FakeParams(window=WindowParams(mode=WindowMode.since_start))
-        cell = PlotCell(
-            geometry=_GEO,
-            layers=[_make_layer(wf, ['Front Right'], params=params)],
-        )
-        assert (
-            derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection &rarr; Image (Front Right, since run start)'
-        )
-
-    def test_multiple_workflows_fall_back_to_first_layer(self) -> None:
+    def test_uses_first_layer_workflow_title(self) -> None:
         wf_a = self._wf('a')
         wf_b = self._wf('b')
         registry = {**self._registry(wf_a), **self._registry(wf_b)}
@@ -306,8 +275,8 @@ class TestDeriveCellTitle:
             geometry=_GEO,
             layers=[_make_layer(wf_a, ['Front Right']), _make_layer(wf_b, ['s2'])],
         )
-        first_title, _ = get_plot_cell_display_info(cell.layers[0].config, registry)
-        assert derive_cell_title(cell, registry) == f'{first_title} (+1 more)'
+        # Different sources across layers -> source dropped, first workflow used.
+        assert derive_cell_title(cell, registry) == 'Detector XY Projection'
 
     def test_static_layers_excluded_from_derivation(self) -> None:
         wf = self._wf()
@@ -317,7 +286,7 @@ class TestDeriveCellTitle:
         )
         assert (
             derive_cell_title(cell, self._registry(wf))
-            == 'Detector XY Projection &rarr; Image (Front Right)'
+            == 'Detector XY Projection (Front Right)'
         )
 
     def test_only_static_layers_uses_first_static_title(self) -> None:
