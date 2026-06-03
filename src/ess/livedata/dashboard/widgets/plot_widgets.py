@@ -16,7 +16,7 @@ from .icons import get_icon
 from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
-    from ..plot_orchestrator import PlotConfig
+    from ..plot_orchestrator import PlotCell, PlotConfig
 
 
 _ADD_LAYER_ITEM = 'Add layer...'
@@ -102,26 +102,21 @@ def _create_add_button_or_menu(
     return menu_button
 
 
-def create_cell_toolbar(
+def create_layer_toolbar(
     *,
     on_gear_callback: Callable[[], None],
     on_close_callback: Callable[[], None],
-    on_add_callback: Callable[[], None] | None = None,
-    on_overlay_selected: Callable[[str, str], None] | None = None,
-    available_overlays: list[tuple[str, str, str]] | None = None,
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
 ) -> pn.Row:
     """
-    Create a toolbar row containing title and buttons for plot cells.
+    Create a per-layer toolbar row with title and gear/close buttons.
 
     The toolbar displays an optional title on the left (with tooltip for
-    description) and gear/add/close buttons on the right, using flexbox layout
-    to avoid overlap with Bokeh's plot toolbar.
-
-    When overlay suggestions are available, the add button becomes a dropdown
-    menu with "Add layer..." (opens modal) and direct overlay options.
+    description) and gear/close buttons on the right, using flexbox layout
+    to avoid overlap with Bokeh's plot toolbar. Cell-level actions (add layer,
+    rename, toolbar visibility) live on the cell titlebar, not here.
 
     Parameters
     ----------
@@ -129,19 +124,6 @@ def create_cell_toolbar(
         Callback function to invoke when the gear button is clicked.
     on_close_callback:
         Callback function to invoke when the close button is clicked.
-    on_add_callback:
-        Optional callback to invoke when the add button is clicked.
-        If None, the add button is not shown. This allows the toolbar to be
-        used in contexts where adding layers doesn't make sense (e.g., read-only
-        views, cells with layer limits, or special cell types).
-    on_overlay_selected:
-        Optional callback when an overlay is selected from dropdown.
-        Called with (output_name, plotter_name). Required if available_overlays
-        is provided.
-    available_overlays:
-        Optional list of (output_name, plotter_name, plotter_title) tuples
-        representing available overlay options for this layer. If provided,
-        the add button becomes a dropdown menu.
     title:
         Optional title text to display on the left side of the toolbar.
     description:
@@ -160,15 +142,6 @@ def create_cell_toolbar(
         hover_color=ButtonStyles.PRIMARY_HOVER,
         on_click_callback=on_gear_callback,
     )
-
-    add_button: pn.widgets.Button | pn.widgets.MenuButton | None = None
-    if on_add_callback is not None:
-        add_button = _create_add_button_or_menu(
-            on_add_callback=on_add_callback,
-            on_overlay_selected=on_overlay_selected,
-            available_overlays=available_overlays,
-        )
-
     close_button = create_tool_button(
         icon_name='x',
         button_color=ButtonStyles.DANGER_RED,
@@ -208,10 +181,6 @@ def create_cell_toolbar(
             left_items.append(tooltip_icon)
 
     margin = ButtonStyles.CELL_MARGIN
-    right_buttons = [gear_button]
-    if add_button is not None:
-        right_buttons.append(add_button)
-    right_buttons.append(close_button)
 
     # Add border when workflow is stopped
     styles = {}
@@ -222,12 +191,159 @@ def create_cell_toolbar(
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        *right_buttons,
+        gear_button,
+        close_button,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         margin=(margin, margin, margin, margin),
         align='end',
         styles=styles,
+    )
+
+
+def _cell_title_html(title: str, has_user_title: bool) -> str:
+    """Render the cell title span; derived titles are muted and italic.
+
+    User-defined titles are free text and HTML-escaped. Derived titles come
+    from display-info helpers and may contain HTML entities (e.g. ``&rarr;``),
+    so they are rendered as-is.
+    """
+    if has_user_title:
+        from html import escape
+
+        style = f'font-size:12.5px;font-weight:600;color:{Colors.TEXT_DARK};'
+        title = escape(title)
+    else:
+        style = f'font-size:12.5px;color:{Colors.TEXT_MUTED};font-style:italic;'
+    return (
+        f'<span style="{style}white-space:nowrap;overflow:hidden;'
+        f'text-overflow:ellipsis;display:block;">{title}</span>'
+    )
+
+
+def _create_toolbar_visibility_button(
+    *,
+    visible: bool,
+    on_toggle: Callable[[bool], None],
+) -> pn.widgets.Button:
+    """Adjustments button toggling per-layer toolbar visibility for a cell."""
+
+    def _icon(shown: bool) -> str:
+        return get_icon('adjustments' if shown else 'adjustments-off')
+
+    def _tip(shown: bool) -> str:
+        return 'Hide layer toolbars' if shown else 'Show layer toolbars'
+
+    button = pn.widgets.Button(
+        label='',
+        icon=_icon(visible),
+        icon_size='1.5em',
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        color='light',
+        sizing_mode='fixed',
+        margin=0,
+        description=_tip(visible),
+        stylesheets=create_tool_button_stylesheet(Colors.TEXT_MUTED, HoverColors.MUTED),
+    )
+    state = {'visible': visible}
+
+    def _toggle(_) -> None:
+        state['visible'] = not state['visible']
+        button.icon = _icon(state['visible'])
+        button.description = _tip(state['visible'])
+        on_toggle(state['visible'])
+
+    button.on_click(_toggle)
+    return button
+
+
+def create_cell_titlebar(
+    *,
+    title: str,
+    has_user_title: bool,
+    on_edit_title_callback: Callable[[], None],
+    toolbars_visible: bool,
+    on_toggle_toolbars_callback: Callable[[bool], None],
+    on_add_callback: Callable[[], None] | None = None,
+    on_overlay_selected: Callable[[str, str], None] | None = None,
+    available_overlays: list[tuple[str, str, str]] | None = None,
+) -> pn.Row:
+    """
+    Create the cell-level titlebar shown above the per-layer toolbars.
+
+    The titlebar holds the cell title on the left and cell-level actions on the
+    right: add layer (with overlay suggestions), edit title (opens a modal), and
+    a toggle that hides/shows the per-layer toolbars.
+
+    Parameters
+    ----------
+    title:
+        Title to display. Either the user-defined title or a derived one.
+    has_user_title:
+        Whether ``title`` is user-defined (styled prominently) or derived
+        (styled muted/italic as a placeholder).
+    on_edit_title_callback:
+        Invoked when the edit (pencil) button is clicked; opens the rename modal.
+    toolbars_visible:
+        Current visibility of the per-layer toolbars; sets the toggle icon.
+    on_toggle_toolbars_callback:
+        Invoked with the new visibility state when the toggle is clicked.
+    on_add_callback:
+        Optional callback to add a layer (opens modal). If None, no add button.
+    on_overlay_selected:
+        Optional callback when an overlay suggestion is selected, called with
+        (output_name, plotter_name).
+    available_overlays:
+        Optional list of (output_name, plotter_name, plotter_title) tuples; if
+        provided the add button becomes a dropdown menu.
+
+    Returns
+    -------
+    :
+        Panel Row widget containing the cell titlebar.
+    """
+    title_pane = pn.pane.HTML(
+        _cell_title_html(title, has_user_title),
+        sizing_mode='stretch_width',
+        margin=(0, 4),
+        styles={'overflow': 'hidden', 'min-width': '0'},
+    )
+
+    edit_button = create_tool_button(
+        icon_name='pencil',
+        button_color=Colors.TEXT_MUTED,
+        hover_color=HoverColors.MUTED,
+        on_click_callback=on_edit_title_callback,
+    )
+    toggle_button = _create_toolbar_visibility_button(
+        visible=toolbars_visible,
+        on_toggle=on_toggle_toolbars_callback,
+    )
+
+    right_buttons: list = []
+    if on_add_callback is not None:
+        right_buttons.append(
+            _create_add_button_or_menu(
+                on_add_callback=on_add_callback,
+                on_overlay_selected=on_overlay_selected,
+                available_overlays=available_overlays,
+            )
+        )
+    right_buttons.extend([edit_button, toggle_button])
+
+    margin = ButtonStyles.CELL_MARGIN
+    return pn.Row(
+        title_pane,
+        *right_buttons,
+        sizing_mode='stretch_width',
+        min_height=ButtonStyles.TOOL_BUTTON_SIZE,
+        align='center',
+        margin=(margin, margin, 0, margin),
+        styles={
+            'background-color': Colors.BG_LIGHT,
+            'border-bottom': f'1px solid {Colors.BORDER}',
+        },
     )
 
 
@@ -408,3 +524,54 @@ def get_plot_cell_display_info(
     description = '\n'.join(description_parts)
 
     return title, description
+
+
+def derive_cell_title(
+    cell: PlotCell,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    get_source_title: Callable[[str], str] | None = None,
+) -> str:
+    """
+    Derive a default cell title from its layers.
+
+    Uses the source title when a single source is shared across all non-static
+    layers (the common monitoring case). Otherwise falls back to the single
+    layer's display title, or a generic ``"N layers"`` placeholder for
+    multi-layer cells the user is expected to rename.
+
+    Parameters
+    ----------
+    cell:
+        The plot cell.
+    workflow_registry:
+        Registry mapping workflow IDs to their specifications.
+    get_source_title:
+        Optional function to get display title for a source name.
+
+    Returns
+    -------
+    :
+        Derived title string.
+    """
+    layers = cell.layers
+    if not layers:
+        return ''
+
+    source_sets = [
+        set(layer.config.source_names)
+        for layer in layers
+        if not layer.config.is_static()
+    ]
+    if source_sets:
+        common = set.intersection(*source_sets)
+        if len(common) == 1:
+            source = next(iter(common))
+            return get_source_title(source) if get_source_title else source
+
+    if len(layers) == 1:
+        title, _ = get_plot_cell_display_info(
+            layers[0].config, workflow_registry, get_source_title
+        )
+        return title
+
+    return f'{len(layers)} layers'

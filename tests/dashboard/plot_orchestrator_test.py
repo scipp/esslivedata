@@ -2198,6 +2198,90 @@ class TestSetGridEnabled:
         assert 'enabled' not in data
 
 
+class TestCellTitle:
+    """Tests for user-defined cell titles."""
+
+    def test_add_cell_defaults_to_no_user_title(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        assert plot_orchestrator.get_cell(cell_id).user_title is None
+
+    def test_add_cell_with_user_title(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(
+            grid_id, DEFAULT_GEOMETRY, user_title='My cell'
+        )
+        assert plot_orchestrator.get_cell(cell_id).user_title == 'My cell'
+
+    def test_set_cell_title_updates(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id),
+        )
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        assert plot_orchestrator.get_cell(cell_id).user_title == 'Renamed'
+
+    def test_set_cell_title_empty_clears(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY, user_title='X')
+        plot_orchestrator.set_cell_title(cell_id, '')
+        assert plot_orchestrator.get_cell(cell_id).user_title is None
+
+    def test_set_cell_title_notifies_cell_updated(self, plot_orchestrator, workflow_id):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id),
+        )
+        before = callback.call_count
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        assert callback.call_count == before + 1
+        assert callback.call_args[1]['cell'].user_title == 'Renamed'
+
+    def test_user_title_serialized_when_set(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id),
+        )
+        plot_orchestrator.set_cell_title(cell_id, 'Saved title')
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert data['cells'][0]['user_title'] == 'Saved title'
+
+    def test_user_title_omitted_when_none(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id),
+        )
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert 'user_title' not in data['cells'][0]
+
+    def test_user_title_round_trips_through_parse(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id),
+        )
+        plot_orchestrator.set_cell_title(cell_id, 'Round trip')
+        data = plot_orchestrator.serialize_grid(grid_id)
+        parsed = plot_orchestrator.parse_raw_cell(data['cells'][0])
+        assert parsed.user_title == 'Round trip'
+
+
 class TestReplaceGrid:
     """Tests for grid replacement functionality."""
 

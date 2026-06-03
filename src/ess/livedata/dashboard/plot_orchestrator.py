@@ -203,10 +203,14 @@ class PlotCell:
     The plots are placed in the given row and col of a :py:class:`PlotGrid`, spanning
     the given number of rows and columns. A cell can contain multiple layers that
     are composed via hv.Overlay.
+
+    ``user_title`` is an optional user-defined cell title shown in the cell
+    titlebar. When ``None`` the titlebar shows a title derived from the layers.
     """
 
     geometry: CellGeometry
     layers: list[Layer]
+    user_title: str | None = None
 
 
 @dataclass
@@ -616,7 +620,12 @@ class PlotOrchestrator:
         self._notify_grid_created(new_grid_id)
         return new_grid_id
 
-    def add_cell(self, grid_id: GridId, geometry: CellGeometry) -> CellId:
+    def add_cell(
+        self,
+        grid_id: GridId,
+        geometry: CellGeometry,
+        user_title: str | None = None,
+    ) -> CellId:
         """
         Add an empty cell to a grid.
 
@@ -628,6 +637,8 @@ class PlotOrchestrator:
             ID of the grid to add the cell to.
         geometry
             Cell geometry (position and size in the grid).
+        user_title
+            Optional user-defined title for the cell.
 
         Returns
         -------
@@ -635,7 +646,7 @@ class PlotOrchestrator:
             ID of the added cell.
         """
         cell_id = CellId(uuid4())
-        cell = PlotCell(geometry=geometry, layers=[])
+        cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
         grid = self._grids[grid_id]
         grid.cells[cell_id] = cell
         self._cell_to_grid[cell_id] = grid_id
@@ -658,6 +669,25 @@ class PlotOrchestrator:
 
         self._persist_to_store()
         self._notify_cell_removed(grid_id, cell_id, cell)
+
+    def set_cell_title(self, cell_id: CellId, title: str | None) -> None:
+        """
+        Set or clear the user-defined title of a cell.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to rename.
+        title
+            New user-defined title, or ``None``/empty to clear it and fall back
+            to the derived title.
+        """
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+        cell.user_title = title or None
+        self._persist_to_store()
+        self._logger.info('Set cell %s title to %r', cell_id, cell.user_title)
+        self._notify_cell_updated(grid_id, cell_id, cell)
 
     def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
         """
@@ -1204,7 +1234,11 @@ class PlotOrchestrator:
         if not layers:
             return None
 
-        return PlotCell(geometry=geometry, layers=layers)
+        return PlotCell(
+            geometry=geometry,
+            layers=layers,
+            user_title=cell_data.get('user_title'),
+        )
 
     def _parse_raw_layer(self, layer_data: dict[str, Any]) -> Layer | None:
         """
@@ -1361,18 +1395,7 @@ class PlotOrchestrator:
             'title': grid.title,
             'nrows': grid.nrows,
             'ncols': grid.ncols,
-            'cells': [
-                {
-                    'geometry': {
-                        'row': cell.geometry.row,
-                        'col': cell.geometry.col,
-                        'row_span': cell.geometry.row_span,
-                        'col_span': cell.geometry.col_span,
-                    },
-                    'layers': [self._serialize_layer(layer) for layer in cell.layers],
-                }
-                for cell in grid.cells.values()
-            ],
+            'cells': [self._serialize_cell(cell) for cell in grid.cells.values()],
         }
         if not grid.enabled:
             result['enabled'] = False
@@ -1389,6 +1412,21 @@ class PlotOrchestrator:
             runtime identity handles with no cross-session significance.
         """
         return [self.serialize_grid(grid_id) for grid_id in self._grids]
+
+    def _serialize_cell(self, cell: PlotCell) -> dict[str, Any]:
+        """Serialize a single cell to dict format."""
+        result: dict[str, Any] = {
+            'geometry': {
+                'row': cell.geometry.row,
+                'col': cell.geometry.col,
+                'row_span': cell.geometry.row_span,
+                'col_span': cell.geometry.col_span,
+            },
+            'layers': [self._serialize_layer(layer) for layer in cell.layers],
+        }
+        if cell.user_title is not None:
+            result['user_title'] = cell.user_title
+        return result
 
     def _serialize_layer(self, layer: Layer) -> dict[str, Any]:
         """Serialize a single layer to dict format."""
@@ -1425,7 +1463,9 @@ class PlotOrchestrator:
             for spec in specs:
                 grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
                 for cell in spec.cells:
-                    cell_id = self.add_cell(grid_id, cell.geometry)
+                    cell_id = self.add_cell(
+                        grid_id, cell.geometry, user_title=cell.user_title
+                    )
                     for layer in cell.layers:
                         self.add_layer(cell_id, layer.config)
                 if not spec.enabled:

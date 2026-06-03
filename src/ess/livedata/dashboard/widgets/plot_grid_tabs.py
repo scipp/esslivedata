@@ -43,7 +43,9 @@ from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import (
-    create_cell_toolbar,
+    create_cell_titlebar,
+    create_layer_toolbar,
+    derive_cell_title,
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
@@ -146,6 +148,13 @@ class PlotGridTabs:
 
         # Per-session layer state: version tracking and optional render components.
         self._session_layers: dict[LayerId, SessionLayer] = {}
+
+        # Per-session, per-cell display preference: cells whose layer toolbars
+        # are shown. Layer toolbars are hidden by default; this set tracks the
+        # cells the user has revealed. Purely local UI state (not persisted, not
+        # cross-session); re-applied on cell rebuild so it survives version
+        # polling.
+        self._toolbars_shown: set[CellId] = set()
 
         # Per-session, per-cell autoscale controllers. Lifetime tracks the
         # cell composition: each rebuild creates a fresh controller whose
@@ -462,6 +471,67 @@ class PlotGridTabs:
         self._current_modal = None
         self._modal_container.clear()
 
+    def _show_rename_modal(
+        self, cell_id: CellId, current_title: str, has_user_title: bool
+    ) -> None:
+        """
+        Show a small modal to set or clear the user-defined cell title.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to rename.
+        current_title
+            The currently displayed title (user-defined or derived).
+        has_user_title
+            Whether ``current_title`` is user-defined; if not, the input starts
+            empty so the placeholder hints at the derived fallback.
+        """
+        text = pn.widgets.TextInput(
+            name='Cell title',
+            value=current_title if has_user_title else '',
+            placeholder='Leave empty to use the derived title',
+            sizing_mode='stretch_width',
+        )
+        save_button = pn.widgets.Button(name='Save', button_type='primary')
+        cancel_button = pn.widgets.Button(name='Cancel')
+        modal = pn.Modal(
+            pn.Column(
+                text,
+                pn.Row(
+                    pn.Spacer(sizing_mode='stretch_width'),
+                    cancel_button,
+                    save_button,
+                ),
+                sizing_mode='stretch_width',
+            ),
+            name='Rename cell',
+            margin=20,
+            width=420,
+        )
+        done = {'v': False}
+
+        def finish(*, save: bool) -> None:
+            if done['v']:
+                return
+            done['v'] = True
+            if save:
+                new_title = (text.value_input or '').strip() or None
+                self._orchestrator.set_cell_title(cell_id, new_title)
+            modal.open = False
+            self._modal_container.clear()
+
+        save_button.on_click(lambda _: finish(save=True))
+        cancel_button.on_click(lambda _: finish(save=False))
+        # Closing via the X button or ESC cancels.
+        modal.param.watch(
+            lambda event: None if event.new else finish(save=False), 'open'
+        )
+
+        self._modal_container.clear()
+        self._modal_container.append(modal)
+        modal.open = True
+
     def _on_cell_updated(
         self,
         *,
@@ -619,8 +689,15 @@ class PlotGridTabs:
         # Get layer states from PlotDataService
         layer_states = self._get_layer_states(cell)
 
-        # Create toolbars for all layers
-        toolbars = self._create_layer_toolbars(cell_id, cell, layer_states)
+        # Per-layer toolbars, wrapped in a column the titlebar toggle can hide.
+        layer_toolbars = self._create_layer_toolbars(cell, layer_states)
+        layers_column = pn.Column(
+            *layer_toolbars,
+            sizing_mode='stretch_width',
+            margin=0,
+            visible=cell_id in self._toolbars_shown,
+        )
+        titlebar = self._create_cell_titlebar(cell_id, cell, layers_column)
 
         # Create content area (placeholder or plot)
         if plot is not None:
@@ -647,7 +724,8 @@ class PlotGridTabs:
             styles['border'] = border
 
         return pn.Column(
-            *toolbars,
+            titlebar,
+            layers_column,
             content,
             sizing_mode='stretch_both',
             styles=styles,
@@ -724,19 +802,94 @@ class PlotGridTabs:
 
         self._orchestrator.add_layer(cell_id, overlay_config)
 
-    def _create_layer_toolbars(
+    def _create_cell_titlebar(
         self,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerStateMachine],
-    ) -> list[pn.Row]:
+        layers_column: pn.Column,
+    ) -> pn.Row:
         """
-        Create toolbars for all layers in a cell.
+        Create the cell-level titlebar (title, add layer, rename, toolbar toggle).
 
         Parameters
         ----------
         cell_id
             ID of the cell.
+        cell
+            Plot cell with layers.
+        layers_column
+            The column wrapping the per-layer toolbars, whose visibility the
+            toggle button controls.
+
+        Returns
+        -------
+        :
+            Titlebar Row widget.
+        """
+        has_user_title = cell.user_title is not None
+        title = (
+            cell.user_title
+            if has_user_title
+            else derive_cell_title(
+                cell,
+                self._workflow_registry,
+                get_source_title=self._orchestrator.get_source_title,
+            )
+        )
+
+        # Union of overlay suggestions across all layers, excluding plotters
+        # already present in the cell. Each suggestion remembers the source
+        # layer's config so the overlay inherits the right workflow/sources.
+        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
+        overlay_specs: list[tuple[str, str, str]] = []
+        overlay_sources: dict[tuple[str, str], PlotConfig] = {}
+        for layer in cell.layers:
+            for spec in self._get_available_overlays_for_layer(layer.config):
+                output_name, plotter_name, _ = spec
+                key = (output_name, plotter_name)
+                if plotter_name in existing_plotter_names or key in overlay_sources:
+                    continue
+                overlay_sources[key] = layer.config
+                overlay_specs.append(spec)
+
+        def on_edit_title() -> None:
+            self._show_rename_modal(cell_id, title, has_user_title)
+
+        def on_toggle_toolbars(visible: bool) -> None:
+            if visible:
+                self._toolbars_shown.add(cell_id)
+            else:
+                self._toolbars_shown.discard(cell_id)
+            layers_column.visible = visible
+
+        def on_add() -> None:
+            self._on_add_layer(cell_id)
+
+        def on_overlay(view_name: str, plotter_name: str) -> None:
+            source_config = overlay_sources[(view_name, plotter_name)]
+            self._create_overlay_layer(cell_id, source_config, view_name, plotter_name)
+
+        return create_cell_titlebar(
+            title=title,
+            has_user_title=has_user_title,
+            on_edit_title_callback=on_edit_title,
+            toolbars_visible=cell_id in self._toolbars_shown,
+            on_toggle_toolbars_callback=on_toggle_toolbars,
+            on_add_callback=on_add,
+            on_overlay_selected=on_overlay,
+            available_overlays=overlay_specs,
+        )
+
+    def _create_layer_toolbars(
+        self,
+        cell: PlotCell,
+        layer_states: dict[LayerId, LayerStateMachine],
+    ) -> list[pn.Row]:
+        """
+        Create per-layer toolbars (title + gear/close) for all layers in a cell.
+
+        Parameters
+        ----------
         cell
             Plot cell with layers.
         layer_states
@@ -747,9 +900,6 @@ class PlotGridTabs:
         :
             List of toolbar widgets, one per layer.
         """
-        # Collect existing plotter names to filter already-added overlays
-        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
-
         toolbars = []
         for layer in cell.layers:
             layer_id = layer.layer_id
@@ -778,15 +928,6 @@ class PlotGridTabs:
                 case LayerState.READY:
                     pass  # No extra description for ready state
 
-            # Get available overlays, excluding those already present in the cell
-            available_overlays = [
-                overlay
-                for overlay in self._get_available_overlays_for_layer(config)
-                if overlay[1]
-                not in existing_plotter_names  # overlay[1] is plotter_name
-            ]
-
-            # Create callbacks that capture layer_id / cell_id / config
             def make_close_callback(lid: LayerId) -> Callable[[], None]:
                 def on_close() -> None:
                     self._orchestrator.remove_layer(lid)
@@ -799,26 +940,9 @@ class PlotGridTabs:
 
                 return on_gear
 
-            def make_add_callback(cid: CellId) -> Callable[[], None]:
-                def on_add() -> None:
-                    self._on_add_layer(cid)
-
-                return on_add
-
-            def make_overlay_callback(
-                cid: CellId, cfg: PlotConfig
-            ) -> Callable[[str, str], None]:
-                def on_overlay(view_name: str, plotter_name: str) -> None:
-                    self._create_overlay_layer(cid, cfg, view_name, plotter_name)
-
-                return on_overlay
-
-            toolbar = create_cell_toolbar(
+            toolbar = create_layer_toolbar(
                 on_gear_callback=make_gear_callback(layer_id),
                 on_close_callback=make_close_callback(layer_id),
-                on_add_callback=make_add_callback(cell_id),
-                on_overlay_selected=make_overlay_callback(cell_id, config),
-                available_overlays=available_overlays,
                 title=title,
                 description=description,
                 stopped=stopped,

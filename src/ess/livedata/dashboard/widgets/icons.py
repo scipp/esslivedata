@@ -130,6 +130,33 @@ _ICONS: dict[str, str] = {
         '-.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87"/>'
         '<path d="M3 3l18 18"/>'
     ),
+    # Check (confirm)
+    'check': _svg('<path d="M5 12l5 5l10 -10"/>'),
+    # Adjustments/sliders (layer controls visible)
+    'adjustments': _svg(
+        '<path d="M4 10a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M6 4v4"/>'
+        '<path d="M6 12v8"/>'
+        '<path d="M10 16a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M12 4v10"/>'
+        '<path d="M12 18v2"/>'
+        '<path d="M16 7a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M18 4v1"/>'
+        '<path d="M18 9v11"/>'
+    ),
+    # Adjustments off (layer controls hidden): sliders with a diagonal strike
+    'adjustments-off': _svg(
+        '<path d="M4 10a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M6 4v4"/>'
+        '<path d="M6 12v8"/>'
+        '<path d="M10 16a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M12 4v10"/>'
+        '<path d="M12 18v2"/>'
+        '<path d="M16 7a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
+        '<path d="M18 4v1"/>'
+        '<path d="M18 9v11"/>'
+        '<path d="M3 3l18 18"/>'
+    ),
     # Trash/delete
     'trash': _svg(
         '<path d="M4 7l16 0"/>'
@@ -206,11 +233,12 @@ def get_icon(name: str) -> str:
     Parameters
     ----------
     name:
-        Icon name. Available icons: arrows-minimize, autoscale-c,
-        autoscale-c-on, autoscale-x, autoscale-x-on, autoscale-y,
-        autoscale-y-on, backspace, chevron-down, chevron-right, chevron-up,
-        download, eye, eye-off, pencil, player-pause, player-play, player-stop,
-        plus, refresh, settings, trash, x.
+        Icon name. Available icons: adjustments, adjustments-off,
+        arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
+        autoscale-x-on, autoscale-y, autoscale-y-on, backspace, check,
+        chevron-down, chevron-right, chevron-up, download, eye, eye-off, pencil,
+        player-pause, player-play, player-stop, plus, refresh, settings, trash,
+        x.
 
     Returns
     -------

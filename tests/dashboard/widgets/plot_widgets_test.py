@@ -10,10 +10,18 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_roles import PRIMARY
-from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    DataSourceConfig,
+    Layer,
+    LayerId,
+    PlotCell,
+    PlotConfig,
+)
 from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
 from ess.livedata.dashboard.widgets.plot_widgets import (
     _format_window_info,
+    derive_cell_title,
     get_plot_cell_display_info,
 )
 
@@ -134,3 +142,69 @@ class TestGetPlotCellDisplayInfo:
 
         title, _ = get_plot_cell_display_info(config, registry)
         assert 'since run start' in title
+
+
+_GEO = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+
+def _make_layer(workflow_id, source_names, view_name='result', plot_name='lines'):
+    from uuid import uuid4
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=workflow_id,
+                source_names=source_names,
+                view_name=view_name,
+            )
+        },
+        plot_name=plot_name,
+        params=_FakeParams(),
+    )
+    return Layer(layer_id=LayerId(uuid4()), config=config)
+
+
+class TestDeriveCellTitle:
+    @staticmethod
+    def _wf():
+        return WorkflowId(instrument='test', name='wf', version=1)
+
+    def test_shared_single_source_uses_source_title(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s1'])],
+        )
+        title = derive_cell_title(cell, {}, get_source_title=lambda s: f'Title:{s}')
+        assert title == 'Title:s1'
+
+    def test_shared_common_among_multi_source_layers(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['s1', 's2']), _make_layer(wf, ['s1', 's3'])],
+        )
+        assert derive_cell_title(cell, {}) == 's1'
+
+    def test_single_layer_single_source_uses_source(self) -> None:
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(self._wf(), ['s1'])])
+        assert derive_cell_title(cell, {}) == 's1'
+
+    def test_disjoint_sources_multi_layer_falls_back_to_count(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s2'])],
+        )
+        assert derive_cell_title(cell, {}) == '2 layers'
+
+    def test_single_layer_multi_source_falls_back_to_display_title(self) -> None:
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(self._wf(), ['s1', 's2'], view_name='current')],
+        )
+        assert '2 sources' in derive_cell_title(cell, {})
+
+    def test_empty_cell_returns_empty(self) -> None:
+        cell = PlotCell(geometry=_GEO, layers=[])
+        assert derive_cell_title(cell, {}) == ''
