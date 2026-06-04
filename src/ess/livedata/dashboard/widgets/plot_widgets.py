@@ -13,7 +13,7 @@ from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_params import WindowMode
 from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
 from .icons import get_icon
-from .styles import Colors, FreshnessPill, HoverColors, StatusColors
+from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotCell, PlotConfig
@@ -238,98 +238,6 @@ def _cell_title_html(title: str, has_user_title: bool) -> str:
         f'<span style="{style}line-height:{ButtonStyles.TOOL_BUTTON_SIZE}px;'
         f'white-space:nowrap;overflow:hidden;'
         f'text-overflow:ellipsis;display:block;">{title}</span>'
-    )
-
-
-def _freshness_band(lag_seconds: float) -> tuple[str, str, str]:
-    """Return the ``(background, text, dot)`` pill colors for a lag in seconds."""
-    if lag_seconds < FreshnessPill.FRESH_MAX_SECONDS:
-        return FreshnessPill.FRESH
-    if lag_seconds < FreshnessPill.STALE_MAX_SECONDS:
-        return FreshnessPill.STALE
-    return FreshnessPill.OLD
-
-
-def _format_lag_short(lag_seconds: float) -> str:
-    """Compact lag label, e.g. "2.3s", "41s", "3m"."""
-    if lag_seconds < 10:
-        return f'{lag_seconds:.1f}s'
-    if lag_seconds < 60:
-        return f'{lag_seconds:.0f}s'
-    return f'{lag_seconds / 60:.0f}m'
-
-
-def format_freshness_html(lag_seconds: float | None, tooltip: str = '') -> str:
-    """Render the titlebar freshness/lag pill, color-banded by staleness.
-
-    Parameters
-    ----------
-    lag_seconds:
-        Data lag in seconds, or None to render nothing (no timing data).
-    tooltip:
-        Full time-range text shown on hover (the pill itself shows only the
-        compact lag).
-    """
-    if lag_seconds is None:
-        return ''
-    background, text_color, dot_color = _freshness_band(lag_seconds)
-    pill_style = (
-        f'display:inline-flex;align-items:center;gap:5px;height:20px;'
-        f'padding:0 8px;border-radius:10px;font-size:11px;'
-        f'font-variant-numeric:tabular-nums;white-space:nowrap;'
-        f'background:{background};color:{text_color};'
-    )
-    dot_style = (
-        f'width:7px;height:7px;border-radius:50%;flex:none;background:{dot_color};'
-    )
-    if tooltip:
-        from html import escape
-
-        title_attr = f' title="{escape(tooltip)}"'
-    else:
-        title_attr = ''
-    return (
-        f'<span style="{pill_style}"{title_attr}>'
-        f'<span style="{dot_style}"></span>{_format_lag_short(lag_seconds)}</span>'
-    )
-
-
-def create_freshness_pane() -> pn.pane.HTML:
-    """Create the titlebar freshness/lag pane, updated in place via ``.object``.
-
-    Content sizes to the pill; ``align='center'`` (``align-self:center``)
-    vertically centers it against the title and buttons in the row.
-    """
-    return pn.pane.HTML(
-        '',
-        align='center',
-        margin=(0, 6),
-        styles={'flex': '0 0 auto'},
-    )
-
-
-def format_layer_time_html(text: str) -> str:
-    """Render a per-layer time-range/lag label (muted, tabular nums)."""
-    if not text:
-        return ''
-    style = (
-        f'font-size:11px;color:{Colors.TEXT_MUTED};white-space:nowrap;'
-        'font-variant-numeric:tabular-nums;'
-    )
-    return f'<span style="{style}">{text}</span>'
-
-
-def create_layer_time_pane() -> pn.pane.HTML:
-    """Create a per-layer time-range pane, updated in place via ``.object``.
-
-    Placed on its own line below the layer title/buttons row; indented and
-    pulled up close to the title so it visually belongs to it.
-    """
-    return pn.pane.HTML(
-        '',
-        align='start',
-        margin=(-4, 6, 0, 14),
-        styles={'flex': '0 0 auto'},
     )
 
 

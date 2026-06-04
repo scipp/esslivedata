@@ -232,12 +232,12 @@ class TestPollHandlesLayoutPlotters:
         assert new_version != version_after_first_poll
 
         # Inject a transient failure into the rebuild path
-        original = plot_grid_tabs._get_session_composed_plot
+        original = plot_grid_tabs._build_cell
 
         def _raise(cell_id, cell):
             raise RuntimeError("injected failure")
 
-        plot_grid_tabs._get_session_composed_plot = _raise
+        plot_grid_tabs._build_cell = _raise
         try:
             try:
                 plot_grid_tabs._poll_for_plot_updates()
@@ -247,7 +247,7 @@ class TestPollHandlesLayoutPlotters:
             session_layer = plot_grid_tabs._session_layers[layer_id]
             assert session_layer.last_seen_version != new_version
         finally:
-            plot_grid_tabs._get_session_composed_plot = original
+            plot_grid_tabs._build_cell = original
 
 
 class TestFreshnessIndicator:
@@ -275,14 +275,18 @@ class TestFreshnessIndicator:
 
         plot_grid_tabs._poll_for_plot_updates()
 
-        panes = list(plot_grid_tabs._cell_freshness_panes.values())
+        panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
         assert len(panes) == 1
         # Pill styling present, with the full range in the hover tooltip.
         assert 'border-radius' in panes[0].object
         assert 'Lag:' in panes[0].object
 
         # The per-layer time pane shows the full range + lag.
-        layer_panes = list(plot_grid_tabs._layer_time_panes.values())
+        layer_panes = [
+            pane
+            for cw in plot_grid_tabs._cells.values()
+            for pane in cw.layer_time_panes.values()
+        ]
         assert len(layer_panes) == 1
         assert 'Lag:' in layer_panes[0].object
 
@@ -336,10 +340,11 @@ class TestFreshnessIndicator:
 
         plot_grid_tabs._poll_for_plot_updates()
 
-        assert 'Lag:' in plot_grid_tabs._layer_time_panes[l1].object
-        assert 'Lag:' in plot_grid_tabs._layer_time_panes[l2].object
+        cell_widget = plot_grid_tabs._cells[cell_id]
+        assert 'Lag:' in cell_widget.layer_time_panes[l1].object
+        assert 'Lag:' in cell_widget.layer_time_panes[l2].object
         # The cell pill must still show with two layers.
-        pill_panes = list(plot_grid_tabs._cell_freshness_panes.values())
+        pill_panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
         assert len(pill_panes) == 1
         assert 'border-radius' in pill_panes[0].object
 
@@ -355,5 +360,5 @@ class TestFreshnessIndicator:
 
         plot_grid_tabs._poll_for_plot_updates()
 
-        for pane in plot_grid_tabs._cell_freshness_panes.values():
-            assert pane.object in ('', None)
+        for cell_widget in plot_grid_tabs._cells.values():
+            assert cell_widget.freshness_pane.object in ('', None)
