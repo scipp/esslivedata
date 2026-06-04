@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from .icons import get_icon
 from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
+    from ..plot_data_service import LayerId
     from ..plot_orchestrator import PlotCell, PlotConfig
     from ..plotting_controller import PlottingController
 
@@ -126,51 +128,39 @@ def create_overlay_add_button(
     return menu_button
 
 
-def create_layer_toolbar(
+def create_layer_info_row(
     *,
-    on_gear_callback: Callable[[], None],
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
     time_pane: pn.pane.HTML | None = None,
 ) -> pn.Row | pn.Column:
     """
-    Create a per-layer toolbar with title and a gear button.
+    Create a per-layer info row showing the layer title and its time range.
 
-    The toolbar displays an optional title on the left (with tooltip for
-    description) and a gear button on the right, using flexbox layout
-    to avoid overlap with Bokeh's plot toolbar. When a ``time_pane`` is given
-    it is placed on its own line below, so the time info does not compete with
-    the title for horizontal space. Cell-level actions (add/remove layer,
-    rename, toolbar visibility) live on the cell titlebar and properties modal,
-    not here.
+    Purely informational: it shows the layer title (with a tooltip for the
+    description) and, when a ``time_pane`` is given, the layer's data time
+    range on its own line below. Layer configuration lives on the cell titlebar
+    gear; add/remove and rename live on the cell properties modal — no controls
+    are placed here.
 
     Parameters
     ----------
-    on_gear_callback:
-        Callback function to invoke when the gear button is clicked.
     title:
-        Optional title text to display on the left side of the toolbar.
+        Optional title text to display on the left side of the row.
     description:
         Optional description shown as tooltip when hovering over the title.
     stopped:
         If True, adds a visual indicator (border) showing workflow has ended.
     time_pane:
-        Optional pane showing this layer's data time range/lag, placed right of
-        the title and updated in place by the caller.
+        Optional pane showing this layer's data time range/lag, placed on its
+        own line below the title and updated in place by the caller.
 
     Returns
     -------
     :
-        Panel Row widget containing the toolbar.
+        Panel Row (or Column when a time pane is given) for one layer.
     """
-    gear_button = create_tool_button(
-        icon_name='settings',
-        button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color=ButtonStyles.PRIMARY_HOVER,
-        on_click_callback=on_gear_callback,
-    )
-
     # Build left content: title and optional tooltip icon
     left_items: list = []
     if title:
@@ -210,24 +200,23 @@ def create_layer_toolbar(
         styles['border'] = f'2px solid {Colors.TEXT}'
         styles['border-radius'] = '4px'
 
-    button_row = pn.Row(
+    title_row = pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        gear_button,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         align='end',
     )
 
     if time_pane is None:
-        button_row.margin = (margin, margin, margin, margin)
-        button_row.styles = styles
-        return button_row
+        title_row.margin = (margin, margin, margin, margin)
+        title_row.styles = styles
+        return title_row
 
-    # Time info goes on its own line below the title/buttons row to avoid
-    # competing with the title for horizontal space.
+    # Time info goes on its own line below the title row to avoid competing
+    # with the title for horizontal space.
     return pn.Column(
-        button_row,
+        title_row,
         time_pane,
         sizing_mode='stretch_width',
         margin=(margin, margin, margin, margin),
@@ -261,13 +250,13 @@ def _create_toolbar_visibility_button(
     visible: bool,
     on_toggle: Callable[[bool], None],
 ) -> pn.widgets.Button:
-    """Adjustments button toggling per-layer toolbar visibility for a cell."""
+    """Adjustments button toggling per-layer info-row visibility for a cell."""
 
     def _icon(shown: bool) -> str:
         return get_icon('stack-2' if shown else 'stack')
 
     def _tip(shown: bool) -> str:
-        return 'Hide layer toolbars' if shown else 'Show layer toolbars'
+        return 'Hide layer details' if shown else 'Show layer details'
 
     button = pn.widgets.Button(
         label='',
@@ -293,21 +282,101 @@ def _create_toolbar_visibility_button(
     return button
 
 
+def _create_configure_button_or_menu(
+    *,
+    layers: list[tuple[LayerId, str]],
+    on_configure: Callable[[LayerId], None],
+) -> pn.widgets.Button | pn.widgets.MenuButton:
+    """
+    Gear button (single layer) or menu picking which layer to configure.
+
+    For a single-layer cell the gear configures that layer directly. For
+    multiple layers it becomes a dropdown listing the layer titles, routing the
+    selection to ``on_configure`` with the chosen layer's ID.
+
+    Parameters
+    ----------
+    layers:
+        ``(layer_id, title)`` pairs for the cell's layers, in display order.
+    on_configure:
+        Callback invoked with the layer ID to configure.
+    """
+    button_color = Colors.TEXT_MUTED
+    hover_color = HoverColors.MUTED
+
+    if len(layers) == 1:
+        layer_id = layers[0][0]
+        return create_tool_button(
+            icon_name='settings',
+            button_color=button_color,
+            hover_color=hover_color,
+            on_click_callback=lambda: on_configure(layer_id),
+        )
+
+    # Titles carry HTML entities (e.g. '&rarr;'); unescape for plain menu
+    # labels and disambiguate duplicates so the label->layer map stays 1:1.
+    items: list[str] = []
+    label_map: dict[str, LayerId] = {}
+    for layer_id, title in layers:
+        label = html.unescape(title)
+        if label in label_map:
+            suffix = 2
+            while f'{label} ({suffix})' in label_map:
+                suffix += 1
+            label = f'{label} ({suffix})'
+        items.append(label)
+        label_map[label] = layer_id
+
+    stylesheets = create_tool_button_stylesheet(button_color, hover_color)
+    stylesheets.append(
+        """
+        .bk-menu {
+            min-width: 200px !important;
+            right: 0 !important;
+            left: auto !important;
+        }
+        """
+    )
+    menu_button = pn.widgets.MenuButton(
+        label='',
+        items=items,
+        icon=get_icon('settings'),
+        icon_size='1.5em',
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        color='light',
+        sizing_mode='fixed',
+        margin=0,
+        stylesheets=stylesheets,
+    )
+
+    def on_menu_click(event: pn.param.parameterized.Event) -> None:
+        if event.new in label_map:
+            on_configure(label_map[event.new])
+
+    menu_button.on_click(on_menu_click)
+    return menu_button
+
+
 def create_cell_titlebar(
     *,
     title: str,
     has_user_title: bool,
     on_edit_title_callback: Callable[[], None],
+    configure_layers: list[tuple[LayerId, str]],
+    on_configure_layer: Callable[[LayerId], None],
     toolbars_visible: bool,
     on_toggle_toolbars_callback: Callable[[bool], None],
     freshness_pane: pn.pane.HTML | None = None,
 ) -> pn.Row:
     """
-    Create the cell-level titlebar shown above the per-layer toolbars.
+    Create the cell-level titlebar shown above the per-layer info rows.
 
     The titlebar holds the cell title on the left and cell-level actions on the
-    right: edit cell properties (opens a modal for rename/add/remove layer) and
-    a toggle that hides/shows the per-layer toolbars.
+    right: a gear that configures a layer (directly for one layer, via a layer
+    picker for several), edit cell properties (opens a modal for
+    rename/add/remove layer), and a toggle that hides/shows the per-layer info
+    rows.
 
     Parameters
     ----------
@@ -319,8 +388,13 @@ def create_cell_titlebar(
     on_edit_title_callback:
         Invoked when the edit (pencil) button is clicked; opens the cell
         properties modal.
+    configure_layers:
+        ``(layer_id, title)`` pairs for the cell's layers, driving the gear
+        button/menu.
+    on_configure_layer:
+        Invoked with a layer ID when the gear (or a layer menu entry) is chosen.
     toolbars_visible:
-        Current visibility of the per-layer toolbars; sets the toggle icon.
+        Current visibility of the per-layer info rows; sets the toggle icon.
     on_toggle_toolbars_callback:
         Invoked with the new visibility state when the toggle is clicked.
     freshness_pane:
@@ -340,6 +414,10 @@ def create_cell_titlebar(
         styles={'overflow': 'hidden', 'min-width': '0'},
     )
 
+    gear_button = _create_configure_button_or_menu(
+        layers=configure_layers,
+        on_configure=on_configure_layer,
+    )
     edit_button = create_tool_button(
         icon_name='pencil',
         button_color=Colors.TEXT_MUTED,
@@ -351,7 +429,7 @@ def create_cell_titlebar(
         on_toggle=on_toggle_toolbars_callback,
     )
 
-    right_buttons: list = [edit_button, toggle_button]
+    right_buttons: list = [gear_button, edit_button, toggle_button]
 
     # Freshness pill sits at the far left; the stretch title fills the middle and
     # pushes the action buttons to the right.

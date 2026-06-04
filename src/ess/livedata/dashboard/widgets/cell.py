@@ -44,7 +44,7 @@ from ..session_layer import SessionLayer
 from .plot_grid import GridCellStyles
 from .plot_widgets import (
     create_cell_titlebar,
-    create_layer_toolbar,
+    create_layer_info_row,
     derive_cell_title,
     get_plot_cell_display_info,
     get_workflow_display_info,
@@ -384,6 +384,18 @@ class CellWidget:
             )
         )
 
+        configure_layers = [
+            (
+                layer.layer_id,
+                get_plot_cell_display_info(
+                    layer.config,
+                    self._deps.workflow_registry,
+                    get_source_title=self._deps.orchestrator.get_source_title,
+                )[0],
+            )
+            for layer in cell.layers
+        ]
+
         def on_edit_title() -> None:
             self._deps.on_edit_title(self._cell_id, title, has_user_title)
 
@@ -395,6 +407,8 @@ class CellWidget:
             title=title,
             has_user_title=has_user_title,
             on_edit_title_callback=on_edit_title,
+            configure_layers=configure_layers,
+            on_configure_layer=self._deps.on_reconfigure_layer,
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
             freshness_pane=self._freshness_pane,
@@ -405,7 +419,7 @@ class CellWidget:
         layer_states: dict[LayerId, LayerStateMachine],
     ) -> list[pn.Row | pn.Column]:
         """
-        Create per-layer toolbars (title + gear/close) for all layers in the cell.
+        Create per-layer info rows (title + time range) for the cell's layers.
 
         Parameters
         ----------
@@ -415,9 +429,9 @@ class CellWidget:
         Returns
         -------
         :
-            List of toolbar widgets, one per layer.
+            List of info-row widgets, one per layer.
         """
-        toolbars = []
+        rows = []
         for layer in self._cell.layers:
             layer_id = layer.layer_id
             config = layer.config
@@ -445,25 +459,19 @@ class CellWidget:
                 case LayerState.READY:
                     pass  # No extra description for ready state
 
-            def make_gear_callback(lid: LayerId) -> Callable[[], None]:
-                def on_gear() -> None:
-                    self._deps.on_reconfigure_layer(lid)
-
-                return on_gear
-
             time_pane = create_layer_time_pane()
             self._layer_time_panes[layer_id] = time_pane
 
-            toolbar = create_layer_toolbar(
-                on_gear_callback=make_gear_callback(layer_id),
-                title=title,
-                description=description,
-                stopped=stopped,
-                time_pane=time_pane,
+            rows.append(
+                create_layer_info_row(
+                    title=title,
+                    description=description,
+                    stopped=stopped,
+                    time_pane=time_pane,
+                )
             )
-            toolbars.append(toolbar)
 
-        return toolbars
+        return rows
 
     def _build_placeholder(
         self,
