@@ -27,13 +27,11 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.timestamp import Timestamp
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
-from ..data_roles import PRIMARY
 from ..format_utils import extract_error_summary
 from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellId,
-    DataSourceConfig,
     LayerId,
     PlotCell,
     PlotConfig,
@@ -41,7 +39,6 @@ from ..plot_orchestrator import (
 )
 from ..plot_params import PlotAspectType, StretchMode
 from ..plots import TimeBounds, format_time_info, merge_time_bounds
-from ..plotting_controller import PlottingController
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from .plot_grid import GridCellStyles
@@ -192,11 +189,9 @@ class CellDeps:
 
     orchestrator: PlotOrchestrator
     workflow_registry: Mapping[WorkflowId, WorkflowSpec]
-    plotting_controller: PlottingController
     plot_data_service: PlotDataService
     session_layers: dict[LayerId, SessionLayer]
     on_edit_title: Callable[[CellId, str, bool], None]
-    on_add_layer: Callable[[CellId], None]
     on_reconfigure_layer: Callable[[LayerId], None]
 
 
@@ -389,34 +384,12 @@ class CellWidget:
             )
         )
 
-        # Union of overlay suggestions across all layers, excluding plotters
-        # already present in the cell. Each suggestion remembers the source
-        # layer's config so the overlay inherits the right workflow/sources.
-        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
-        overlay_specs: list[tuple[str, str, str]] = []
-        overlay_sources: dict[tuple[str, str], PlotConfig] = {}
-        for layer in cell.layers:
-            for spec in self._available_overlays(layer.config):
-                output_name, plotter_name, _ = spec
-                key = (output_name, plotter_name)
-                if plotter_name in existing_plotter_names or key in overlay_sources:
-                    continue
-                overlay_sources[key] = layer.config
-                overlay_specs.append(spec)
-
         def on_edit_title() -> None:
             self._deps.on_edit_title(self._cell_id, title, has_user_title)
 
         def on_toggle_toolbars(visible: bool) -> None:
             self._toolbars_shown = visible
             layers_column.visible = visible
-
-        def on_add() -> None:
-            self._deps.on_add_layer(self._cell_id)
-
-        def on_overlay(view_name: str, plotter_name: str) -> None:
-            source_config = overlay_sources[(view_name, plotter_name)]
-            self._create_overlay_layer(source_config, view_name, plotter_name)
 
         return create_cell_titlebar(
             title=title,
@@ -425,70 +398,7 @@ class CellWidget:
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
             freshness_pane=self._freshness_pane,
-            on_add_callback=on_add,
-            on_overlay_selected=on_overlay,
-            available_overlays=overlay_specs,
         )
-
-    def _available_overlays(self, config: PlotConfig) -> list[tuple[str, str, str]]:
-        """
-        Get available overlay suggestions for a layer based on its configuration.
-
-        Returns
-        -------
-        :
-            List of (output_name, plotter_name, plotter_title) tuples.
-            Returns empty list if overlays are not applicable.
-        """
-        # Skip for static overlays (no workflow)
-        if config.is_static():
-            return []
-
-        # Get workflow spec
-        workflow_spec = self._deps.workflow_registry.get(config.workflow_id)
-        if workflow_spec is None:
-            return []
-
-        return self._deps.plotting_controller.get_available_overlays(
-            workflow_spec, config.plot_name
-        )
-
-    def _create_overlay_layer(
-        self,
-        base_config: PlotConfig,
-        view_name: str,
-        plotter_name: str,
-    ) -> None:
-        """
-        Create an overlay layer inheriting configuration from a base layer.
-
-        Parameters
-        ----------
-        base_config
-            Configuration of the base layer (e.g., image layer).
-        view_name
-            Name of the output view for the overlay (e.g., 'roi_rectangle').
-        plotter_name
-            Name of the plotter to use for the overlay.
-        """
-        # Get default params for the plotter
-        spec = self._deps.plotting_controller.get_spec(plotter_name)
-        params = spec.params() if spec.params else None
-
-        # Create PlotConfig inheriting workflow/sources from base layer
-        overlay_config = PlotConfig(
-            data_sources={
-                PRIMARY: DataSourceConfig(
-                    workflow_id=base_config.workflow_id,
-                    source_names=list(base_config.source_names),
-                    view_name=view_name,
-                )
-            },
-            plot_name=plotter_name,
-            params=params,
-        )
-
-        self._deps.orchestrator.add_layer(self._cell_id, overlay_config)
 
     def _build_layer_toolbars(
         self,
@@ -535,12 +445,6 @@ class CellWidget:
                 case LayerState.READY:
                     pass  # No extra description for ready state
 
-            def make_close_callback(lid: LayerId) -> Callable[[], None]:
-                def on_close() -> None:
-                    self._deps.orchestrator.remove_layer(lid)
-
-                return on_close
-
             def make_gear_callback(lid: LayerId) -> Callable[[], None]:
                 def on_gear() -> None:
                     self._deps.on_reconfigure_layer(lid)
@@ -552,7 +456,6 @@ class CellWidget:
 
             toolbar = create_layer_toolbar(
                 on_gear_callback=make_gear_callback(layer_id),
-                on_close_callback=make_close_callback(layer_id),
                 title=title,
                 description=description,
                 stopped=stopped,

@@ -17,55 +17,83 @@ from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotCell, PlotConfig
+    from ..plotting_controller import PlottingController
 
 
-_ADD_LAYER_ITEM = 'Add layer...'
+def _available_overlays_for_config(
+    config: PlotConfig,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    plotting_controller: PlottingController,
+) -> list[tuple[str, str, str]]:
+    """Overlay suggestions for a single layer: ``(view, plotter, title)``."""
+    if config.is_static():
+        return []
+    workflow_spec = workflow_registry.get(config.workflow_id)
+    if workflow_spec is None:
+        return []
+    return plotting_controller.get_available_overlays(workflow_spec, config.plot_name)
 
 
-def _create_add_button_or_menu(
-    *,
-    on_add_callback: Callable[[], None],
-    on_overlay_selected: Callable[[str, str], None] | None = None,
-    available_overlays: list[tuple[str, str, str]] | None = None,
-) -> pn.widgets.Button | pn.widgets.MenuButton:
+def overlay_suggestions_for_layer(
+    config: PlotConfig,
+    existing_plotters: frozenset[str],
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    plotting_controller: PlottingController,
+) -> list[tuple[str, str, str]]:
     """
-    Create either a simple add button or a dropdown menu with overlay options.
+    Overlay suggestions derived from one layer, minus plotters already present.
 
-    Parameters
-    ----------
-    on_add_callback:
-        Callback when "Add layer..." is selected (opens modal).
-    on_overlay_selected:
-        Callback when an overlay is selected: (output_name, plotter_name).
-    available_overlays:
-        List of (output_name, plotter_name, plotter_title) tuples.
+    Overlays inherit the layer's workflow/sources, so a suggestion is offered
+    per base layer. Plotters already present anywhere in the cell are excluded
+    to avoid suggesting a duplicate.
 
     Returns
     -------
     :
-        Button widget or MenuButton with overlay options.
+        List of ``(view_name, plotter_name, plotter_title)`` tuples.
+    """
+    return [
+        (view_name, plotter_name, title)
+        for view_name, plotter_name, title in _available_overlays_for_config(
+            config, workflow_registry, plotting_controller
+        )
+        if plotter_name not in existing_plotters
+    ]
+
+
+def create_overlay_add_button(
+    *,
+    overlays: list[tuple[str, str, str]],
+    on_overlay_selected: Callable[[str, str], None],
+) -> pn.widgets.MenuButton:
+    """
+    Create a ``+`` dropdown adding an overlay derived from a layer.
+
+    The dropdown lists the overlay titles (always a menu, even for a single
+    suggestion, so the choice is always labeled). Callers build this only when
+    ``overlays`` is non-empty.
+
+    Parameters
+    ----------
+    overlays:
+        ``(view_name, plotter_name, plotter_title)`` tuples for the layer.
+    on_overlay_selected:
+        Callback when an overlay is chosen: ``(view_name, plotter_name)``.
+
+    Returns
+    -------
+    :
+        MenuButton listing the overlay suggestions.
     """
     button_color = StatusColors.SUCCESS
     hover_color = HoverColors.SUCCESS
 
-    if not available_overlays or on_overlay_selected is None:
-        # No overlays available - use simple button
-        return create_tool_button(
-            icon_name='plus',
-            button_color=button_color,
-            hover_color=hover_color,
-            on_click_callback=on_add_callback,
-        )
-
-    # Build menu items: "Add layer..." followed by overlay suggestions
-    items = [_ADD_LAYER_ITEM]
+    items: list[str] = []
     overlay_map: dict[str, tuple[str, str]] = {}
+    for view_name, plotter_name, title in overlays:
+        items.append(title)
+        overlay_map[title] = (view_name, plotter_name)
 
-    for output_name, plotter_name, plotter_title in available_overlays:
-        items.append(plotter_title)
-        overlay_map[plotter_title] = (output_name, plotter_name)
-
-    # Use shared button stylesheet + menu-specific styling
     stylesheets = create_tool_button_stylesheet(button_color, hover_color)
     stylesheets.append(
         """
@@ -76,7 +104,6 @@ def _create_add_button_or_menu(
         }
         """
     )
-
     menu_button = pn.widgets.MenuButton(
         label='',
         items=items,
@@ -91,12 +118,9 @@ def _create_add_button_or_menu(
     )
 
     def on_menu_click(event: pn.param.parameterized.Event) -> None:
-        selected = event.new
-        if selected == _ADD_LAYER_ITEM:
-            on_add_callback()
-        elif selected in overlay_map:
-            output_name, plotter_name = overlay_map[selected]
-            on_overlay_selected(output_name, plotter_name)
+        if event.new in overlay_map:
+            view_name, plotter_name = overlay_map[event.new]
+            on_overlay_selected(view_name, plotter_name)
 
     menu_button.on_click(on_menu_click)
     return menu_button
@@ -105,28 +129,26 @@ def _create_add_button_or_menu(
 def create_layer_toolbar(
     *,
     on_gear_callback: Callable[[], None],
-    on_close_callback: Callable[[], None],
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
     time_pane: pn.pane.HTML | None = None,
 ) -> pn.Row | pn.Column:
     """
-    Create a per-layer toolbar with title and gear/close buttons.
+    Create a per-layer toolbar with title and a gear button.
 
     The toolbar displays an optional title on the left (with tooltip for
-    description) and gear/close buttons on the right, using flexbox layout
+    description) and a gear button on the right, using flexbox layout
     to avoid overlap with Bokeh's plot toolbar. When a ``time_pane`` is given
     it is placed on its own line below, so the time info does not compete with
-    the title for horizontal space. Cell-level actions (add layer, rename,
-    toolbar visibility) live on the cell titlebar, not here.
+    the title for horizontal space. Cell-level actions (add/remove layer,
+    rename, toolbar visibility) live on the cell titlebar and properties modal,
+    not here.
 
     Parameters
     ----------
     on_gear_callback:
         Callback function to invoke when the gear button is clicked.
-    on_close_callback:
-        Callback function to invoke when the close button is clicked.
     title:
         Optional title text to display on the left side of the toolbar.
     description:
@@ -147,12 +169,6 @@ def create_layer_toolbar(
         button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color=ButtonStyles.PRIMARY_HOVER,
         on_click_callback=on_gear_callback,
-    )
-    close_button = create_tool_button(
-        icon_name='x',
-        button_color=ButtonStyles.DANGER_RED,
-        hover_color=ButtonStyles.DANGER_HOVER,
-        on_click_callback=on_close_callback,
     )
 
     # Build left content: title and optional tooltip icon
@@ -198,7 +214,6 @@ def create_layer_toolbar(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
         gear_button,
-        close_button,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         align='end',
@@ -286,15 +301,12 @@ def create_cell_titlebar(
     toolbars_visible: bool,
     on_toggle_toolbars_callback: Callable[[bool], None],
     freshness_pane: pn.pane.HTML | None = None,
-    on_add_callback: Callable[[], None] | None = None,
-    on_overlay_selected: Callable[[str, str], None] | None = None,
-    available_overlays: list[tuple[str, str, str]] | None = None,
 ) -> pn.Row:
     """
     Create the cell-level titlebar shown above the per-layer toolbars.
 
     The titlebar holds the cell title on the left and cell-level actions on the
-    right: add layer (with overlay suggestions), edit title (opens a modal), and
+    right: edit cell properties (opens a modal for rename/add/remove layer) and
     a toggle that hides/shows the per-layer toolbars.
 
     Parameters
@@ -305,7 +317,8 @@ def create_cell_titlebar(
         Whether ``title`` is user-defined (styled prominently) or derived
         (styled muted/italic as a placeholder).
     on_edit_title_callback:
-        Invoked when the edit (pencil) button is clicked; opens the rename modal.
+        Invoked when the edit (pencil) button is clicked; opens the cell
+        properties modal.
     toolbars_visible:
         Current visibility of the per-layer toolbars; sets the toggle icon.
     on_toggle_toolbars_callback:
@@ -313,14 +326,6 @@ def create_cell_titlebar(
     freshness_pane:
         Optional pane showing the data freshness/lag indicator, placed between
         the title and the action buttons. Updated in place by the caller.
-    on_add_callback:
-        Optional callback to add a layer (opens modal). If None, no add button.
-    on_overlay_selected:
-        Optional callback when an overlay suggestion is selected, called with
-        (output_name, plotter_name).
-    available_overlays:
-        Optional list of (output_name, plotter_name, plotter_title) tuples; if
-        provided the add button becomes a dropdown menu.
 
     Returns
     -------
@@ -346,16 +351,7 @@ def create_cell_titlebar(
         on_toggle=on_toggle_toolbars_callback,
     )
 
-    right_buttons: list = []
-    if on_add_callback is not None:
-        right_buttons.append(
-            _create_add_button_or_menu(
-                on_add_callback=on_add_callback,
-                on_overlay_selected=on_overlay_selected,
-                available_overlays=available_overlays,
-            )
-        )
-    right_buttons.extend([edit_button, toggle_button])
+    right_buttons: list = [edit_button, toggle_button]
 
     # Freshness pill sits at the far left; the stretch title fills the middle and
     # pushes the action buttons to the right.
