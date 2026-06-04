@@ -732,7 +732,12 @@ class Plotter:
         store for every element on every tick. Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
         """
-        return [hv.opts.Overlay(shared_axes=True), hv.opts.Layout(shared_axes=False)]
+        # title='' stops Bokeh promoting a single overlaid element's label to the
+        # plot title when there is no legend to carry it.
+        return [
+            hv.opts.Overlay(shared_axes=True, title=''),
+            hv.opts.Layout(shared_axes=False),
+        ]
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
@@ -1300,6 +1305,11 @@ class Overlay1DPlotter(Plotter):
         data = plot_data
         use_histogram = actual_mode == 'histogram'
 
+        # A single slice needs no label: a lone labelled element renders its
+        # label as the plot title, whereas labels only earn their keep as legend
+        # entries distinguishing multiple overlaid slices.
+        label_slices = slice_size > 1
+
         elements: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
@@ -1311,7 +1321,7 @@ class Overlay1DPlotter(Plotter):
             color_idx = int(coord_val) % len(self._colors)
             color = self._colors[color_idx]
 
-            curve_label = f"{slice_dim}={coord_val}"
+            curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
                 slice_data, value_label=output_display_name, dim_label=dim_label
             )

@@ -1369,6 +1369,8 @@ class TestOverlay1DPlotter:
         result = overlay_plotter.plot(data, data_key)
         # Single curve, not wrapped in Overlay
         assert isinstance(result, hv.Curve)
+        # No label: a lone labelled element would render its label as the title.
+        assert result.label == ''
 
     def test_empty_first_dim_returns_empty_curve(
         self, overlay_plotter, data_2d_empty_first_dim, data_key
