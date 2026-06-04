@@ -17,12 +17,10 @@ import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
-from ..data_roles import PRIMARY
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
-    DataSourceConfig,
     GridId,
     LayerId,
     PlotCell,
@@ -34,16 +32,11 @@ from ..plot_orchestrator import (
 from ..plots import TimeBounds
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
-from .buttons import ButtonStyles, create_tool_button
 from .cell import CellDeps, CellWidget
+from .cell_properties_modal import CellPropertiesModal
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .plot_widgets import (
-    create_overlay_add_button,
-    get_plot_cell_display_info,
-    overlay_suggestions_for_layer,
-)
 from .styles import Colors
 
 logger = structlog.get_logger(__name__)
@@ -448,53 +441,11 @@ class PlotGridTabs:
         self._current_modal = None
         self._modal_container.clear()
 
-    def _add_overlay_layer(
-        self,
-        cell_id: CellId,
-        base_config: PlotConfig,
-        view_name: str,
-        plotter_name: str,
-    ) -> None:
-        """
-        Add an overlay layer inheriting workflow/sources from a base layer.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the cell to add the overlay to.
-        base_config
-            Configuration of the base layer the overlay derives from.
-        view_name
-            Name of the output view for the overlay (e.g., 'roi_rectangle').
-        plotter_name
-            Name of the plotter to use for the overlay.
-        """
-        spec = self._plotting_controller.get_spec(plotter_name)
-        params = spec.params() if spec.params else None
-        overlay_config = PlotConfig(
-            data_sources={
-                PRIMARY: DataSourceConfig(
-                    workflow_id=base_config.workflow_id,
-                    source_names=list(base_config.source_names),
-                    view_name=view_name,
-                )
-            },
-            plot_name=plotter_name,
-            params=params,
-        )
-        self._orchestrator.add_layer(cell_id, overlay_config)
-
     def _show_cell_properties_modal(
         self, cell_id: CellId, current_title: str, has_user_title: bool
     ) -> None:
         """
-        Show the cell-properties modal: rename, add layer, and remove layers.
-
-        Rename is the only field saved on "Save"; add/remove act immediately so
-        the modal doubles as the cell's layer-composition editor. Add layer and
-        add overlay persist any pending title edit, then hand off to the plot
-        config modal (add layer) or add the overlay directly (overlays use
-        plotter defaults).
+        Show the cell-properties modal (rename, add layer, remove layers).
 
         Parameters
         ----------
@@ -506,136 +457,19 @@ class PlotGridTabs:
             Whether ``current_title`` is user-defined; if not, the input starts
             empty so the placeholder hints at the derived fallback.
         """
-        cell = self._orchestrator.get_cell(cell_id)
-        text = pn.widgets.TextInput(
-            value=current_title if has_user_title else '',
-            placeholder='Leave empty to use the derived title',
-            description='Leave empty to use the derived title.',
-            sizing_mode='stretch_width',
+        modal = CellPropertiesModal(
+            orchestrator=self._orchestrator,
+            workflow_registry=self._workflow_registry,
+            plotting_controller=self._plotting_controller,
+            cell_id=cell_id,
+            current_title=current_title,
+            has_user_title=has_user_title,
+            on_add_layer=self._on_add_layer,
+            on_close=self._cleanup_modal,
         )
-        layers_col = pn.Column(sizing_mode='stretch_width')
-        add_layer_button = pn.widgets.Button(name='Add layer…', button_type='default')
-        save_button = pn.widgets.Button(name='Save', button_type='primary')
-        cancel_button = pn.widgets.Button(name='Cancel')
-        heading_margin = (10, 0, 0, 0)
-        modal = pn.Modal(
-            pn.Column(
-                pn.pane.Markdown('### Cell properties', margin=(0, 0, 5, 0)),
-                pn.pane.Markdown('#### Header', margin=(0, 0, 0, 0)),
-                text,
-                pn.pane.Markdown('#### Layers', margin=heading_margin),
-                pn.Row(add_layer_button, pn.Spacer(sizing_mode='stretch_width')),
-                layers_col,
-                pn.Row(
-                    pn.Spacer(sizing_mode='stretch_width'),
-                    cancel_button,
-                    save_button,
-                    margin=(10, 0, 0, 0),
-                ),
-                sizing_mode='stretch_width',
-            ),
-            margin=20,
-            width=480,
-        )
-        done = {'v': False}
-
-        def persist_title() -> None:
-            new_title = (text.value_input or '').strip() or None
-            self._orchestrator.set_cell_title(cell_id, new_title)
-
-        def close() -> None:
-            done['v'] = True
-            modal.open = False
-            self._modal_container.clear()
-
-        def finish(*, save: bool) -> None:
-            if done['v']:
-                return
-            if save:
-                persist_title()
-            close()
-
-        def on_remove(layer_id: LayerId) -> None:
-            # ``remove_layer`` mutates the shared ``cell.layers`` in place, and
-            # removes the whole cell once its last layer is gone.
-            self._orchestrator.remove_layer(layer_id)
-            if not cell.layers:
-                close()
-            else:
-                # Per-layer overlay suggestions depend on the remaining layers.
-                render_layers()
-
-        def on_add() -> None:
-            if done['v']:
-                return
-            persist_title()
-            close()
-            self._on_add_layer(cell_id)
-
-        def on_add_overlay(
-            view_name: str, plotter_name: str, base_config: PlotConfig
-        ) -> None:
-            if done['v']:
-                return
-            # Add in place and keep the modal open so several overlays can be
-            # added in one session; the new layer appears as its own row.
-            self._add_overlay_layer(cell_id, base_config, view_name, plotter_name)
-            render_layers()
-
-        def render_layers() -> None:
-            existing = frozenset(layer.config.plot_name for layer in cell.layers)
-            rows: list = []
-            for layer in cell.layers:
-                title, _ = get_plot_cell_display_info(
-                    layer.config,
-                    self._workflow_registry,
-                    get_source_title=self._orchestrator.get_source_title,
-                )
-                controls: list = []
-                overlays = overlay_suggestions_for_layer(
-                    layer.config,
-                    existing,
-                    self._workflow_registry,
-                    self._plotting_controller,
-                )
-                if overlays:
-                    controls.append(
-                        create_overlay_add_button(
-                            overlays=overlays,
-                            on_overlay_selected=(
-                                lambda v, p, b=layer.config: on_add_overlay(v, p, b)
-                            ),
-                        )
-                    )
-                controls.append(
-                    create_tool_button(
-                        icon_name='x',
-                        button_color=ButtonStyles.DANGER_RED,
-                        hover_color=ButtonStyles.DANGER_HOVER,
-                        on_click_callback=lambda lid=layer.layer_id: on_remove(lid),
-                    )
-                )
-                title_pane = pn.pane.HTML(
-                    title,
-                    sizing_mode='stretch_width',
-                    align='center',
-                    styles={'overflow': 'hidden'},
-                )
-                rows.append(pn.Row(title_pane, *controls, sizing_mode='stretch_width'))
-            layers_col[:] = rows
-
-        add_layer_button.on_click(lambda _: on_add())
-        render_layers()
-        save_button.on_click(lambda _: finish(save=True))
-        cancel_button.on_click(lambda _: finish(save=False))
-        # Closing via the X button or ESC cancels.
-        modal.param.watch(
-            lambda event: None if event.new else finish(save=False), 'open'
-        )
-
         self._modal_container.clear()
-        self._modal_container.append(modal)
-        modal.open = True
+        self._modal_container.append(modal.modal)
+        modal.show()
 
     def _on_cell_updated(
         self,
