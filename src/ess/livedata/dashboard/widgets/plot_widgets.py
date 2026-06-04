@@ -249,7 +249,7 @@ def _create_toolbar_visibility_button(
     """Adjustments button toggling per-layer toolbar visibility for a cell."""
 
     def _icon(shown: bool) -> str:
-        return get_icon('adjustments' if shown else 'adjustments-off')
+        return get_icon('stack-2' if shown else 'stack')
 
     def _tip(shown: bool) -> str:
         return 'Hide layer toolbars' if shown else 'Show layer toolbars'

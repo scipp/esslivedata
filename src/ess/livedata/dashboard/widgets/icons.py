@@ -132,30 +132,13 @@ _ICONS: dict[str, str] = {
     ),
     # Check (confirm)
     'check': _svg('<path d="M5 12l5 5l10 -10"/>'),
-    # Adjustments/sliders (layer controls visible)
-    'adjustments': _svg(
-        '<path d="M4 10a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M6 4v4"/>'
-        '<path d="M6 12v8"/>'
-        '<path d="M10 16a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M12 4v10"/>'
-        '<path d="M12 18v2"/>'
-        '<path d="M16 7a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M18 4v1"/>'
-        '<path d="M18 9v11"/>'
-    ),
-    # Adjustments off (layer controls hidden): sliders with a diagonal strike
-    'adjustments-off': _svg(
-        '<path d="M4 10a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M6 4v4"/>'
-        '<path d="M6 12v8"/>'
-        '<path d="M10 16a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M12 4v10"/>'
-        '<path d="M12 18v2"/>'
-        '<path d="M16 7a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>'
-        '<path d="M18 4v1"/>'
-        '<path d="M18 9v11"/>'
-        '<path d="M3 3l18 18"/>'
+    # Stack (single layer): layer toolbars hidden
+    'stack': _svg('<path d="M12 6l-8 4l8 4l8 -4l-8 -4"/><path d="M4 14l8 4l8 -4"/>'),
+    # Stack-2 (multiple layers): layer toolbars shown
+    'stack-2': _svg(
+        '<path d="M12 4l-8 4l8 4l8 -4l-8 -4"/>'
+        '<path d="M4 12l8 4l8 -4"/>'
+        '<path d="M4 16l8 4l8 -4"/>'
     ),
     # Trash/delete
     'trash': _svg(
@@ -233,12 +216,12 @@ def get_icon(name: str) -> str:
     Parameters
     ----------
     name:
-        Icon name. Available icons: adjustments, adjustments-off,
+        Icon name. Available icons:
         arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
         autoscale-x-on, autoscale-y, autoscale-y-on, backspace, check,
         chevron-down, chevron-right, chevron-up, download, eye, eye-off, pencil,
-        player-pause, player-play, player-stop, plus, refresh, settings, trash,
-        x.
+        player-pause, player-play, player-stop, plus, refresh, settings, stack,
+        stack-2, trash, x.
 
     Returns
     -------
