@@ -81,11 +81,17 @@ def _get_sizing_mode(config: PlotConfig) -> str:
     return 'stretch_both'
 
 
+# Lag thresholds in seconds (now minus the oldest data's end time) that
+# classify data freshness for the titlebar pill.
+_FRESH_MAX_SECONDS = 5.0
+_STALE_MAX_SECONDS = 30.0
+
+
 def _freshness_band(lag_seconds: float) -> tuple[str, str, str]:
     """Return the ``(background, text, dot)`` pill colors for a lag in seconds."""
-    if lag_seconds < FreshnessPill.FRESH_MAX_SECONDS:
+    if lag_seconds < _FRESH_MAX_SECONDS:
         return FreshnessPill.FRESH
-    if lag_seconds < FreshnessPill.STALE_MAX_SECONDS:
+    if lag_seconds < _STALE_MAX_SECONDS:
         return FreshnessPill.STALE
     return FreshnessPill.OLD
 
