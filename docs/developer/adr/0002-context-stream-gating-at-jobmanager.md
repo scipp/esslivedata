@@ -87,7 +87,7 @@ for a context with no safe default.
 |---|---|
 | **Gate at JobManager on context streams with no safe default (chosen)** | The gate respects the workflow's own tolerates-absence distinction. The set is derived from declarations, so adding a gated workflow needs no JobManager change. |
 | Gate at JobManager on all aux | Conflates routing with execution; gates dynamic aux (monitors) that legitimately accumulate without context. Forces tests and production to pre-publish dynamic aux before events. Rejected. |
-| Gate inside `StreamProcessorWorkflow` with per-workflow opt-in | Couples scheduling to workflow execution; forces SPW to carry a "drop dynamic while pending" branch and spreads gate configuration across factories. Rejected. |
+| Gate inside `StreamProcessorWorkflow` with per-workflow opt-in | Couples scheduling to workflow execution; forces `StreamProcessorWorkflow` to carry a "drop dynamic while pending" branch and spreads gate configuration across factories. Rejected. |
 | Defer job construction until context ready | Conflicts with time-based scheduling and moves the Sciline-pipeline build cost from config-load to first-data-arrival, introducing user-visible latency. Rejected. |
 
 ## Key design choices

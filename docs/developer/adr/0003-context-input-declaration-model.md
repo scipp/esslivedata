@@ -23,9 +23,9 @@ were spread across several mechanisms with three sharp edges:
 
 3. **`Workflow.context_keys` was a protocol leak.** Only `JobFactory.create`
    consulted it, only at job-creation time, yet every `Workflow` implementation had
-   to expose it (the actual keys for SPW, empty stubs for `AreaDetectorView` and
-   `TimeseriesStreamProcessor`). A configuration concern leaked into the runtime
-   protocol.
+   to expose it (the actual keys for `StreamProcessorWorkflow`, empty stubs for
+   `AreaDetectorView` and `TimeseriesStreamProcessor`). A configuration concern
+   leaked into the runtime protocol.
 
 A standing constraint shapes the solution: the dashboard imports workflow `specs.py`
 to generate UI, so `specs.py` must stay free of workflow-key imports — the dashboard
@@ -47,15 +47,15 @@ variant, not to introduce param-dependent gating. Today this is hypothetical; YA
 
 ## Decision
 
-One declaration record, `ContextBinding`, declarable at two scopes, feeding both the
+One declaration record, `ContextBinding`, declarable at two scopes, feeds both the
 factory's `context_keys` (wired into `set_context`) and the job's gating set (ADR
 0002).
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ContextBinding:
-    stream_name: str                 # internal stream name; also the workflow-facing key
-    workflow_key: Any                # opaque Sciline key, consumed by the factory
+    stream_name: str                 # internal stream name; the data-path lookup key into context_keys
+    workflow_key: Any                # opaque Sciline graph key, consumed by the factory
     dependent_sources: frozenset[str]
 ```
 
@@ -101,10 +101,14 @@ return {binding.stream_name: binding.workflow_key
         if source_name in binding.dependent_sources}
 ```
 
-`JobFactory.create` calls it once per job. The result goes to the factory as
-`context_keys`; its key set becomes `Job.gating_streams` (context wire names equal their
-stream names). The merge lives on `Instrument` rather than inlined in `JobFactory` so
-workflow visualization can resolve the same keys without constructing a job.
+`JobFactory.create` calls it once per job. The resolved `{stream_name: workflow_key}`
+mapping is the single source of the gate ADR 0002 applies: it goes to the factory as
+`context_keys`, and its key set becomes `Job.gating_streams` — the streams whose values
+must be present before the job runs (context wire names equal their stream names). This
+is where "which streams are gated" is decided: the gated set *is* the set of resolved
+context bindings for the `(spec, source)`, nothing more. The merge lives on `Instrument`
+rather than inlined in `JobFactory` so workflow visualization can resolve the same keys
+without constructing a job.
 `JobFactory.create` returns a bare `Job`. `AuxSources` is slimmed to dynamic,
 user-selectable aux only — no context-flavoured entries, no `initial_context_messages`.
 
@@ -165,12 +169,14 @@ indefinitely.
 
 `Workflow.context_keys` is removed from the protocol. The routing layer injects the
 resolved `context_keys` via `SupportsContext.build` *after* the factory returns the
-workflow, so factories never declare `context_keys` in their signature; SPW defers
-constructing the wrapped `StreamProcessor` until `build` so the keys can be merged
-before the graph is baked (the uniform-keying and deferred-build seam is settled in
+workflow, so factories never declare `context_keys` in their signature;
+`StreamProcessorWorkflow` defers constructing the wrapped `StreamProcessor` until
+`build` so the keys can be merged before the graph is baked (the uniform-keying and
+deferred-build seam is settled in
 ADR 0004). `AreaDetectorView` and `TimeseriesStreamProcessor` lose their empty-stub
 property. The `Workflow` protocol reduces to `accumulate`, `finalize`, `clear`;
-context handling is an SPW-internal concern, opaque to `Job` and `JobManager`.
+context handling is a `StreamProcessorWorkflow`-internal concern, opaque to `Job`
+and `JobManager`.
 
 ## Alternatives considered
 
@@ -225,7 +231,8 @@ single source of truth and a binding cannot disagree with the stream it patches.
 - `AuxSources` is dynamic, user-selectable aux only. ROI remains an `AuxSources`
   (`DetectorROIAuxSources`, job-prefixed per job) — it is not a context binding, since
   ADR 0002 routes ROI as aux rather than gating it.
-- `Workflow.context_keys` is removed from the protocol; SPW receives the routing
+- `Workflow.context_keys` is removed from the protocol; `StreamProcessorWorkflow`
+  receives the routing
   layer's `context_keys` via `build` (ADR 0004), other implementations drop the stub.
 - `gather_source_names` includes context bindings so the namespace subscribes to gated
   streams. Without it the gate never opens for motion.

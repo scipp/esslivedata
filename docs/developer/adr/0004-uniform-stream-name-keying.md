@@ -14,7 +14,9 @@ Sciline provider:
   auxiliary data ("the incident monitor used for normalisation"), which may be
   filled by any of several physical streams.
 - **on-disk `stream_name`** — the canonical instrument-config name a stream is
-  given once the `StreamLUT` has resolved it on ingress.
+  given once the `StreamLUT` has resolved it on ingress. By convention this is the
+  NeXus group name the stream is written under when the run is saved to a NeXus file
+  on disk — hence *on-disk*; nothing in livedata reads or writes that file at runtime.
 - **`sciline.Key`** — the graph's type-addressed input (e.g.
   `NeXusData[Incident, SampleRun]`).
 
