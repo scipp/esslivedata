@@ -55,23 +55,33 @@ gating streams not present in `available`. The set is populated at
 `JobFactory.create` from the `ContextBinding` declarations that resolve for the
 specific `(spec, source)` (ADR 0003).
 
-`JobManager` tracks a **sticky** per-job set of seen context streams
+A gated job occupies a dedicated stage **between** *scheduled* and *active*, held in
+its own `_pending_context_jobs` bucket. When `should_start` fires, `_start_job`
+routes the job by `gating_streams`: empty → it becomes `active` at once; non-empty →
+it enters `pending_context` with a `pending_context_warning`. Only active jobs are
+processed — a pending job is never fed primary data.
+
+`JobManager` tracks a **sticky** per-pending-job set of seen context streams
 (`_seen_context_streams`). Context values arrive intermittently — a motor position
-is published once and then is quiet — so once a stream has been seen its value
-remains available via the preprocessor's cached context even on ticks that carry no
-new message for it. On each tick, `_gate_pending_context` folds the tick's
-available streams into each active job's sticky set, then checks
-`job.missing_context(seen)`:
+is published once and then is quiet — so a stream seen on any tick stays available.
+Each tick, `_open_context_gates` folds the tick's available streams into each pending
+job's sticky set and checks `job.missing_context(seen)`:
 
-- non-empty → the job is skipped for this tick, its state set to
-  `JobState.pending_context`, and a `pending_context_warning(missing)` recorded.
-- empty, and the job was previously `pending_context` → the warning is cleared and
-  the state returns to `active`, so the job's own processing outcome drives its
-  state from there.
+- non-empty → the job stays pending; its `pending_context_warning(missing)` is
+  refreshed to the still-missing streams.
+- empty → the job graduates to `active` (`_activate_pending_job`), dropping its
+  warning and sticky set; its own processing outcome drives its state from there.
 
-Time-based activation is preserved: `should_start(current_time)` continues to drive
-the scheduled → active transition. The readiness gate is layered on top — schedule
-semantics stay independent of stream-arrival timing.
+Graduation is **one-way**: `gating_streams` is fixed and `seen` only grows, so once a
+job is active it has left the gate permanently and is never re-checked, and a job with
+no context never enters the stage at all. The per-tick gate therefore scans only the
+small, transient pending bucket — not every active job.
+
+Time-based activation is preserved: `should_start(current_time)` drives the job *out
+of* `scheduled` on time, independent of stream-arrival timing. The readiness gate
+governs only the subsequent pending → active transition, so a job blocked on a dead
+producer stays visible as `pending_context` rather than silently rewriting its
+schedule.
 
 `StreamProcessorWorkflow` remains a pure "given dynamic + context, produce result"
 unit. It does not consult the gate, does not track which keys have arrived, and does
@@ -89,6 +99,7 @@ for a context with no safe default.
 | Gate at JobManager on all aux | Conflates routing with execution; gates dynamic aux (monitors) that legitimately accumulate without context. Forces tests and production to pre-publish dynamic aux before events. Rejected. |
 | Gate inside `StreamProcessorWorkflow` with per-workflow opt-in | Couples scheduling to workflow execution; forces `StreamProcessorWorkflow` to carry a "drop dynamic while pending" branch and spreads gate configuration across factories. Rejected. |
 | Defer job construction until context ready | Conflicts with time-based scheduling and moves the Sciline-pipeline build cost from config-load to first-data-arrival, introducing user-visible latency. Rejected. |
+| Hold gated jobs in `scheduled` rather than a distinct stage | Entangles the schedule contract with producer liveness — a dead motion producer would keep a job "scheduled" past its start, and the dashboard could not tell "not due yet" from "started but blocked". A dedicated `pending_context` stage keeps the two axes separate. Rejected. |
 
 ## Key design choices
 
@@ -103,33 +114,35 @@ standard declaration (ADR 0003), no `JobManager` change.
 
 Gating compares against an accumulated `_seen_context_streams` set, not the streams
 present *this* tick. A context value seen once stays available — this matches how
-the preprocessor caches context for `set_context` and avoids re-gating a job every
-quiet tick.
+the preprocessor caches context for `set_context` and lets the gate open on a quiet
+tick once the last stream has been seen.
 
-### Time-based activation is preserved
+### A distinct stage, not a per-tick skip
 
-The gate is a single predicate evaluated once per active job per tick, immediately
-before data is filtered for the job. There is no new control-flow path in the
-job-processing loop: a gated job records a warning and is skipped. Deferring the
-scheduled → active transition until context is ready was rejected — it would
-entangle the schedule contract with stream-arrival timing.
+A gated job is held in its own `_pending_context_jobs` bucket, not left among the
+active jobs with a per-tick "skip if gated" branch. Because `gating_streams` is fixed
+and `seen` only grows, readiness is monotonic: a job graduates once and never
+re-gates. Modelling that as a one-way stage move means the processing loop iterates
+only runnable jobs, the per-tick gate scans only the (small) pending bucket, and a
+job that never needed context never participates in gating at all.
 
 ### Primary data arriving before context is dropped
 
-If primary data arrives while a gating stream is still missing, the primary is
-filtered out of the job's input for that tick and not buffered. The workflow
-processes the next primary batch that arrives after the gate opens. This is
-conceptually correct: detector events whose geometry context is unknown cannot be
-meaningfully reduced, and silent attribution to a default geometry is the exact
-failure mode the gate exists to prevent. Dynamic aux is unaffected — it is not in
-the gate set and accumulates normally.
+A pending job is not among the active jobs a batch is dispatched to, so primary data
+arriving while a gating stream is still missing simply is not delivered to it and
+nothing is buffered. It processes the first primary batch on or after the tick its
+gate opens. This is conceptually correct: detector events whose geometry context is
+unknown cannot be meaningfully reduced, and silent attribution to a default geometry
+is the exact failure mode the gate exists to prevent. Dynamic aux is unaffected — it
+is not in the gate set and accumulates normally.
 
 ### Dedicated `JobState.pending_context`
 
-A job that is time-active but context-gated is conceptually distinct from one whose
-last processing attempt errored. The two are modelled separately:
-`JobState.pending_context` is healthy and waiting; `JobState.warning` has produced
-an error and may need attention.
+A job held in the pending stage is conceptually distinct both from one not yet due
+(`scheduled`) and from one whose last processing attempt errored (`warning`).
+`JobState.pending_context` is healthy and waiting on a producer; surfacing it
+distinctly lets an operator tell a dead motion producer from a job that simply has
+not started.
 
 ## Consequences
 
@@ -143,10 +156,12 @@ an error and may need attention.
   there is no readiness to wait on and no seed to inject.
 - Warning emission for context-pending jobs is consolidated inside `JobManager`.
   There is no warning channel between the workflow execution unit and the job layer.
-- `JobState.pending_context` is added to the job state machine.
+- `JobState.pending_context` is added to the job state machine, backed by a
+  `_pending_context_jobs` bucket between `_scheduled_jobs` and `_active_jobs`. Job
+  lookup, control, reset, status, and finish handling all account for the new bucket.
 - Tests at JobManager level cover: dynamic aux not gated; context (motion) blocks
   then unblocks once its stream is seen; the sticky seen-set keeps the gate open on
-  quiet ticks; primary dropped while gated.
+  quiet ticks; primary dropped while gated; gates independent across jobs.
 - The declaration model that feeds `gating_streams` and `context_keys`, and the
   routing that ensures the gated streams are actually subscribed, are settled in
   ADR 0003.

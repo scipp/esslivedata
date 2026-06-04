@@ -2127,8 +2127,10 @@ class TestPeekPendingStreams:
 
 
 class TestContextStreamGate:
-    """The JobManager skips active jobs whose aux context is not yet available.
+    """The JobManager holds jobs whose context is not yet available.
 
+    A gated job waits in the ``pending_context`` stage and graduates to active
+    once every gating stream has been seen.
     See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
     """
 
@@ -2322,3 +2324,39 @@ class TestContextStreamGate:
         processor = fake_job_factory.processors[job_id]
         assert "stream_a" in processor.data
         assert "stream_b" in processor.data
+
+    def test_gated_job_finishes_at_schedule_end(self, fake_job_factory):
+        """A job gated for its whole window still finishes at its scheduled end.
+
+        Context never arrives, so the job stays in ``pending_context``; once data
+        passes its scheduled ``end_time`` it must be removed, not stranded in the
+        pending stage.
+        """
+        manager = JobManager(fake_job_factory)
+        config = _make_config(
+            "src",
+            name="wf",
+            aux_source_names={"ctx": "ctx_stream"},
+            schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
+        )
+        job_id = manager.schedule_job(config)
+        # Tick 1: activates on time but aux is missing -> pending_context.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(150),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+        # Tick 2: data passes the scheduled end_time while still gated.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(180),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(2.0)},
+            )
+        )
+        manager.compute_results()
+        assert manager.get_job_status(job_id) is None
+        assert manager.peek_gated_context_streams() == set()
