@@ -44,7 +44,7 @@ class SupportsContext(Protocol):
     materializes the workflow in one call, so the caller need not sequence
     separate configuration steps and factories need not thread these through
     their signature. (Aux-role resolution is not among these: factories key
-    ``dynamic_keys`` by on-disk stream name directly, via the
+    ``dynamic_keys`` by canonical stream name directly, via the
     ``aux_source_names`` map passed to the factory.)
     """
 

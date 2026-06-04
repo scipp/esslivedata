@@ -304,7 +304,7 @@ class Job:
 
     def add(self, data: JobData) -> JobReply:
         try:
-            # Primary and aux data are both keyed by on-disk stream name, which
+            # Primary and aux data are both keyed by canonical stream name, which
             # is exactly how the workflow's dynamic/context keys are keyed (aux
             # roles are resolved at workflow construction). No remapping needed.
             self._processor.accumulate(

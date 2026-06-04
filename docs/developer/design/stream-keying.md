@@ -1,6 +1,6 @@
 # Stream Keying
 
-A single-page visual explainer of how a message's identifier is named at each layer of the workflow harness, and the three points where it is translated between naming schemes (`(topic, source_name)`, role, on-disk stream name, and sciline key).
+A single-page visual explainer of how a message's identifier is named at each layer of the workflow harness, and the three points where it is translated between naming schemes (`(topic, source_name)`, role, canonical stream name, and sciline key).
 
 ```{raw} html
 <iframe src="../../_static/stream_keying_overview.html"

@@ -48,10 +48,10 @@ class StreamProcessorWorkflow(Workflow):
         base_workflow:
             The sciline Pipeline to wrap.
         dynamic_keys:
-            Mapping from on-disk stream name to sciline key for dynamic inputs.
+            Mapping from canonical stream name to sciline key for dynamic inputs.
             Dynamic inputs are accumulated across calls via
             ``StreamProcessor.accumulate()``. Factories key every entry by the
-            on-disk stream name incoming data arrives under: the primary input
+            canonical stream name incoming data arrives under: the primary input
             by its ``source_name`` and auxiliary inputs by resolving their role
             through the ``aux_source_names`` map the factory receives (e.g.
             ``aux_source_names['incident_monitor']``). The role space therefore
@@ -109,7 +109,7 @@ class StreamProcessorWorkflow(Workflow):
 
     @property
     def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
-        """Mapping from on-disk stream name to sciline key for dynamic inputs.
+        """Mapping from canonical stream name to sciline key for dynamic inputs.
 
         :meth:`build` reads it to match each stream name against a binding's
         ``dependent_sources`` and derive the NeXus component type (the first

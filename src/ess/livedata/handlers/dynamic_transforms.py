@@ -162,7 +162,7 @@ def wire_dynamic_transforms(
 
     Deriving the map from ``dynamic_keys`` avoids restating it in the factory
     (which would duplicate ``dynamic_keys`` and is a recurring source of
-    factory-author error). ``dynamic_keys`` is keyed by on-disk stream name
+    factory-author error). ``dynamic_keys`` is keyed by canonical stream name
     (aux roles are resolved at workflow construction), so each wire name matches
     directly against ``dependent_sources``.
 

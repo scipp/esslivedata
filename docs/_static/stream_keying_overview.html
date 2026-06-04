@@ -115,7 +115,7 @@
 <div class="legend">
   <span class="s1"><code>(topic, source_name)</code> &mdash; raw Kafka identity</span>
   <span class="s2">role &mdash; logical input a workflow consumes</span>
-  <span class="s3">on-disk stream_name &mdash; the canonical instrument-config name</span>
+  <span class="s3">canonical stream_name &mdash; the NeXus name from the instrument config</span>
   <span class="s4">sciline.Key &mdash; the graph&rsquo;s type-addressed input</span>
 </div>
 
@@ -141,7 +141,7 @@
 </div>
 
 <div class="flow">&darr;</div>
-<div class="wire">WorkflowData.data &nbsp;&mdash;&nbsp; <span class="k-stream">on-disk stream-name space</span></div>
+<div class="wire">WorkflowData.data &nbsp;&mdash;&nbsp; <span class="k-stream">canonical stream-name space</span></div>
 <div class="flow">&darr;</div>
 
 <div class="layer l-jm">
@@ -215,12 +215,12 @@
 <p><strong>The primary is the degenerate case.</strong> It is a logical slot too &mdash; named by its sciline key, <code>NeXusData[NXdetector, Run]</code> &mdash; but its stream binding is the job&rsquo;s identity (<code>source_name</code>) rather than a user-selectable role, so translation 2 is the identity function and the factory keys it directly, without <code>aux_source_names</code>. Context inputs likewise carry no role: their wire name <em>equals</em> their stream name. Translation 2 therefore touches only auxiliary inputs.</p>
 
 <h2>C. Resolving an auxiliary role to a stream name</h2>
-<p>The <span class="k-role">role</span> scheme is the one a workflow author and a user reason in for auxiliary inputs. It is resolved to an on-disk stream name once, in the instrument factory that constructs the workflow &mdash; before any data flows &mdash; so that the workflow object itself is built entirely in the <span class="k-stream">stream-name</span> scheme.</p>
+<p>The <span class="k-role">role</span> scheme is the one a workflow author and a user reason in for auxiliary inputs. It is resolved to a canonical stream name once, in the instrument factory that constructs the workflow &mdash; before any data flows &mdash; so that the workflow object itself is built entirely in the <span class="k-stream">stream-name</span> scheme.</p>
 
 <div class="layer l-job">
   <div class="title"><span>Instrument factory (e.g. _i_of_q_factory)</span><span class="file mono">config/instruments/&hellip;/factories.py</span></div>
   <div class="desc">The factory receives <code>aux_source_names</code>, the <span class="k-role">role</span>&nbsp;&rarr;&nbsp;<span class="k-stream">stream</span> map that <code>JobFactory</code> computes via <code>AuxSources.render</code> (defaults overlaid with the user&rsquo;s selection).</div>
-  <div class="desc">It keys <code>dynamic_keys</code> by on-disk stream name directly, resolving each role inline:</div>
+  <div class="desc">It keys <code>dynamic_keys</code> by canonical stream name directly, resolving each role inline:</div>
   <div class="desc">&nbsp;&nbsp;<code>{ source_name: NeXusData[NXdetector, &hellip;], <span class="k-stream">aux_source_names[<span class="k-role">'incident_monitor'</span>]</span>: NeXusData[Incident, &hellip;] }</code></div>
   <div class="xlate"><b>Translation 2</b> &nbsp;<span class="k-role">role</span> &rarr; <span class="k-stream">stream_name</span> &nbsp;<span class="tag cfg">factory / build-time &mdash; not on the data path</span></div>
   <div class="desc" style="margin-top:.5rem;color:var(--muted)">An unknown role raises <code>KeyError</code> at job creation, visible in factory code. The <span class="k-role">role</span> scheme never enters the workflow object.</div>
@@ -257,7 +257,7 @@
 <h2>Invariants worth remembering</h2>
 <div class="note">
   <p><strong>Only one scheme is on the data path.</strong> Translation 2 happens at construction; once messages flow, the entire stack from <code>WorkflowData</code> down to the <code>StreamProcessorWorkflow</code> dict lookup speaks a single language &mdash; <span class="k-stream">stream_name</span>. Only the innermost shell (<code>StreamProcessor</code> / <code>sciline</code>) speaks <span class="k-sciline">sciline keys</span>.</p>
-  <p><strong>Two independent sources must agree on the on-disk name.</strong> The <code>StreamLUT</code> drives translation 1 on ingress; the <code>render</code> / <code>aux_source_names</code> map drives translation 2 in the factory. Nothing cross-checks the two &mdash; a stream that is present in both but spelled differently routes silently to nowhere, surfacing only as an input that never accumulates.</p>
+  <p><strong>Two independent sources must agree on the canonical name.</strong> The <code>StreamLUT</code> drives translation 1 on ingress; the <code>render</code> / <code>aux_source_names</code> map drives translation 2 in the factory. Nothing cross-checks the two &mdash; a stream that is present in both but spelled differently routes silently to nowhere, surfacing only as an input that never accumulates.</p>
   <p><strong>The <span class="k-role">role</span> scheme is confined to the config layer.</strong> It lives in <code>AuxSources</code> and the brief <code>aux_source_names[role]</code> lookups in factories, and is fully consumed before the first message moves. Neither the <code>Job</code> nor the runtime path is aware of roles.</p>
 </div>
 
