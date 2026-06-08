@@ -145,8 +145,6 @@ def setup_factories(instrument: Instrument) -> None:
         attach_wavelength_lut_factory,
     )
 
-    # Binds each chopper's rotation-speed and delay setpoints as spec-scope
-    # Sciline context (gated at the JobManager) and attaches the LUT factory.
     attach_wavelength_lut_factory(
         specs.wavelength_lut_handle,
         choppers=instrument.choppers,
