@@ -173,6 +173,7 @@ def create_monitor_workflow(
     coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
     lookup_table_filename: str | None = None,
+    reset_coord: str | None = 'position',
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -193,6 +194,14 @@ def create_monitor_workflow(
         (needed for Ltotal computation). Optional for 'toa' mode.
     lookup_table_filename:
         Path to lookup table file. Required for 'wavelength' mode.
+    reset_coord:
+        The cumulative histogram resets when this scalar coord changes, so a
+        moving monitor restarts accumulation rather than summing across
+        configurations (issue #828). Defaults to ``'position'``: monitor views
+        are meaningless across a move, and in wavelength mode the position coord
+        on the histogram makes summing across a move raise outright. The coord is
+        absent in TOA mode, where the reset is a harmless no-op. Pass ``None`` to
+        disable (e.g. reduction-style accumulation across positions).
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
@@ -234,7 +243,7 @@ def create_monitor_workflow(
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
     # WindowMonitorHistogram during finalize, not accumulated separately.
-    cumulative, window = make_no_copy_accumulator_pair()
+    cumulative, window = make_no_copy_accumulator_pair(reset_coord=reset_coord)
     return StreamProcessorWorkflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow

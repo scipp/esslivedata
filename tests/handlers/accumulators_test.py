@@ -413,6 +413,44 @@ class TestNoCopyAccumulatorPair:
         assert not eternal_acc.is_empty
 
 
+class TestResettingCumulativeAccumulator:
+    """make_no_copy_accumulator_pair(reset_coord=...) — issue #828 option C."""
+
+    @staticmethod
+    def _hist(values, position):
+        """A histogram tagged with a scalar geometry coord."""
+        return sc.DataArray(
+            sc.array(dims=['x'], values=values, unit='counts'),
+            coords={'position': sc.scalar(position, unit='m')},
+        )
+
+    def test_accumulates_while_reset_coord_unchanged(self) -> None:
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(self._hist([1.0, 2.0], 0.0))
+        cumulative.push(self._hist([3.0, 4.0], 0.0))
+        assert sc.identical(
+            cumulative.value.data,
+            sc.array(dims=['x'], values=[4.0, 6.0], unit='counts'),
+        )
+
+    def test_resets_when_reset_coord_changes(self) -> None:
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(self._hist([1.0, 2.0], 0.0))
+        moved = self._hist([3.0, 4.0], 1.0)
+        cumulative.push(moved)
+        # The pre-move histogram is discarded; only the new configuration remains.
+        assert sc.identical(cumulative.value, moved)
+
+    def test_absent_reset_coord_is_a_noop(self) -> None:
+        """Data without the coord accumulates as usual (e.g. TOA-mode histograms)."""
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'))
+        cumulative.push(sc.array(dims=['x'], values=[3.0, 4.0], unit='counts'))
+        assert sc.identical(
+            cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0], unit='counts')
+        )
+
+
 class TestCumulative:
     def test_get_before_add_raises_error(self) -> None:
         accumulator = Cumulative()

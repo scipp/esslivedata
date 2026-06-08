@@ -128,9 +128,40 @@ class _NoCopyWindowAccumulator(NoCopyAccumulator):
         self.clear()
 
 
-def make_no_copy_accumulator_pair() -> tuple[
-    NoCopyAccumulator, _NoCopyWindowAccumulator
-]:
+class _ResettingNoCopyAccumulator(NoCopyAccumulator):
+    """Cumulative accumulator that resets when a geometry coord changes.
+
+    Issue #828 option C for view workflows: the accumulated histogram carries a
+    scalar coord identifying the geometry it was computed in (e.g. ``position``
+    or ``Ltotal``, derived from a live position stream). A histogram summed
+    across a move mixes incompatible spatial configurations, so when incoming
+    data carries a different value for ``reset_coord`` the stored buffer is
+    discarded and accumulation restarts from the new configuration. When the
+    coord is absent (e.g. TOA-mode histograms) this is a no-op and behaviour
+    matches :class:`NoCopyAccumulator`.
+    """
+
+    def __init__(self, *, reset_coord: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._reset_coord = reset_coord
+
+    def _do_push(self, value: sc.DataArray) -> None:
+        coord = self._reset_coord
+        new = getattr(value, 'coords', {})
+        stored = getattr(self._value, 'coords', {})
+        if (
+            self._value is not None
+            and coord in new
+            and coord in stored
+            and not sc.identical(new[coord], stored[coord])
+        ):
+            self._value = None
+        super()._do_push(value)
+
+
+def make_no_copy_accumulator_pair(
+    *, reset_coord: str | None = None
+) -> tuple[NoCopyAccumulator, _NoCopyWindowAccumulator]:
     """Create a paired cumulative/window accumulator that skips redundant copies.
 
     The two accumulators are designed to receive the same shared input. The cumulative
@@ -141,12 +172,24 @@ def make_no_copy_accumulator_pair() -> tuple[
     This pairing is what makes the no-copy optimization safe: because exactly one
     NoCopyAccumulator always deepcopies, no consumer ever mutates the shared input.
 
+    Parameters
+    ----------
+    reset_coord:
+        If given, the cumulative accumulator resets whenever incoming data carries
+        a different value for this scalar coord (issue #828 option C), rather than
+        summing across a geometry change. ``None`` keeps plain cumulative behaviour.
+
     Returns
     -------
     :
         ``(cumulative, window)`` accumulator pair.
     """
-    return NoCopyAccumulator(), _NoCopyWindowAccumulator()
+    cumulative = (
+        NoCopyAccumulator()
+        if reset_coord is None
+        else _ResettingNoCopyAccumulator(reset_coord=reset_coord)
+    )
+    return cumulative, _NoCopyWindowAccumulator()
 
 
 class LatestValue(streaming.Accumulator[T], Generic[T]):

@@ -2,11 +2,20 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the monitor view workflow using StreamProcessor."""
 
+import copy
 import uuid
 
 import pytest
 import scipp as sc
+from ess.reduce.nexus.types import (
+    NeXusComponent,
+    NeXusTransformationChain,
+    SampleRun,
+)
+from scippnexus import NXmonitor
 
+from ess.livedata.config.stream import ChainPatchBinding
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
@@ -771,3 +780,198 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         assert results['cumulative'].sum().value > 0
         assert results['current'].sum().value > 0
         assert results['counts_total'].value > 0
+
+
+class _MonitorZLog(ValueLog):
+    """Typed key for a monitor's f144 z-position log (issue #780)."""
+
+
+# Sentinel so a test can request create_monitor_workflow's own reset_coord default
+# rather than passing a value explicitly.
+_USE_FACTORY_DEFAULT = object()
+
+
+@pytest.mark.slow
+class TestMonitorMotion:
+    """A motorised monitor's position drives the wavelength output (issue #780).
+
+    Mirrors the detector-view dynamic-transform mechanism on a monitor: the
+    geometry artifact stores the monitor's motorised translation as a length-0
+    NXlog placeholder along its ``depends_on`` chain, and a chain-patch
+    :class:`ContextBinding` replaces it with the latest sample of a live f144
+    position stream. The monitor workflow itself is unchanged — motion support
+    falls out of the same component-agnostic ``StreamProcessorWorkflow`` seam
+    the detector uses.
+
+    Drives the real wavelength-mode workflow (DREAM geometry + lookup table) and
+    asserts the wavelength spectrum responds to the streamed position: the
+    monitor's ``Ltotal`` is a lookup parameter into the time-of-flight table, so
+    moving the monitor changes which wavelengths a given arrival time maps to.
+    Whether that table is loaded from file or streamed as context does not affect
+    the lookup, so this holds for the current file-based table.
+    """
+
+    # monitor_cave's depends_on chain holds a single static translation; the test
+    # swaps it for a placeholder the streamed position then drives.
+    _PATH = '/entry/instrument/monitor_cave/transformations/translation'
+
+    @pytest.fixture
+    def wavelength_edges(self):
+        return sc.linspace('wavelength', 0.1, 10.0, num=101, unit='angstrom')
+
+    @pytest.fixture
+    def geometry_filename(self):
+        from ess.livedata.handlers.detector_data_handler import (
+            get_nexus_geometry_filename,
+        )
+
+        return str(get_nexus_geometry_filename('dream-no-shape'))
+
+    @pytest.fixture
+    def lookup_table_filename(self):
+        import ess.dream
+
+        return str(
+            ess.dream.workflows._get_lookup_table_filename_from_configuration(
+                ess.dream.InstrumentConfiguration.high_flux_BC215
+            )
+        )
+
+    @staticmethod
+    def _histogram_input() -> sc.DataArray:
+        """A flat monitor spectrum across the frame, in arrival-time bins."""
+        edges = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
+        return sc.DataArray(
+            sc.array(dims=['frame_time'], values=[1.0] * 1000, unit='counts'),
+            coords={'frame_time': edges},
+        )
+
+    @staticmethod
+    def _position_log(z: float) -> sc.DataArray:
+        """An f144 z-position log holding a single sample, in metres."""
+        return sc.DataArray(
+            sc.array(dims=['time'], values=[z], unit='m'),
+            coords={
+                'time': sc.array(dims=['time'], values=[0], unit='ns', dtype='int64')
+            },
+        )
+
+    def _build(
+        self,
+        *,
+        wavelength_edges,
+        geometry_filename,
+        lookup_table_filename,
+        reset_coord=_USE_FACTORY_DEFAULT,
+    ):
+        """A wavelength monitor workflow whose monitor_cave position is streamed."""
+        extra = (
+            {} if reset_coord is _USE_FACTORY_DEFAULT else {'reset_coord': reset_coord}
+        )
+        workflow = create_monitor_workflow(
+            'monitor_cave',
+            wavelength_edges,
+            coordinate_mode='wavelength',
+            geometry_filename=geometry_filename,
+            lookup_table_filename=lookup_table_filename,
+            **extra,
+        )
+        pipeline = workflow.base_pipeline
+        # Replace the static translation with a length-0 NXlog placeholder, as the
+        # geometry artifact stores dynamic geometry; keep all other real fields so
+        # the rest of the loaded monitor geometry is untouched.
+        chain = copy.deepcopy(
+            pipeline.compute(NeXusTransformationChain[NXmonitor, SampleRun])
+        )
+        chain.transformations[self._PATH].value = sc.DataArray(
+            sc.array(dims=['time'], values=[], unit='m', dtype='float64'),
+            coords={
+                'time': sc.array(dims=['time'], values=[], unit='ns', dtype='int64')
+            },
+        )
+        component = copy.copy(pipeline.compute(NeXusComponent[NXmonitor, SampleRun]))
+        component['depends_on'] = chain
+        pipeline[NeXusComponent[NXmonitor, SampleRun]] = component
+
+        binding = ChainPatchBinding(
+            stream_name='mon_z',
+            transform_path=self._PATH,
+            workflow_key=_MonitorZLog,
+            dependent_sources=frozenset({'monitor_cave'}),
+        )
+        workflow.build(
+            context_keys={'mon_z': _MonitorZLog}, chain_patch_bindings=[binding]
+        )
+        return workflow
+
+    def _cycle(self, workflow, z, *, start, end):
+        """Push one window of monitor data with the monitor parked at ``z``."""
+        workflow.accumulate(
+            {'monitor_cave': self._histogram_input(), 'mon_z': self._position_log(z)},
+            start_time=Timestamp.from_ns(start),
+            end_time=Timestamp.from_ns(end),
+        )
+        return workflow.finalize()
+
+    def test_wavelength_output_tracks_streamed_monitor_position(
+        self, wavelength_edges, geometry_filename, lookup_table_filename
+    ):
+        files = {
+            'wavelength_edges': wavelength_edges,
+            'geometry_filename': geometry_filename,
+            'lookup_table_filename': lookup_table_filename,
+        }
+
+        def counts_at(z):
+            return self._cycle(self._build(**files), z, start=0, end=1000)[
+                'counts_total'
+            ].value
+
+        near = counts_at(-4.22)
+        far = counts_at(-24.0)
+
+        # Both positions keep the monitor within the lookup table's Ltotal range.
+        assert near > 0
+        assert far > 0
+        # Moving the monitor changes Ltotal, hence the arrival-time -> wavelength
+        # mapping, hence how many counts fall in the wavelength range.
+        assert near != pytest.approx(far)
+        # The streamed value is what drives it: the same position reproduces.
+        assert counts_at(-24.0) == pytest.approx(far)
+
+    def test_cumulative_resets_when_monitor_moves(
+        self, wavelength_edges, geometry_filename, lookup_table_filename
+    ):
+        """Issue #828 option C: a move resets the cumulative instead of crashing.
+
+        The monitor workflow defaults to ``reset_coord='position'``, so the stale
+        pre-move histogram is discarded and the cumulative restarts from the new
+        configuration -- after the move it matches the post-move window rather than
+        summing across it.
+        """
+        workflow = self._build(
+            wavelength_edges=wavelength_edges,
+            geometry_filename=geometry_filename,
+            lookup_table_filename=lookup_table_filename,
+        )
+        self._cycle(workflow, -4.22, start=0, end=1000)
+        moved = self._cycle(workflow, -24.0, start=1000, end=2000)
+        assert sc.allclose(moved['cumulative'].data, moved['current'].data)
+
+    def test_disabling_reset_raises_on_move(
+        self, wavelength_edges, geometry_filename, lookup_table_filename
+    ):
+        """Opting out (``reset_coord=None``) restores the #828 crash.
+
+        Documents what the default guards against: the wavelength histogram carries
+        a scalar ``position`` coord, so summing the cumulative across a move raises.
+        """
+        workflow = self._build(
+            wavelength_edges=wavelength_edges,
+            geometry_filename=geometry_filename,
+            lookup_table_filename=lookup_table_filename,
+            reset_coord=None,
+        )
+        self._cycle(workflow, -4.22, start=0, end=1000)
+        with pytest.raises(sc.DatasetError, match='position'):
+            self._cycle(workflow, -24.0, start=1000, end=2000)
