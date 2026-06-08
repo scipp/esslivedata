@@ -1,7 +1,7 @@
 # This script for drawing logo is one-time used, but it is kept here for reference.
 # To run this script, you may need to install
 # a python package ``drawsvg`` and a font ``Comic Neue``.
-from drawsvg import Group, Line, Text, ArcLine, Drawing
+from drawsvg import ArcLine, Drawing, Group, Line, Text
 
 LIME_DARK = '#5E6100'
 LIME_LIGHT = '#A3A800'
@@ -10,8 +10,8 @@ NEW_WIDTH = 320
 
 
 def write_text(*, x: int, y: int, width: int = 256) -> Group:
-    split_1 = x + width * 0.32 * ORIGINAL_WIDTH/NEW_WIDTH
-    split_2 = x + width * 0.65 * ORIGINAL_WIDTH/NEW_WIDTH
+    split_1 = x + width * 0.32 * ORIGINAL_WIDTH / NEW_WIDTH
+    split_2 = x + width * 0.65 * ORIGINAL_WIDTH / NEW_WIDTH
     transparent_line_1 = Line(x, y, split_1, y, opacity=1)
     transparent_line_2 = Line(split_1, y, split_2, y, opacity=1)
     transparent_line_3 = Line(split_2, y, width, y, opacity=1)
@@ -23,7 +23,7 @@ def write_text(*, x: int, y: int, width: int = 256) -> Group:
     texts = [
         Text(
             text,
-            font_size=int((width / 4 * ORIGINAL_WIDTH/NEW_WIDTH) * 0.958),
+            font_size=int((width / 4 * ORIGINAL_WIDTH / NEW_WIDTH) * 0.958),
             path=path,
             text_anchor='start',
             font_family='Comic Neue',
@@ -46,7 +46,7 @@ def draw_beam(*, start_x: int = 0, y: int, width: int) -> Group:
         stroke_linecap="round",
     )
     lime_beam = Line(
-        (start_x + width) * 0.42 * ORIGINAL_WIDTH/NEW_WIDTH,
+        (start_x + width) * 0.42 * ORIGINAL_WIDTH / NEW_WIDTH,
         y,
         start_x + width,
         y,
@@ -138,7 +138,7 @@ def draw_lime_arc(cx: int, cy: int, radius: int) -> Group:
 
 if __name__ == '__main__':
     total_width = NEW_WIDTH
-    total_height = int(total_width * 0.3 * ORIGINAL_WIDTH/NEW_WIDTH)
+    total_height = int(total_width * 0.3 * ORIGINAL_WIDTH / NEW_WIDTH)
     d = Drawing(total_width, total_height, origin='top-left')
     # Draw text
     text_width = int(total_width * 0.85)
