@@ -10,16 +10,24 @@ and image generation in the detector view workflow.
 from __future__ import annotations
 
 import scipp as sc
-from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
+from ess.reduce.nexus.types import (
+    EmptyDetector,
+    NeXusTransformation,
+    RawDetector,
+    SampleRun,
+)
 from ess.reduce.unwrap.types import WavelengthDetector
+from scippnexus import NXdetector
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
+    DETECTOR_TRANSFORM,
     AccumulatedHistogram,
     AccumulationMode,
     CountsInRange,
     CountsTotal,
     Cumulative,
+    DetectorGeometry,
     DetectorHistogram,
     DetectorImage,
     EventCoordName,
@@ -143,10 +151,43 @@ def get_screen_metadata(
     return projector.get_screen_metadata(empty_detector)
 
 
+_TRANSFORM_DTYPES = (
+    sc.DType.translation3,
+    sc.DType.affine_transform3,
+    sc.DType.linear_transform3,
+    sc.DType.rotation3,
+)
+
+
+def detector_geometry(
+    transform: NeXusTransformation[NXdetector, SampleRun],
+) -> DetectorGeometry:
+    """
+    Expose the detector's resolved placement as the geometry-change signal.
+
+    The transformation is recomputed from the (possibly carriage-patched)
+    transformation chain each cycle, so a detector move changes it. It is
+    stamped onto the accumulated histogram by :func:`compute_detector_histogram`
+    and drives the cumulative accumulator's reset-on-move.
+
+    A detector with no ``depends_on`` chain resolves to an identity sentinel
+    (a plain scalar, not a spatial transform): there is no geometry to move, so
+    return ``None`` to stamp no coord. File-less sources likewise override
+    :data:`DetectorGeometry` with ``None`` instead of inserting this provider.
+    """
+    # ``.value`` is the resolved scalar transform (time-dependence is already
+    # rejected upstream), suitable as a coord the accumulator can compare.
+    value = transform.value
+    if value.dtype not in _TRANSFORM_DTYPES:
+        return DetectorGeometry(None)
+    return DetectorGeometry(value)
+
+
 def compute_detector_histogram(
     screen_binned_events: ScreenBinnedEvents,
     bins: HistogramBins,
     event_coord: EventCoordName,
+    geometry: DetectorGeometry,
 ) -> DetectorHistogram:
     """
     Histogram events by the specified event coordinate.
@@ -162,6 +203,10 @@ def compute_detector_histogram(
         Bin edges for histogramming.
     event_coord:
         Name of the event coordinate to histogram.
+    geometry:
+        Scalar geometry signal stamped as the ``DETECTOR_TRANSFORM`` coord so the
+        cumulative accumulator can reset on a detector move. ``None`` (file-less
+        sources) stamps nothing.
 
     Returns
     -------
@@ -170,17 +215,20 @@ def compute_detector_histogram(
     """
     if screen_binned_events.bins is None:
         # Already dense data (shouldn't happen in normal flow)
-        return DetectorHistogram(screen_binned_events)
+        result = screen_binned_events
+    else:
+        # Convert bins to match the event coordinate unit, rename dimension for
+        # histogramming, then restore original dimension name and unit for output.
+        output_dim = bins.dim
+        event_unit = screen_binned_events.bins.coords[event_coord].unit
+        bins_converted = bins.to(unit=event_unit).rename_dims({output_dim: event_coord})
+        result = screen_binned_events.hist({event_coord: bins_converted})
+        result = result.rename_dims({event_coord: output_dim})
+        result.coords[output_dim] = bins
 
-    # Convert bins to match the event coordinate unit, rename dimension for
-    # histogramming, then restore original dimension name and unit for output.
-    output_dim = bins.dim
-    event_unit = screen_binned_events.bins.coords[event_coord].unit
-    bins_converted = bins.to(unit=event_unit).rename_dims({output_dim: event_coord})
-    histogrammed = screen_binned_events.hist({event_coord: bins_converted})
-    histogrammed = histogrammed.rename_dims({event_coord: output_dim})
-    histogrammed.coords[output_dim] = bins
-    return DetectorHistogram(histogrammed)
+    if geometry is not None:
+        result.coords[DETECTOR_TRANSFORM] = geometry
+    return DetectorHistogram(result)
 
 
 def accumulated_histogram(

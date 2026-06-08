@@ -35,6 +35,7 @@ from .providers import (
     compute_pixel_weights,
     counts_in_range,
     counts_total,
+    detector_geometry,
     detector_image,
     get_screen_metadata,
     project_raw_detector,
@@ -112,7 +113,10 @@ def create_base_workflow(
     workflow.insert(compute_pixel_weights)
     workflow[UsePixelWeighting] = False  # Default: disabled
 
-    # Add histogram and downstream providers (generic providers for both modes)
+    # Add histogram and downstream providers (generic providers for both modes).
+    # detector_geometry stamps the move-detection coord; file-less sources override
+    # DetectorGeometry with None (see DetectorDataSource).
+    workflow.insert(detector_geometry)
     workflow.insert(compute_detector_histogram)
     workflow.insert(accumulated_histogram)
     workflow.insert(detector_image)

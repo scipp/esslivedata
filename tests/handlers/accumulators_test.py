@@ -450,6 +450,17 @@ class TestResettingCumulativeAccumulator:
             cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0], unit='counts')
         )
 
+    def test_window_also_resets_on_change(self) -> None:
+        """Safety net: a window straddling a move discards the partial pre-move
+        data rather than summing across it. The driving loop pushes once per
+        finalize so this does not fire in practice, but guards against a future
+        change to that relation (and the coord-mismatch crash it would cause)."""
+        _, window = make_no_copy_accumulator_pair(reset_coord='position')
+        window.push(self._hist([1.0, 2.0], 0.0))
+        moved = self._hist([3.0, 4.0], 1.0)
+        window.push(moved)
+        assert sc.identical(window.value, moved)
+
 
 class TestCumulative:
     def test_get_before_add_raises_error(self) -> None:
