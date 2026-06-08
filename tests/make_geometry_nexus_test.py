@@ -52,6 +52,69 @@ def test_copies_detector_with_local_transformations(basic_nexus_file, tmp_path):
         assert ds.attrs['depends_on'] == '.'
 
 
+def test_copies_event_only_monitor_without_depends_on(tmp_path):
+    """A backup monitor carrying only event data has no ``depends_on``; the
+    geometry artifact must copy it without crashing on the missing chain."""
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+        mon = inst.create_group('backup_monitor')
+        mon.attrs['NX_class'] = 'NXmonitor'
+        mon.create_group('events')
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        mon = f['entry/instrument/backup_monitor']
+        assert mon.attrs['NX_class'] == 'NXmonitor'
+        assert 'depends_on' not in mon
+
+
+def test_copies_moderator_depends_on(tmp_path):
+    """The neutron source may be modelled as ``NXmoderator`` (BIFROST's
+    convention) rather than ``NXsource``. Its ``depends_on`` chain must be
+    copied so the source position resolves in the artifact; dropping it leaves
+    the moderator at the origin and the chopper cascade measures flight
+    distances from the wrong point.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+        mod = inst.create_group('source')
+        mod.attrs['NX_class'] = 'NXmoderator'
+        mod.create_dataset(
+            'depends_on',
+            data='/entry/instrument/source/transformations/distance',
+        )
+        tr = mod.create_group('transformations')
+        tr.attrs['NX_class'] = 'NXtransformations'
+        ds = tr.create_dataset('distance', data=-160.0)
+        ds.attrs['transformation_type'] = 'translation'
+        ds.attrs['vector'] = [0.0, 0.0, 1.0]
+        ds.attrs['units'] = 'm'
+        ds.attrs['depends_on'] = '.'
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        mod = f['entry/instrument/source']
+        assert mod.attrs['NX_class'] == 'NXmoderator'
+        assert mod['depends_on'][()].decode() == (
+            '/entry/instrument/source/transformations/distance'
+        )
+        ds = f['entry/instrument/source/transformations/distance']
+        assert ds[()] == pytest.approx(-160.0)
+        assert ds.attrs['depends_on'] == '.'
+
+
 @pytest.fixture
 def nexus_with_nxlog_chain(tmp_path):
     """NeXus file where a detector's depends_on chain passes through an NXlog
