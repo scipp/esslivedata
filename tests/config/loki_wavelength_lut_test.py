@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import scipp as sc
 
+from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
@@ -26,8 +27,6 @@ from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
-    delay_setpoint_stream,
-    speed_setpoint_stream,
 )
 
 pytestmark = pytest.mark.slow

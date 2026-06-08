@@ -39,14 +39,16 @@ setpoints for quantities now read back only.
 Such a change is not local to this module. The ``(rotation_speed, delay)``
 pair and its readback/setpoint split is also encoded in:
 
-- ``wavelength_lut_workflow_specs.py`` — the three stream-name helpers.
+- ``config/chopper.py`` — the stream-name conventions and
+  ``declare_chopper_setpoint_streams`` (the synthetic streams an instrument
+  with choppers auto-declares).
 - ``wavelength_lut_workflow.py`` — ``make_chopper_setpoint_keys`` and the
   ``rotation_speed_setpoint``/``delay`` NXlog field names written by
   ``build_disk_choppers_provider``.
 - this module — ``_ChopperState`` fields, the stream maps, the per-quantity
   handlers, and ``is_locked``.
-- the instrument specs/factories (e.g. ``loki/specs.py``) — the registered
-  ``delay_setpoint`` stream and the speed/delay context bindings.
+- ``attach_wavelength_lut_factory`` — the per-chopper speed/delay context
+  bindings.
 
 Adjust all four together when the streamed quantities change.
 """
@@ -60,15 +62,15 @@ from dataclasses import dataclass
 import numpy as np
 import structlog
 
-from ..core.message import Message, MessageSource, StreamId, StreamKind
-from ..core.timestamp import Timestamp
-from ..handlers.accumulators import LogData
-from ..handlers.wavelength_lut_workflow_specs import (
-    CHOPPER_CASCADE_SOURCE,
+from ..config.chopper import (
     delay_readback_stream,
     delay_setpoint_stream,
     speed_setpoint_stream,
 )
+from ..core.message import Message, MessageSource, StreamId, StreamKind
+from ..core.timestamp import Timestamp
+from ..handlers.accumulators import LogData
+from ..handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 
 logger = structlog.get_logger(__name__)
 

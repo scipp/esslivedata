@@ -9,13 +9,13 @@ from collections.abc import Sequence
 import numpy as np
 import pytest
 
-from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
-from ess.livedata.handlers.accumulators import LogData
-from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+from ess.livedata.config.chopper import (
     delay_readback_stream,
     delay_setpoint_stream,
     speed_setpoint_stream,
 )
+from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
+from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.kafka.chopper_synthesizer import (
     CHOPPER_CASCADE_STREAM,
     ChopperSynthesizer,

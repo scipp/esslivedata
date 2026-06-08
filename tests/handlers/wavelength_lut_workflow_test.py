@@ -13,6 +13,7 @@ import scipp as sc
 import scippnexus as snx
 from scipp.testing import assert_identical
 
+from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.handlers.wavelength_lut_workflow import (
     create_wavelength_lut_workflow,
     make_chopper_setpoint_keys,
@@ -21,8 +22,6 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
-    delay_setpoint_stream,
-    speed_setpoint_stream,
 )
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 

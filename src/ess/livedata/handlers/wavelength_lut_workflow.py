@@ -53,14 +53,13 @@ from ess.reduce.unwrap.lut import (
     TimeResolution,
 )
 
+from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from .dynamic_transforms import synthesise_provider
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
-    delay_setpoint_stream,
-    speed_setpoint_stream,
 )
 from .workflow_factory import SpecHandle, Workflow
 

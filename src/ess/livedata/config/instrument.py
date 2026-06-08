@@ -156,6 +156,13 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
+        from .chopper import declare_chopper_setpoint_streams
+
+        # Choppers are an instrument concern: declaring them implies the
+        # synthetic delay_setpoint streams the ChopperSynthesizer emits. Done
+        # before the f144 snapshot below so they register as timeseries sources.
+        declare_chopper_setpoint_streams(self.streams, self.choppers)
+
         for binding in self.context_bindings:
             self._validate_binding_stream_name(binding)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(

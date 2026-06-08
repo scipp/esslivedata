@@ -30,7 +30,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-    declare_chopper_setpoint_streams,
     register_wavelength_lut_workflow_spec,
 )
 
@@ -184,7 +183,6 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # geometry file). The detector carriage readback is the position dependency of
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
 streams = name_streams(PARSED_STREAMS)
-declare_chopper_setpoint_streams(streams, LOKI_CHOPPERS)
 
 # Create instrument
 instrument = Instrument(

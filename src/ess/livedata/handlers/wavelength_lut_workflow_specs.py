@@ -4,13 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.stream import F144Stream, Stream
 from ..config.workflow_spec import REDUCTION, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 from ..parameter_models import LengthUnit, RangeModel, TimeUnit
@@ -24,55 +21,6 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: Output key returned by the workflow's ``finalize`` and the field name on
 #: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
-
-
-def speed_setpoint_stream(chopper: str) -> str:
-    """Internal stream name of a chopper's clean rotation-speed setpoint f144.
-
-    A real upstream PV (subscribed from Kafka). Consumed by the LUT workflow
-    as context and cached by :class:`ChopperSynthesizer` to detect changes.
-    """
-    return f'{chopper}/rotation_speed_setpoint'
-
-
-def delay_readback_stream(chopper: str) -> str:
-    """Internal stream name of a chopper's noisy delay readback f144.
-
-    A real upstream PV (subscribed from Kafka). Plateau-detected by
-    :class:`ChopperSynthesizer`; not consumed by the LUT workflow directly.
-    """
-    return f'{chopper}/delay'
-
-
-def delay_setpoint_stream(chopper: str) -> str:
-    """Internal stream name of a chopper's synthesized delay setpoint.
-
-    Emitted in-process by :class:`ChopperSynthesizer` once the delay readback
-    plateaus. Not a Kafka topic. Consumed by the LUT workflow as context — the
-    locked plateau value, not the noisy readback, is what the cascade fires on.
-    """
-    return f'{chopper}/delay_setpoint'
-
-
-def declare_chopper_setpoint_streams(
-    streams: dict[str, Stream], choppers: Sequence[str]
-) -> None:
-    """Declare the synthetic ``delay_setpoint`` streams the synthesizer emits.
-
-    The ``ChopperSynthesizer`` (timeseries service) plateau-detects each
-    chopper's noisy ``delay`` readback and injects a synthetic
-    ``<chopper>/delay_setpoint`` f144. It is not a Kafka topic (no topic/source,
-    so it stays out of the StreamLUT) but must be a declared stream so the
-    preprocessor accepts it with the readback's unit — the LUT workflow consumes
-    it as context and ``DiskChopper.from_nexus`` needs the unit.
-
-    Mutates ``streams`` in place; call before constructing the ``Instrument`` so
-    the streams exist for context-binding validation.
-    """
-    for chopper in choppers:
-        streams[delay_setpoint_stream(chopper)] = F144Stream(
-            units=streams[delay_readback_stream(chopper)].units
-        )
 
 
 class Pulse(pydantic.BaseModel):
