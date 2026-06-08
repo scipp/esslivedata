@@ -141,15 +141,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
     from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
-    from ess.livedata.handlers.wavelength_lut_workflow import (
-        attach_wavelength_lut_factory,
-    )
-
-    attach_wavelength_lut_factory(
-        specs.wavelength_lut_handle,
-        choppers=instrument.choppers,
-        nexus_filename=str(_nexus_geometry_filename),
-    )
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):

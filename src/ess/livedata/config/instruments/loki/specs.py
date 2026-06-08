@@ -29,9 +29,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-    register_wavelength_lut_workflow_spec,
-)
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
@@ -274,8 +271,6 @@ tube_view_handle = instrument.add_logical_view(
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
-
-wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(
