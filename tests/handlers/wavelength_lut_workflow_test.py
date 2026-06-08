@@ -212,12 +212,15 @@ class TestMultiChopperWorkflow:
         assert not np.array_equal(np.nan_to_num(a.values), np.nan_to_num(b.values))
 
     def test_missing_chopper_in_artifact_raises(self, tmp_path: Path) -> None:
+        # A configured chopper absent from the geometry artifact is not validated
+        # at factory time; it surfaces as a KeyError when the table is computed.
         path = tmp_path / 'one_chopper.nxs'
         _write_chopper_nexus(path, ['chopper1'])
-        keys = {n: make_chopper_setpoint_keys(n) for n in ['chopper1', 'chopper2']}
-        with pytest.raises(ValueError, match=r'missing.*chopper2'):
-            create_wavelength_lut_workflow(
-                params=_params(), setpoint_keys=keys, nexus_filename=str(path)
+        with pytest.raises(KeyError, match='chopper2'):
+            _run_chopper_lut(
+                path,
+                ['chopper1', 'chopper2'],
+                {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
             )
 
 

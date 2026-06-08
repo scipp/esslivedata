@@ -14,13 +14,17 @@ Two flavours:
 
 - **Chopperless** (``create_chopperless_wavelength_lut_workflow``): the
   provider returns an empty ``DiskChoppers``. The trigger fires once.
-- **With choppers** (``create_wavelength_lut_workflow``): static
-  ``NXdisk_chopper`` geometry is loaded from the NeXus artifact, and the
-  provider merges per-chopper rotation-speed and delay **setpoints** —
-  delivered as Sciline *context* keys via :meth:`StreamProcessor.set_context`,
-  gated at the JobManager (ADR 0002/0003) — onto that geometry via
-  ``DiskChopper.from_nexus``. The provider is synthesised at factory time
-  (chopper count is known then) with one parameter per setpoint, reusing
+- **With choppers** (``create_wavelength_lut_workflow``): the pipeline loads
+  static ``NXdisk_chopper`` geometry from the NeXus artifact itself — via
+  ``Filename`` and the ``GenericNeXusWorkflow`` chopper providers, producing
+  ``RawChoppers`` — and the synthesised provider consumes those raw choppers,
+  merging per-chopper rotation-speed and delay **setpoints** — delivered as
+  Sciline *context* keys via :meth:`StreamProcessor.set_context`, gated at the
+  JobManager (ADR 0002/0003) — onto that geometry, then delegating the
+  ``RawChoppers`` → ``DiskChoppers`` conversion to essreduce's
+  ``to_disk_choppers``. It thereby replaces the workflow's own call to that
+  provider. The provider is synthesised at factory time (chopper count is known
+  then) with one parameter per setpoint, reusing
   :func:`~ess.livedata.handlers.dynamic_transforms.synthesise_provider`.
 """
 
@@ -33,15 +37,14 @@ from typing import Any, NewType
 import sciline
 import scipp as sc
 import scippnexus as snx
-from ess.reduce.nexus import GenericNeXusWorkflow
 from ess.reduce.nexus.types import (
     AnyRun,
     DiskChoppers,
     Filename,
     Position,
     RawChoppers,
-    SampleRun,
 )
+from ess.reduce.nexus.workflow import to_disk_choppers
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
     DistanceResolution,
@@ -51,7 +54,6 @@ from ess.reduce.unwrap.lut import (
     PulseStride,
     TimeResolution,
 )
-from scippneutron.chopper import DiskChopper
 
 from .dynamic_transforms import synthesise_provider
 from .stream_processor_workflow import StreamProcessorWorkflow
@@ -65,12 +67,6 @@ from .workflow_factory import Workflow
 # Placeholder source position for chopperless instruments (the upstream
 # per-chopper simulation loop is empty, so the value is unused).
 _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
-
-# Anti-clockwise angular offset where the beam crosses the chopper disk. The
-# upstream essreduce convention stores ``slit_edges`` already measured from the
-# beam-crossing point, so this is zero. Production NeXus files carry no
-# ``beam_position`` field, so it is injected here.
-_BEAM_POSITION = sc.scalar(0.0, unit='deg')
 
 #: Component the standalone table is parametrised by. The table is not tied to a
 #: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
@@ -123,18 +119,18 @@ def _latest(container: sc.DataArray) -> sc.Variable:
 
 def build_disk_choppers_provider(
     setpoint_keys: Mapping[str, ChopperSetpointKeys],
-    *,
-    raw_choppers: sc.DataGroup,
-    beam_position: sc.Variable = _BEAM_POSITION,
 ) -> Callable[..., DiskChoppers[AnyRun]]:
     """Synthesise the provider assembling ``DiskChoppers`` from live setpoints.
 
-    The returned provider consumes :data:`ChopperCascadeTrigger` (so a new
-    trigger drives a recompute) plus, per chopper, its rotation-speed and delay
+    The returned provider consumes the workflow's file-loaded
+    ``RawChoppers`` (static geometry) and :data:`ChopperCascadeTrigger` (so a new
+    trigger drives a recompute), plus, per chopper, its rotation-speed and delay
     setpoint context keys. At evaluation it overrides the static geometry's
-    NXlog placeholders with the latest setpoint samples and builds each chopper
-    via ``DiskChopper.from_nexus``, which derives ``phase`` from ``delay`` and
-    ``rotation_speed_setpoint``.
+    NXlog placeholders with the latest setpoint samples, then delegates the
+    ``RawChoppers`` → ``DiskChoppers`` conversion (``DiskChopper.from_nexus`` per
+    chopper, including the default zero ``beam_position`` for ESS files) to
+    essreduce's :func:`~ess.reduce.nexus.workflow.to_disk_choppers`. Producing
+    ``DiskChoppers`` directly replaces the workflow's own call to that provider.
 
     The arity is fixed at synthesis time from ``setpoint_keys``; sciline reads a
     provider's ``__code__`` and ignores ``__signature__``, so a real function
@@ -144,21 +140,25 @@ def build_disk_choppers_provider(
     names = list(setpoint_keys)
     order = [(name, quantity) for name in names for quantity in ('speed', 'delay')]
 
-    def _impl(_trigger: Any, *containers: sc.DataArray) -> DiskChoppers[AnyRun]:
+    def _impl(
+        raw_choppers: sc.DataGroup, _trigger: Any, *containers: sc.DataArray
+    ) -> DiskChoppers[AnyRun]:
         latest: dict[tuple[str, str], sc.Variable] = {
             key: _latest(container)
             for key, container in zip(order, containers, strict=True)
         }
-        choppers = {}
+        patched = {}
         for name in names:
             merged = sc.DataGroup(dict(raw_choppers[name]))
             merged['rotation_speed_setpoint'] = latest[name, 'speed']
             merged['delay'] = latest[name, 'delay']
-            merged['beam_position'] = beam_position
-            choppers[name] = DiskChopper.from_nexus(merged)
-        return DiskChoppers[AnyRun](sc.DataGroup(choppers))
+            patched[name] = merged
+        return to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
 
-    annotations: dict[str, Any] = {'trigger': ChopperCascadeTrigger}
+    annotations: dict[str, Any] = {
+        'raw_choppers': RawChoppers[AnyRun],
+        'trigger': ChopperCascadeTrigger,
+    }
     for name in names:
         annotations[f'speed_{name}'] = setpoint_keys[name].speed
         annotations[f'delay_{name}'] = setpoint_keys[name].delay
@@ -190,9 +190,7 @@ def _attach_provenance(
     return WavelengthLut(arr)
 
 
-def _build_pipeline(
-    params: WavelengthLutParams, *, source_position: sc.Variable
-) -> sciline.Pipeline:
+def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf = GenericUnwrapWorkflow(
         run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
     )
@@ -204,7 +202,6 @@ def _build_pipeline(
         params.distance_range.get_start(),
         params.distance_range.get_stop(),
     )
-    wf[Position[snx.NXsource, AnyRun]] = source_position
     wf[ParamsKey] = params
     wf.insert(_attach_provenance)
     return wf
@@ -222,22 +219,6 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
     )
 
 
-def _load_static_geometry(filename: str) -> tuple[sc.DataGroup, sc.Variable]:
-    """Load static chopper geometry and source position from a NeXus file.
-
-    Uses ``GenericNeXusWorkflow`` so ``depends_on`` chains are resolved and
-    ``RawChoppers`` is produced in the layout ``DiskChopper.from_nexus``
-    consumes. NXlog placeholders for streamed quantities (``rotation_speed``,
-    ``delay``, etc.) come through as length-0 arrays and are overridden later
-    with the live setpoints.
-    """
-    wf = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
-    wf[Filename[SampleRun]] = filename
-    raw_choppers = wf.compute(RawChoppers[SampleRun])
-    source_position = wf.compute(Position[snx.NXsource, SampleRun])
-    return raw_choppers, source_position
-
-
 def create_chopperless_wavelength_lut_workflow(
     *, params: WavelengthLutParams
 ) -> Workflow:
@@ -247,7 +228,8 @@ def create_chopperless_wavelength_lut_workflow(
     trigger. The empty-chopper provider ignores its value and returns an empty
     cascade.
     """
-    pipeline = _build_pipeline(params, source_position=_PLACEHOLDER_SOURCE_POSITION)
+    pipeline = _build_pipeline(params)
+    pipeline[Position[snx.NXsource, AnyRun]] = _PLACEHOLDER_SOURCE_POSITION
     pipeline.insert(_empty_choppers)
     return _make_workflow(pipeline)
 
@@ -257,7 +239,6 @@ def create_wavelength_lut_workflow(
     params: WavelengthLutParams,
     setpoint_keys: Mapping[str, ChopperSetpointKeys],
     nexus_filename: str,
-    beam_position: sc.Variable = _BEAM_POSITION,
 ) -> Workflow:
     """Factory for the chopper-equipped wavelength lookup-table workflow.
 
@@ -265,19 +246,10 @@ def create_wavelength_lut_workflow(
     arrive on; the same keys must back the spec-scope ``ContextBinding``\\ s the
     instrument declares. ``nexus_filename`` is the geometry artifact carrying
     the static ``NXdisk_chopper`` groups (slit edges, radius, axle position)
-    and the source position.
+    and the source position; the pipeline loads both from it. A configured
+    chopper missing from the artifact surfaces as a ``KeyError`` at recompute.
     """
-    raw_choppers, source_position = _load_static_geometry(nexus_filename)
-    missing = set(setpoint_keys) - set(raw_choppers)
-    if missing:
-        raise ValueError(
-            f"Geometry artifact {nexus_filename!r} is missing NXdisk_chopper "
-            f"groups for: {sorted(missing)}"
-        )
-    pipeline = _build_pipeline(params, source_position=source_position)
-    pipeline.insert(
-        build_disk_choppers_provider(
-            setpoint_keys, raw_choppers=raw_choppers, beam_position=beam_position
-        )
-    )
+    pipeline = _build_pipeline(params)
+    pipeline[Filename[AnyRun]] = nexus_filename
+    pipeline.insert(build_disk_choppers_provider(setpoint_keys))
     return _make_workflow(pipeline)
