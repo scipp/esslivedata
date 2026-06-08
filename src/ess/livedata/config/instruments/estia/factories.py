@@ -32,7 +32,7 @@ def setup_factories(instrument: Instrument) -> None:
         LookupTableFilename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
-        ProtonCurrent,
+        ProtonCharge,
         QBins,
         ReducibleData,
         SampleRun,
@@ -81,9 +81,9 @@ def setup_factories(instrument: Instrument) -> None:
             edge.to(unit='rad') for edge in params.beam_divergence_limits.get_limits()
         ]
         wf[CorrectionsToApply] = estia_corrections.default_corrections
-        # TODO: Currently we don't have proton current data,
+        # TODO: Currently we don't have proton charge data,
         # so for now just set it to constant 1uA.
-        wf[ProtonCurrent[SampleRun]] = sc.DataArray(
+        wf[ProtonCharge[SampleRun]] = sc.DataArray(
             sc.ones(dims=['time'], shape=[1], unit='uA'),
             coords={
                 'time': sc.datetime(0, unit='ns')
