@@ -178,7 +178,6 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
 streams = name_streams(PARSED_STREAMS)
 
-
 # Create instrument
 instrument = Instrument(
     name='loki',
