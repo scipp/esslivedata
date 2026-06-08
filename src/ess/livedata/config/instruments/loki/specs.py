@@ -36,9 +36,6 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
 
-#: Disk choppers feeding the wavelength-LUT cascade, in beam order.
-LOKI_CHOPPERS = ['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2']
-
 
 class TransmissionMode(StrEnum):
     """Transmission correction mode for SANS reduction."""
@@ -184,6 +181,7 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
 streams = name_streams(PARSED_STREAMS)
 
+
 # Create instrument
 instrument = Instrument(
     name='loki',
@@ -195,7 +193,7 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
-    choppers=LOKI_CHOPPERS,
+    choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
     streams=streams,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
@@ -277,8 +275,6 @@ tube_view_handle = instrument.add_logical_view(
     reduction_dim=['straw', 'pixel'],
 )
 
-# Register the wavelength lookup-table spec. The factory and the per-chopper
-# setpoint context bindings are attached in factories.py.
 wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
