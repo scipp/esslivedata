@@ -130,6 +130,11 @@ def build_disk_choppers_provider(
     provider's ``__code__`` and ignores ``__signature__``, so a real function
     with N named typed parameters is built via
     :func:`~ess.livedata.handlers.dynamic_transforms.synthesise_provider`.
+
+    The ``rotation_speed_setpoint``/``delay`` field names hardcoded here are one
+    of the sites that move if the streamed chopper quantities change; see
+    :class:`~ess.livedata.kafka.chopper_synthesizer.ChopperSynthesizer` for the
+    full list.
     """
     names = list(setpoint_keys)
     order = [(name, quantity) for name in names for quantity in ('speed', 'delay')]

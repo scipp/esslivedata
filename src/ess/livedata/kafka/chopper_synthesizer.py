@@ -20,15 +20,35 @@ For chopperless instruments (empty ``chopper_names``) it emits exactly one
 vacuous ``chopper_cascade`` tick on the first ``get_messages`` call and is
 otherwise a passthrough.
 
-``DiskChopper.from_nexus`` derives the chopper's phase relative to the source
-pulse from ``delay`` and ``rotation_speed_setpoint``: production NeXus files
-carry no ``phase`` field, so the synthesizer locks on the delay readback that
-does exist.
+Permanent vs. provisional
+--------------------------
+Synthesizing the cascade trigger in-process is expected to be *permanent*: an
+upstream "all choppers reached setpoints" signal may never exist, so the
+firing model (lock all choppers, then tick) lives here for good.
 
-This wrapper is a temporary stand-in for an upstream-side gap (the producer
-does not yet publish the locked setpoints or a ``chopper_cascade_reached``
-f144). Once it does, the wrapper drops out and the LUT workflow becomes a
-plain f144 consumer.
+What is *provisional* is the choice of chopper quantities and how each is
+treated. Today each chopper contributes a clean ``rotation_speed_setpoint``
+(passed through, cached) and a noisy ``delay`` readback (plateau-detected into
+a synthetic ``delay_setpoint``). This reflects what the producer currently
+streams and that ``DiskChopper.from_nexus`` derives phase from ``delay`` +
+``rotation_speed_setpoint`` (production NeXus files carry no ``phase`` field).
+Any of this may change: the producer may stream ``phase`` instead of ``delay``,
+publish a delay *setpoint* directly (dropping the plateau detection), or add
+setpoints for quantities now read back only.
+
+Such a change is not local to this module. The ``(rotation_speed, delay)``
+pair and its readback/setpoint split is also encoded in:
+
+- ``wavelength_lut_workflow_specs.py`` — the three stream-name helpers.
+- ``wavelength_lut_workflow.py`` — ``make_chopper_setpoint_keys`` and the
+  ``rotation_speed_setpoint``/``delay`` NXlog field names written by
+  ``build_disk_choppers_provider``.
+- this module — ``_ChopperState`` fields, the stream maps, the per-quantity
+  handlers, and ``is_locked``.
+- the instrument specs/factories (e.g. ``loki/specs.py``) — the registered
+  ``delay_setpoint`` stream and the speed/delay context bindings.
+
+Adjust all four together when the streamed quantities change.
 """
 
 from __future__ import annotations
