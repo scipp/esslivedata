@@ -16,7 +16,6 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.stream import F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     AuxInput,
@@ -31,8 +30,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-    delay_readback_stream,
-    delay_setpoint_stream,
+    declare_chopper_setpoint_streams,
     register_wavelength_lut_workflow_spec,
 )
 
@@ -186,17 +184,7 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # geometry file). The detector carriage readback is the position dependency of
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
 streams = name_streams(PARSED_STREAMS)
-
-# The ChopperSynthesizer (timeseries service) plateau-detects each chopper's
-# noisy delay readback and injects a synthetic ``<chopper>/delay_setpoint``
-# f144. It is not a Kafka topic (topic/source left None keep it out of the
-# StreamLUT), but must be a declared stream so the preprocessor accepts it with
-# the delay's unit — the LUT workflow consumes it as context and
-# ``DiskChopper.from_nexus`` needs the unit.
-for _chopper in LOKI_CHOPPERS:
-    streams[delay_setpoint_stream(_chopper)] = F144Stream(
-        units=streams[delay_readback_stream(_chopper)].units
-    )
+declare_chopper_setpoint_streams(streams, LOKI_CHOPPERS)
 
 # Create instrument
 instrument = Instrument(
