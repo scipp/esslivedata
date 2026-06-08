@@ -29,7 +29,7 @@ An instrument with no choppers simply supplies a geometry artifact whose
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NewType
 
@@ -59,8 +59,10 @@ from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
+    delay_setpoint_stream,
+    speed_setpoint_stream,
 )
-from .workflow_factory import Workflow
+from .workflow_factory import SpecHandle, Workflow
 
 #: Component the standalone table is parametrised by. The table is not tied to a
 #: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
@@ -232,3 +234,37 @@ def create_wavelength_lut_workflow(
     pipeline[Filename[AnyRun]] = nexus_filename
     pipeline.insert(build_disk_choppers_provider(setpoint_keys))
     return _make_workflow(pipeline)
+
+
+def attach_wavelength_lut_factory(
+    handle: SpecHandle, *, choppers: Sequence[str], nexus_filename: str
+) -> None:
+    """Bind per-chopper setpoint context and attach the LUT factory.
+
+    The single per-instrument entry point: from ``factories.py`` an instrument
+    that has choppers calls this on its registered spec handle. It declares one
+    spec-scope ``ContextBinding`` per chopper per setpoint quantity
+    (rotation-speed, delay), then attaches the workflow factory.
+
+    The setpoint keys are created once and shared *by reference* between the
+    bindings and the ``DiskChoppers`` provider the factory inserts, so each
+    ``set_context`` value reaches the matching provider parameter. Sharing them
+    here enforces that invariant by construction rather than leaving each
+    instrument's ``factories.py`` to wire matching keys by hand.
+    """
+    setpoint_keys = {
+        chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
+    }
+    for chopper, keys in setpoint_keys.items():
+        handle.add_context_binding(
+            stream_name=speed_setpoint_stream(chopper), workflow_key=keys.speed
+        )
+        handle.add_context_binding(
+            stream_name=delay_setpoint_stream(chopper), workflow_key=keys.delay
+        )
+
+    @handle.attach_factory()
+    def _factory(params: WavelengthLutParams) -> Workflow:
+        return create_wavelength_lut_workflow(
+            params=params, setpoint_keys=setpoint_keys, nexus_filename=nexus_filename
+        )
