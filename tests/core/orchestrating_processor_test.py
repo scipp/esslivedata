@@ -1,15 +1,37 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import uuid
 from typing import Any
 
+import pydantic
 import scipp as sc
 
+from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    WorkflowConfig,
+    WorkflowOutputsBase,
+)
 from ess.livedata.core.handler import Accumulator
-from ess.livedata.core.message import Message, StreamId, StreamKind
-from ess.livedata.core.message_batcher import MessageBatch
-from ess.livedata.core.orchestrating_processor import MessagePreprocessor
+from ess.livedata.core.message import (
+    COMMANDS_STREAM_ID,
+    Message,
+    StreamId,
+    StreamKind,
+)
+from ess.livedata.core.message_batcher import MessageBatch, NaiveMessageBatcher
+from ess.livedata.core.orchestrating_processor import (
+    MessagePreprocessor,
+    OrchestratingProcessor,
+)
+from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
 from ess.livedata.handlers.accumulators import LogData
+from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
 from ess.livedata.handlers.to_nxlog import ToNXlog
+from ess.livedata.handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
+
+from .job_test import FakeProcessor
 
 
 class FakeContextAccumulator(Accumulator[Any, sc.DataArray]):
@@ -180,3 +202,102 @@ class TestGetContext:
         # Calling again returns the same data (idempotent)
         result2 = preprocessor.get_context({"temperature"})
         assert sc.identical(result[stream_id], result2[stream_id])
+
+
+class _ReplayOutputs(WorkflowOutputsBase):
+    result: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+        title='Result',
+    )
+
+
+class TestEmptyBatchContextReplay:
+    """Replaying a one-shot primary tick that is cached as context.
+
+    ``chopper_cascade`` is a job's *primary* source, yet it is backed by an
+    ``is_context`` ``ToNXlog`` accumulator. The tick fires once, before any job
+    is scheduled. A job scheduled afterwards must still fire exactly once, from
+    the cached tick replayed on an empty batch. That assembly —
+    ``peek_pending_streams`` + ``get_context`` enriching the empty batch — lives
+    only in ``OrchestratingProcessor.process`` (its parts are unit-tested
+    above and in ``job_manager_test.py``, but their integration is not).
+    """
+
+    @staticmethod
+    def _make_instrument() -> tuple[Instrument, Any]:
+        instrument = Instrument(name='test_orch')
+        handle = instrument.register_spec(
+            service='timeseries',
+            name='replay_probe',
+            version=1,
+            title='Replay probe',
+            source_names=[CHOPPER_CASCADE_SOURCE],
+            params=None,
+            outputs=_ReplayOutputs,
+        )
+        handle.attach_factory()(lambda: FakeProcessor())
+        return instrument, handle.workflow_id
+
+    @staticmethod
+    def _processor(
+        instrument: Instrument, batches: list[list[Message]]
+    ) -> tuple[OrchestratingProcessor, FakeMessageSink]:
+        sink = FakeMessageSink()
+        processor = OrchestratingProcessor(
+            source=FakeMessageSource(batches),
+            sink=sink,
+            preprocessor_factory=LogdataHandlerFactory(instrument=instrument),
+            service_name='timeseries',
+            message_batcher=NaiveMessageBatcher(),
+        )
+        return processor, sink
+
+    @staticmethod
+    def _tick() -> Message:
+        return Message(
+            timestamp=Timestamp.from_ns(100),
+            stream=StreamId(kind=StreamKind.LOG, name=CHOPPER_CASCADE_SOURCE),
+            value=LogData(time=100, value=1),
+        )
+
+    @staticmethod
+    def _schedule(workflow_id: Any) -> Message:
+        job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
+        config = WorkflowConfig.from_params(
+            workflow_id=workflow_id, job_id=job_id, params=None, aux_source_names=None
+        )
+        return Message(
+            timestamp=Timestamp.from_ns(200),
+            stream=COMMANDS_STREAM_ID,
+            value=config,
+        )
+
+    @staticmethod
+    def _data_messages(sink: FakeMessageSink) -> list[Message]:
+        return [m for m in sink.messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
+
+    def test_tick_cached_before_schedule_fires_job_once(self) -> None:
+        instrument, workflow_id = self._make_instrument()
+        processor, sink = self._processor(
+            instrument, [[self._tick()], [self._schedule(workflow_id)]]
+        )
+
+        # First poll: the tick arrives and is cached in the ToNXlog context
+        # accumulator. No job is scheduled, so nothing fires.
+        processor.process()
+        assert self._data_messages(sink) == []
+
+        # Second poll: the operator schedules the job. The data batch is empty,
+        # so activation can only come from the cached tick being replayed.
+        processor.process()
+        assert len(self._data_messages(sink)) == 1
+
+    def test_no_replay_without_a_scheduled_job(self) -> None:
+        instrument, _ = self._make_instrument()
+        # Tick arrives, then an empty poll: with no job scheduled there is
+        # nothing to activate and nothing to publish.
+        processor, sink = self._processor(instrument, [[self._tick()], []])
+
+        processor.process()
+        processor.process()
+        assert self._data_messages(sink) == []

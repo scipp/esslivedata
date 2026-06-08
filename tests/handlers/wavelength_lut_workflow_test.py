@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for the wavelength lookup-table workflow (chopperless and chopper)."""
+"""Tests for the wavelength lookup-table workflow (no-chopper and chopper)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import scippnexus as snx
 from scipp.testing import assert_identical
 
 from ess.livedata.handlers.wavelength_lut_workflow import (
-    create_chopperless_wavelength_lut_workflow,
     create_wavelength_lut_workflow,
     make_chopper_setpoint_keys,
 )
@@ -36,61 +35,14 @@ def _trigger() -> dict[str, sc.DataArray]:
     return {CHOPPER_CASCADE_SOURCE: sc.DataArray(sc.scalar(1))}
 
 
-@pytest.fixture
-def lut() -> sc.DataArray:
-    wf = create_chopperless_wavelength_lut_workflow(params=_params())
-    wf.accumulate(_trigger(), start_time=0, end_time=1)
-    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
-
-
-class TestWavelengthLutWorkflow:
-    def test_chopperless_produces_table_with_expected_dims(
-        self, lut: sc.DataArray
-    ) -> None:
-        assert lut.dims == ('distance', 'event_time_offset')
-        assert lut.unit == sc.units.angstrom
-        # Some finite wavelength values are expected; not all NaN.
-        assert np.isfinite(lut.values).any()
-
-    def test_provenance_coords_attached(self) -> None:
-        params = _params()
-        wf = create_chopperless_wavelength_lut_workflow(params=params)
-        wf.accumulate(_trigger(), start_time=0, end_time=1)
-        table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
-
-        for name in (
-            'pulse_period',
-            'pulse_stride',
-            'distance_resolution',
-            'time_resolution',
-        ):
-            assert name in table.coords, name
-        assert_identical(table.coords['pulse_period'], params.pulse.get_period())
-        assert_identical(
-            table.coords['distance_resolution'],
-            params.distance_resolution.get(),
-        )
-        assert_identical(table.coords['time_resolution'], params.time_resolution.get())
-        assert int(table.coords['pulse_stride'].value) == params.pulse.stride
-
-    def test_clear_then_retrigger_produces_fresh_table(self) -> None:
-        wf = create_chopperless_wavelength_lut_workflow(params=_params())
-        wf.accumulate(_trigger(), start_time=0, end_time=1)
-        first = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
-        wf.clear()
-        wf.accumulate(_trigger(), start_time=2, end_time=3)
-        second = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
-        assert first is not second
-        assert first.dims == second.dims
-        assert first.unit == second.unit
-
-
 def _write_chopper_nexus(path: Path, names: list[str], *, source_z: float = -25.0):
     """Build a minimal NeXus file with NXdisk_chopper groups + NXsource.
 
     Static fields (slit_edges, radius, axle position) are populated; streamed
     quantities are length-0 NXlog placeholders, matching what
-    ``make_geometry_nexus.py`` writes for real instruments.
+    ``make_geometry_nexus.py`` writes for real instruments. An empty ``names``
+    yields a source-only file: the no-chopper geometry an instrument without
+    choppers supplies.
     """
     with snx.File(path, 'w') as root:
         entry = root.create_class('entry', snx.NXentry)
@@ -145,6 +97,71 @@ def _nxlog(value: float, unit: str | None) -> sc.DataArray:
     return sc.DataArray(
         sc.full(value=value, sizes={'time': 3}, unit=unit), coords={'time': t}
     )
+
+
+@pytest.fixture
+def no_chopper_geometry(tmp_path: Path) -> Path:
+    path = tmp_path / 'no_choppers.nxs'
+    _write_chopper_nexus(path, [])
+    return path
+
+
+def _build_no_chopper_workflow(geom: Path):
+    """Build the LUT workflow against a chopper-free geometry file."""
+    return create_wavelength_lut_workflow(
+        params=_params(), setpoint_keys={}, nexus_filename=str(geom)
+    )
+
+
+@pytest.fixture
+def lut(no_chopper_geometry: Path) -> sc.DataArray:
+    wf = _build_no_chopper_workflow(no_chopper_geometry)
+    wf.accumulate(_trigger(), start_time=0, end_time=1)
+    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+
+
+class TestNoChopperWorkflow:
+    def test_produces_table_with_expected_dims(self, lut: sc.DataArray) -> None:
+        assert lut.dims == ('distance', 'event_time_offset')
+        assert lut.unit == sc.units.angstrom
+        # Some finite wavelength values are expected; not all NaN.
+        assert np.isfinite(lut.values).any()
+
+    def test_provenance_coords_attached(self, no_chopper_geometry: Path) -> None:
+        params = _params()
+        wf = create_wavelength_lut_workflow(
+            params=params, setpoint_keys={}, nexus_filename=str(no_chopper_geometry)
+        )
+        wf.accumulate(_trigger(), start_time=0, end_time=1)
+        table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+
+        for name in (
+            'pulse_period',
+            'pulse_stride',
+            'distance_resolution',
+            'time_resolution',
+        ):
+            assert name in table.coords, name
+        assert_identical(table.coords['pulse_period'], params.pulse.get_period())
+        assert_identical(
+            table.coords['distance_resolution'],
+            params.distance_resolution.get(),
+        )
+        assert_identical(table.coords['time_resolution'], params.time_resolution.get())
+        assert int(table.coords['pulse_stride'].value) == params.pulse.stride
+
+    def test_clear_then_retrigger_produces_fresh_table(
+        self, no_chopper_geometry: Path
+    ) -> None:
+        wf = _build_no_chopper_workflow(no_chopper_geometry)
+        wf.accumulate(_trigger(), start_time=0, end_time=1)
+        first = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        wf.clear()
+        wf.accumulate(_trigger(), start_time=2, end_time=3)
+        second = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        assert first is not second
+        assert first.dims == second.dims
+        assert first.unit == second.unit
 
 
 def _run_chopper_lut(

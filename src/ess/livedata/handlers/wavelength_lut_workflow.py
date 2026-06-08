@@ -10,22 +10,21 @@ synthetic
 that produces ``DiskChoppers``; its value is ignored — only its arrival
 drives a recompute (the trigger is the job's ``allow_bypass`` primary).
 
-Two flavours:
+The pipeline loads static ``NXdisk_chopper`` geometry from the NeXus artifact
+itself — via ``Filename`` and the ``GenericNeXusWorkflow`` chopper providers,
+producing ``RawChoppers`` — and the synthesised provider consumes those raw
+choppers, merging per-chopper rotation-speed and delay **setpoints** —
+delivered as Sciline *context* keys via :meth:`StreamProcessor.set_context`,
+gated at the JobManager (ADR 0002/0003) — onto that geometry, then delegating
+the ``RawChoppers`` → ``DiskChoppers`` conversion to essreduce's
+``to_disk_choppers``. It thereby replaces the workflow's own call to that
+provider. The provider is synthesised at factory time (chopper count is known
+then) with one parameter per setpoint, reusing
+:func:`~ess.livedata.handlers.dynamic_transforms.synthesise_provider`.
 
-- **Chopperless** (``create_chopperless_wavelength_lut_workflow``): the
-  provider returns an empty ``DiskChoppers``. The trigger fires once.
-- **With choppers** (``create_wavelength_lut_workflow``): the pipeline loads
-  static ``NXdisk_chopper`` geometry from the NeXus artifact itself — via
-  ``Filename`` and the ``GenericNeXusWorkflow`` chopper providers, producing
-  ``RawChoppers`` — and the synthesised provider consumes those raw choppers,
-  merging per-chopper rotation-speed and delay **setpoints** — delivered as
-  Sciline *context* keys via :meth:`StreamProcessor.set_context`, gated at the
-  JobManager (ADR 0002/0003) — onto that geometry, then delegating the
-  ``RawChoppers`` → ``DiskChoppers`` conversion to essreduce's
-  ``to_disk_choppers``. It thereby replaces the workflow's own call to that
-  provider. The provider is synthesised at factory time (chopper count is known
-  then) with one parameter per setpoint, reusing
-  :func:`~ess.livedata.handlers.dynamic_transforms.synthesise_provider`.
+An instrument with no choppers simply supplies a geometry artifact whose
+``NXsource`` is present but that has no ``NXdisk_chopper`` groups: the empty
+``RawChoppers`` yields empty ``DiskChoppers``.
 """
 
 from __future__ import annotations
@@ -41,7 +40,6 @@ from ess.reduce.nexus.types import (
     AnyRun,
     DiskChoppers,
     Filename,
-    Position,
     RawChoppers,
 )
 from ess.reduce.nexus.workflow import to_disk_choppers
@@ -63,10 +61,6 @@ from .wavelength_lut_workflow_specs import (
     WavelengthLutParams,
 )
 from .workflow_factory import Workflow
-
-# Placeholder source position for chopperless instruments (the upstream
-# per-chopper simulation loop is empty, so the value is unused).
-_PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
 
 #: Component the standalone table is parametrised by. The table is not tied to a
 #: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
@@ -166,11 +160,6 @@ def build_disk_choppers_provider(
     return synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
-def _empty_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
-    """Provide an empty chopper cascade for chopperless instruments."""
-    return DiskChoppers[AnyRun](sc.DataGroup({}))
-
-
 def _attach_provenance(
     table: LookupTable[AnyRun, _LUT_COMPONENT], params: ParamsKey
 ) -> WavelengthLut:
@@ -217,21 +206,6 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
         # through an accumulator.
         allow_bypass=True,
     )
-
-
-def create_chopperless_wavelength_lut_workflow(
-    *, params: WavelengthLutParams
-) -> Workflow:
-    """Factory for the chopperless wavelength lookup-table workflow.
-
-    The workflow's only stream input is the synthetic ``chopper_cascade``
-    trigger. The empty-chopper provider ignores its value and returns an empty
-    cascade.
-    """
-    pipeline = _build_pipeline(params)
-    pipeline[Position[snx.NXsource, AnyRun]] = _PLACEHOLDER_SOURCE_POSITION
-    pipeline.insert(_empty_choppers)
-    return _make_workflow(pipeline)
 
 
 def create_wavelength_lut_workflow(
