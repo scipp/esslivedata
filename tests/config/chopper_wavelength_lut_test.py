@@ -106,6 +106,10 @@ def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     bands = result.data[WAVELENGTH_BANDS_OUTPUT]
     assert bands.dims == ('distance', 'event_time_offset')
     assert bands.unit == sc.units.angstrom
-    # One row for the source plus one per chopper, at exact distances.
-    assert bands.sizes['distance'] == len(instrument.choppers) + 1
     assert np.isfinite(bands.values).any()
+    distances = bands.coords['distance']
+    # Source + one row per chopper, plus a marker per monitor (both test
+    # instruments declare monitors).
+    assert distances.sizes['distance'] > len(instrument.choppers) + 1
+    # Rows are ordered by ascending distance.
+    assert sc.allsorted(distances, 'distance')

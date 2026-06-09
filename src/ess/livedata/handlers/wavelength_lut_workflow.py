@@ -28,6 +28,7 @@ An instrument with no choppers simply supplies a geometry artifact whose
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NewType
@@ -39,6 +40,7 @@ from ess.reduce.nexus.types import (
     AnyRun,
     DiskChoppers,
     Filename,
+    Position,
     RawChoppers,
 )
 from ess.reduce.nexus.workflow import to_disk_choppers
@@ -79,8 +81,12 @@ ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 WavelengthLut = NewType('WavelengthLut', sc.DataArray)
 
 #: Per-component wavelength bands evaluated at exact chopper distances, indexed
-#: by a ``distance`` dimension (source + one row per chopper).
+#: by a ``distance`` dimension (source + one row per chopper, plus monitor and
+#: detector-range marker rows).
 WavelengthBands = NewType('WavelengthBands', sc.DataArray)
+
+#: Distance-from-source of each monitor in the geometry artifact, keyed by name.
+MonitorDistances = NewType('MonitorDistances', dict)
 
 #: Sciline key for the user-facing parameter bundle, used by the provenance
 #: provider. Distinct from the individual parameter keys (PulsePeriod, etc.)
@@ -194,19 +200,56 @@ def _attach_provenance(
     return WavelengthLut(arr)
 
 
+def load_monitor_distances(
+    filename: Filename[AnyRun],
+    source_position: Position[snx.NXsource, AnyRun],
+) -> MonitorDistances:
+    """Distance-from-source of every ``NXmonitor`` in the geometry artifact.
+
+    Monitors are point devices, so each resolves to a single distance, computed
+    from its ``depends_on`` transformation chain. Instruments whose artifact has
+    no monitors (or monitors without a resolvable position) simply yield an
+    empty mapping. Detectors are intentionally excluded: in the shape-stripped
+    geometry artifacts they collapse to a single point, so their flight-path
+    range comes from the user's ``distance_range`` parameter instead.
+    """
+    distances: dict[str, sc.Variable] = {}
+    # scippnexus warns and falls back to a plain DataGroup for these
+    # signal-less NXmonitor groups; the transformation chain still resolves.
+    with warnings.catch_warnings(), snx.File(filename) as f:
+        warnings.simplefilter('ignore', category=UserWarning)
+        entry = next(iter(f[snx.NXentry].values()))
+        instrument = next(iter(entry[snx.NXinstrument].values()))
+        for name, group in instrument[snx.NXmonitor].items():
+            position = snx.compute_positions(group[()], store_position='position').get(
+                'position'
+            )
+            if position is None or position.ndim != 0:
+                continue
+            distances[name] = sc.norm(position - source_position.to(unit=position.unit))
+    return MonitorDistances(distances)
+
+
 def make_wavelength_bands_from_frames(
     time_resolution: TimeResolution,
     pulse_period: PulsePeriod,
     pulse_stride: PulseStride[AnyRun],
     frames: ChopperFrameSequence[AnyRun],
+    monitor_distances: MonitorDistances,
 ) -> WavelengthBands:
-    """Wavelength band transmitted at each chopper-cascade frame.
+    """Wavelength band transmitted at points along the beamline.
 
     Evaluates the surviving wavelength vs ``event_time_offset`` at the exact
     distance of every frame in the cascade — the source pulse (distance 0)
-    followed by one row per chopper, ordered by ascending distance. A row that
-    is entirely NaN means no neutrons are transmitted at that component, i.e.
-    the corresponding chopper blocks the beam.
+    followed by one row per chopper — plus a marker row at each monitor
+    position. A row that is entirely NaN means no neutrons are transmitted
+    there, i.e. the upstream chopper blocks the beam. Rows are ordered by
+    ascending distance.
+
+    Monitor rows reuse :meth:`FrameSequence.__getitem__`, which propagates the
+    last cascade frame *before* the requested distance forward to it, so a
+    monitor between or beyond the choppers reflects the physically correct beam
+    state.
 
     Unlike :func:`make_wavelength_lut_from_polygons`, this does not rasterize
     onto a uniform distance grid, so closely-spaced choppers stay individually
@@ -227,24 +270,30 @@ def make_wavelength_bands_from_frames(
         'event_time_offset', 0.0, frame_period.value, nbins + 1, unit=pulse_period.unit
     )
 
-    bands = [
-        _estimate_wavelength_by_polygon_centers(
+    def band(frame) -> sc.Variable:
+        return _estimate_wavelength_by_polygon_centers(
             subframes=frame.subframes,
             time_edges=time_edges,
             time_unit=time_unit,
             wavelength_unit=wavelength_unit,
             frame_period=frame_period,
         )
-        for frame in frames
-    ]
-    distances = sc.concat(
-        [frame.distance.to(unit='m') for frame in frames], dim='distance'
-    )
+
+    # Source + choppers sit at their own frame distances; monitor rows propagate
+    # the cascade forward to each monitor position.
+    rows = [(frame.distance.to(unit='m'), frame) for frame in frames]
+    for distance in monitor_distances.values():
+        distance = distance.to(unit='m')
+        rows.append((distance, frames[distance]))
+
+    # Round to whole millimetres so curve labels read cleanly (e.g. 6.145 m)
+    # rather than carrying float-propagation noise.
+    distances = sc.round(sc.concat([d for d, _ in rows], dim='distance'), decimals=3)
     table = sc.DataArray(
-        data=sc.concat(bands, dim='distance'),
+        data=sc.concat([band(frame) for _, frame in rows], dim='distance'),
         coords={'distance': distances, 'event_time_offset': time_edges},
     )
-    return WavelengthBands(table)
+    return WavelengthBands(sc.sort(table, 'distance'))
 
 
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
@@ -267,6 +316,7 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     # Per-component diagnostic evaluated at exact chopper distances, sidestepping
     # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
     wf.insert(make_wavelength_bands_from_frames)
+    wf.insert(load_monitor_distances)
     return wf
 
 

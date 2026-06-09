@@ -151,12 +151,12 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
         default_factory=_empty_wavelength_bands_template,
         title='Chopper cascade bands',
         description=(
-            'Wavelength band transmitted at each beamline component (the source '
-            'and each chopper), evaluated at the component\'s exact distance. '
-            'Plot with the "Overlay 1D" plotter: one curve per distance. A curve '
-            'that vanishes (all-NaN) marks the chopper blocking the beam. Unlike '
-            'the lookup table, this resolves closely-spaced choppers regardless '
-            'of distance resolution.'
+            'Wavelength band transmitted along the beamline: the source and each '
+            'chopper at their exact distances, plus a marker row at each monitor '
+            'position. Plot with the "Overlay 1D" plotter: one curve per distance '
+            '(identified by its value in metres). A curve that vanishes (all-NaN) '
+            'marks where the beam is blocked. Unlike the lookup table, this '
+            'resolves closely-spaced choppers regardless of distance resolution.'
         ),
     )
 
