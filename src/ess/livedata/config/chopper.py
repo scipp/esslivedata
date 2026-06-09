@@ -61,11 +61,20 @@ def declare_chopper_setpoint_streams(
     preprocessor accepts it with the readback's unit — the LUT workflow consumes
     it as context and ``DiskChopper.from_nexus`` needs the unit.
 
+    The readback unit must be ``ns``: the synthesizer plateau-detects on raw
+    f144 values and ``Instrument.chopper_delay_atol_ns`` is a ns threshold,
+    so a differently-unitted readback would silently mis-scale the detector.
+
     Invoked automatically from :meth:`Instrument.__post_init__` for any
     instrument that declares ``choppers``; mutates ``streams`` in place before
     the f144 stream set is snapshotted for timeseries-spec registration.
     """
     for chopper in choppers:
-        streams[delay_setpoint_stream(chopper)] = F144Stream(
-            units=streams[delay_readback_stream(chopper)].units
-        )
+        readback = streams[delay_readback_stream(chopper)]
+        if readback.units != 'ns':
+            raise ValueError(
+                f"Chopper {chopper!r} delay readback declares units "
+                f"{readback.units!r}, expected 'ns': ChopperSynthesizer plateau "
+                f"detection and chopper_delay_atol_ns assume nanosecond samples."
+            )
+        streams[delay_setpoint_stream(chopper)] = F144Stream(units=readback.units)

@@ -128,13 +128,13 @@ class Instrument:
     #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
     #: the ``ChopperSynthesizer`` wired into the timeseries service.
     choppers: list[str] = field(default_factory=list)
-    #: Plateau-detection tolerance for chopper delay readbacks, in the delay
-    #: stream's own unit (ns for LOKI). Used by ``ChopperSynthesizer`` for both
-    #: noise rejection (rolling-window std must be below this) and change
-    #: detection (drift since the last lock). 1 us is a tight default suitable
-    #: for sub-degree phase tracking on typical ESS choppers; loosen
-    #: per-instrument once real readback noise is measured.
-    chopper_delay_atol: float = 1000.0
+    #: Stability tolerance for chopper delay readbacks. The readback stream's
+    #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
+    #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
+    #: must be below this) and change detection (drift since the last lock).
+    #: Default 1 us is tight; loosen per-instrument once real readback noise is
+    #: measured.
+    chopper_delay_atol_ns: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
     context_bindings: list[ContextBinding] = field(default_factory=list)
