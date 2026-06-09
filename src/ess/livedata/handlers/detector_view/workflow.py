@@ -22,13 +22,16 @@ from ess.reduce.live.raw import (
     pixel_cylinder_axis,
     pixel_cylinder_radius,
     pixel_shape,
-    position_noise_for_cylindrical_pixel,
     position_with_noisy_replicas,
 )
 from ess.reduce.nexus.types import SampleRun
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 
-from .projectors import make_geometric_projector, make_logical_projector
+from .projectors import (
+    make_geometric_projector,
+    make_logical_projector,
+    position_noise_for_cylindrical_pixel,
+)
 from .providers import (
     accumulated_histogram,
     compute_detector_histogram,

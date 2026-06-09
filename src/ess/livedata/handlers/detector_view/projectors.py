@@ -23,11 +23,48 @@ import scipp as sc
 from ess.reduce.live.raw import (
     CalibratedPositionWithNoisyReplicas,
     DetectorViewResolution,
+    PixelCylinderAxis,
+    PixelCylinderRadius,
+    PositionNoise,
     make_cylinder_mantle_coords,
     make_xy_plane_coords,
 )
 
 from .types import FlipX, LogicalTransform, ProjectionType, ReductionDim, ScreenMetadata
+
+# Mirror of essreduce's noise array length; the value is arbitrary (see upstream).
+_NOISE_SIZE = 107
+
+
+def position_noise_for_cylindrical_pixel(
+    *, axis: PixelCylinderAxis, radius: PixelCylinderRadius
+) -> PositionNoise:
+    """Seeded reimplementation of essreduce's cylindrical pixel position noise.
+
+    essreduce's ``position_noise_for_cylindrical_pixel`` draws from an unseeded
+    ``np.random.default_rng()``, so the noise (and hence the geometric projector's
+    screen bin edges) differs on every recompute. Under ``StreamProcessor`` the
+    projector is recomputed on each context update (e.g. a ``detector_carriage``
+    f144 sample, even an unchanged one), so the cumulative accumulator then fails
+    adding histograms with mismatched edges. Pinning the seed makes the edges
+    reproducible across recomputes; a genuine move still shifts them, which the
+    reset-on-move accumulator handles. Drop this once essreduce seeds upstream.
+    """
+    rng = np.random.default_rng(seed=1234)
+    dims = ('position',)
+    size = _NOISE_SIZE
+    dz = sc.array(dims=dims, values=rng.uniform(-0.5, 0.5, size=size)) * axis
+    dphi = sc.array(dims=dims, values=rng.uniform(0, 2 * np.pi, size=size), unit='rad')
+    x_hat = radius / sc.norm(radius)
+    z_hat = axis / sc.norm(axis)
+    y_hat = sc.cross(z_hat, x_hat)
+    r = sc.norm(radius).value
+    dr = sc.sqrt(
+        sc.array(dims=dims, values=rng.uniform(0, r**2, size=size), unit='m^2')
+    )
+    dx = dr * sc.cos(dphi) * x_hat
+    dy = dr * sc.sin(dphi) * y_hat
+    return PositionNoise(dx + dy + dz)
 
 
 class Projector(Protocol):
