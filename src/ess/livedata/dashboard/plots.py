@@ -5,18 +5,19 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import holoviews as hv
 import numpy as np
 import scipp as sc
+from holoviews.core.util import range_pad
+from holoviews.plotting.util import get_axis_padding
 
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.timestamp import Timestamp
 
-from .autoscaler import Autoscaler
 from .data_roles import PRIMARY
 from .plot_params import (
     LayoutParams,
@@ -32,6 +33,7 @@ from .plot_params import (
     TickParams,
     TimeseriesDownsamplingParams,
 )
+from .range_hook import Axis, RangeTargets
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
 from .time_utils import format_time_ns_local
 from .timeseries_downsample import downsample_timeseries
@@ -49,6 +51,115 @@ def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
         int(np.datetime64(da.coords['time'].values[-1], 'ns').astype('int64'))
         for da in primary.values()
     )
+
+
+# Used only to widen a zero-width range (see _ensure_span); the per-axis
+# padding fraction itself comes from HoloViews (see _hv_axis_padding).
+_DEGENERATE_PAD = 0.05
+_DEGENERATE_PAD_MIN = 0.5
+_DEGENERATE_LOG_FACTOR = 1.1
+
+
+def _hv_axis_padding(element_type: type) -> tuple[float, float, float]:
+    """Per-axis ``(xpad, ypad, zpad)`` padding HoloViews applies for an element.
+
+    Sourced from the element's registered Bokeh plot class so autoscale ranges
+    frame the data exactly as HoloViews would: images pad nothing, curves pad
+    only y, histograms and scatter pad both axes. The values are fractions of
+    the data span, matching how :func:`range_pad` interprets them.
+    """
+    plot_cls = hv.Store.registry['bokeh'][element_type]
+    return get_axis_padding(plot_cls.param.padding.default)
+
+
+def _ensure_span(lo: float, hi: float, *, log: bool) -> tuple[float, float]:
+    """Widen a zero-width range so Bokeh has something to render.
+
+    ``range_pad`` derives padding from the span, so it leaves a single-valued
+    range (constant image, single point or bin) untouched; HoloViews handles
+    this separately via ``default_span``. Bump multiplicatively on log axes to
+    keep the lower bound positive, additively on linear axes.
+    """
+    if hi != lo:
+        return lo, hi
+    if log:
+        return lo / _DEGENERATE_LOG_FACTOR, hi * _DEGENERATE_LOG_FACTOR
+    offset = max(abs(lo) * _DEGENERATE_PAD, _DEGENERATE_PAD_MIN)
+    return lo - offset, hi + offset
+
+
+def _pad_range(lo: float, hi: float, *, pad: float, log: bool) -> tuple[float, float]:
+    """Pad ``(lo, hi)`` by fraction ``pad`` using HoloViews' range padding.
+
+    ``pad`` is the per-axis fraction HoloViews assigns to the element type (see
+    :func:`_hv_axis_padding`); :func:`range_pad` applies it in data space, or in
+    log space when ``log=True``. ``pad=0`` (e.g. every image axis) is a no-op
+    beyond the zero-width guard.
+    """
+    lo, hi = _ensure_span(lo, hi, log=log)
+    return range_pad(lo, hi, pad, log)
+
+
+def _bounds_for_log(
+    bounds: tuple[float, float], *, log: bool
+) -> tuple[float, float] | None:
+    """Validate explicit ``(lo, hi)`` bounds for an axis.
+
+    Returns ``None`` if any bound is non-finite, or if ``log=True`` and the
+    lower bound is non-positive — log axes require strictly positive bounds.
+    """
+    lo, hi = bounds
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return None
+    if log and lo <= 0.0:
+        return None
+    return lo, hi
+
+
+def _finite_min_max(
+    values: np.ndarray, *, log: bool = False
+) -> tuple[float, float] | None:
+    """Return finite (min, max) of ``values``, or ``None`` if none qualify.
+
+    Parameters
+    ----------
+    values:
+        Input array.
+    log:
+        If True, also drop non-positive values. ``LogColorMapper`` and
+        Bokeh's log axes reject non-positive bounds, so any padding derived
+        from a non-positive ``lo`` would break rendering.
+    """
+    if values.size == 0:
+        return None
+    mask = np.isfinite(values)
+    if log:
+        mask &= values > 0
+    finite = values[mask]
+    if finite.size == 0:
+        return None
+    return float(finite.min()), float(finite.max())
+
+
+def _value_extent_with_errors(
+    data: sc.DataArray, *, show_errors: bool, log: bool
+) -> tuple[float, float] | None:
+    """Finite (min, max) of the y values, widened to the error whiskers.
+
+    When error bars / bands are shown they extend the rendered y-range to
+    ``value ± stddev`` (see ``HvConverter1d.error_bars`` / ``spread``), so the
+    extent must include those whiskers or autoscale would clip them. Mirrors
+    the range HoloViews itself derives for an ``ErrorBars`` / ``Spread``
+    element. Returns ``None`` when no value qualifies (see
+    :func:`_finite_min_max`).
+    """
+    values = data.values
+    if show_errors and data.variances is not None:
+        std = np.sqrt(data.variances)
+        values = np.concatenate(
+            [values.ravel(), (values - std).ravel(), (values + std).ravel()]
+        )
+    return _finite_min_max(values, log=log)
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
@@ -244,13 +355,15 @@ class Plotter:
     This enables efficient polling-based update detection.
     """
 
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
+    """Per-axis autoscale support. Override per subclass."""
+
     def __init__(
         self,
         *,
         aspect_params: PlotAspect | None = None,
         layout_params: LayoutParams | None = None,
         normalize_to_rate: bool = False,
-        **kwargs,
     ):
         """
         Initialize the plotter.
@@ -262,14 +375,11 @@ class Plotter:
         normalize_to_rate:
             If True, normalize counts data to rate (counts/s) using
             start_time/end_time coordinates before plotting.
-        **kwargs:
-            Additional keyword arguments passed to the autoscaler if created.
         """
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
+        self._range_targets: dict[ResultKey, RangeTargets] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
-        self.autoscaler_kwargs = kwargs
-        self.autoscalers: dict[ResultKey, Autoscaler] = {}
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
@@ -453,6 +563,7 @@ class Plotter:
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
+        self._range_targets = {}
         resolver = title_resolver or TitleResolver()
         plots: list[hv.Element] = []
         try:
@@ -473,6 +584,7 @@ class Plotter:
                 )
                 plots.append(plot_element)
         except Exception as e:
+            self._range_targets = {}
             plots = [
                 hv.Text(0.5, 0.5, f"Error: {e}").opts(
                     text_align='center', text_baseline='middle'
@@ -553,21 +665,26 @@ class Plotter:
         """Check if state has been computed."""
         return self._cached_state is not None
 
+    def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
+        """Per-axis ``(lo, hi)`` targets computed at the last ``compute()``.
+
+        Returns ``None`` when no targets have been computed for ``data_key``
+        (e.g. for plotters whose ``AUTOSCALE_AXES`` is empty, or before the
+        first ``compute()`` call).
+        """
+        return self._range_targets.get(data_key)
+
+    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
+        """Iterate ``(data_key, targets)`` pairs computed at the last ``compute()``.
+
+        Empty when no ``compute()`` has happened yet or when the plotter's
+        ``AUTOSCALE_AXES`` is empty.
+        """
+        return iter(self._range_targets.items())
+
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""
         return plot_element.opts(**self._sizing_opts)
-
-    def _update_autoscaler_and_get_framewise(
-        self,
-        data: sc.DataArray,
-        data_key: ResultKey,
-        *,
-        coord_data: sc.DataArray | None = None,
-    ) -> bool:
-        """Update autoscaler with data and return whether bounds changed."""
-        if data_key not in self.autoscalers:
-            self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
-        return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
@@ -590,6 +707,12 @@ _LINE1D_BASE_METHOD: dict[str, str] = {
 _LINE1D_ERROR_METHOD: dict[str, str] = {
     'bars': 'error_bars',
     'band': 'spread',
+}
+# HoloViews element each mode renders as, for sourcing axis padding.
+_LINE1D_ELEMENT: dict[str, type] = {
+    'line': hv.Curve,
+    'points': hv.Scatter,
+    'histogram': hv.Histogram,
 }
 _LINE1D_HISTOGRAM_FALLBACK = 'line'
 
@@ -621,6 +744,8 @@ class LinePlotter(Plotter):
     error display (bars, band, or none).
     """
 
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
+
     def __init__(
         self,
         scale_opts: PlotScaleParams,
@@ -649,9 +774,11 @@ class LinePlotter(Plotter):
         super().__init__(**kwargs)
         self._mode = mode
         self._errors = errors
+        self._logx = scale_opts.x_scale == PlotScale.log
+        self._logy = scale_opts.y_scale == PlotScale.log
         self._base_opts: dict[str, Any] = {
-            'logx': True if scale_opts.x_scale == PlotScale.log else False,
-            'logy': True if scale_opts.y_scale == PlotScale.log else False,
+            'logx': self._logx,
+            'logy': self._logy,
             **self._make_tick_opts(tick_params),
         }
         self._downsampling: TimeseriesDownsamplingParams | None = None
@@ -663,7 +790,6 @@ class LinePlotter(Plotter):
     ):
         """Create LinePlotter from display parameters."""
         return cls(
-            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
@@ -744,6 +870,25 @@ class LinePlotter(Plotter):
         period_ns = int(self._downsampling.fine_period_seconds * 1e9)
         return (latest_ns - self._last_compute_data_time_ns) < period_ns
 
+    def _compute_line_range_targets(
+        self, data: sc.DataArray, mode: str
+    ) -> RangeTargets:
+        """Per-axis ``(lo, hi)`` targets for the given 1-D data."""
+        xpad, ypad, _ = _hv_axis_padding(_LINE1D_ELEMENT[mode])
+        targets: RangeTargets = {}
+        dim = data.dim
+        if dim in data.coords:
+            coord_values = data.coords[dim].values
+            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            if coord_extent is not None:
+                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+        value_extent = _value_extent_with_errors(
+            data, show_errors=self._errors != 'none', log=self._logy
+        )
+        if value_extent is not None:
+            targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
+        return targets
+
     def plot(
         self,
         data: sc.DataArray,
@@ -756,11 +901,13 @@ class LinePlotter(Plotter):
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
         mode, da = _resolve_line1d_mode(self._mode, data)
+        targets = self._compute_line_range_targets(data, mode)
+        if targets:
+            self._range_targets[data_key] = targets
         converter = HvConverter1d(
             da, value_label=output_display_name, dim_label=dim_label
         )
-        framewise = self._update_autoscaler_and_get_framewise(da, data_key)
-        opts = dict(framewise=framewise, **self._base_opts)
+        opts = dict(self._base_opts)
 
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
         base = base_method(label=label).opts(**opts)
@@ -785,6 +932,8 @@ class LinePlotter(Plotter):
 
 class ImagePlotter(Plotter):
     """Plotter for 2D images from scipp DataArrays."""
+
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y', 'c'})
 
     def __init__(
         self,
@@ -813,13 +962,41 @@ class ImagePlotter(Plotter):
         """Create ImagePlotter from PlotParams2d."""
         rate = getattr(params, 'rate', None)
         return cls(
-            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
+
+    def _compute_image_range_targets(
+        self,
+        element: hv.Element,
+        plot_data: sc.DataArray,
+        use_log_scale: bool,
+    ) -> RangeTargets:
+        """Per-axis ``(lo, hi)`` targets for the rendered 2-D image element.
+
+        ``x``/``y`` extents are read from ``element.range`` so they match the
+        bounds HoloViews actually renders -- half-pixel extension for
+        midpoint coords, exact edge values for bin edges -- without
+        duplicating that logic here. ``c`` extent is derived from the data
+        because HoloViews does not expose a NaN-filtered or log-filtered
+        value range.
+        """
+        xpad, ypad, cpad = _hv_axis_padding(hv.Image)
+        targets: RangeTargets = {}
+        if plot_data.ndim == 2:
+            logx = self._scale_opts.x_scale == PlotScale.log
+            logy = self._scale_opts.y_scale == PlotScale.log
+            if x_extent := _bounds_for_log(element.range(0), log=logx):
+                targets['x'] = _pad_range(*x_extent, pad=xpad, log=logx)
+            if y_extent := _bounds_for_log(element.range(1), log=logy):
+                targets['y'] = _pad_range(*y_extent, pad=ypad, log=logy)
+        extent = _finite_min_max(plot_data.values, log=use_log_scale)
+        if extent is not None:
+            targets['c'] = _pad_range(*extent, pad=cpad, log=use_log_scale)
+        return targets
 
     def plot(
         self,
@@ -838,14 +1015,17 @@ class ImagePlotter(Plotter):
         if output_display_name:
             plot_data.name = output_display_name
 
-        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         # We are using the masked data here since Holoviews (at least with the Bokeh
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
         histogram = to_holoviews(plot_data, label=label, dim_label=dim_label)
+
+        targets = self._compute_image_range_targets(histogram, plot_data, use_log_scale)
+        if targets:
+            self._range_targets[data_key] = targets
+
         opts = dict(self._base_opts)
-        opts['framewise'] = framewise
         # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
             opts['clim'] = clim
@@ -854,6 +1034,8 @@ class ImagePlotter(Plotter):
 
 class BarsPlotter(Plotter):
     """Plotter for bar charts of 0D scalar data."""
+
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
 
     def __init__(
         self,
@@ -933,6 +1115,8 @@ class Overlay1DPlotter(Plotter):
     Supports the same line style options (mode, errors) as LinePlotter.
     """
 
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
+
     def __init__(
         self,
         scale_opts: PlotScaleParams,
@@ -961,9 +1145,11 @@ class Overlay1DPlotter(Plotter):
         super().__init__(**kwargs)
         self._mode = mode
         self._errors = errors
+        self._logx = scale_opts.x_scale == PlotScale.log
+        self._logy = scale_opts.y_scale == PlotScale.log
         self._base_opts: dict[str, Any] = {
-            'logx': scale_opts.x_scale == PlotScale.log,
-            'logy': scale_opts.y_scale == PlotScale.log,
+            'logx': self._logx,
+            'logy': self._logy,
             **self._make_tick_opts(tick_params),
         }
         self._colors = hv.Cycle.default_cycles["default_colors"]
@@ -974,7 +1160,6 @@ class Overlay1DPlotter(Plotter):
         from .plot_params import CombineMode
 
         return cls(
-            grow_threshold=0.1,
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
@@ -983,6 +1168,25 @@ class Overlay1DPlotter(Plotter):
             mode=params.line.mode,
             errors=params.line.errors,
         )
+
+    def _compute_overlay_range_targets(
+        self, data: sc.DataArray, mode: str
+    ) -> RangeTargets:
+        """Union x/y targets across all slices of the 2-D overlay data."""
+        xpad, ypad, _ = _hv_axis_padding(_LINE1D_ELEMENT[mode])
+        targets: RangeTargets = {}
+        plot_dim = data.dims[1]
+        if plot_dim in data.coords:
+            coord_values = data.coords[plot_dim].values
+            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            if coord_extent is not None:
+                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+        value_extent = _value_extent_with_errors(
+            data, show_errors=self._errors != 'none', log=self._logy
+        )
+        if value_extent is not None:
+            targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
+        return targets
 
     def plot(
         self,
@@ -1009,8 +1213,12 @@ class Overlay1DPlotter(Plotter):
         if slice_size == 0:
             return hv.Curve([]).opts(**self._base_opts)
 
-        # Update autoscaler with full 2D data to establish global bounds
-        framewise = self._update_autoscaler_and_get_framewise(data, data_key)
+        actual_mode, plot_data = _resolve_line1d_mode(
+            self._mode, data, dim=data.dims[1]
+        )
+        targets = self._compute_overlay_range_targets(data, actual_mode)
+        if targets:
+            self._range_targets[data_key] = targets
 
         # Get coordinate values for labels and colors
         if slice_dim in data.coords:
@@ -1018,7 +1226,7 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
-        actual_mode, data = _resolve_line1d_mode(self._mode, data, dim=data.dims[1])
+        data = plot_data
         use_histogram = actual_mode == 'histogram'
 
         elements: list[hv.Element] = []
@@ -1037,9 +1245,7 @@ class Overlay1DPlotter(Plotter):
                 slice_data, value_label=output_display_name, dim_label=dim_label
             )
             base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
-            base = base_method(label=curve_label).opts(
-                color=color, framewise=framewise, **self._base_opts
-            )
+            base = base_method(label=curve_label).opts(color=color, **self._base_opts)
 
             if slice_data.variances is not None and self._errors != 'none':
                 if use_histogram:
@@ -1057,7 +1263,6 @@ class Overlay1DPlotter(Plotter):
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
                 error_el = error_method(label=curve_label).opts(
                     color=color,
-                    framewise=framewise,
                     **self._base_opts,
                     **self._sizing_opts,
                 )

@@ -229,7 +229,7 @@ class TestPollHandlesLayoutPlotters:
         # Inject a transient failure into the rebuild path
         original = plot_grid_tabs._get_session_composed_plot
 
-        def _raise(cell):
+        def _raise(cell_id, cell):
             raise RuntimeError("injected failure")
 
         plot_grid_tabs._get_session_composed_plot = _raise

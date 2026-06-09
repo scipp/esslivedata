@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import holoviews as hv
 import numpy as np
@@ -15,7 +15,14 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
-from .plots import Plotter, PresenterBase, _normalize_to_rate
+from .plots import (
+    Plotter,
+    PresenterBase,
+    _hv_axis_padding,
+    _normalize_to_rate,
+    _pad_range,
+)
+from .range_hook import Axis
 from .scipp_to_holoviews import to_holoviews
 
 
@@ -186,8 +193,6 @@ class SlicerPresenter(PresenterBase):
 
         image = to_holoviews(plot_data)
         opts: dict[str, Any] = {**self._base_opts, **self._sizing_opts}
-        # Always use framewise=True for interactive slicing
-        opts['framewise'] = True
         # Use pre-computed clim for consistent color scale across slices
         if clim is not None:
             opts['clim'] = clim
@@ -246,6 +251,8 @@ class SlicerPlotter(Plotter):
     - SlicerPresenter: Handles interactive slicing per-session
     """
 
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'c'})
+
     def __init__(
         self,
         scale_opts: PlotScaleParams2d,
@@ -273,7 +280,6 @@ class SlicerPlotter(Plotter):
         """Create SlicerPlotter from PlotParams3d."""
         return cls(
             scale_opts=params.plot_scale,
-            grow_threshold=0.1,
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
@@ -302,8 +308,14 @@ class SlicerPlotter(Plotter):
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
         clim = self._compute_global_clim(data)
-        # Pre-prepare 3D data (dtype conversion + log masking)
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
+        self._range_targets = {}
+        if clim is not None:
+            _, _, cpad = _hv_axis_padding(hv.Image)
+            padded = _pad_range(*clim, pad=cpad, log=use_log_scale)
+            for key in data:
+                self._range_targets[key] = {'c': padded}
+        # Pre-prepare 3D data (dtype conversion + log masking)
         prepared_data = {
             k: self._prepare_2d_image_data(v, use_log_scale) for k, v in data.items()
         }

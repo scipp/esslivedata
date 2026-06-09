@@ -678,11 +678,6 @@ class TestSlicerPlotter:
         """Create SlicerPresenter for testing render_slice."""
         return slicer_plotter.create_presenter()
 
-    def test_initialization(self, slicer_plotter):
-        """Test that SlicerPlotter initializes correctly."""
-        # Uses base class autoscalers dict (initialized lazily)
-        assert slicer_plotter.autoscalers == {}
-
     # === Stage 1: compute() tests ===
 
     def test_compute_returns_slicer_state(self, slicer_plotter, data_3d, data_key):
@@ -789,16 +784,6 @@ class TestSlicerPlotter:
         # Check that clim is set in options (clim is a 'plot' option, not 'norm')
         plot_opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
         assert plot_opts.get('clim') == clim
-
-    def test_render_slice_framewise_always_true(self, slicer_presenter, data_3d):
-        """Test that render_slice always sets framewise=True."""
-        z_value = float(data_3d.coords['z'].values[0])
-        result = slicer_presenter.render_slice(
-            data_3d, clim=None, slice_dim='z', z_value=z_value
-        )
-
-        norm_opts = hv.Store.lookup_options('bokeh', result, 'norm').kwargs
-        assert norm_opts.get('framewise') is True
 
     def test_render_slice_flatten_mode(self, data_3d):
         """Test that flatten mode works in render_slice."""

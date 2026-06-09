@@ -341,7 +341,6 @@ class TestFlattenPlotterDirectConstruction:
         # that matter to it.
         base = FlattenParams()
         return dict(
-            grow_threshold=0.1,
             layout_params=base.layout,
             aspect_params=base.plot_aspect,
             scale_opts=base.plot_scale,

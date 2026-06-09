@@ -18,6 +18,7 @@ import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..data_roles import PRIMARY
 from ..format_utils import extract_error_summary
 from ..frame_aspect import make_frame_aspect_hook_from_config
@@ -145,6 +146,13 @@ class PlotGridTabs:
 
         # Per-session layer state: version tracking and optional render components.
         self._session_layers: dict[LayerId, SessionLayer] = {}
+
+        # Per-session, per-cell autoscale controllers. Lifetime tracks the
+        # cell composition: each rebuild creates a fresh controller whose
+        # ``CustomAction`` tools live in this session's Bokeh document; the
+        # previous controller (with its now-detached tools) is garbage
+        # collected. Cleaned up when the cell goes away or its layers do.
+        self._session_autoscale_controllers: dict[CellId, CellAutoscaleController] = {}
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 3 if system_status_widget else 2
@@ -487,7 +495,7 @@ class PlotGridTabs:
         # Note: When config changes, update_layer_config() creates a new layer_id.
         # The old layer_id is orphaned and cleaned up by update_pipes().
         # New layer_ids have no cache, so fresh components are created naturally.
-        session_plot = self._get_session_composed_plot(cell)
+        session_plot = self._get_session_composed_plot(cell_id, cell)
 
         # Create widget with toolbars and content
         widget = self._create_cell_widget(cell_id, cell, session_plot)
@@ -530,6 +538,31 @@ class PlotGridTabs:
 
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
+
+        # Drop any per-session autoscale controller for the removed cell.
+        # The geometry → cell_id mapping isn't tracked here, so we sweep
+        # controllers whose CellId no longer matches any active cell.
+        active_cell_ids: set[CellId] = set()
+        for grid_config in (
+            self._orchestrator.peek_grid(gid) for gid in self._grid_widgets
+        ):
+            if grid_config is None:
+                continue
+            active_cell_ids.update(grid_config.cells.keys())
+        for cid in list(self._session_autoscale_controllers):
+            if cid not in active_cell_ids:
+                self._drop_autoscale_controller(cid)
+
+    def _drop_autoscale_controller(self, cell_id: CellId) -> None:
+        """Pop the controller for ``cell_id`` and dispose it (if any).
+
+        Calling ``dispose()`` breaks the controller → Bokeh-tool →
+        on_change-callback → controller reference cycle so long sessions
+        don't accumulate detached controllers after cell rebuilds/removals.
+        """
+        controller = self._session_autoscale_controllers.pop(cell_id, None)
+        if controller is not None:
+            controller.dispose()
 
     def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, LayerStateMachine]:
         """
@@ -904,14 +937,14 @@ class PlotGridTabs:
         # - Each panel needs independent autoscaling
         #
         # Previous workarounds and why they failed:
-        # - shared_axes=False (HoloViews): Breaks framewise autoscaling and other
-        #   dynamic features that rely on shared axis infrastructure
+        # - shared_axes=False (HoloViews): Breaks dynamic features that rely on
+        #   shared axis infrastructure
         # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
         #   which was needed for the layer system (#606)
         #
         # Solution: linked_axes=False on the Panel pane
-        # - Disables Panel's cross-plot axis linking while preserving all HoloViews
-        #   features (framewise options, autoscaling, dynamic updates)
+        # - Disables Panel's cross-plot axis linking while preserving HoloViews
+        #   features (autoscaling, dynamic updates)
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
         plot_pane_wrapper = pn.pane.HoloViews(
@@ -920,7 +953,7 @@ class PlotGridTabs:
         return plot_pane_wrapper.layout
 
     def _get_session_composed_plot(
-        self, cell: PlotCell
+        self, cell_id: CellId, cell: PlotCell
     ) -> hv.DynamicMap | hv.Element | None:
         """
         Get composed plot from session-local DynamicMaps or static elements.
@@ -941,6 +974,7 @@ class PlotGridTabs:
         """
         plots = []
         has_layout = False
+        cell_plotters: list = []
         for layer in cell.layers:
             layer_id = layer.layer_id
             session_layer = self._session_layers.get(layer_id)
@@ -951,6 +985,10 @@ class PlotGridTabs:
             state = self._plot_data_service.get(layer_id)
             if state is not None:
                 session_layer.ensure_components(state)
+                # Static overlays (vlines/hlines/rectangles) are not Plotters
+                # and carry no autoscale axes; exclude them from the controller.
+                if state.plotter is not None and not layer.config.is_static():
+                    cell_plotters.append(state.plotter)
 
             dmap = session_layer.dmap
             if dmap is not None:
@@ -968,6 +1006,7 @@ class PlotGridTabs:
                 plots.append(dmap)
 
         if not plots:
+            self._drop_autoscale_controller(cell_id)
             return None
 
         result: hv.DynamicMap | hv.Element
@@ -983,7 +1022,9 @@ class PlotGridTabs:
 
         # Skip hooks for Layouts — each sub-figure has its own SaveTool,
         # so a single cell-level filename is not meaningful.
-        if not has_layout:
+        if has_layout:
+            self._drop_autoscale_controller(cell_id)
+        else:
             hooks: list = []
             filename = build_save_filename_from_cell(
                 cell, self._workflow_registry, self._orchestrator.get_source_title
@@ -996,6 +1037,16 @@ class PlotGridTabs:
                     aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
                     if aspect_hook is not None:
                         hooks.append(aspect_hook)
+            # Fresh controller on every cell rebuild: keeps tools and
+            # toggle state local to this session's Bokeh document. Dispose
+            # any prior controller for this cell first to break its
+            # on_change reference cycle (would otherwise leak across the
+            # session lifetime).
+            self._drop_autoscale_controller(cell_id)
+            controller = build_controller_from_layers(cell_plotters)
+            if controller is not None:
+                self._session_autoscale_controllers[cell_id] = controller
+                hooks.append(controller.make_hook())
             if hooks:
                 result = result.opts(hooks=hooks)
 
@@ -1086,7 +1137,7 @@ class PlotGridTabs:
         # race with DynamicMap updates, causing KeyError when Panel tries to
         # access removed models.
         for cell_id, (cell, plot_grid) in cells_to_rebuild.items():
-            session_plot = self._get_session_composed_plot(cell)
+            session_plot = self._get_session_composed_plot(cell_id, cell)
             widget = self._create_cell_widget(cell_id, cell, session_plot)
             pn.state.execute(
                 lambda g=cell.geometry, w=widget, pg=plot_grid: pg.insert_widget_at(
@@ -1109,6 +1160,8 @@ class PlotGridTabs:
         for layer_id, session_layer in self._session_layers.items():
             self._orchestrator.activate_layer(layer_id, session_layer, False)
         self._session_layers.clear()
+        for cid in list(self._session_autoscale_controllers):
+            self._drop_autoscale_controller(cid)
         self._grid_manager.shutdown()
 
     @property

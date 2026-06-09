@@ -13,8 +13,9 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pydantic
 import scipp as sc
@@ -29,6 +30,7 @@ from .plot_params import (
     PlotDisplayParams2d,
 )
 from .plots import ImagePlotter, LinePlotter, PresenterBase, TitleResolver
+from .range_hook import Axis, RangeTargets
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -175,6 +177,9 @@ class CorrelationHistogramPlotter:
     - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
     """
 
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
+    """Subclasses delegate to the inner renderer's ``AUTOSCALE_AXES``."""
+
     kdims: list[str] | None = None
 
     def __init__(
@@ -256,6 +261,14 @@ class CorrelationHistogramPlotter:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
 
+    def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
+        """Delegate per-axis target lookup to the inner renderer."""
+        return self._renderer.get_range_targets(data_key)
+
+    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
+        """Delegate per-key target iteration to the inner renderer."""
+        return self._renderer.iter_range_targets()
+
     def create_presenter(self) -> PresenterBase:
         """Create a presenter owned by this plotter.
 
@@ -270,6 +283,8 @@ class CorrelationHistogramPlotter:
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
     """Plotter for 1D correlation histograms."""
+
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
 
     def __init__(self, params: CorrelationHistogram1dParams) -> None:
         axes = [
@@ -292,6 +307,8 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
 
 class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
     """Plotter for 2D correlation histograms."""
+
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y', 'c'})
 
     def __init__(self, params: CorrelationHistogram2dParams) -> None:
         # Y axis first: dims[0] maps to vertical, dims[1] to horizontal
