@@ -265,6 +265,7 @@ class TestFreshnessIndicator:
         now_ns = time.time_ns()
         bounds = TimeBounds(
             min_end=Timestamp.from_ns(now_ns - int(2e9)),
+            created_at=Timestamp.from_ns(now_ns),
             min_start=Timestamp.from_ns(now_ns - int(3e9)),
             max_end=Timestamp.from_ns(now_ns - int(1e9)),
         )
@@ -277,9 +278,10 @@ class TestFreshnessIndicator:
 
         panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
         assert len(panes) == 1
-        # Pill styling present, with the full range in the hover tooltip.
+        # Pill shows the compact frozen lag with band styling, no hover tooltip.
         assert 'border-radius' in panes[0].object
-        assert 'Lag:' in panes[0].object
+        assert '2.0s' in panes[0].object
+        assert 'title=' not in panes[0].object
 
         # The per-layer time pane shows the full range + lag.
         layer_panes = [
@@ -302,6 +304,7 @@ class TestFreshnessIndicator:
         now_ns = time.time_ns()
         bounds = TimeBounds(
             min_end=Timestamp.from_ns(now_ns - int(2e9)),
+            created_at=Timestamp.from_ns(now_ns),
             min_start=Timestamp.from_ns(now_ns - int(3e9)),
             max_end=Timestamp.from_ns(now_ns - int(1e9)),
         )

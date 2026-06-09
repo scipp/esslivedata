@@ -24,7 +24,6 @@ import panel as pn
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.core.timestamp import Timestamp
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..format_utils import extract_error_summary
@@ -102,37 +101,49 @@ def _format_lag_short(lag_seconds: float) -> str:
     return f'{lag_seconds / 60:.0f}m'
 
 
-def format_freshness_html(lag_seconds: float | None, tooltip: str = '') -> str:
-    """Render the titlebar freshness/lag pill, color-banded by staleness.
+def format_freshness_html(
+    lag_seconds: float | None,
+    idle_seconds: float | None = None,
+) -> str:
+    """Render the titlebar freshness/lag pill on two independent channels.
+
+    The fill, text, dot, and number show pipeline ``lag_seconds`` (frozen at
+    compute time), banded by staleness. The border shows wall-clock
+    ``idle_seconds`` (time since the stream last delivered), banded the same
+    way, so a stalled stream's border visibly reddens while the lag number
+    holds at its last value.
+
+    No hover tooltip: the pill re-renders whenever its content changes (up to
+    once per data frame), which would tear down a native ``title`` tooltip on
+    every update. The full range/lag detail lives in the per-layer toolbar row
+    instead, where it can update without disturbing a hover.
 
     Parameters
     ----------
     lag_seconds:
-        Data lag in seconds, or None to render nothing (no timing data).
-    tooltip:
-        Full time-range text shown on hover (the pill itself shows only the
-        compact lag).
+        Pipeline lag in seconds, or None to render nothing (no timing data).
+    idle_seconds:
+        Wall-clock seconds since the data was computed, or None to draw no
+        border accent.
     """
     if lag_seconds is None:
         return ''
     background, text_color, dot_color = _freshness_band(lag_seconds)
+    border_color = (
+        'transparent' if idle_seconds is None else _freshness_band(idle_seconds)[2]
+    )
     pill_style = (
         f'display:inline-flex;align-items:center;gap:5px;height:20px;'
-        f'padding:0 8px;border-radius:10px;font-size:11px;'
+        f'box-sizing:border-box;padding:0 8px;border-radius:10px;font-size:11px;'
         f'font-variant-numeric:tabular-nums;white-space:nowrap;'
         f'background:{background};color:{text_color};'
+        f'border:2px solid {border_color};'
     )
     dot_style = (
         f'width:7px;height:7px;border-radius:50%;flex:none;background:{dot_color};'
     )
-    if tooltip:
-        from html import escape
-
-        title_attr = f' title="{escape(tooltip)}"'
-    else:
-        title_attr = ''
     return (
-        f'<span style="{pill_style}"{title_attr}>'
+        f'<span style="{pill_style}">'
         f'<span style="{dot_style}"></span>{_format_lag_short(lag_seconds)}</span>'
     )
 
@@ -273,9 +284,8 @@ class CellWidget:
         if merged is None:
             html = ''
         else:
-            now = Timestamp.now()
             html = format_freshness_html(
-                merged.lag_seconds(now), tooltip=format_time_info(merged, now=now)
+                merged.lag_seconds(), idle_seconds=merged.idle_seconds()
             )
         if self._freshness_pane.object != html:
             self._freshness_pane.object = html

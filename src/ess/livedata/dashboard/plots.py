@@ -326,17 +326,31 @@ class TimeBounds:
 
     ``min_end`` is the end time of the oldest data, giving worst-case staleness.
     ``min_start`` and ``max_end`` bound the full data range and are present only
-    when start times exist on the data.
+    when start times exist on the data. ``created_at`` is the wall-clock instant
+    these bounds were computed, anchoring the two distinct freshness measures:
+    pipeline lag (frozen at compute time) and idle time (grows against the wall
+    clock between data arrivals).
     """
 
     min_end: Timestamp
+    created_at: Timestamp
     min_start: Timestamp | None = None
     max_end: Timestamp | None = None
 
-    def lag_seconds(self, now: Timestamp | None = None) -> float:
-        """Seconds between the oldest data's end time and ``now`` (max lag)."""
+    def lag_seconds(self) -> float:
+        """Pipeline latency: oldest data's end time to when it was plotted.
+
+        Frozen at compute time -- does not grow while the stream is idle.
+        """
+        return (self.created_at - self.min_end).to_seconds()
+
+    def idle_seconds(self, now: Timestamp | None = None) -> float:
+        """Wall-clock seconds since these bounds were computed (stream idle).
+
+        Grows between data arrivals, so a stalled stream visibly ages.
+        """
         now = Timestamp.now() if now is None else now
-        return (now - self.min_end).to_seconds()
+        return (now - self.created_at).to_seconds()
 
 
 def _compute_time_bounds(data: dict[str, sc.DataArray]) -> TimeBounds | None:
@@ -362,11 +376,20 @@ def _compute_time_bounds(data: dict[str, sc.DataArray]) -> TimeBounds | None:
 
     if min_end is None:
         return None
-    return TimeBounds(min_end=min_end, min_start=min_start, max_end=max_end)
+    return TimeBounds(
+        min_end=min_end,
+        created_at=Timestamp.now(),
+        min_start=min_start,
+        max_end=max_end,
+    )
 
 
 def merge_time_bounds(bounds: Iterable[TimeBounds | None]) -> TimeBounds | None:
-    """Combine bounds across layers: earliest start, oldest end, latest end."""
+    """Combine bounds across layers: earliest start, oldest end, latest end.
+
+    ``created_at`` takes the earliest across layers so idle time reflects the
+    most stale layer (worst-case staleness).
+    """
     present = [b for b in bounds if b is not None]
     if not present:
         return None
@@ -374,15 +397,18 @@ def merge_time_bounds(bounds: Iterable[TimeBounds | None]) -> TimeBounds | None:
     ends = [b.max_end for b in present if b.max_end is not None]
     return TimeBounds(
         min_end=min(b.min_end for b in present),
+        created_at=min(b.created_at for b in present),
         min_start=min(starts) if starts else None,
         max_end=max(ends) if ends else None,
     )
 
 
-def format_time_info(bounds: TimeBounds, now: Timestamp | None = None) -> str:
-    """Format time bounds as a range + lag string, e.g. "12:34:56 (Lag: 2.3s)"."""
-    now = Timestamp.now() if now is None else now
-    lag_s = bounds.lag_seconds(now)
+def format_time_info(bounds: TimeBounds) -> str:
+    """Format time bounds as a range + lag string, e.g. "12:34:56 (Lag: 2.3s)".
+
+    ``Lag`` is the frozen pipeline latency, not wall-clock staleness.
+    """
+    lag_s = bounds.lag_seconds()
     if bounds.min_start is not None and bounds.max_end is not None:
         start_str = format_time_ns_local(bounds.min_start)
         end_str = format_time_ns_local(bounds.max_end)
