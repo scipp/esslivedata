@@ -31,6 +31,7 @@ from ess.livedata.core.job_manager import JobFactory
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
 )
 
@@ -101,3 +102,10 @@ def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     assert lut.dims == ('distance', 'event_time_offset')
     assert lut.unit == sc.units.angstrom
     assert np.isfinite(lut.values).any()
+
+    bands = result.data[WAVELENGTH_BANDS_OUTPUT]
+    assert bands.dims == ('distance', 'event_time_offset')
+    assert bands.unit == sc.units.angstrom
+    # One row for the source plus one per chopper, at exact distances.
+    assert bands.sizes['distance'] == len(instrument.choppers) + 1
+    assert np.isfinite(bands.values).any()

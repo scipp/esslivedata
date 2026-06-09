@@ -44,12 +44,14 @@ from ess.reduce.nexus.types import (
 from ess.reduce.nexus.workflow import to_disk_choppers
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
+    ChopperFrameSequence,
     DistanceResolution,
     LookupTable,
     LtotalRange,
     PulsePeriod,
     PulseStride,
     TimeResolution,
+    _estimate_wavelength_by_polygon_centers,
 )
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
@@ -57,6 +59,7 @@ from .dynamic_transforms import synthesise_provider
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
 )
@@ -74,6 +77,10 @@ ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 
 #: Wavelength lookup-table with provenance coords attached.
 WavelengthLut = NewType('WavelengthLut', sc.DataArray)
+
+#: Per-component wavelength bands evaluated at exact chopper distances, indexed
+#: by a ``distance`` dimension (source + one row per chopper).
+WavelengthBands = NewType('WavelengthBands', sc.DataArray)
 
 #: Sciline key for the user-facing parameter bundle, used by the provenance
 #: provider. Distinct from the individual parameter keys (PulsePeriod, etc.)
@@ -187,6 +194,59 @@ def _attach_provenance(
     return WavelengthLut(arr)
 
 
+def make_wavelength_bands_from_frames(
+    time_resolution: TimeResolution,
+    pulse_period: PulsePeriod,
+    pulse_stride: PulseStride[AnyRun],
+    frames: ChopperFrameSequence[AnyRun],
+) -> WavelengthBands:
+    """Wavelength band transmitted at each chopper-cascade frame.
+
+    Evaluates the surviving wavelength vs ``event_time_offset`` at the exact
+    distance of every frame in the cascade — the source pulse (distance 0)
+    followed by one row per chopper, ordered by ascending distance. A row that
+    is entirely NaN means no neutrons are transmitted at that component, i.e.
+    the corresponding chopper blocks the beam.
+
+    Unlike :func:`make_wavelength_lut_from_polygons`, this does not rasterize
+    onto a uniform distance grid, so closely-spaced choppers stay individually
+    resolved regardless of the table's distance resolution — letting one read
+    off which chopper in a tight cascade blocks the beam.
+
+    Reuses essreduce's (currently private)
+    ``_estimate_wavelength_by_polygon_centers``; once this diagnostic proves its
+    design, the whole function should move upstream into ``ess.reduce.unwrap``.
+    """
+    time_unit = 'us'
+    wavelength_unit = 'angstrom'
+    pulse_period = pulse_period.to(unit=time_unit)
+    frame_period = pulse_period * pulse_stride
+
+    nbins = 10 * int(frame_period / time_resolution.to(unit=time_unit)) + 1
+    time_edges = sc.linspace(
+        'event_time_offset', 0.0, frame_period.value, nbins + 1, unit=pulse_period.unit
+    )
+
+    bands = [
+        _estimate_wavelength_by_polygon_centers(
+            subframes=frame.subframes,
+            time_edges=time_edges,
+            time_unit=time_unit,
+            wavelength_unit=wavelength_unit,
+            frame_period=frame_period,
+        )
+        for frame in frames
+    ]
+    distances = sc.concat(
+        [frame.distance.to(unit='m') for frame in frames], dim='distance'
+    )
+    table = sc.DataArray(
+        data=sc.concat(bands, dim='distance'),
+        coords={'distance': distances, 'event_time_offset': time_edges},
+    )
+    return WavelengthBands(table)
+
+
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf = GenericUnwrapWorkflow(
         run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
@@ -204,6 +264,9 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     )
     wf[ParamsKey] = params
     wf.insert(_attach_provenance)
+    # Per-component diagnostic evaluated at exact chopper distances, sidestepping
+    # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
+    wf.insert(make_wavelength_bands_from_frames)
     return wf
 
 
@@ -211,7 +274,10 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         pipeline,
         dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
-        target_keys={WAVELENGTH_LUT_OUTPUT: WavelengthLut},
+        target_keys={
+            WAVELENGTH_LUT_OUTPUT: WavelengthLut,
+            WAVELENGTH_BANDS_OUTPUT: WavelengthBands,
+        },
         accumulators={},
         # The trigger flows straight to the DiskChoppers provider rather than
         # through an accumulator.

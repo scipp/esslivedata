@@ -22,6 +22,10 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
 
+#: Output key for the per-component wavelength bands diagnostic. Field name on
+#: :class:`WavelengthLutOutputs`.
+WAVELENGTH_BANDS_OUTPUT = 'chopper_cascade_bands'
+
 
 class Pulse(pydantic.BaseModel):
     """Source pulse properties.
@@ -119,6 +123,19 @@ def _empty_wavelength_lut_template() -> sc.DataArray:
     )
 
 
+def _empty_wavelength_bands_template() -> sc.DataArray:
+    """Empty placeholder used by the spec until the first computation."""
+    return sc.DataArray(
+        sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
+        coords={
+            'distance': sc.array(dims=['distance'], values=[], unit='m'),
+            'event_time_offset': sc.array(
+                dims=['event_time_offset'], values=[], unit='us'
+            ),
+        },
+    )
+
+
 class WavelengthLutOutputs(WorkflowOutputsBase):
     """Outputs of the wavelength lookup-table workflow."""
 
@@ -128,6 +145,18 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
         description=(
             'Wavelength as a function of distance and event-time-offset, '
             'computed from the current chopper cascade.'
+        ),
+    )
+    chopper_cascade_bands: sc.DataArray = pydantic.Field(
+        default_factory=_empty_wavelength_bands_template,
+        title='Chopper cascade bands',
+        description=(
+            'Wavelength band transmitted at each beamline component (the source '
+            'and each chopper), evaluated at the component\'s exact distance. '
+            'Plot with the "Overlay 1D" plotter: one curve per distance. A curve '
+            'that vanishes (all-NaN) marks the chopper blocking the beam. Unlike '
+            'the lookup table, this resolves closely-spaced choppers regardless '
+            'of distance resolution.'
         ),
     )
 
