@@ -1242,8 +1242,10 @@ class Overlay1DPlotter(Plotter):
     one for each position along the first dimension. Useful for visualizing multiple
     spectra (e.g., ROI spectra) from a single 2D array.
 
-    Colors are assigned by coordinate value (not position) when coordinates are
-    integer-like, providing stable color identity across updates.
+    Colors are assigned by coordinate value when coordinates are integer-like,
+    providing stable color identity across updates. For non-integer coordinates
+    colors are assigned by position, since rounding values to an integer color
+    index would collapse closely-spaced coordinates onto the same color.
 
     Supports the same line style options (mode, errors) as LinePlotter.
     """
@@ -1359,6 +1361,12 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
+        # Integer coords (e.g. ROI indices) color by value, giving each slice a
+        # stable color even when the set of slices changes between updates. For
+        # non-integer coords (e.g. distances in metres) ``int()`` would collapse
+        # nearby values onto the same color, so fall back to position instead.
+        color_by_value = np.issubdtype(coord_values.dtype, np.integer)
+
         data = plot_data
         use_histogram = actual_mode == 'histogram'
 
@@ -1374,8 +1382,7 @@ class Overlay1DPlotter(Plotter):
                 slice_data.name = output_display_name
             coord_val = coord_values[i]
 
-            # Assign color by coordinate value for stable identity
-            color_idx = int(coord_val) % len(self._colors)
+            color_idx = (int(coord_val) if color_by_value else i) % len(self._colors)
             color = self._colors[color_idx]
 
             curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
