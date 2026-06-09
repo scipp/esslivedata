@@ -278,9 +278,11 @@ class TestFreshnessIndicator:
 
         panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
         assert len(panes) == 1
-        # Pill shows the compact frozen lag with band styling, no hover tooltip.
+        # Pill shows the compact data age with band styling, no hover tooltip.
+        # Age is computed against the poll's wall clock, so assert structure
+        # rather than an exact value.
         assert 'border-radius' in panes[0].object
-        assert '2.0s' in panes[0].object
+        assert 's</span>' in panes[0].object  # compact age label, e.g. "2.0s"
         assert 'title=' not in panes[0].object
 
         # The per-layer time pane shows the full range + lag.

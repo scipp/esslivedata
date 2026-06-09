@@ -328,8 +328,8 @@ class TimeBounds:
     ``min_start`` and ``max_end`` bound the full data range and are present only
     when start times exist on the data. ``created_at`` is the wall-clock instant
     these bounds were computed, anchoring the two distinct freshness measures:
-    pipeline lag (frozen at compute time) and idle time (grows against the wall
-    clock between data arrivals).
+    data age (``now`` minus the data's end time, the headline indicator) and
+    pipeline lag (frozen at compute time, the per-layer diagnostic detail).
     """
 
     min_end: Timestamp
@@ -337,20 +337,22 @@ class TimeBounds:
     min_start: Timestamp | None = None
     max_end: Timestamp | None = None
 
+    def age_seconds(self, now: Timestamp | None = None) -> float:
+        """Wall-clock age of the oldest displayed data (``now`` minus its end).
+
+        Recomputed against a shared ``now`` so ages are comparable across plots
+        and grow while a stream is stalled -- the headline freshness indicator.
+        """
+        now = Timestamp.now() if now is None else now
+        return (now - self.min_end).to_seconds()
+
     def lag_seconds(self) -> float:
         """Pipeline latency: oldest data's end time to when it was plotted.
 
-        Frozen at compute time -- does not grow while the stream is idle.
+        Frozen at compute time -- the reduction's processing delay, anchored to
+        each plot's own render moment and so not comparable across plots.
         """
         return (self.created_at - self.min_end).to_seconds()
-
-    def idle_seconds(self, now: Timestamp | None = None) -> float:
-        """Wall-clock seconds since these bounds were computed (stream idle).
-
-        Grows between data arrivals, so a stalled stream visibly ages.
-        """
-        now = Timestamp.now() if now is None else now
-        return (now - self.created_at).to_seconds()
 
 
 def _compute_time_bounds(data: dict[str, sc.DataArray]) -> TimeBounds | None:
@@ -387,8 +389,8 @@ def _compute_time_bounds(data: dict[str, sc.DataArray]) -> TimeBounds | None:
 def merge_time_bounds(bounds: Iterable[TimeBounds | None]) -> TimeBounds | None:
     """Combine bounds across layers: earliest start, oldest end, latest end.
 
-    ``created_at`` takes the earliest across layers so idle time reflects the
-    most stale layer (worst-case staleness).
+    ``min_end`` is the oldest across layers, so the cell's age reflects its most
+    stale layer (worst case). ``created_at`` takes the earliest to match.
     """
     present = [b for b in bounds if b is not None]
     if not present:

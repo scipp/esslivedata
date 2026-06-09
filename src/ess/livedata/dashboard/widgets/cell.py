@@ -77,74 +77,61 @@ def _get_sizing_mode(config: PlotConfig) -> str:
     return 'stretch_both'
 
 
-# Lag thresholds in seconds (now minus the oldest data's end time) that
-# classify data freshness for the titlebar pill.
+# Data-age thresholds in seconds (now minus the oldest data's end time) that
+# classify freshness for the titlebar pill.
 _FRESH_MAX_SECONDS = 5.0
 _STALE_MAX_SECONDS = 30.0
 
 
-def _freshness_band(lag_seconds: float) -> tuple[str, str, str]:
-    """Return the ``(background, text, dot)`` pill colors for a lag in seconds."""
-    if lag_seconds < _FRESH_MAX_SECONDS:
+def _freshness_band(age_seconds: float) -> tuple[str, str, str]:
+    """Return the ``(background, text, dot)`` pill colors for a data age."""
+    if age_seconds < _FRESH_MAX_SECONDS:
         return FreshnessPill.FRESH
-    if lag_seconds < _STALE_MAX_SECONDS:
+    if age_seconds < _STALE_MAX_SECONDS:
         return FreshnessPill.STALE
     return FreshnessPill.OLD
 
 
-def _format_lag_short(lag_seconds: float) -> str:
-    """Compact lag label, e.g. "2.3s", "41s", "3m"."""
-    if lag_seconds < 10:
-        return f'{lag_seconds:.1f}s'
-    if lag_seconds < 60:
-        return f'{lag_seconds:.0f}s'
-    return f'{lag_seconds / 60:.0f}m'
+def _format_age_short(age_seconds: float) -> str:
+    """Compact age label, e.g. "2.3s", "41s", "3m"."""
+    if age_seconds < 10:
+        return f'{age_seconds:.1f}s'
+    if age_seconds < 60:
+        return f'{age_seconds:.0f}s'
+    return f'{age_seconds / 60:.0f}m'
 
 
-def format_freshness_html(
-    lag_seconds: float | None,
-    idle_seconds: float | None = None,
-) -> str:
-    """Render the titlebar freshness/lag pill on two independent channels.
+def format_freshness_html(age_seconds: float | None) -> str:
+    """Render the titlebar freshness pill: wall-clock age of the displayed data.
 
-    The fill, text, dot, and number show pipeline ``lag_seconds`` (frozen at
-    compute time), banded by staleness. The border shows wall-clock
-    ``idle_seconds`` (time since the stream last delivered), banded the same
-    way, so a stalled stream's border visibly reddens while the lag number
-    holds at its last value.
+    Shows ``now - data_end`` for the oldest layer, color-banded by staleness.
+    Because every cell uses a shared ``now``, ages are directly comparable
+    across plots and grow visibly while a stream is stalled.
 
-    No hover tooltip: the pill re-renders whenever its content changes (up to
-    once per data frame), which would tear down a native ``title`` tooltip on
-    every update. The full range/lag detail lives in the per-layer toolbar row
-    instead, where it can update without disturbing a hover.
+    No hover tooltip: the pill re-renders as the age ticks, which would tear
+    down a native ``title`` tooltip on every update. The absolute time range and
+    the frozen pipeline lag live in the per-layer toolbar row instead.
 
     Parameters
     ----------
-    lag_seconds:
-        Pipeline lag in seconds, or None to render nothing (no timing data).
-    idle_seconds:
-        Wall-clock seconds since the data was computed, or None to draw no
-        border accent.
+    age_seconds:
+        Data age in seconds, or None to render nothing (no timing data).
     """
-    if lag_seconds is None:
+    if age_seconds is None:
         return ''
-    background, text_color, dot_color = _freshness_band(lag_seconds)
-    border_color = (
-        'transparent' if idle_seconds is None else _freshness_band(idle_seconds)[2]
-    )
+    background, text_color, dot_color = _freshness_band(age_seconds)
     pill_style = (
         f'display:inline-flex;align-items:center;gap:5px;height:20px;'
-        f'box-sizing:border-box;padding:0 8px;border-radius:10px;font-size:11px;'
+        f'padding:0 8px;border-radius:10px;font-size:11px;'
         f'font-variant-numeric:tabular-nums;white-space:nowrap;'
         f'background:{background};color:{text_color};'
-        f'border:2px solid {border_color};'
     )
     dot_style = (
         f'width:7px;height:7px;border-radius:50%;flex:none;background:{dot_color};'
     )
     return (
         f'<span style="{pill_style}">'
-        f'<span style="{dot_style}"></span>{_format_lag_short(lag_seconds)}</span>'
+        f'<span style="{dot_style}"></span>{_format_age_short(age_seconds)}</span>'
     )
 
 
@@ -279,14 +266,10 @@ class CellWidget:
         return self._autoscale_controller
 
     def update_freshness(self, bounds_list: list[TimeBounds | None]) -> None:
-        """Update the titlebar freshness pane from the layers' time bounds."""
+        """Update the titlebar freshness pane with the worst-case data age."""
         merged = merge_time_bounds(bounds_list)
-        if merged is None:
-            html = ''
-        else:
-            html = format_freshness_html(
-                merged.lag_seconds(), idle_seconds=merged.idle_seconds()
-            )
+        age = merged.age_seconds() if merged is not None else None
+        html = format_freshness_html(age)
         if self._freshness_pane.object != html:
             self._freshness_pane.object = html
 

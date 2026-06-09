@@ -1767,7 +1767,7 @@ class TestTimeBounds:
         merged = plots.merge_time_bounds([a, b])
         assert merged.min_end == self._ts(50)
 
-    def test_merge_takes_earliest_created_at_for_idle(self) -> None:
+    def test_merge_takes_earliest_created_at(self) -> None:
         a = plots.TimeBounds(min_end=self._ts(100), created_at=self._ts(200))
         b = plots.TimeBounds(min_end=self._ts(50), created_at=self._ts(150))
         merged = plots.merge_time_bounds([a, b])
@@ -1809,11 +1809,11 @@ class TestTimeBounds:
         )
         assert bounds.lag_seconds() == pytest.approx(2.0)
 
-    def test_idle_grows_against_now(self) -> None:
+    def test_age_grows_against_now(self) -> None:
         bounds = plots.TimeBounds(
             min_end=self._ts(int(8e9)), created_at=self._ts(int(10e9))
         )
-        assert bounds.idle_seconds(now=self._ts(int(25e9))) == pytest.approx(15.0)
+        assert bounds.age_seconds(now=self._ts(int(25e9))) == pytest.approx(17.0)
 
     def test_format_with_range_shows_interval(self) -> None:
         bounds = plots.TimeBounds(
