@@ -57,7 +57,7 @@ jupyter-events==0.12.1
     # via jupyter-server
 jupyter-lsp==2.3.1
     # via jupyterlab
-jupyter-server==2.18.2
+jupyter-server==2.19.0
     # via
     #   jupyter-lsp
     #   jupyterlab
@@ -65,7 +65,7 @@ jupyter-server==2.18.2
     #   notebook-shim
 jupyter-server-terminals==0.5.4
     # via jupyter-server
-jupyterlab==4.5.7
+jupyterlab==4.5.8
     # via -r dev.in
 jupyterlab-server==2.28.0
     # via jupyterlab
@@ -79,7 +79,7 @@ pip-compile-multi==3.3.1
     # via -r dev.in
 pip-tools==7.5.3
     # via pip-compile-multi
-plumbum==1.10.0
+plumbum==2.0.1
     # via copier
 prometheus-client==0.25.0
     # via jupyter-server

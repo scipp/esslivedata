@@ -34,7 +34,7 @@ dependencies = [
   "confluent_kafka",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.5.0",
+  "essreduce>=26.6.0",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -48,7 +48,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = [
     "essdiffraction>=26.5.0",
-    "essreflectometry>=26.4.0",
+    "essreflectometry>=26.6.0",
     "esssans",
     "essspectroscopy>=26.3.0",
     "holoviews",
@@ -66,7 +66,7 @@ dream = [
 ]
 dummy = []
 estia = [
-    "essreflectometry>=26.4.0",
+    "essreflectometry>=26.6.0",
 ]
 loki = [
     "esssans>=26.4.0",
