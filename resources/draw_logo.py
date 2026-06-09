@@ -1,24 +1,29 @@
 # This script for drawing logo is one-time used, but it is kept here for reference.
 # To run this script, you may need to install
 # a python package ``drawsvg`` and a font ``Comic Neue``.
-import drawsvg as dvg
+from drawsvg import ArcLine, Drawing, Group, Line, Text
 
 LIME_DARK = '#5E6100'
 LIME_LIGHT = '#A3A800'
+ORIGINAL_WIDTH = 300
+NEW_WIDTH = 320
 
 
-def write_text(*, x: int, y: int, width: int = 256) -> dvg.Group:
-    split_x = x + width * 0.57
-    transparent_line_1 = dvg.Line(x, y, split_x, y, opacity=0)
-    transparent_line_2 = dvg.Line(split_x, y, width, y, opacity=0)
+def write_text(*, x: int, y: int, width: int = 256) -> Group:
+    split_1 = x + width * 0.32 * ORIGINAL_WIDTH / NEW_WIDTH
+    split_2 = x + width * 0.65 * ORIGINAL_WIDTH / NEW_WIDTH
+    transparent_line_1 = Line(x, y, split_1, y, opacity=1)
+    transparent_line_2 = Line(split_1, y, split_2, y, opacity=1)
+    transparent_line_3 = Line(split_2, y, width, y, opacity=1)
     text_recipes = [
-        ('beam', LIME_DARK, 'normal', transparent_line_1),
-        ('lime', LIME_LIGHT, 'bold', transparent_line_2),
+        ('ess', LIME_DARK, 'normal', transparent_line_1),
+        ('live', LIME_LIGHT, 'bold', transparent_line_2),
+        ('data', LIME_DARK, 'normal', transparent_line_3),
     ]
     texts = [
-        dvg.Text(
+        Text(
             text,
-            font_size=int((width / 4) * 0.958),
+            font_size=int((width / 4 * ORIGINAL_WIDTH / NEW_WIDTH) * 0.958),
             path=path,
             text_anchor='start',
             font_family='Comic Neue',
@@ -27,11 +32,11 @@ def write_text(*, x: int, y: int, width: int = 256) -> dvg.Group:
         )
         for text, color, weight, path in text_recipes
     ]
-    return dvg.Group(texts)
+    return Group(texts)
 
 
-def draw_beam(*, start_x: int = 0, y: int, width: int) -> dvg.Group:
-    beam_beam = dvg.Line(
+def draw_beam(*, start_x: int = 0, y: int, width: int) -> Group:
+    beam_beam = Line(
         start_x,
         y,
         start_x + width,
@@ -40,8 +45,8 @@ def draw_beam(*, start_x: int = 0, y: int, width: int) -> dvg.Group:
         stroke=LIME_DARK,
         stroke_linecap="round",
     )
-    lime_beam = dvg.Line(
-        (start_x + width) * 0.66,
+    lime_beam = Line(
+        (start_x + width) * 0.42 * ORIGINAL_WIDTH / NEW_WIDTH,
         y,
         start_x + width,
         y,
@@ -49,10 +54,10 @@ def draw_beam(*, start_x: int = 0, y: int, width: int) -> dvg.Group:
         stroke=LIME_LIGHT,
         stroke_linecap="round",
     )
-    return dvg.Group([beam_beam, lime_beam])
+    return Group([beam_beam, lime_beam])
 
 
-def draw_lime_splits(cx: int, cy: int, radius: int) -> dvg.Group:
+def draw_lime_splits(cx: int, cy: int, radius: int) -> Group:
     import numpy as np
 
     start = np.pi + (np.pi / 6)
@@ -63,7 +68,7 @@ def draw_lime_splits(cx: int, cy: int, radius: int) -> dvg.Group:
         x, y = center + (np.array([np.cos(cur_theta), np.sin(cur_theta)]) * radius)
 
         lime_splits.append(
-            dvg.Line(
+            Line(
                 cx, cy, x, y, stroke_width=4, stroke=LIME_LIGHT, stroke_linecap="round"
             )
         )
@@ -77,7 +82,7 @@ def draw_lime_splits(cx: int, cy: int, radius: int) -> dvg.Group:
                 * (radius * 0.8)
             )
             lime_splits.append(
-                dvg.ArcLine(
+                ArcLine(
                     np.cos(cur_theta + np.pi / 12) * arc_rotation_r + cx,
                     np.sin(cur_theta + np.pi / 12) * arc_rotation_r + cy,
                     radius * 0.16,
@@ -97,7 +102,7 @@ def draw_lime_splits(cx: int, cy: int, radius: int) -> dvg.Group:
                 * (radius * 0.8)
             )
             lime_splits.append(
-                dvg.ArcLine(
+                ArcLine(
                     little_arc_x,
                     little_arc_y,
                     radius * 0.16,
@@ -110,13 +115,13 @@ def draw_lime_splits(cx: int, cy: int, radius: int) -> dvg.Group:
                 )
             )
 
-    return dvg.Group(lime_splits)
+    return Group(lime_splits)
 
 
-def draw_lime_arc(cx: int, cy: int, radius: int) -> dvg.Group:
-    return dvg.Group(
+def draw_lime_arc(cx: int, cy: int, radius: int) -> Group:
+    return Group(
         [
-            dvg.ArcLine(
+            ArcLine(
                 cx,
                 cy,
                 radius,
@@ -132,9 +137,9 @@ def draw_lime_arc(cx: int, cy: int, radius: int) -> dvg.Group:
 
 
 if __name__ == '__main__':
-    total_width = 300
-    total_height = int(total_width * 0.3)
-    d = dvg.Drawing(total_width, total_height, origin='top-left')
+    total_width = NEW_WIDTH
+    total_height = int(total_width * 0.3 * ORIGINAL_WIDTH / NEW_WIDTH)
+    d = Drawing(total_width, total_height, origin='top-left')
     # Draw text
     text_width = int(total_width * 0.85)
 

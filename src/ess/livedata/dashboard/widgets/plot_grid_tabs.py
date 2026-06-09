@@ -637,9 +637,10 @@ class PlotGridTabs:
                     # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
                     if session_layer is None:
-                        self._session_layers[layer_id] = SessionLayer(
+                        session_layer = SessionLayer(
                             layer_id=layer_id, last_seen_version=state.version
                         )
+                        self._session_layers[layer_id] = session_layer
                         # New layer → rebuild cell
                         cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
@@ -651,11 +652,21 @@ class PlotGridTabs:
                             cells_to_rebuild[cell_id] = (cell, plot_grid)
                             versions_to_apply[layer_id] = state.version
 
+                    # Drive the layer compute gate: on 0→1 the orchestrator
+                    # flushes any pending build synchronously so the rebuild
+                    # below sees fresh has_cached_state on this same pass.
+                    self._orchestrator.activate_layer(
+                        layer_id, session_layer, is_active
+                    )
+
         # Clean up orphaned session layers (removed from orchestrator). Per-cell
         # widget state (freshness/time panes, autoscale) is swept on cell rebuild
         # or removal, so only the global layer registry needs explicit cleanup.
         for layer_id in list(self._session_layers.keys()):
             if layer_id not in seen_layer_ids:
+                self._orchestrator.activate_layer(
+                    layer_id, self._session_layers[layer_id], False
+                )
                 del self._session_layers[layer_id]
 
         # Rebuild affected cells.
@@ -693,6 +704,8 @@ class PlotGridTabs:
         if self._subscription_id is not None:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
+        for layer_id, session_layer in self._session_layers.items():
+            self._orchestrator.activate_layer(layer_id, session_layer, False)
         self._session_layers.clear()
         for cell_widget in self._cells.values():
             cell_widget.dispose()
