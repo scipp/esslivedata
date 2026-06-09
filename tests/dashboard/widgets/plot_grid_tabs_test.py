@@ -678,11 +678,11 @@ class TestComposeMixedLayers:
             plot_grid_tabs._session_layers[layer.layer_id] = session_layer
 
         cell_id = CellId(uuid4())
-        result = plot_grid_tabs._get_session_composed_plot(cell_id, cell)
+        cell_widget = plot_grid_tabs._build_cell(cell_id, cell)
 
-        assert result is not None
+        assert cell_widget.has_plot
         # The dynamic layer still drives autoscale; controller was built.
-        assert cell_id in plot_grid_tabs._session_autoscale_controllers
+        assert cell_widget.autoscale_controller is not None
 
 
 class TestDisabledGridTabs:

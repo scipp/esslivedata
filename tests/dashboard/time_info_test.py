@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Tests for time-interval display in plot titles.
+Tests for the time-interval freshness indicator.
 
-These tests verify that the time information shown in plot titles is factual,
-i.e., it reflects the actual time range of the data being displayed.
+These tests verify that the time information exposed by a plotter (and shown in
+the cell titlebar) is factual, i.e., it reflects the actual time range of the
+data being displayed.
 
 The tests simulate the end-to-end flow: buffered data → extractor → plotter.
 Extractors are responsible for setting correct start_time/end_time coords
@@ -44,10 +45,10 @@ def data_key(workflow_id):
     return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='test_result')
 
 
-def _extract_title(result) -> str:
-    """Extract title from a HoloViews plot result."""
-    opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-    return opts.get('title', '')
+def _time_info(plotter) -> str:
+    """Format the plotter's freshness/lag indicator, or '' if no time bounds."""
+    bounds = plotter.time_bounds
+    return plots.format_time_info(bounds) if bounds is not None else ''
 
 
 def _parse_time_range_from_title(title: str) -> tuple[str, str] | None:
@@ -108,9 +109,7 @@ class TestTimeseriesTimeInfo:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: extracted_data}})
-        result = plotter.get_cached_state()
-
-        title = _extract_title(result)
+        title = _time_info(plotter)
         assert 'Lag:' in title
         lag_seconds = _extract_lag_seconds(title)
 
@@ -148,9 +147,7 @@ class TestTimeseriesTimeInfo:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: extracted_data}})
-        result = plotter.get_cached_state()
-
-        title = _extract_title(result)
+        title = _time_info(plotter)
         # Extractor computes min/max of start_time/end_time
         assert 'Lag:' in title
         lag_seconds = _extract_lag_seconds(title)
@@ -193,9 +190,7 @@ class TestWindowedTimeInfo:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: extracted_data}})
-        result = plotter.get_cached_state()
-
-        title = _extract_title(result)
+        title = _time_info(plotter)
         assert 'Lag:' in title
         lag_seconds = _extract_lag_seconds(title)
 
@@ -223,9 +218,7 @@ class TestTimeInfoBaseline:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: data}})
-        result = plotter.get_cached_state()
-
-        title = _extract_title(result)
+        title = _time_info(plotter)
         assert 'Lag:' in title
         lag_seconds = _extract_lag_seconds(title)
         assert 0.5 < lag_seconds < 3.0
@@ -243,9 +236,7 @@ class TestTimeInfoEdgeCases:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({data_key: data})
-        result = plotter.get_cached_state()
-
-        title = _extract_title(result)
+        title = _time_info(plotter)
         assert 'Lag:' not in title
 
     def test_time_dimension_without_coords_does_not_crash(self, data_key):
@@ -263,5 +254,4 @@ class TestTimeInfoEdgeCases:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: data}})  # Should not raise
-        result = plotter.get_cached_state()
-        assert isinstance(_extract_title(result), str)
+        assert plotter.time_bounds is None

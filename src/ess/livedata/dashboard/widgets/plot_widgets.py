@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
@@ -16,56 +17,85 @@ from .icons import get_icon
 from .styles import Colors, HoverColors, StatusColors
 
 if TYPE_CHECKING:
-    from ..plot_orchestrator import PlotConfig
+    from ..plot_data_service import LayerId
+    from ..plot_orchestrator import PlotCell, PlotConfig
+    from ..plotting_controller import PlottingController
 
 
-_ADD_LAYER_ITEM = 'Add layer...'
+def _available_overlays_for_config(
+    config: PlotConfig,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    plotting_controller: PlottingController,
+) -> list[tuple[str, str, str]]:
+    """Overlay suggestions for a single layer: ``(view, plotter, title)``."""
+    if config.is_static():
+        return []
+    workflow_spec = workflow_registry.get(config.workflow_id)
+    if workflow_spec is None:
+        return []
+    return plotting_controller.get_available_overlays(workflow_spec, config.plot_name)
 
 
-def _create_add_button_or_menu(
-    *,
-    on_add_callback: Callable[[], None],
-    on_overlay_selected: Callable[[str, str], None] | None = None,
-    available_overlays: list[tuple[str, str, str]] | None = None,
-) -> pn.widgets.Button | pn.widgets.MenuButton:
+def overlay_suggestions_for_layer(
+    config: PlotConfig,
+    existing_plotters: frozenset[str],
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    plotting_controller: PlottingController,
+) -> list[tuple[str, str, str]]:
     """
-    Create either a simple add button or a dropdown menu with overlay options.
+    Overlay suggestions derived from one layer, minus plotters already present.
 
-    Parameters
-    ----------
-    on_add_callback:
-        Callback when "Add layer..." is selected (opens modal).
-    on_overlay_selected:
-        Callback when an overlay is selected: (output_name, plotter_name).
-    available_overlays:
-        List of (output_name, plotter_name, plotter_title) tuples.
+    Overlays inherit the layer's workflow/sources, so a suggestion is offered
+    per base layer. Plotters already present anywhere in the cell are excluded
+    to avoid suggesting a duplicate.
 
     Returns
     -------
     :
-        Button widget or MenuButton with overlay options.
+        List of ``(view_name, plotter_name, plotter_title)`` tuples.
+    """
+    return [
+        (view_name, plotter_name, title)
+        for view_name, plotter_name, title in _available_overlays_for_config(
+            config, workflow_registry, plotting_controller
+        )
+        if plotter_name not in existing_plotters
+    ]
+
+
+def create_overlay_add_button(
+    *,
+    overlays: list[tuple[str, str, str]],
+    on_overlay_selected: Callable[[str, str], None],
+) -> pn.widgets.MenuButton:
+    """
+    Create a ``+`` dropdown adding an overlay derived from a layer.
+
+    The dropdown lists the overlay titles (always a menu, even for a single
+    suggestion, so the choice is always labeled). Callers build this only when
+    ``overlays`` is non-empty.
+
+    Parameters
+    ----------
+    overlays:
+        ``(view_name, plotter_name, plotter_title)`` tuples for the layer.
+    on_overlay_selected:
+        Callback when an overlay is chosen: ``(view_name, plotter_name)``.
+
+    Returns
+    -------
+    :
+        MenuButton listing the overlay suggestions.
     """
     button_color = StatusColors.SUCCESS
     hover_color = HoverColors.SUCCESS
 
-    if not available_overlays or on_overlay_selected is None:
-        # No overlays available - use simple button
-        return create_tool_button(
-            icon_name='plus',
-            button_color=button_color,
-            hover_color=hover_color,
-            on_click_callback=on_add_callback,
-        )
-
-    # Build menu items: "Add layer..." followed by overlay suggestions
-    items = [_ADD_LAYER_ITEM]
+    items: list[str] = []
     overlay_map: dict[str, tuple[str, str]] = {}
+    for view_name, plotter_name, title in overlays:
+        items.append(title)
+        overlay_map[title] = (view_name, plotter_name)
 
-    for output_name, plotter_name, plotter_title in available_overlays:
-        items.append(plotter_title)
-        overlay_map[plotter_title] = (output_name, plotter_name)
-
-    # Use shared button stylesheet + menu-specific styling
     stylesheets = create_tool_button_stylesheet(button_color, hover_color)
     stylesheets.append(
         """
@@ -76,7 +106,6 @@ def _create_add_button_or_menu(
         }
         """
     )
-
     menu_button = pn.widgets.MenuButton(
         label='',
         items=items,
@@ -91,91 +120,47 @@ def _create_add_button_or_menu(
     )
 
     def on_menu_click(event: pn.param.parameterized.Event) -> None:
-        selected = event.new
-        if selected == _ADD_LAYER_ITEM:
-            on_add_callback()
-        elif selected in overlay_map:
-            output_name, plotter_name = overlay_map[selected]
-            on_overlay_selected(output_name, plotter_name)
+        if event.new in overlay_map:
+            view_name, plotter_name = overlay_map[event.new]
+            on_overlay_selected(view_name, plotter_name)
 
     menu_button.on_click(on_menu_click)
     return menu_button
 
 
-def create_cell_toolbar(
+def create_layer_info_row(
     *,
-    on_gear_callback: Callable[[], None],
-    on_close_callback: Callable[[], None],
-    on_add_callback: Callable[[], None] | None = None,
-    on_overlay_selected: Callable[[str, str], None] | None = None,
-    available_overlays: list[tuple[str, str, str]] | None = None,
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
-) -> pn.Row:
+    time_pane: pn.pane.HTML | None = None,
+) -> pn.Row | pn.Column:
     """
-    Create a toolbar row containing title and buttons for plot cells.
+    Create a per-layer info row showing the layer title and its time range.
 
-    The toolbar displays an optional title on the left (with tooltip for
-    description) and gear/add/close buttons on the right, using flexbox layout
-    to avoid overlap with Bokeh's plot toolbar.
-
-    When overlay suggestions are available, the add button becomes a dropdown
-    menu with "Add layer..." (opens modal) and direct overlay options.
+    Purely informational: it shows the layer title (with a tooltip for the
+    description) and, when a ``time_pane`` is given, the layer's data time
+    range on its own line below. Layer configuration lives on the cell titlebar
+    gear; add/remove and rename live on the cell properties modal — no controls
+    are placed here.
 
     Parameters
     ----------
-    on_gear_callback:
-        Callback function to invoke when the gear button is clicked.
-    on_close_callback:
-        Callback function to invoke when the close button is clicked.
-    on_add_callback:
-        Optional callback to invoke when the add button is clicked.
-        If None, the add button is not shown. This allows the toolbar to be
-        used in contexts where adding layers doesn't make sense (e.g., read-only
-        views, cells with layer limits, or special cell types).
-    on_overlay_selected:
-        Optional callback when an overlay is selected from dropdown.
-        Called with (output_name, plotter_name). Required if available_overlays
-        is provided.
-    available_overlays:
-        Optional list of (output_name, plotter_name, plotter_title) tuples
-        representing available overlay options for this layer. If provided,
-        the add button becomes a dropdown menu.
     title:
-        Optional title text to display on the left side of the toolbar.
+        Optional title text to display on the left side of the row.
     description:
         Optional description shown as tooltip when hovering over the title.
     stopped:
         If True, adds a visual indicator (border) showing workflow has ended.
+    time_pane:
+        Optional pane showing this layer's data time range/lag, placed on its
+        own line below the title and updated in place by the caller.
 
     Returns
     -------
     :
-        Panel Row widget containing the toolbar.
+        Panel Row (or Column when a time pane is given) for one layer.
     """
-    gear_button = create_tool_button(
-        icon_name='settings',
-        button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color=ButtonStyles.PRIMARY_HOVER,
-        on_click_callback=on_gear_callback,
-    )
-
-    add_button: pn.widgets.Button | pn.widgets.MenuButton | None = None
-    if on_add_callback is not None:
-        add_button = _create_add_button_or_menu(
-            on_add_callback=on_add_callback,
-            on_overlay_selected=on_overlay_selected,
-            available_overlays=available_overlays,
-        )
-
-    close_button = create_tool_button(
-        icon_name='x',
-        button_color=ButtonStyles.DANGER_RED,
-        hover_color=ButtonStyles.DANGER_HOVER,
-        on_click_callback=on_close_callback,
-    )
-
     # Build left content: title and optional tooltip icon
     left_items: list = []
     if title:
@@ -208,10 +193,6 @@ def create_cell_toolbar(
             left_items.append(tooltip_icon)
 
     margin = ButtonStyles.CELL_MARGIN
-    right_buttons = [gear_button]
-    if add_button is not None:
-        right_buttons.append(add_button)
-    right_buttons.append(close_button)
 
     # Add border when workflow is stopped
     styles = {}
@@ -219,15 +200,254 @@ def create_cell_toolbar(
         styles['border'] = f'2px solid {Colors.TEXT}'
         styles['border-radius'] = '4px'
 
-    return pn.Row(
+    title_row = pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        *right_buttons,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        margin=(margin, margin, margin, margin),
         align='end',
+    )
+
+    if time_pane is None:
+        title_row.margin = (margin, margin, margin, margin)
+        title_row.styles = styles
+        return title_row
+
+    # Time info goes on its own line below the title row to avoid competing
+    # with the title for horizontal space.
+    return pn.Column(
+        title_row,
+        time_pane,
+        sizing_mode='stretch_width',
+        margin=(margin, margin, margin, margin),
         styles=styles,
+    )
+
+
+def _cell_title_html(title: str, has_user_title: bool) -> str:
+    """Render the cell title span; derived titles are muted and italic.
+
+    User-defined titles are free text and HTML-escaped. Derived titles come
+    from display-info helpers and may contain HTML entities (e.g. ``&rarr;``),
+    so they are rendered as-is.
+    """
+    if has_user_title:
+        from html import escape
+
+        style = f'font-size:12.5px;font-weight:600;color:{Colors.TEXT_DARK};'
+        title = escape(title)
+    else:
+        style = f'font-size:12.5px;color:{Colors.TEXT_MUTED};font-style:italic;'
+    return (
+        f'<span style="{style}line-height:{ButtonStyles.TOOL_BUTTON_SIZE}px;'
+        f'white-space:nowrap;overflow:hidden;'
+        f'text-overflow:ellipsis;display:block;">{title}</span>'
+    )
+
+
+def _create_toolbar_visibility_button(
+    *,
+    visible: bool,
+    on_toggle: Callable[[bool], None],
+) -> pn.widgets.Button:
+    """Adjustments button toggling per-layer info-row visibility for a cell."""
+
+    def _icon(shown: bool) -> str:
+        return get_icon('stack-2' if shown else 'stack')
+
+    def _tip(shown: bool) -> str:
+        return 'Hide layer details' if shown else 'Show layer details'
+
+    button = pn.widgets.Button(
+        label='',
+        icon=_icon(visible),
+        icon_size='1.5em',
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        color='light',
+        sizing_mode='fixed',
+        margin=0,
+        description=_tip(visible),
+        stylesheets=create_tool_button_stylesheet(Colors.TEXT_MUTED, HoverColors.MUTED),
+    )
+    state = {'visible': visible}
+
+    def _toggle(_) -> None:
+        state['visible'] = not state['visible']
+        button.icon = _icon(state['visible'])
+        button.description = _tip(state['visible'])
+        on_toggle(state['visible'])
+
+    button.on_click(_toggle)
+    return button
+
+
+def _create_configure_button_or_menu(
+    *,
+    layers: list[tuple[LayerId, str]],
+    on_configure: Callable[[LayerId], None],
+) -> pn.widgets.Button | pn.widgets.MenuButton:
+    """
+    Gear button (single layer) or menu picking which layer to configure.
+
+    For a single-layer cell the gear configures that layer directly. For
+    multiple layers it becomes a dropdown listing the layer titles, routing the
+    selection to ``on_configure`` with the chosen layer's ID.
+
+    Parameters
+    ----------
+    layers:
+        ``(layer_id, title)`` pairs for the cell's layers, in display order.
+    on_configure:
+        Callback invoked with the layer ID to configure.
+    """
+    button_color = Colors.TEXT_MUTED
+    hover_color = HoverColors.MUTED
+
+    if len(layers) == 1:
+        layer_id = layers[0][0]
+        return create_tool_button(
+            icon_name='settings',
+            button_color=button_color,
+            hover_color=hover_color,
+            on_click_callback=lambda: on_configure(layer_id),
+        )
+
+    # Titles carry HTML entities (e.g. '&rarr;'); unescape for plain menu
+    # labels and disambiguate duplicates so the label->layer map stays 1:1.
+    items: list[str] = []
+    label_map: dict[str, LayerId] = {}
+    for layer_id, title in layers:
+        label = html.unescape(title)
+        if label in label_map:
+            suffix = 2
+            while f'{label} ({suffix})' in label_map:
+                suffix += 1
+            label = f'{label} ({suffix})'
+        items.append(label)
+        label_map[label] = layer_id
+
+    stylesheets = create_tool_button_stylesheet(button_color, hover_color)
+    stylesheets.append(
+        """
+        .bk-menu {
+            min-width: 200px !important;
+            right: 0 !important;
+            left: auto !important;
+        }
+        """
+    )
+    menu_button = pn.widgets.MenuButton(
+        label='',
+        items=items,
+        icon=get_icon('settings'),
+        icon_size='1.5em',
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        color='light',
+        sizing_mode='fixed',
+        margin=0,
+        stylesheets=stylesheets,
+    )
+
+    def on_menu_click(event: pn.param.parameterized.Event) -> None:
+        if event.new in label_map:
+            on_configure(label_map[event.new])
+
+    menu_button.on_click(on_menu_click)
+    return menu_button
+
+
+def create_cell_titlebar(
+    *,
+    title: str,
+    has_user_title: bool,
+    on_edit_title_callback: Callable[[], None],
+    configure_layers: list[tuple[LayerId, str]],
+    on_configure_layer: Callable[[LayerId], None],
+    toolbars_visible: bool,
+    on_toggle_toolbars_callback: Callable[[bool], None],
+    freshness_pane: pn.pane.HTML | None = None,
+) -> pn.Row:
+    """
+    Create the cell-level titlebar shown above the per-layer info rows.
+
+    The titlebar holds the cell title on the left and cell-level actions on the
+    right: a gear that configures a layer (directly for one layer, via a layer
+    picker for several), edit cell properties (opens a modal for
+    rename/add/remove layer), and a toggle that hides/shows the per-layer info
+    rows.
+
+    Parameters
+    ----------
+    title:
+        Title to display. Either the user-defined title or a derived one.
+    has_user_title:
+        Whether ``title`` is user-defined (styled prominently) or derived
+        (styled muted/italic as a placeholder).
+    on_edit_title_callback:
+        Invoked when the edit (pencil) button is clicked; opens the cell
+        properties modal.
+    configure_layers:
+        ``(layer_id, title)`` pairs for the cell's layers, driving the gear
+        button/menu.
+    on_configure_layer:
+        Invoked with a layer ID when the gear (or a layer menu entry) is chosen.
+    toolbars_visible:
+        Current visibility of the per-layer info rows; sets the toggle icon.
+    on_toggle_toolbars_callback:
+        Invoked with the new visibility state when the toggle is clicked.
+    freshness_pane:
+        Optional pane showing the data freshness/lag indicator, placed between
+        the title and the action buttons. Updated in place by the caller.
+
+    Returns
+    -------
+    :
+        Panel Row widget containing the cell titlebar.
+    """
+    title_pane = pn.pane.HTML(
+        _cell_title_html(title, has_user_title),
+        sizing_mode='stretch_width',
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        margin=(0, 4),
+        styles={'overflow': 'hidden', 'min-width': '0'},
+    )
+
+    gear_button = _create_configure_button_or_menu(
+        layers=configure_layers,
+        on_configure=on_configure_layer,
+    )
+    edit_button = create_tool_button(
+        icon_name='pencil',
+        button_color=Colors.TEXT_MUTED,
+        hover_color=HoverColors.MUTED,
+        on_click_callback=on_edit_title_callback,
+    )
+    toggle_button = _create_toolbar_visibility_button(
+        visible=toolbars_visible,
+        on_toggle=on_toggle_toolbars_callback,
+    )
+
+    right_buttons: list = [gear_button, edit_button, toggle_button]
+
+    # Freshness pill sits at the far left; the stretch title fills the middle and
+    # pushes the action buttons to the right.
+    left: list = [freshness_pane] if freshness_pane is not None else []
+
+    margin = ButtonStyles.CELL_MARGIN
+    return pn.Row(
+        *left,
+        title_pane,
+        *right_buttons,
+        sizing_mode='stretch_width',
+        min_height=ButtonStyles.TOOL_BUTTON_SIZE,
+        align='center',
+        margin=(margin, margin, 0, margin),
+        styles={
+            'background-color': Colors.BG_LIGHT,
+            'border-bottom': f'1px solid {Colors.BORDER}',
+        },
     )
 
 
@@ -280,10 +500,10 @@ def _format_window_info(params) -> str:
     Format window parameters into a human-readable string.
 
     Only ``since_start`` produces a label here. For window mode the actual time
-    range comes from the data and is displayed by ``_compute_time_info`` at
-    render time; the configured ``window_duration_seconds`` is a target, not a
-    truth, so showing it in the static title would lie when backend cadence
-    exceeds the requested lookback.
+    range comes from the data and is shown by the titlebar freshness indicator
+    (see ``_compute_time_bounds``); the configured ``window_duration_seconds`` is
+    a target, not a truth, so showing it in the static title would lie when
+    backend cadence exceeds the requested lookback.
     """
     window = getattr(params, 'window', None)
     if window is None:
@@ -408,3 +628,58 @@ def get_plot_cell_display_info(
     description = '\n'.join(description_parts)
 
     return title, description
+
+
+def derive_cell_title(
+    cell: PlotCell,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    get_source_title: Callable[[str], str] | None = None,
+) -> str:
+    """
+    Derive a default cell title from its layers.
+
+    Deliberately minimal: the title is the first non-static layer's workflow
+    title, plus ``" (Source)"`` when the cell's layers reference a single source
+    (a single source is otherwise not shown by plot labels). Output names and
+    window info are omitted -- base-workflow output names (``Image``,
+    ``Histogram``) are implied by the workflow, window/freshness lives in the
+    titlebar indicator, and per-source breakdown is visible in the plot. When
+    this default is too coarse (e.g. distinct reduction outputs sharing a
+    workflow), the user sets an explicit cell title.
+
+    Static layers (decorative overlays) are excluded. A cell with only static
+    overlays uses the first static layer's title; an empty cell yields ``''``.
+
+    Parameters
+    ----------
+    cell:
+        The plot cell.
+    workflow_registry:
+        Registry mapping workflow IDs to their specifications.
+    get_source_title:
+        Optional function to get display title for a source name.
+
+    Returns
+    -------
+    :
+        Derived title string.
+    """
+    layers = [layer for layer in cell.layers if not layer.config.is_static()]
+    if not layers:
+        if not cell.layers:
+            return ''
+        title, _ = get_plot_cell_display_info(
+            cell.layers[0].config, workflow_registry, get_source_title
+        )
+        return title
+
+    workflow_title, _ = get_workflow_display_info(
+        workflow_registry, layers[0].config.workflow_id, None
+    )
+
+    sources = {s for layer in layers for s in layer.config.source_names}
+    if len(sources) == 1:
+        source = next(iter(sources))
+        source_title = get_source_title(source) if get_source_title else source
+        return f'{workflow_title} ({source_title})'
+    return workflow_title

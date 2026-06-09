@@ -29,7 +29,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, PresenterBase, TitleResolver
+from .plots import ImagePlotter, LinePlotter, PresenterBase, TimeBounds, TitleResolver
 from .range_hook import Axis, RangeTargets
 
 
@@ -256,6 +256,11 @@ class CorrelationHistogramPlotter:
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""
         return self._renderer.get_cached_state()
+
+    @property
+    def time_bounds(self) -> TimeBounds | None:
+        """Time bounds of the most recently computed data (from the renderer)."""
+        return self._renderer.time_bounds
 
     def has_cached_state(self) -> bool:
         """Check if the renderer has computed state."""

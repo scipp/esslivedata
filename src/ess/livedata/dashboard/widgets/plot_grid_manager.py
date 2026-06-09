@@ -703,7 +703,9 @@ class PlotGridManager:
             cells_to_add = ()
 
         for cell in cells_to_add:
-            cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
+            cell_id = self._orchestrator.add_cell(
+                grid_id, cell.geometry, user_title=cell.user_title
+            )
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
@@ -939,7 +941,9 @@ class PlotGridManager:
         )
 
         for cell in cells_to_add:
-            cell_id = self._orchestrator.add_cell(new_grid_id, cell.geometry)
+            cell_id = self._orchestrator.add_cell(
+                new_grid_id, cell.geometry, user_title=cell.user_title
+            )
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
@@ -954,7 +958,9 @@ class PlotGridManager:
         grid_id = self._orchestrator.add_grid(title=title, nrows=nrows, ncols=ncols)
 
         for cell in cells_to_add:
-            cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
+            cell_id = self._orchestrator.add_cell(
+                grid_id, cell.geometry, user_title=cell.user_title
+            )
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 

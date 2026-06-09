@@ -12,6 +12,7 @@ from bokeh.models import GlyphRenderer
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
     ErrorDisplay,
@@ -1368,6 +1369,8 @@ class TestOverlay1DPlotter:
         result = overlay_plotter.plot(data, data_key)
         # Single curve, not wrapped in Overlay
         assert isinstance(result, hv.Curve)
+        # No label: a lone labelled element would render its label as the title.
+        assert result.label == ''
 
     def test_empty_first_dim_returns_empty_curve(
         self, overlay_plotter, data_2d_empty_first_dim, data_key
@@ -1653,7 +1656,7 @@ class TestLagIndicator:
         )
 
     def test_time_info_shown_when_coords_present(self, data_key):
-        """Test that time interval and lag are shown in title."""
+        """Time interval and lag are exposed via the plotter's time bounds."""
         import time
 
         now_ns = time.time_ns()
@@ -1671,12 +1674,8 @@ class TestLagIndicator:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: data}})
-        result = plotter.get_cached_state()
 
-        # Check that title contains time range and lag
-        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-        assert 'title' in opts
-        title = opts['title']
+        title = plots.format_time_info(plotter.time_bounds)
         # Should contain time range separator and lag
         assert ' - ' in title  # hyphen between times
         assert 'Lag:' in title
@@ -1684,7 +1683,7 @@ class TestLagIndicator:
         assert '1.' in title or '2.' in title
 
     def test_no_lag_title_when_end_time_absent(self, data_key):
-        """Test that no lag title is added when end_time coord is absent."""
+        """No time bounds are produced when the end_time coord is absent."""
         data = sc.DataArray(
             data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
             coords={'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0])},
@@ -1692,12 +1691,8 @@ class TestLagIndicator:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: data}})
-        result = plotter.get_cached_state()
 
-        # Check that no title is set (or title doesn't contain Lag)
-        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-        title = opts.get('title', '')
-        assert 'Lag:' not in title
+        assert plotter.time_bounds is None
 
     def test_lag_uses_maximum_across_multiple_sources(self):
         """Test that lag shows the maximum (oldest data) when multiple sources."""
@@ -1742,14 +1737,70 @@ class TestLagIndicator:
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key1: data1, data_key2: data2}})
-        result = plotter.get_cached_state()
 
-        # Check that lag is approximately 5 seconds (the older data)
-        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-        assert 'title' in opts
-        assert 'Lag:' in opts['title']
+        title = plots.format_time_info(plotter.time_bounds)
+        assert 'Lag:' in title
         # Should show ~5 seconds, not ~1 second (using oldest end_time)
-        assert '5.' in opts['title'] or '6.' in opts['title']
+        assert '5.' in title or '6.' in title
+
+
+class TestTimeBounds:
+    """Tests for time-bounds merging and formatting helpers."""
+
+    @staticmethod
+    def _ts(ns: int) -> Timestamp:
+        return Timestamp.from_ns(ns)
+
+    def test_merge_returns_none_for_all_none(self) -> None:
+        assert plots.merge_time_bounds([None, None]) is None
+
+    def test_merge_returns_none_for_empty(self) -> None:
+        assert plots.merge_time_bounds([]) is None
+
+    def test_merge_takes_oldest_end_for_lag(self) -> None:
+        a = plots.TimeBounds(min_end=self._ts(100), max_end=self._ts(100))
+        b = plots.TimeBounds(min_end=self._ts(50), max_end=self._ts(80))
+        merged = plots.merge_time_bounds([a, b])
+        assert merged.min_end == self._ts(50)
+
+    def test_merge_spans_full_range(self) -> None:
+        a = plots.TimeBounds(
+            min_end=self._ts(100), min_start=self._ts(90), max_end=self._ts(110)
+        )
+        b = plots.TimeBounds(
+            min_end=self._ts(50), min_start=self._ts(40), max_end=self._ts(60)
+        )
+        merged = plots.merge_time_bounds([a, b, None])
+        assert merged.min_start == self._ts(40)
+        assert merged.min_end == self._ts(50)
+        assert merged.max_end == self._ts(110)
+
+    def test_merge_drops_missing_start(self) -> None:
+        a = plots.TimeBounds(min_end=self._ts(100))  # no start/max_end
+        b = plots.TimeBounds(
+            min_end=self._ts(50), min_start=self._ts(40), max_end=self._ts(60)
+        )
+        merged = plots.merge_time_bounds([a, b])
+        assert merged.min_start == self._ts(40)
+        assert merged.max_end == self._ts(60)
+
+    def test_format_with_range_shows_interval(self) -> None:
+        now = self._ts(int(10e9))
+        bounds = plots.TimeBounds(
+            min_end=self._ts(int(8e9)),
+            min_start=self._ts(int(7e9)),
+            max_end=self._ts(int(9e9)),
+        )
+        text = plots.format_time_info(bounds, now=now)
+        assert ' - ' in text
+        assert 'Lag: 2.0s' in text
+
+    def test_format_without_range_shows_single_time(self) -> None:
+        now = self._ts(int(10e9))
+        bounds = plots.TimeBounds(min_end=self._ts(int(7e9)))
+        text = plots.format_time_info(bounds, now=now)
+        assert ' - ' not in text
+        assert 'Lag: 3.0s' in text
 
 
 class TestTwoStageArchitecture:

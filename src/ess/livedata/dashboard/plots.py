@@ -320,46 +320,74 @@ class StaticPresenter(PresenterBase):
         return pipe.data
 
 
-def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
-    """
-    Compute time interval and lag from start_time/end_time coordinates.
+@dataclass(frozen=True)
+class TimeBounds:
+    """Data-time bounds backing the freshness/lag indicator.
 
-    Returns a formatted string like "12:34:56 - 12:35:02 (Lag: 2.3s)" or None
-    if no timing coordinates are found. Uses the earliest start_time and
-    latest end_time across all DataArrays to show the full data range.
-    Lag is computed from the earliest end_time (oldest data) to show worst-case
-    staleness.
+    ``min_end`` is the end time of the oldest data, giving worst-case staleness.
+    ``min_start`` and ``max_end`` bound the full data range and are present only
+    when start times exist on the data.
     """
-    now_ns = Timestamp.now()
+
+    min_end: Timestamp
+    min_start: Timestamp | None = None
+    max_end: Timestamp | None = None
+
+    def lag_seconds(self, now: Timestamp | None = None) -> float:
+        """Seconds between the oldest data's end time and ``now`` (max lag)."""
+        now = Timestamp.now() if now is None else now
+        return (now - self.min_end).to_seconds()
+
+
+def _compute_time_bounds(data: dict[str, sc.DataArray]) -> TimeBounds | None:
+    """
+    Extract time bounds from start_time/end_time coordinates.
+
+    Returns the earliest start_time, the earliest end_time (oldest data, for
+    worst-case lag), and the latest end_time across all DataArrays. Returns None
+    if no end_time coordinate is found.
+    """
     min_start: Timestamp | None = None
     min_end: Timestamp | None = None
     max_end: Timestamp | None = None
 
     for da in data.values():
         if 'start_time' in da.coords:
-            start_ns = Timestamp.from_scipp(da.coords['start_time'])
-            if min_start is None or start_ns < min_start:
-                min_start = start_ns
+            start = Timestamp.from_scipp(da.coords['start_time'])
+            min_start = start if min_start is None else min(min_start, start)
         if 'end_time' in da.coords:
-            end_ns = Timestamp.from_scipp(da.coords['end_time'])
-            if min_end is None or end_ns < min_end:
-                min_end = end_ns
-            if max_end is None or end_ns > max_end:
-                max_end = end_ns
+            end = Timestamp.from_scipp(da.coords['end_time'])
+            min_end = end if min_end is None else min(min_end, end)
+            max_end = end if max_end is None else max(max_end, end)
 
     if min_end is None:
         return None
+    return TimeBounds(min_end=min_end, min_start=min_start, max_end=max_end)
 
-    # Use min_end for lag (oldest data = maximum lag)
-    lag_s = (now_ns - min_end).to_seconds()
 
-    if min_start is not None and max_end is not None:
-        start_str = format_time_ns_local(min_start)
-        end_str = format_time_ns_local(max_end)
+def merge_time_bounds(bounds: Iterable[TimeBounds | None]) -> TimeBounds | None:
+    """Combine bounds across layers: earliest start, oldest end, latest end."""
+    present = [b for b in bounds if b is not None]
+    if not present:
+        return None
+    starts = [b.min_start for b in present if b.min_start is not None]
+    ends = [b.max_end for b in present if b.max_end is not None]
+    return TimeBounds(
+        min_end=min(b.min_end for b in present),
+        min_start=min(starts) if starts else None,
+        max_end=max(ends) if ends else None,
+    )
+
+
+def format_time_info(bounds: TimeBounds, now: Timestamp | None = None) -> str:
+    """Format time bounds as a range + lag string, e.g. "12:34:56 (Lag: 2.3s)"."""
+    now = Timestamp.now() if now is None else now
+    lag_s = bounds.lag_seconds(now)
+    if bounds.min_start is not None and bounds.max_end is not None:
+        start_str = format_time_ns_local(bounds.min_start)
+        end_str = format_time_ns_local(bounds.max_end)
         return f'{start_str} - {end_str} (Lag: {lag_s:.1f}s)'
-    else:
-        end_str = format_time_ns_local(min_end)
-        return f'{end_str} (Lag: {lag_s:.1f}s)'
+    return f'{format_time_ns_local(bounds.min_end)} (Lag: {lag_s:.1f}s)'
 
 
 class Plotter:
@@ -393,6 +421,7 @@ class Plotter:
         """
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
+        self._time_bounds: TimeBounds | None = None
         self._range_targets: dict[ResultKey, RangeTargets] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.layout_params = layout_params or LayoutParams()
@@ -620,11 +649,9 @@ class Plotter:
         else:
             result = hv.Layout(plots).cols(self.layout_params.layout_columns)
 
-        # Add time interval and lag indicator as plot title
-        time_info = _compute_time_info(data)
-        if time_info is not None:
-            result = result.opts(title=time_info, fontsize={'title': '10pt'})
-
+        # Time bounds drive the cell titlebar's freshness indicator; they are
+        # kept off the plot title to avoid minting an OptionTree entry per tick.
+        self._time_bounds = _compute_time_bounds(data)
         self._set_cached_state(result)
 
     def create_presenter(self, *, owner: Plotter | None = None) -> PresenterBase:
@@ -670,6 +697,11 @@ class Plotter:
         """Get the last computed state, or None if not yet computed."""
         return self._cached_state
 
+    @property
+    def time_bounds(self) -> TimeBounds | None:
+        """Time bounds of the most recently computed data, or None if absent."""
+        return self._time_bounds
+
     def has_cached_state(self) -> bool:
         """Check if state has been computed."""
         return self._cached_state is not None
@@ -700,7 +732,12 @@ class Plotter:
         store for every element on every tick. Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
         """
-        return [hv.opts.Overlay(shared_axes=True), hv.opts.Layout(shared_axes=False)]
+        # title='' stops Bokeh promoting a single overlaid element's label to the
+        # plot title when there is no legend to carry it.
+        return [
+            hv.opts.Overlay(shared_axes=True, title=''),
+            hv.opts.Layout(shared_axes=False),
+        ]
 
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
@@ -1268,6 +1305,11 @@ class Overlay1DPlotter(Plotter):
         data = plot_data
         use_histogram = actual_mode == 'histogram'
 
+        # A single slice needs no label: a lone labelled element renders its
+        # label as the plot title, whereas labels only earn their keep as legend
+        # entries distinguishing multiple overlaid slices.
+        label_slices = slice_size > 1
+
         elements: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
@@ -1279,7 +1321,7 @@ class Overlay1DPlotter(Plotter):
             color_idx = int(coord_val) % len(self._colors)
             color = self._colors[color_idx]
 
-            curve_label = f"{slice_dim}={coord_val}"
+            curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
                 slice_data, value_label=output_display_name, dim_label=dim_label
             )

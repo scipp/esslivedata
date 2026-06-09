@@ -12,21 +12,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 
-import holoviews as hv
 import panel as pn
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
-from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
-from ..data_roles import PRIMARY
-from ..format_utils import extract_error_summary
-from ..frame_aspect import make_frame_aspect_hook_from_config
-from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
+from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
-    DataSourceConfig,
     GridId,
     LayerId,
     PlotCell,
@@ -35,19 +29,15 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
-from ..plot_params import PlotAspectType, StretchMode
-from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
+from ..plots import TimeBounds
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
+from .cell import CellDeps, CellWidget
+from .cell_properties_modal import CellPropertiesModal
 from .plot_config_modal import PlotConfigModal
-from .plot_grid import GridCellStyles, PlotGrid
+from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .plot_widgets import (
-    create_cell_toolbar,
-    get_plot_cell_display_info,
-    get_workflow_display_info,
-)
-from .styles import Colors, StatusColors
+from .styles import Colors
 
 logger = structlog.get_logger(__name__)
 
@@ -71,30 +61,6 @@ class _BatchedTabs(pn.Tabs):
         freeze = doc.models.freeze() if doc is not None else nullcontext()
         with pn.io.hold(), freeze:
             super()._update_active(*events)
-
-
-def _get_sizing_mode(config: PlotConfig) -> str:
-    """Extract Panel sizing_mode from plot configuration.
-
-    Parameters
-    ----------
-    config:
-        Plot configuration containing plotter params.
-
-    Returns
-    -------
-    :
-        Panel sizing_mode string ('stretch_both', 'stretch_width', or 'stretch_height').
-    """
-    params = config.params
-    if hasattr(params, 'plot_aspect'):
-        aspect = params.plot_aspect
-        if aspect.aspect_type == PlotAspectType.free:
-            return 'stretch_both'
-        if aspect.stretch_mode == StretchMode.width:
-            return 'stretch_width'
-        return 'stretch_height'
-    return 'stretch_both'
 
 
 class PlotGridTabs:
@@ -144,15 +110,28 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
-        # Per-session layer state: version tracking and optional render components.
+        # Per-session layer state: version tracking and optional render
+        # components. Owned by the poll loop; read by CellWidgets when composing
+        # plots (shared via CellDeps).
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
-        # Per-session, per-cell autoscale controllers. Lifetime tracks the
-        # cell composition: each rebuild creates a fresh controller whose
-        # ``CustomAction`` tools live in this session's Bokeh document; the
-        # previous controller (with its now-detached tools) is garbage
-        # collected. Cleaned up when the cell goes away or its layers do.
-        self._session_autoscale_controllers: dict[CellId, CellAutoscaleController] = {}
+        # Per-session cell widgets, keyed by CellId. Each owns its titlebar,
+        # per-layer toolbars, content, autoscale controller, and the panes
+        # updated in place by the poll loop (freshness pill, layer time labels).
+        # Rebuilt on cell/layer changes; disposed when the cell goes away.
+        self._cells: dict[CellId, CellWidget] = {}
+
+        # Shared dependencies handed to every CellWidget. Built once; the
+        # callbacks route modal interactions back here (modal container lives
+        # at this level). Created after the dependencies above are set.
+        self._cell_deps = CellDeps(
+            orchestrator=plot_orchestrator,
+            workflow_registry=self._workflow_registry,
+            plot_data_service=plot_data_service,
+            session_layers=self._session_layers,
+            on_edit_title=self._show_cell_properties_modal,
+            on_reconfigure_layer=self._on_reconfigure_layer,
+        )
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 3 if system_status_widget else 2
@@ -403,7 +382,7 @@ class PlotGridTabs:
 
     def _on_add_layer(self, cell_id: CellId) -> None:
         """
-        Handle add layer request from plus button.
+        Handle add layer request from the cell-properties modal.
 
         Shows the PlotConfigModal to configure the new layer, then adds it
         to the cell in the orchestrator on success.
@@ -462,6 +441,36 @@ class PlotGridTabs:
         self._current_modal = None
         self._modal_container.clear()
 
+    def _show_cell_properties_modal(
+        self, cell_id: CellId, current_title: str, has_user_title: bool
+    ) -> None:
+        """
+        Show the cell-properties modal (rename, add layer, remove layers).
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to edit.
+        current_title
+            The currently displayed title (user-defined or derived).
+        has_user_title
+            Whether ``current_title`` is user-defined; if not, the input starts
+            empty so the placeholder hints at the derived fallback.
+        """
+        modal = CellPropertiesModal(
+            orchestrator=self._orchestrator,
+            workflow_registry=self._workflow_registry,
+            plotting_controller=self._plotting_controller,
+            cell_id=cell_id,
+            current_title=current_title,
+            has_user_title=has_user_title,
+            on_add_layer=self._on_add_layer,
+            on_close=self._cleanup_modal,
+        )
+        self._modal_container.clear()
+        self._modal_container.append(modal.modal)
+        modal.show()
+
     def _on_cell_updated(
         self,
         *,
@@ -491,18 +500,16 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
-        # Get session-local composed plot if data is available.
-        # Note: When config changes, update_layer_config() creates a new layer_id.
-        # The old layer_id is orphaned and cleaned up by update_pipes().
-        # New layer_ids have no cache, so fresh components are created naturally.
-        session_plot = self._get_session_composed_plot(cell_id, cell)
-
-        # Create widget with toolbars and content
-        widget = self._create_cell_widget(cell_id, cell, session_plot)
-
+        # Build the cell widget. Composing its plot creates fresh session
+        # components: when config changes, update_layer_config() creates a new
+        # layer_id; the old one is orphaned and cleaned up by update_pipes(),
+        # and new layer_ids have no cache, so components are created naturally.
+        #
         # Note: SessionLayer.create() already records state.version in
         # last_seen_version, so _poll_for_plot_updates won't trigger
         # redundant rebuilds.
+        cell_widget = self._build_cell(cell_id, cell)
+        view = cell_widget.view
 
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
@@ -511,13 +518,13 @@ class PlotGridTabs:
         # collapsed/default size before the grid container is properly sized,
         # resulting in "glitched" rendering. Deferring to the next event loop
         # iteration allows Panel to process layout updates first.
-        if session_plot is not None:
+        if cell_widget.has_plot:
             pn.state.execute(
-                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget)
+                lambda g=cell.geometry: plot_grid.insert_widget_at(g, view)
             )
         else:
             # Status widgets can be inserted immediately
-            plot_grid.insert_widget_at(cell.geometry, widget)
+            plot_grid.insert_widget_at(cell.geometry, view)
 
     def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
@@ -539,9 +546,9 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
 
-        # Drop any per-session autoscale controller for the removed cell.
-        # The geometry → cell_id mapping isn't tracked here, so we sweep
-        # controllers whose CellId no longer matches any active cell.
+        # Drop the cell widget for the removed cell, disposing its autoscale
+        # controller. The geometry → cell_id mapping isn't tracked here, so we
+        # sweep widgets whose CellId no longer matches any active cell.
         active_cell_ids: set[CellId] = set()
         for grid_config in (
             self._orchestrator.peek_grid(gid) for gid in self._grid_widgets
@@ -549,508 +556,26 @@ class PlotGridTabs:
             if grid_config is None:
                 continue
             active_cell_ids.update(grid_config.cells.keys())
-        for cid in list(self._session_autoscale_controllers):
+        for cid in list(self._cells):
             if cid not in active_cell_ids:
-                self._drop_autoscale_controller(cid)
+                self._cells.pop(cid).dispose()
 
-    def _drop_autoscale_controller(self, cell_id: CellId) -> None:
-        """Pop the controller for ``cell_id`` and dispose it (if any).
+    def _build_cell(self, cell_id: CellId, cell: PlotCell) -> CellWidget:
+        """Build (or rebuild) the session widget for a cell.
 
-        Calling ``dispose()`` breaks the controller → Bokeh-tool →
-        on_change-callback → controller reference cycle so long sessions
-        don't accumulate detached controllers after cell rebuilds/removals.
+        Preserves the per-layer toolbar visibility toggle across rebuilds and
+        disposes the previous widget's autoscale controller (breaking its
+        on_change reference cycle) once the replacement is in place.
         """
-        controller = self._session_autoscale_controllers.pop(cell_id, None)
-        if controller is not None:
-            controller.dispose()
-
-    def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, LayerStateMachine]:
-        """
-        Get layer states from PlotDataService for all layers in a cell.
-
-        Parameters
-        ----------
-        cell
-            Plot cell with layers.
-
-        Returns
-        -------
-        :
-            Dict mapping layer IDs to their state.
-        """
-        result: dict[LayerId, LayerStateMachine] = {}
-        for layer in cell.layers:
-            state = self._plot_data_service.get(layer.layer_id)
-            if state is None:
-                raise RuntimeError(
-                    f"Layer {layer.layer_id} has no state in PlotDataService. "
-                    "This indicates a bug: layers should be registered before "
-                    "widgets are notified."
-                )
-            result[layer.layer_id] = state
-        return result
-
-    def _create_cell_widget(
-        self,
-        cell_id: CellId,
-        cell: PlotCell,
-        plot: hv.DynamicMap | hv.Element | hv.Overlay | None,
-    ) -> pn.Column:
-        """
-        Create a cell widget with per-layer toolbars and content area.
-
-        The widget has a stable toolbar section (one toolbar per layer) and
-        a content area that shows either a placeholder or the composed plot.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the cell.
-        cell
-            Plot cell configuration with all layers.
-        plot
-            The composed plot, or None if no layers have data yet.
-
-        Returns
-        -------
-        :
-            Panel widget with toolbars and content.
-        """
-        # Get layer states from PlotDataService
-        layer_states = self._get_layer_states(cell)
-
-        # Create toolbars for all layers
-        toolbars = self._create_layer_toolbars(cell_id, cell, layer_states)
-
-        # Create content area (placeholder or plot)
-        if plot is not None:
-            content = self._create_plot_content(cell, plot)
-            border = None
-            bg_color = None
-        else:
-            content = self._create_placeholder_content(cell, layer_states)
-            # Check if any layer has an error
-            has_error = any(
-                state.error_message is not None for state in layer_states.values()
-            )
-            if has_error:
-                bg_color = '#ffe6e6'
-                border = f'2px solid {StatusColors.ERROR}'
-            else:
-                bg_color = Colors.BG_LIGHT
-                border = f'2px dashed {Colors.BORDER}'
-
-        styles = {}
-        if bg_color:
-            styles['background-color'] = bg_color
-        if border:
-            styles['border'] = border
-
-        return pn.Column(
-            *toolbars,
-            content,
-            sizing_mode='stretch_both',
-            styles=styles,
-            margin=GridCellStyles.CELL_MARGIN,
+        previous = self._cells.get(cell_id)
+        toolbars_visible = previous.toolbars_shown if previous is not None else False
+        cell_widget = CellWidget(
+            cell_id, cell, self._cell_deps, toolbars_visible=toolbars_visible
         )
-
-    def _get_available_overlays_for_layer(
-        self, config: PlotConfig
-    ) -> list[tuple[str, str, str]]:
-        """
-        Get available overlay suggestions for a layer based on its configuration.
-
-        Parameters
-        ----------
-        config
-            Layer's plot configuration.
-
-        Returns
-        -------
-        :
-            List of (output_name, plotter_name, plotter_title) tuples.
-            Returns empty list if overlays are not applicable.
-        """
-        # Skip for static overlays (no workflow)
-        if config.is_static():
-            return []
-
-        # Get workflow spec
-        workflow_spec = self._workflow_registry.get(config.workflow_id)
-        if workflow_spec is None:
-            return []
-
-        return self._plotting_controller.get_available_overlays(
-            workflow_spec, config.plot_name
-        )
-
-    def _create_overlay_layer(
-        self,
-        cell_id: CellId,
-        base_config: PlotConfig,
-        view_name: str,
-        plotter_name: str,
-    ) -> None:
-        """
-        Create an overlay layer inheriting configuration from a base layer.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the cell to add the overlay to.
-        base_config
-            Configuration of the base layer (e.g., image layer).
-        view_name
-            Name of the output view for the overlay (e.g., 'roi_rectangle').
-        plotter_name
-            Name of the plotter to use for the overlay.
-        """
-        # Get default params for the plotter
-        spec = self._plotting_controller.get_spec(plotter_name)
-        params = spec.params() if spec.params else None
-
-        # Create PlotConfig inheriting workflow/sources from base layer
-        overlay_config = PlotConfig(
-            data_sources={
-                PRIMARY: DataSourceConfig(
-                    workflow_id=base_config.workflow_id,
-                    source_names=list(base_config.source_names),
-                    view_name=view_name,
-                )
-            },
-            plot_name=plotter_name,
-            params=params,
-        )
-
-        self._orchestrator.add_layer(cell_id, overlay_config)
-
-    def _create_layer_toolbars(
-        self,
-        cell_id: CellId,
-        cell: PlotCell,
-        layer_states: dict[LayerId, LayerStateMachine],
-    ) -> list[pn.Row]:
-        """
-        Create toolbars for all layers in a cell.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the cell.
-        cell
-            Plot cell with layers.
-        layer_states
-            Per-layer runtime state from PlotDataService.
-
-        Returns
-        -------
-        :
-            List of toolbar widgets, one per layer.
-        """
-        # Collect existing plotter names to filter already-added overlays
-        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
-
-        toolbars = []
-        for layer in cell.layers:
-            layer_id = layer.layer_id
-            config = layer.config
-            state = layer_states[layer_id]
-
-            # Get display info for this layer
-            title, description = get_plot_cell_display_info(
-                config,
-                self._workflow_registry,
-                get_source_title=self._orchestrator.get_source_title,
-            )
-
-            # Add state info to description using explicit state enum
-            stopped = False
-            match state.state:
-                case LayerState.ERROR:
-                    description = f"{description}\n\nError: {state.error_message}"
-                case LayerState.STOPPED:
-                    stopped = True
-                    description = f"{description}\n\nStatus: Workflow ended"
-                case LayerState.WAITING_FOR_DATA:
-                    description = f"{description}\n\nStatus: Waiting for data..."
-                case LayerState.WAITING_FOR_JOB:
-                    description = f"{description}\n\nStatus: Waiting for workflow"
-                case LayerState.READY:
-                    pass  # No extra description for ready state
-
-            # Get available overlays, excluding those already present in the cell
-            available_overlays = [
-                overlay
-                for overlay in self._get_available_overlays_for_layer(config)
-                if overlay[1]
-                not in existing_plotter_names  # overlay[1] is plotter_name
-            ]
-
-            # Create callbacks that capture layer_id / cell_id / config
-            def make_close_callback(lid: LayerId) -> Callable[[], None]:
-                def on_close() -> None:
-                    self._orchestrator.remove_layer(lid)
-
-                return on_close
-
-            def make_gear_callback(lid: LayerId) -> Callable[[], None]:
-                def on_gear() -> None:
-                    self._on_reconfigure_layer(lid)
-
-                return on_gear
-
-            def make_add_callback(cid: CellId) -> Callable[[], None]:
-                def on_add() -> None:
-                    self._on_add_layer(cid)
-
-                return on_add
-
-            def make_overlay_callback(
-                cid: CellId, cfg: PlotConfig
-            ) -> Callable[[str, str], None]:
-                def on_overlay(view_name: str, plotter_name: str) -> None:
-                    self._create_overlay_layer(cid, cfg, view_name, plotter_name)
-
-                return on_overlay
-
-            toolbar = create_cell_toolbar(
-                on_gear_callback=make_gear_callback(layer_id),
-                on_close_callback=make_close_callback(layer_id),
-                on_add_callback=make_add_callback(cell_id),
-                on_overlay_selected=make_overlay_callback(cell_id, config),
-                available_overlays=available_overlays,
-                title=title,
-                description=description,
-                stopped=stopped,
-            )
-            toolbars.append(toolbar)
-
-        return toolbars
-
-    def _create_placeholder_content(
-        self,
-        cell: PlotCell,
-        layer_states: dict[LayerId, LayerStateMachine],
-    ) -> pn.pane.Markdown:
-        """
-        Create placeholder content showing layer status.
-
-        Parameters
-        ----------
-        cell
-            Plot cell with layers.
-        layer_states
-            Per-layer runtime state from PlotDataService.
-
-        Returns
-        -------
-        :
-            Markdown pane showing status for all layers.
-        """
-        # Build status info for each layer
-        status_lines = []
-        for layer in cell.layers:
-            config = layer.config
-            state = layer_states[layer.layer_id]
-
-            workflow_title, output_title = get_workflow_display_info(
-                self._workflow_registry, config.workflow_id, config.view_name
-            )
-
-            # Determine status from explicit state enum
-            match state.state:
-                case LayerState.ERROR:
-                    error_text = state.error_message or "Unknown error"
-                    status = f"Error: {extract_error_summary(error_text)}"
-                    text_color = StatusColors.ERROR
-                case LayerState.STOPPED:
-                    status = "Workflow ended"
-                    text_color = Colors.TEXT
-                case LayerState.WAITING_FOR_DATA:
-                    status = "Waiting for data..."
-                    text_color = Colors.TEXT_MUTED
-                case LayerState.WAITING_FOR_JOB:
-                    status = "Waiting for workflow..."
-                    text_color = Colors.TEXT_MUTED
-                case LayerState.READY:
-                    # Defensive: READY should have displayable plot and not
-                    # reach placeholder. Log if this happens.
-                    logger.warning(
-                        "Layer %s in READY state but showing placeholder",
-                        layer.layer_id,
-                    )
-                    status = "Ready (loading...)"
-                    text_color = Colors.TEXT_MUTED
-
-            status_lines.append(
-                f"**{workflow_title} → {output_title}**: "
-                f"<span style='color: {text_color}'>{status}</span>"
-            )
-
-        content = "\n\n".join(status_lines)
-
-        return pn.pane.Markdown(
-            content,
-            styles={'text-align': 'left', 'padding': '20px'},
-        )
-
-    def _create_plot_content(
-        self,
-        cell: PlotCell,
-        plot: hv.DynamicMap | hv.Element | hv.Overlay,
-    ) -> pn.pane.HoloViews:
-        """
-        Create plot content widget.
-
-        Parameters
-        ----------
-        cell
-            Plot cell with layers.
-        plot
-            The composed plot.
-
-        Returns
-        -------
-        :
-            HoloViews pane containing the plot.
-        """
-        # Use sizing mode from first layer (they should be consistent for overlay)
-        if cell.layers:
-            sizing_mode = _get_sizing_mode(cell.layers[0].config)
-        else:
-            sizing_mode = 'stretch_both'
-
-        # Use .layout to preserve widgets for DynamicMaps with kdims.
-        # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
-        # widgets. However, these widgets don't render when the pane is placed
-        # in a Panel layout (Tabs, Column, etc.). The .layout property contains
-        # both the plot and widgets, which renders correctly in layouts.
-        # See: https://github.com/holoviz/panel/issues/5628
-        #
-        # CRITICAL: Use linked_axes=False to prevent unintended axis linking (#607)
-        #
-        # Problem: By default, Panel's HoloViews pane links axes across different
-        # plots based on their axis labels (e.g., all plots with 'x' and 'y' axes
-        # get linked). For detector panels in different grid cells, this is unwanted:
-        # - Different detector panels have independent spatial coordinates
-        # - Zooming one panel shouldn't affect others
-        # - Each panel needs independent autoscaling
-        #
-        # Previous workarounds and why they failed:
-        # - shared_axes=False (HoloViews): Breaks dynamic features that rely on
-        #   shared axis infrastructure
-        # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
-        #   which was needed for the layer system (#606)
-        #
-        # Solution: linked_axes=False on the Panel pane
-        # - Disables Panel's cross-plot axis linking while preserving HoloViews
-        #   features (autoscaling, dynamic updates)
-        # - Allows proper multi-layer composition via hv.Overlay
-        # - Each grid cell's plot remains independent
-        plot_pane_wrapper = pn.pane.HoloViews(
-            plot, sizing_mode=sizing_mode, linked_axes=False
-        )
-        return plot_pane_wrapper.layout
-
-    def _get_session_composed_plot(
-        self, cell_id: CellId, cell: PlotCell
-    ) -> hv.DynamicMap | hv.Element | None:
-        """
-        Get composed plot from session-local DynamicMaps or static elements.
-
-        Ensures session components exist when data is available.
-        Sets a descriptive SaveTool filename on the result so that
-        browser "Save" downloads get a meaningful name.
-
-        Parameters
-        ----------
-        cell
-            The plot cell with layers.
-
-        Returns
-        -------
-        :
-            Composed plot from session DMaps/elements, or None if none available.
-        """
-        plots = []
-        has_layout = False
-        cell_plotters: list = []
-        for layer in cell.layers:
-            layer_id = layer.layer_id
-            session_layer = self._session_layers.get(layer_id)
-            if session_layer is None:
-                continue
-
-            # Ensure components exist if data is now available
-            state = self._plot_data_service.get(layer_id)
-            if state is not None:
-                session_layer.ensure_components(state)
-                # Static overlays (vlines/hlines/rectangles) are not Plotters
-                # and carry no autoscale axes; exclude them from the controller.
-                if state.plotter is not None and not layer.config.is_static():
-                    cell_plotters.append(state.plotter)
-
-            dmap = session_layer.dmap
-            if dmap is not None:
-                # Check the DynamicMap's resolved type (set after Bokeh
-                # renders it) and the plotter's cached state.  Either
-                # being a Layout means hooks must be skipped.
-                if isinstance(dmap, hv.DynamicMap) and dmap.type is hv.Layout:
-                    has_layout = True
-                elif (
-                    state is not None
-                    and state.plotter is not None
-                    and isinstance(state.plotter.get_cached_state(), hv.Layout)
-                ):
-                    has_layout = True
-                plots.append(dmap)
-
-        if not plots:
-            self._drop_autoscale_controller(cell_id)
-            return None
-
-        result: hv.DynamicMap | hv.Element
-        if len(plots) == 1:
-            result = plots[0]
-        else:
-            # Collate so hooks survive for any number of DynamicMap layers.
-            # Without collation, HoloViews drops overlay-level opts (including
-            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
-            # produces a single DynamicMap whose outputs are plain Overlays;
-            # opts applied afterwards land on the OverlayPlot and persist.
-            result = hv.Overlay(plots).collate()
-
-        # Skip hooks for Layouts — each sub-figure has its own SaveTool,
-        # so a single cell-level filename is not meaningful.
-        if has_layout:
-            self._drop_autoscale_controller(cell_id)
-        else:
-            hooks: list = []
-            filename = build_save_filename_from_cell(
-                cell, self._workflow_registry, self._orchestrator.get_source_title
-            )
-            if filename is not None:
-                hooks.append(make_save_filename_hook(filename))
-            if cell.layers:
-                params = cell.layers[0].config.params
-                if hasattr(params, 'plot_aspect'):
-                    aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
-                    if aspect_hook is not None:
-                        hooks.append(aspect_hook)
-            # Fresh controller on every cell rebuild: keeps tools and
-            # toggle state local to this session's Bokeh document. Dispose
-            # any prior controller for this cell first to break its
-            # on_change reference cycle (would otherwise leak across the
-            # session lifetime).
-            self._drop_autoscale_controller(cell_id)
-            controller = build_controller_from_layers(cell_plotters)
-            if controller is not None:
-                self._session_autoscale_controllers[cell_id] = controller
-                hooks.append(controller.make_hook())
-            if hooks:
-                result = result.opts(hooks=hooks)
-
-        return result
+        self._cells[cell_id] = cell_widget
+        if previous is not None:
+            previous.dispose()
+        return cell_widget
 
     def _poll_for_plot_updates(self) -> None:
         """
@@ -1074,6 +599,9 @@ class PlotGridTabs:
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
+        # Per-cell, per-layer time bounds for active-grid cells, driving the
+        # titlebar freshness pill (merged) and the per-layer time-range panes.
+        active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         active_grid_id = self._get_active_grid_id()
 
         for grid_id, plot_grid in self._grid_widgets.items():
@@ -1097,6 +625,14 @@ class PlotGridTabs:
                             layer_id,
                         )
                         continue
+
+                    if is_active:
+                        bounds = (
+                            state.plotter.time_bounds
+                            if state.plotter is not None
+                            else None
+                        )
+                        active_cell_bounds.setdefault(cell_id, {})[layer_id] = bounds
 
                     # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
@@ -1123,7 +659,9 @@ class PlotGridTabs:
                         layer_id, session_layer, is_active
                     )
 
-        # Clean up orphaned session layers (removed from orchestrator)
+        # Clean up orphaned session layers (removed from orchestrator). Per-cell
+        # widget state (freshness/time panes, autoscale) is swept on cell rebuild
+        # or removal, so only the global layer registry needs explicit cleanup.
         for layer_id in list(self._session_layers.keys()):
             if layer_id not in seen_layer_ids:
                 self._orchestrator.activate_layer(
@@ -1137,12 +675,9 @@ class PlotGridTabs:
         # race with DynamicMap updates, causing KeyError when Panel tries to
         # access removed models.
         for cell_id, (cell, plot_grid) in cells_to_rebuild.items():
-            session_plot = self._get_session_composed_plot(cell_id, cell)
-            widget = self._create_cell_widget(cell_id, cell, session_plot)
+            view = self._build_cell(cell_id, cell).view
             pn.state.execute(
-                lambda g=cell.geometry, w=widget, pg=plot_grid: pg.insert_widget_at(
-                    g, w
-                )
+                lambda g=cell.geometry, w=view, pg=plot_grid: pg.insert_widget_at(g, w)
             )
             # Bump versions only after successful rebuild — if the rebuild
             # raised, the version stays stale so the next poll retries.
@@ -1152,6 +687,18 @@ class PlotGridTabs:
                     if sl is not None:
                         sl.last_seen_version = versions_to_apply[layer.layer_id]
 
+        # Refresh the freshness/lag indicator for active-grid cells. Runs after
+        # rebuilds so cells recreated this poll update their fresh pane handle.
+        # Lag is recomputed against the current wall clock every poll, so a
+        # stalled stream visibly grows stale rather than freezing.
+        for cell_id, per_layer in active_cell_bounds.items():
+            cell_widget = self._cells.get(cell_id)
+            if cell_widget is None:
+                continue
+            cell_widget.update_freshness(list(per_layer.values()))
+            for layer_id, bounds in per_layer.items():
+                cell_widget.update_layer_time(layer_id, bounds)
+
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and clean up session state."""
         if self._subscription_id is not None:
@@ -1160,8 +707,9 @@ class PlotGridTabs:
         for layer_id, session_layer in self._session_layers.items():
             self._orchestrator.activate_layer(layer_id, session_layer, False)
         self._session_layers.clear()
-        for cid in list(self._session_autoscale_controllers):
-            self._drop_autoscale_controller(cid)
+        for cell_widget in self._cells.values():
+            cell_widget.dispose()
+        self._cells.clear()
         self._grid_manager.shutdown()
 
     @property

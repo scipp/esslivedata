@@ -10,10 +10,18 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_roles import PRIMARY
-from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    DataSourceConfig,
+    Layer,
+    LayerId,
+    PlotCell,
+    PlotConfig,
+)
 from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
 from ess.livedata.dashboard.widgets.plot_widgets import (
     _format_window_info,
+    derive_cell_title,
     get_plot_cell_display_info,
 )
 
@@ -134,3 +142,154 @@ class TestGetPlotCellDisplayInfo:
 
         title, _ = get_plot_cell_display_info(config, registry)
         assert 'since run start' in title
+
+
+_GEO = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+
+def _make_layer(
+    workflow_id, source_names, view_name='image', plot_name='lines', params=None
+):
+    from uuid import uuid4
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=workflow_id,
+                source_names=source_names,
+                view_name=view_name,
+            )
+        },
+        plot_name=plot_name,
+        params=params if params is not None else _FakeParams(),
+    )
+    return Layer(layer_id=LayerId(uuid4()), config=config)
+
+
+def _make_static_layer(name, plot_name='rectangle'):
+    """A static overlay: single primary source with empty source_names."""
+    from uuid import uuid4
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=WorkflowId(instrument='test', name='static', version=1),
+                source_names=[],
+                view_name=name,
+            )
+        },
+        plot_name=plot_name,
+        params=_FakeParams(),
+    )
+    return Layer(layer_id=LayerId(uuid4()), config=config)
+
+
+class _XYOutputs(WorkflowOutputsBase):
+    image: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['x'], shape=[0], unit='counts'),
+            coords={'x': sc.arange('x', 0, unit='m')},
+        ),
+        title='Image',
+    )
+    roi: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['x'], shape=[0], unit='counts'),
+            coords={'x': sc.arange('x', 0, unit='m')},
+        ),
+        title='ROI',
+    )
+
+
+class TestDeriveCellTitle:
+    @staticmethod
+    def _wf(name='wf'):
+        return WorkflowId(instrument='test', name=name, version=1)
+
+    @staticmethod
+    def _registry(wf):
+        spec = WorkflowSpec(
+            instrument='test',
+            name=wf.name,
+            version=1,
+            title='Detector XY Projection',
+            description='D',
+            outputs=_XYOutputs,
+            params=None,
+            source_names=['Front Right'],
+            group=REDUCTION,
+        )
+        return {wf: spec}
+
+    def test_single_layer_single_source(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['Front Right'])])
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection (Front Right)'
+        )
+
+    def test_output_name_is_not_shown(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[
+                _make_layer(wf, ['Front Right'], view_name='image'),
+                _make_layer(wf, ['Front Right'], view_name='roi'),
+            ],
+        )
+        title = derive_cell_title(cell, self._registry(wf))
+        assert title == 'Detector XY Projection (Front Right)'
+        assert 'Image' not in title
+        assert 'ROI' not in title
+
+    def test_source_title_callback_applied(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['s1'])])
+        title = derive_cell_title(
+            cell, self._registry(wf), get_source_title=lambda s: f'Title:{s}'
+        )
+        assert title == 'Detector XY Projection (Title:s1)'
+
+    def test_multiple_sources_drop_source(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['s1']), _make_layer(wf, ['s2'])],
+        )
+        assert derive_cell_title(cell, self._registry(wf)) == 'Detector XY Projection'
+
+    def test_single_layer_multi_source_drops_source(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(geometry=_GEO, layers=[_make_layer(wf, ['s1', 's2'])])
+        assert derive_cell_title(cell, self._registry(wf)) == 'Detector XY Projection'
+
+    def test_uses_first_layer_workflow_title(self) -> None:
+        wf_a = self._wf('a')
+        wf_b = self._wf('b')
+        registry = {**self._registry(wf_a), **self._registry(wf_b)}
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf_a, ['Front Right']), _make_layer(wf_b, ['s2'])],
+        )
+        # Different sources across layers -> source dropped, first workflow used.
+        assert derive_cell_title(cell, registry) == 'Detector XY Projection'
+
+    def test_static_layers_excluded_from_derivation(self) -> None:
+        wf = self._wf()
+        cell = PlotCell(
+            geometry=_GEO,
+            layers=[_make_layer(wf, ['Front Right']), _make_static_layer('Box')],
+        )
+        assert (
+            derive_cell_title(cell, self._registry(wf))
+            == 'Detector XY Projection (Front Right)'
+        )
+
+    def test_only_static_layers_uses_first_static_title(self) -> None:
+        cell = PlotCell(geometry=_GEO, layers=[_make_static_layer('Box')])
+        assert derive_cell_title(cell, {}) == 'Rectangle &rarr; Box'
+
+    def test_empty_cell_returns_empty(self) -> None:
+        cell = PlotCell(geometry=_GEO, layers=[])
+        assert derive_cell_title(cell, {}) == ''
