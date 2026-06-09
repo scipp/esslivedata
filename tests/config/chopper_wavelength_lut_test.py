@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Instrument-level integration test for LOKI's chopper wavelength-LUT workflow.
+"""Instrument-level integration test for chopper wavelength-LUT workflows.
 
-This is the first production user of spec-scope ``SpecHandle.add_context_binding``
-(ADR 0003). It exercises the full path the unit tests cannot: the spec-scope
-bindings declared in ``loki/factories.py`` flowing through ``JobFactory.create``
-into the job's gating set and the workflow's ``set_context`` keys, against the
-real LOKI geometry artifact.
+Exercises the full path the unit tests cannot, for every instrument that
+declares ``choppers``: the spec-scope ``SpecHandle.add_context_binding``\\ s
+(ADR 0003) auto-wired in ``Instrument.load_factories`` flow through
+``JobFactory.create`` into the job's gating set and the workflow's
+``set_context`` keys, against the real geometry artifact (which must carry the
+``NXdisk_chopper`` groups with resolvable positions).
 """
 
 from __future__ import annotations
@@ -17,7 +18,11 @@ import numpy as np
 import pytest
 import scipp as sc
 
-from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
+from ess.livedata.config.chopper import (
+    delay_readback_stream,
+    delay_setpoint_stream,
+    speed_setpoint_stream,
+)
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
@@ -32,24 +37,26 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
 pytestmark = pytest.mark.slow
 
 
-@pytest.fixture(scope='module')
-def loki():
-    get_config('loki')  # register instrument
-    instrument = instrument_registry['loki']
-    instrument.load_factories()
-    return instrument
+@pytest.fixture(scope='module', params=['loki', 'dream'])
+def instrument(request):
+    get_config(request.param)  # register instrument
+    inst = instrument_registry[request.param]
+    inst.load_factories()
+    return inst
 
 
-def _create_lut_job(loki) -> tuple:
+def _create_lut_job(instrument) -> tuple:
     workflow_id = next(
-        w for w in loki.workflow_factory if w.name == WAVELENGTH_LUT_OUTPUT
+        w for w in instrument.workflow_factory if w.name == WAVELENGTH_LUT_OUTPUT
     )
     job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
     config = WorkflowConfig.from_params(
         workflow_id=workflow_id, job_id=job_id, params=None, aux_source_names=None
     )
-    service = loki.workflow_factory.get_service(workflow_id)
-    return JobFactory(loki, service_name=service).create(job_id=job_id, config=config)
+    service = instrument.workflow_factory.get_service(workflow_id)
+    return JobFactory(instrument, service_name=service).create(
+        job_id=job_id, config=config
+    )
 
 
 def _nxlog(value: float, unit: str | None) -> sc.DataArray:
@@ -59,23 +66,25 @@ def _nxlog(value: float, unit: str | None) -> sc.DataArray:
     )
 
 
-def test_spec_scope_bindings_define_gating_set(loki) -> None:
-    job = _create_lut_job(loki)
+def test_spec_scope_bindings_define_gating_set(instrument) -> None:
+    job = _create_lut_job(instrument)
     expected = {
         stream(chopper)
-        for chopper in loki.choppers
+        for chopper in instrument.choppers
         for stream in (speed_setpoint_stream, delay_setpoint_stream)
     }
     # Nothing seen yet → every per-chopper setpoint stream gates the job.
     assert job.missing_context(set()) == expected
 
 
-def test_chopper_lut_computes_from_context_and_trigger(loki) -> None:
-    job = _create_lut_job(loki)
+def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
+    job = _create_lut_job(instrument)
     aux = {}
-    for chopper in loki.choppers:
-        aux[speed_setpoint_stream(chopper)] = _nxlog(14.0, 'Hz')
-        aux[delay_setpoint_stream(chopper)] = _nxlog(0.0, 'ns')
+    for chopper in instrument.choppers:
+        speed_unit = instrument.streams[speed_setpoint_stream(chopper)].units
+        delay_unit = instrument.streams[delay_readback_stream(chopper)].units
+        aux[speed_setpoint_stream(chopper)] = _nxlog(14.0, speed_unit)
+        aux[delay_setpoint_stream(chopper)] = _nxlog(0.0, delay_unit)
     data = JobData(
         start_time=Timestamp.from_ns(0),
         end_time=Timestamp.from_ns(1),
