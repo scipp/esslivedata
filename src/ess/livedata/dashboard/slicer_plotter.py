@@ -21,6 +21,7 @@ from .plots import (
     _hv_axis_padding,
     _normalize_to_rate,
     _pad_range,
+    _typed_opts,
 )
 from .range_hook import Axis
 from .scipp_to_holoviews import to_holoviews
@@ -84,7 +85,7 @@ class SlicerPresenter(PresenterBase):
             The `mode`, `slice_dim`, and other slider kwargs come from kdims.
             """
             if data is None or not data.data:
-                return hv.Text(0.5, 0.5, 'No data')
+                return hv.Text(0.5, 0.5, 'No data').opts(**self._sizing_opts)
 
             # Get first data item (expects single data source)
             array_data = next(iter(data.data.values()))
@@ -92,7 +93,15 @@ class SlicerPresenter(PresenterBase):
                 array_data, data.clim, mode=mode, slice_dim=slice_dim, **kwargs
             )
 
-        return hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
+        dmap = hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
+        return dmap.opts(*self._style_opts())
+
+    def _style_opts(self) -> list[hv.Options]:
+        """Static styling declared once on the DynamicMap (see
+        :meth:`Plotter.style_opts`); the data-dependent clim stays per slice."""
+        return _typed_opts(
+            (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
+        )
 
     def _initialize_kdims(self, state: SlicerState) -> None:
         """
@@ -192,11 +201,12 @@ class SlicerPresenter(PresenterBase):
             plot_data = self._slice_data(data, slice_dim, kwargs)
 
         image = to_holoviews(plot_data)
-        opts: dict[str, Any] = {**self._base_opts, **self._sizing_opts}
-        # Use pre-computed clim for consistent color scale across slices
+        # base_opts/sizing are declared once on the DynamicMap (see _style_opts);
+        # only the data-dependent clim is applied per slice here for a consistent
+        # color scale across slices.
         if clim is not None:
-            opts['clim'] = clim
-        return image.opts(**opts)
+            return image.opts(clim=clim)
+        return image
 
     def _slice_data(
         self, data: sc.DataArray, slice_dim: str, kwargs: dict

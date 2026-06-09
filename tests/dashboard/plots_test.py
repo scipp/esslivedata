@@ -8,6 +8,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
+from bokeh.models import GlyphRenderer
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
@@ -98,6 +99,19 @@ def render_to_bokeh(hv_element):
     assert bokeh_plot is not None
     assert hasattr(bokeh_plot, 'state')
     return bokeh_plot
+
+
+def present_figure(plotter, data_dict):
+    """Render a plotter through the full compute -> present -> bokeh path.
+
+    Styling is applied on the presenter's DynamicMap rather than per element, so
+    observable style (responsive sizing, axis inversion) must be checked on the
+    rendered figure, not on the element returned by ``plot()``.
+    """
+    plotter.compute({'primary': data_dict})
+    presenter = plotter.create_presenter()
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    return render_to_bokeh(presenter.present(pipe)).state
 
 
 class TestTitleResolver:
@@ -582,13 +596,8 @@ class TestLinePlotter:
         assert isinstance(elements[0], hv.Histogram)
         assert isinstance(elements[1], hv.ErrorBars)
 
-    def test_error_overlay_children_have_sizing_opts(self, data_key):
-        """Sizing opts must be on child elements, not just the overlay.
-
-        Bokeh needs responsive/aspect on individual plot elements to size the
-        figure correctly; applying them only to the composite Overlay causes
-        the plot to collapse to a small default size.
-        """
+    def test_error_overlay_renders_responsive(self, data_key):
+        """A line+error overlay renders as a responsive (stretch_both) figure."""
         params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
@@ -602,11 +611,9 @@ class TestLinePlotter:
             ),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
         )
-        result = plotter.plot(data, data_key)
-        assert isinstance(result, hv.Overlay)
-        for child in result:
-            opts = child.opts.get().kwargs
-            assert opts.get('responsive') is True
+        assert isinstance(plotter.plot(data, data_key), hv.Overlay)
+        fig = present_figure(plotter, {data_key: data})
+        assert fig.sizing_mode == 'stretch_both'
 
     def test_plot_uses_output_display_name_as_vdim_label(self, line_plotter, data_key):
         """Test that output_display_name is used as the vdim label."""
@@ -1225,19 +1232,20 @@ class TestBarsPlotter:
         assert vdim.label == 'I(d)'
 
     def test_vertical_bars_default(self, bars_plotter, scalar_data, data_key):
-        """Test that bars are vertical by default (invert_axes=False)."""
-        result = bars_plotter.plot(scalar_data, data_key)
-        # When invert_axes is False (default), it may not appear in options
-        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-        assert opts.get('invert_axes', False) is False
+        """Test that bars are vertical by default (rendered as VBar glyphs)."""
+        fig = present_figure(bars_plotter, {data_key: scalar_data})
+        glyphs = {type(gr.glyph).__name__ for gr in fig.select({'type': GlyphRenderer})}
+        assert 'VBar' in glyphs
+        assert 'HBar' not in glyphs
 
     def test_horizontal_bars_option(
         self, horizontal_bars_plotter, scalar_data, data_key
     ):
-        """Test that horizontal option inverts axes."""
-        result = horizontal_bars_plotter.plot(scalar_data, data_key)
-        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
-        assert opts.get('invert_axes') is True
+        """Test that the horizontal option inverts axes (rendered as HBar glyphs)."""
+        fig = present_figure(horizontal_bars_plotter, {data_key: scalar_data})
+        glyphs = {type(gr.glyph).__name__ for gr in fig.select({'type': GlyphRenderer})}
+        assert 'HBar' in glyphs
+        assert 'VBar' not in glyphs
 
     def test_rejects_non_scalar_data(self, bars_plotter, data_key):
         """Test that BarsPlotter rejects non-0D data."""
@@ -1468,39 +1476,32 @@ class TestOverlay1DPlotter:
         for elem in result:
             assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
 
-    def test_sizing_opts_applied_to_curves(self, data_2d_with_roi_coord, data_key):
-        """Test that sizing options are applied to individual curves."""
+    def test_renders_responsive(self, data_2d_with_roi_coord, data_key):
+        """Aspect enforcement is handled by a JS hook (frame_aspect.py), so the
+        overlay renders responsive (stretch_both) regardless of aspect type."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
-        # Aspect enforcement is handled by a JS hook (frame_aspect.py),
-        # so the plotter only sets responsive=True on the HoloViews element.
         params = PlotParams1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
-        result = plotter.plot(data_2d_with_roi_coord, data_key)
+        fig = present_figure(plotter, {data_key: data_2d_with_roi_coord})
+        assert fig.sizing_mode == 'stretch_both'
+        assert fig.aspect_ratio is None
 
-        for curve in result:
-            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
-            assert opts.get('responsive') is True
-
-    def test_free_aspect_applies_responsive_only(
+    def test_free_aspect_renders_responsive_without_aspect(
         self, data_2d_with_roi_coord, data_key
     ):
-        """Test that 'free' aspect applies responsive=True without aspect constraint."""
+        """'free' aspect renders responsive (stretch_both) without an aspect ratio."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
         params = PlotParams1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.free)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
-        result = plotter.plot(data_2d_with_roi_coord, data_key)
-
-        # Check that responsive is set but no aspect constraint
-        for curve in result:
-            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
-            assert opts.get('responsive') is True
-            assert 'aspect' not in opts or opts.get('aspect') is None
+        fig = present_figure(plotter, {data_key: data_2d_with_roi_coord})
+        assert fig.sizing_mode == 'stretch_both'
+        assert fig.aspect_ratio is None
 
     def test_plot_uses_output_display_name_as_vdim_label(
         self, overlay_plotter, data_2d_with_roi_coord, data_key
