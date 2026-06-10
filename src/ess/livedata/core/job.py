@@ -225,7 +225,7 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         input_streams:
-            On-disk stream names of every non-primary input the job subscribes
+            Canonical stream names of every non-primary input the job subscribes
             to (see :attr:`input_stream_names`) — user-selected ``AuxSources``
             and framework-routed ``ContextBinding`` wire streams alike. Incoming
             data already arrives keyed by stream name — the same key the

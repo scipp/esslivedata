@@ -32,10 +32,7 @@ from .workflow_spec import (
 
 
 def _is_chain_patch(binding: ContextBinding) -> bool:
-    """A context binding whose ``workflow_key`` is a chain-patching.
-
-    ValueLog subclass.
-    """
+    """Whether ``binding.workflow_key`` is a chain-patching ``ValueLog`` subclass."""
     key = binding.workflow_key
     return isinstance(key, type) and issubclass(key, ValueLog)
 
