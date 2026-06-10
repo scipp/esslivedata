@@ -63,6 +63,7 @@ class TestSpectrumViewIntegration:
         workflow = factory.make_workflow(
             'detector', params=params, aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -91,6 +92,7 @@ class TestSpectrumViewIntegration:
         workflow = factory.make_workflow(
             'detector', params=params, aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -121,6 +123,7 @@ class TestSpectrumViewIntegration:
         workflow = factory.make_workflow(
             'detector', params=params, aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=2)
         workflow.accumulate(

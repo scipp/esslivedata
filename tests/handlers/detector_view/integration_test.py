@@ -36,6 +36,7 @@ class TestIntegrationWithStreamProcessor:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -89,6 +90,7 @@ class TestIntegrationWithStreamProcessor:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -121,6 +123,7 @@ class TestIntegrationWithStreamProcessor:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         # First batch
         events1 = make_fake_nexus_detector_data(
@@ -177,6 +180,7 @@ class TestROISpectraIntegration:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         # Create fake pre-grouped events (format produced by GroupByPixel preprocessor)
         events = make_fake_nexus_detector_data(
@@ -230,6 +234,7 @@ class TestROISpectraIntegration:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         # Create events with some reproducibility
         np.random.seed(42)
@@ -291,6 +296,7 @@ class TestROISpectraIntegration:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -347,6 +353,7 @@ class TestROISpectraIntegration:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -459,6 +466,7 @@ class TestUnitHandling:
         workflow = factory.make_workflow(
             'detector', params=params, aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -488,6 +496,7 @@ class TestUnitHandling:
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
         )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10

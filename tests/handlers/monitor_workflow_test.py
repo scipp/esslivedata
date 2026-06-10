@@ -353,6 +353,7 @@ class TestMonitorWorkflowIntegration:
 
     def test_full_workflow_cycle(self, toa_edges, sample_binned_events):
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # Accumulate data
         workflow.accumulate(
@@ -378,6 +379,7 @@ class TestMonitorWorkflowIntegration:
     def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
         """Delta outputs get time, start_time, end_time coords."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -414,6 +416,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Cumulative output should not have time coords (spans all time)."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -430,6 +433,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Time coords should track first start_time and last end_time."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         # Multiple accumulate calls before finalize
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
@@ -456,6 +460,7 @@ class TestMonitorWorkflowIntegration:
     def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
         """Time coords should reset between finalize cycles."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # First cycle
         workflow.accumulate(
@@ -482,6 +487,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Verify cumulative accumulates while window clears each cycle."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # First cycle
         workflow.accumulate(
@@ -509,6 +515,7 @@ class TestMonitorWorkflowIntegration:
     def test_full_workflow_cycle_histogram_mode(self, toa_edges):
         """Test full workflow cycle with histogram-mode monitor data."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # Create histogram data like Cumulative preprocessor produces
         input_edges = sc.linspace('tof', 0, 10, num=11, unit='ns')
