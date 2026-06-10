@@ -670,9 +670,7 @@ class Instrument:
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
 
-        self._validate_binding_dependent_sources()
-        self._validate_context_binding_wire_name_collisions()
-        self._validate_chain_patch_value_log_uniqueness()
+        self.validate()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -683,6 +681,20 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+
+    def validate(self) -> None:
+        """Check registration-time invariants across all bindings and specs.
+
+        Run at the end of :meth:`load_factories`; exposed separately so a
+        synthetic instrument assembled in a test can be checked without the
+        package-import and NeXus-loading machinery. Raises :class:`ValueError`
+        on the first violation. The order matches ``load_factories``: unknown
+        dependent sources are reported before the finer wire-name and
+        chain-patch checks, since those assume the sources are real.
+        """
+        self._validate_binding_dependent_sources()
+        self._validate_context_binding_wire_name_collisions()
+        self._validate_chain_patch_value_log_uniqueness()
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""
