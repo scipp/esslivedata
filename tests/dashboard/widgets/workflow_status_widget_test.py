@@ -16,7 +16,51 @@ from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusWidget,
     _get_unconfigured_sources,
     _group_configs_by_equality,
+    job_state_display_name,
+    worst_job_state,
 )
+
+
+class TestWorstJobState:
+    def test_empty_defaults_to_active(self):
+        assert worst_job_state([]) == JobState.active
+
+    def test_single_state_returned(self):
+        assert worst_job_state([JobState.warning]) == JobState.warning
+
+    def test_priority_order(self):
+        assert worst_job_state([JobState.active, JobState.stopped]) == JobState.stopped
+        assert (
+            worst_job_state([JobState.stopped, JobState.pending_context])
+            == JobState.pending_context
+        )
+        assert (
+            worst_job_state([JobState.pending_context, JobState.warning])
+            == JobState.warning
+        )
+        assert worst_job_state([JobState.warning, JobState.error]) == JobState.error
+
+    def test_pending_context_outranks_stopped_and_active(self):
+        states = [JobState.active, JobState.stopped, JobState.pending_context]
+        assert worst_job_state(states) == JobState.pending_context
+
+    def test_error_dominates(self):
+        states = [
+            JobState.warning,
+            JobState.pending_context,
+            JobState.error,
+            JobState.stopped,
+        ]
+        assert worst_job_state(states) == JobState.error
+
+
+class TestJobStateDisplayName:
+    def test_pending_context_is_friendly(self):
+        assert job_state_display_name(JobState.pending_context) == 'WAITING FOR CONTEXT'
+
+    def test_other_states_use_upper_value(self):
+        assert job_state_display_name(JobState.active) == 'ACTIVE'
+        assert job_state_display_name(JobState.error) == 'ERROR'
 
 
 def _get_button_icons(buttons) -> list[str | None]:

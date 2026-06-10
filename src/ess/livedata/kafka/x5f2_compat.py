@@ -112,6 +112,8 @@ def job_state_to_nicos_status_constant(state: JobState) -> NicosStatus:
             return NicosStatus.DISABLED
         case JobState.warning:
             return NicosStatus.WARNING
+        case JobState.pending_context:
+            return NicosStatus.WARNING
         case _:
             return NicosStatus.UNKNOWN
 
