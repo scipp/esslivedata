@@ -71,6 +71,7 @@ estia = [
 loki = [
     "esssans>=26.4.0",
 ]
+magic = []
 nmx = [
     "essnmx>=26.4.0",
 ]
