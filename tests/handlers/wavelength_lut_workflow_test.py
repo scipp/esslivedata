@@ -33,6 +33,7 @@ def _trigger() -> dict[str, sc.DataArray]:
 @pytest.fixture
 def lut() -> sc.DataArray:
     wf = create_chopperless_wavelength_lut_workflow(params=_params())
+    wf.build()
     wf.accumulate(_trigger(), start_time=0, end_time=1)
     return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
 
@@ -49,6 +50,7 @@ class TestWavelengthLutWorkflow:
     def test_provenance_coords_attached(self) -> None:
         params = _params()
         wf = create_chopperless_wavelength_lut_workflow(params=params)
+        wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
         table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
 
@@ -69,6 +71,7 @@ class TestWavelengthLutWorkflow:
 
     def test_clear_then_retrigger_produces_fresh_table(self) -> None:
         wf = create_chopperless_wavelength_lut_workflow(params=_params())
+        wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
         first = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
         wf.clear()

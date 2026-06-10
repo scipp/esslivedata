@@ -23,6 +23,7 @@ class TestStreamProcessorWorkflowVisualize:
             target_keys={'output': Output},
             accumulators=(Output,),
         )
+        workflow.build()
         graph = workflow.visualize()
         assert isinstance(graph, graphviz.Digraph)
 
@@ -33,5 +34,6 @@ class TestStreamProcessorWorkflowVisualize:
             target_keys={'output': Output},
             accumulators=(Output,),
         )
+        workflow.build()
         graph = workflow.visualize(compact=True, show_legend=False)
         assert isinstance(graph, graphviz.Digraph)

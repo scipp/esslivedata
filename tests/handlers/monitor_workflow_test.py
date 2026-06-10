@@ -739,6 +739,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             geometry_filename=str(geometry_filename),
             lookup_table_filename=str(lookup_table_filename),
         )
+        workflow.build()
 
         # Create histogram data like fake_monitors da00 mode produces
         # Using 'frame_time' which is what the production data uses
