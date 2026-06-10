@@ -2,10 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Wavelength lookup-table workflow.
 
-Wraps :func:`ess.reduce.unwrap.lut.LookupTableWorkflow` as a livedata
-``Workflow`` via :class:`StreamProcessorWorkflow`. The synthetic
-``chopper_cascade`` trigger is exposed as a sciline dynamic key whose value
-is consumed by an internal provider that produces ``DiskChoppers``.
+Builds a Sciline pipeline from :func:`ess.reduce.unwrap.GenericUnwrapWorkflow`
+in *analytical* mode (chopper-cascade polygon geometry, no neutron simulation)
+and wraps it as a livedata ``Workflow`` via :class:`StreamProcessorWorkflow`.
+The synthetic ``chopper_cascade`` trigger is exposed as a sciline dynamic key
+whose value is consumed by an internal provider that produces ``DiskChoppers``.
 
 For chopperless instruments the provider returns an empty ``DiskChoppers``;
 v1 will replace it with one that assembles real choppers from chopper-PV
@@ -18,16 +19,15 @@ from typing import NewType
 
 import sciline
 import scipp as sc
-from ess.reduce.nexus.types import AnyRun, DiskChoppers
+import scippnexus as snx
+from ess.reduce.nexus.types import AnyRun, DiskChoppers, Position
+from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
     DistanceResolution,
     LookupTable,
-    LookupTableWorkflow,
     LtotalRange,
-    NumberOfSimulatedNeutrons,
     PulsePeriod,
     PulseStride,
-    SourcePosition,
     TimeResolution,
 )
 
@@ -39,8 +39,13 @@ from .wavelength_lut_workflow_specs import (
 )
 from .workflow_factory import Workflow
 
-# Placeholder source position. Only used inside the per-chopper loop in the
-# upstream simulator, which is empty for chopperless instruments.
+#: Component the standalone table is parametrised by. The table is not tied to a
+#: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
+#: LookupTable) and does not appear in the published array.
+_LUT_COMPONENT = snx.NXdetector
+
+# Placeholder source position. With no choppers the analytical frame sequence
+# is the full source pulse, so the absolute position is immaterial.
 _PLACEHOLDER_SOURCE_POSITION = sc.vector([0.0, 0.0, 0.0], unit='m')
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
@@ -68,7 +73,9 @@ def _empty_choppers(_: ChopperCascadeTrigger) -> DiskChoppers[AnyRun]:
     return DiskChoppers[AnyRun](sc.DataGroup({}))
 
 
-def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
+def _attach_provenance(
+    table: LookupTable[AnyRun, _LUT_COMPONENT], params: ParamsKey
+) -> WavelengthLut:
     """Attach the four scalar input parameters as 0-D coords on the result.
 
     Makes the published da00 message self-describing: a consumer can
@@ -86,17 +93,18 @@ def _attach_provenance(table: LookupTable, params: ParamsKey) -> WavelengthLut:
 
 
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
-    wf = LookupTableWorkflow()
+    wf = GenericUnwrapWorkflow(
+        run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
+    )
     wf[PulsePeriod] = params.pulse.get_period()
-    wf[PulseStride] = int(params.pulse.stride)
+    wf[PulseStride[AnyRun]] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
-    wf[LtotalRange] = (
+    wf[LtotalRange[AnyRun, _LUT_COMPONENT]] = (
         params.distance_range.get_start(),
         params.distance_range.get_stop(),
     )
-    wf[NumberOfSimulatedNeutrons] = int(params.simulation.num_simulated_neutrons)
-    wf[SourcePosition] = _PLACEHOLDER_SOURCE_POSITION
+    wf[Position[snx.NXsource, AnyRun]] = _PLACEHOLDER_SOURCE_POSITION
     wf[ParamsKey] = params
     wf.insert(_empty_choppers)
     wf.insert(_attach_provenance)
