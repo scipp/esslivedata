@@ -412,6 +412,11 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
                 chain_patch_bindings=chain_patch_bindings,
             )
         elif context_keys:
+            # No symmetric check for chain_patch_bindings: context_keys are
+            # resolved per (spec, source) and non-empty means this job *must*
+            # consume them, whereas chain_patch_bindings is the instrument-wide
+            # list handed to every job — most workflows legitimately match
+            # none of it, so silently not wiring is the expected case.
             raise TypeError(
                 f"Workflow '{workflow_id}' resolved context bindings "
                 f"{sorted(context_keys)} but the produced workflow "
