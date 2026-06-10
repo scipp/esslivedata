@@ -16,17 +16,66 @@ _detector_number_ranges: dict[str, tuple[int, int]] = {
     'magic_detector_b': (491521, 622592),
 }
 
+#: Temporary per-bank ``event_id`` offsets. The current event producer numbers
+#: ``event_id`` in a global active-channel space that does not line up with
+#: ``detector_number``: bank A starts at 1 (already in range) while bank B's
+#: channels start at 245761 and must be shifted by +245760 to land in its
+#: detector_number range (491521..622592). Remove once the producer is fixed.
+_event_id_offsets: dict[str, int] = {
+    'magic_detector_a': 0,
+    'magic_detector_b': 245760,
+}
+
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize MAGIC-specific factories and workflows.
 
     Logical view factories are attached automatically by ``load_factories``;
-    here we only supply the detector_number arrays the views fold over.
+    here we supply the detector_number arrays the views fold over and the
+    cylinder-Y mantle projection factory.
     """
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
+    )
+    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+
+    from . import specs
+    from .specs import DetectorViewParams
+
     for name, (start, stop) in _detector_number_ranges.items():
         instrument.configure_detector(
             name,
             detector_number=sc.arange(
                 'detector_number', start, stop + 1, unit=None, dtype='int32'
             ),
+            event_id_offset=_event_id_offsets[name],
         )
+
+    _pixel_noise = sc.scalar(2.0, unit='mm')
+    _view_config = {
+        'magic_detector_a': GeometricViewConfig(
+            projection_type='cylinder_mantle_y',
+            resolution={'arc_length': 256, 'y': 220},
+            pixel_noise=_pixel_noise,
+        ),
+        'magic_detector_b': GeometricViewConfig(
+            projection_type='cylinder_mantle_y',
+            resolution={'arc_length': 256, 'y': 40},
+            pixel_noise=_pixel_noise,
+        ),
+    }
+
+    @specs.projection_handle.attach_factory()
+    def _projection_factory(
+        source_name: str, params: DetectorViewParams
+    ) -> StreamProcessorWorkflow:
+        # Resolve the geometry file lazily so logical views and service startup
+        # do not depend on it being registered yet.
+        factory = DetectorViewFactory(
+            data_source=NeXusDetectorSource(get_nexus_geometry_filename('magic')),
+            view_config=_view_config,
+        )
+        return factory.make_workflow(source_name, params)

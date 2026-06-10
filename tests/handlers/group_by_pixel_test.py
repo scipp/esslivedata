@@ -62,6 +62,30 @@ class TestGroupByPixel:
         assert sizes.values[0] == 3
         assert sizes.values[1] == 1
 
+    def test_event_id_offset_shifts_ids_into_detector_number_range(self):
+        # Detector numbers 101..103, but the producer numbers event_id from 1.
+        detector_number = sc.arange('detector_number', 101, 104, unit=None)
+        without = GroupByPixel(ToNXevent_data(), detector_number)
+        without.add(
+            timestamp=Timestamp.from_ns(1000), data=_make_events([1, 2], [10, 20])
+        )
+        # No overlap -> all events dropped.
+        assert without.get().bins.size().sum().value == 0
+
+        with_offset = GroupByPixel(
+            ToNXevent_data(), detector_number, event_id_offset=100
+        )
+        with_offset.add(
+            timestamp=Timestamp.from_ns(1000),
+            data=_make_events([1, 2, 1], [10, 20, 30]),
+        )
+        result = with_offset.get()
+        assert sc.identical(result.coords['detector_number'], detector_number)
+        sizes = result.bins.size()
+        assert sizes.values[0] == 2  # id 1 -> detector_number 101
+        assert sizes.values[1] == 1  # id 2 -> detector_number 102
+        assert sizes.values[2] == 0
+
     def test_clear_resets_state(self):
         detector_number = _make_detector_number(2)
         acc = GroupByPixel(ToNXevent_data(), detector_number)

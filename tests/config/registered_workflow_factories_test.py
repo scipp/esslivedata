@@ -105,6 +105,11 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
             "(268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf) "
             "not available in test environment"
         )
+    if str(workflow_id) == "magic/detector_projection/1":
+        pytest.skip(
+            "Workflow requires the MAGIC geometry file, which is not yet "
+            "uploaded to the geometry release nor in _registry."
+        )
 
     instrument = instrument_registry[instrument_name]
     workflow_factory = instrument.workflow_factory

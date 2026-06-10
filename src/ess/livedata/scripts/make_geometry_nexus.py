@@ -15,9 +15,71 @@ def _copy_attributes(src: h5py.Group, dst: h5py.Group) -> None:
         dst.attrs[key] = value
 
 
+def _pixel_offsets_from_off(
+    src_group: h5py.Group, active_face: str
+) -> dict[str, tuple[np.ndarray, str]] | None:
+    """Derive ``[xyz]_pixel_offset`` from a per-voxel ``NXoff_geometry`` pixel_shape.
+
+    Some detectors (e.g. MAGIC) ship only an ``NXoff_geometry`` ``pixel_shape``
+    holding the full per-voxel mesh, with no ``[xyz]_pixel_offset``. essreduce's
+    position calculation requires the offsets, so we synthesise them here from
+    the vertex centroids.
+
+    Each voxel is a cuboid with 8 vertices stored contiguously in
+    ``detector_number`` order. The two curved (radial) mantle faces are the
+    first four and last four vertices; only one is the active surface (the
+    instrument convention is not yet pinned down), so ``active_face`` selects
+    which to use:
+
+    - ``'inner'``: centroid of the first four vertices (smaller radius);
+    - ``'outer'``: centroid of the last four vertices;
+    - ``'centroid'``: centroid of all eight vertices.
+
+    Returns ``None`` if the group already has offsets or has no per-voxel
+    ``pixel_shape``.
+    """
+    if 'x_pixel_offset' in src_group or 'pixel_shape' not in src_group:
+        return None
+    shape = src_group['pixel_shape']
+    if 'vertices' not in shape or 'detector_number' not in src_group:
+        return None
+    n_pixels = src_group['detector_number'].size
+    vertices = shape['vertices']
+    if vertices.shape[0] != n_pixels * 8:
+        return None
+    unit = vertices.attrs.get('units', b'm')
+    if isinstance(unit, bytes):
+        unit = unit.decode()
+    verts = vertices[:].reshape(n_pixels, 8, 3)
+    selector = {'inner': slice(0, 4), 'outer': slice(4, 8), 'centroid': slice(0, 8)}[
+        active_face
+    ]
+    centroid = verts[:, selector, :].mean(axis=1)
+    return {
+        'x_pixel_offset': (centroid[:, 0], unit),
+        'y_pixel_offset': (centroid[:, 1], unit),
+        'z_pixel_offset': (centroid[:, 2], unit),
+    }
+
+
+def _create_compressed(dst_group: h5py.Group, name: str, data: np.ndarray) -> None:
+    # Using compression makes a 10x size difference (tested on DREAM)
+    dst_group.create_dataset(
+        name, data=data, compression='gzip', compression_opts=1, shuffle=True
+    )
+
+
 def _copy_detector_fields(
-    src_group: h5py.Group, dst_group: h5py.Group, use_pixel_shape: bool
+    src_group: h5py.Group,
+    dst_group: h5py.Group,
+    use_pixel_shape: bool,
+    off_active_face: str | None = None,
 ) -> None:
+    derived_offsets = (
+        _pixel_offsets_from_off(src_group, off_active_face)
+        if off_active_face is not None
+        else None
+    )
     compression_fields: list[str] = [
         'detector_number',
         'x_pixel_offset',
@@ -26,18 +88,15 @@ def _copy_detector_fields(
     ]
     for field in compression_fields:
         if field in src_group:
-            # Using compression makes a 10x size difference (tested on DREAM)
-            data: np.ndarray = src_group[field][:]
-            dst_group.create_dataset(
-                field,
-                data=data,
-                compression='gzip',
-                compression_opts=1,
-                shuffle=True,
-            )
+            _create_compressed(dst_group, field, src_group[field][:])
             _copy_attributes(src_group[field], dst_group[field])
+    if derived_offsets is not None:
+        for field, (data, unit) in derived_offsets.items():
+            _create_compressed(dst_group, field, data)
+            dst_group[field].attrs['units'] = unit
     src_group.copy('depends_on', dst_group)
-    if use_pixel_shape and 'pixel_shape' in src_group:
+    # Keep the (large) OFF mesh only when offsets were not derived from it.
+    if use_pixel_shape and derived_offsets is None and 'pixel_shape' in src_group:
         src_group.copy('pixel_shape', dst_group)
 
 
@@ -184,7 +243,10 @@ _HANDLED_NX_CLASSES = (
 
 
 def write_minimal_geometry(
-    input_filename: Path, output_filename: Path, use_pixel_shape: bool = True
+    input_filename: Path,
+    output_filename: Path,
+    use_pixel_shape: bool = True,
+    off_active_face: str | None = None,
 ) -> None:
     """Create minimal geometry file with only detector positions and transformations."""
     with h5py.File(input_filename, 'r') as fin, h5py.File(output_filename, 'w') as fout:
@@ -197,7 +259,12 @@ def write_minimal_geometry(
                 return
             dst = _get_or_create_dst(fin, fout, name, obj)
             if nx_class == 'NXdetector':
-                _copy_detector_fields(obj, dst, use_pixel_shape=use_pixel_shape)
+                _copy_detector_fields(
+                    obj,
+                    dst,
+                    use_pixel_shape=use_pixel_shape,
+                    off_active_face=off_active_face,
+                )
             elif nx_class == 'NXmonitor':
                 _copy_monitor_fields(obj, dst)
             elif nx_class in ('NXsource', 'NXsample'):
@@ -227,6 +294,17 @@ def main() -> int:
         help='Do not keep pixel shape (which can be large) if present in input file',
     )
     parser.add_argument(
+        '--off-active-face',
+        choices=('inner', 'outer', 'centroid'),
+        default=None,
+        help=(
+            'For detectors with only an NXoff_geometry pixel_shape and no '
+            '[xyz]_pixel_offset, derive offsets from the per-voxel vertex '
+            'centroids using the given face (inner/outer radial face, or the '
+            'full-voxel centroid). The OFF mesh is then dropped.'
+        ),
+    )
+    parser.add_argument(
         '--force',
         action='store_true',
         help='Overwrite output file if it exists',
@@ -241,7 +319,12 @@ def main() -> int:
         print(f'Output file {args.output} already exists', file=sys.stderr)
         return 1
 
-    write_minimal_geometry(args.input, args.output, use_pixel_shape=args.use_shape)
+    write_minimal_geometry(
+        args.input,
+        args.output,
+        use_pixel_shape=args.use_shape,
+        off_active_face=args.off_active_face,
+    )
     return 0
 
 

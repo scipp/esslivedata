@@ -15,6 +15,12 @@ from ess.livedata.config import (
     SourceMetadata,
     instrument_registry,
 )
+from ess.livedata.config.workflow_spec import DETECTORS
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
 from .views import get_strip_view, get_wire_view
 
@@ -57,4 +63,19 @@ instrument.add_logical_view(
     output_ndim=1,
     roi_support=False,
     reduction_dim='other',
+)
+
+# Both banks are vertical (Y-axis) cylinders; project onto the mantle. Pixel
+# positions come from a geometry file whose offsets are derived from the NeXus
+# NXoff_geometry voxel centroids (see scripts/make_geometry_nexus --off-active-face).
+projection_handle = instrument.register_spec(
+    group=DETECTORS,
+    name='detector_projection',
+    version=1,
+    title='Detector Projection',
+    description='Projection of the cylindrical detector banks onto their mantle.',
+    source_names=detector_names,
+    aux_sources=DetectorROIAuxSources(),
+    params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
