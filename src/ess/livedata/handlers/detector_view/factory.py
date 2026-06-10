@@ -91,6 +91,7 @@ class DetectorViewFactory:
         self,
         source_name: str,
         params: DetectorViewParams,
+        aux_source_names: dict[str, str],
         lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:
         """
@@ -102,6 +103,13 @@ class DetectorViewFactory:
             Name of the detector source (e.g., 'panel_0').
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
+        aux_source_names:
+            Rendered auxiliary stream names, mapping role to wire name. ROI
+            roles (``'roi_rectangle'``/``'roi_polygon'``) carry the per-job
+            wire names (``'{job_id}/roi_rectangle'``) on which ROI requests
+            arrive; the workflow keys its ROI ``context_keys`` by these so
+            ``StreamProcessorWorkflow.accumulate`` routes incoming requests to
+            ``set_context``. Empty for views without ROI support.
         lookup_table_filename:
             Path to lookup table file. Required for 'wavelength' coordinate mode.
             The caller (instrument factory) is responsible for resolving this
@@ -235,12 +243,15 @@ class DetectorViewFactory:
                 }
             )
             # ROI requests are auxiliary context streams delivered via
-            # set_context; the routing layer remaps the per-job wire names
-            # ('{job_id}/roi_rectangle') back to these field names.
+            # set_context. They arrive keyed by the per-job wire name
+            # ('{job_id}/roi_rectangle'), so context_keys must use those wire
+            # names (resolved here from aux_source_names) for
+            # StreamProcessorWorkflow.accumulate to route them. The readback
+            # target_keys above stay keyed by output name.
             context_keys.update(
                 {
-                    'roi_rectangle': ROIRectangleRequest,
-                    'roi_polygon': ROIPolygonRequest,
+                    aux_source_names['roi_rectangle']: ROIRectangleRequest,
+                    aux_source_names['roi_polygon']: ROIPolygonRequest,
                 }
             )
             window_outputs = (
