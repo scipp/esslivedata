@@ -1758,17 +1758,33 @@ class TestTimeBounds:
         assert plots.merge_time_bounds([]) is None
 
     def test_merge_takes_oldest_end_for_lag(self) -> None:
-        a = plots.TimeBounds(min_end=self._ts(100), max_end=self._ts(100))
-        b = plots.TimeBounds(min_end=self._ts(50), max_end=self._ts(80))
+        a = plots.TimeBounds(
+            min_end=self._ts(100), created_at=self._ts(200), max_end=self._ts(100)
+        )
+        b = plots.TimeBounds(
+            min_end=self._ts(50), created_at=self._ts(150), max_end=self._ts(80)
+        )
         merged = plots.merge_time_bounds([a, b])
         assert merged.min_end == self._ts(50)
 
+    def test_merge_takes_earliest_created_at(self) -> None:
+        a = plots.TimeBounds(min_end=self._ts(100), created_at=self._ts(200))
+        b = plots.TimeBounds(min_end=self._ts(50), created_at=self._ts(150))
+        merged = plots.merge_time_bounds([a, b])
+        assert merged.created_at == self._ts(150)
+
     def test_merge_spans_full_range(self) -> None:
         a = plots.TimeBounds(
-            min_end=self._ts(100), min_start=self._ts(90), max_end=self._ts(110)
+            min_end=self._ts(100),
+            created_at=self._ts(200),
+            min_start=self._ts(90),
+            max_end=self._ts(110),
         )
         b = plots.TimeBounds(
-            min_end=self._ts(50), min_start=self._ts(40), max_end=self._ts(60)
+            min_end=self._ts(50),
+            created_at=self._ts(150),
+            min_start=self._ts(40),
+            max_end=self._ts(60),
         )
         merged = plots.merge_time_bounds([a, b, None])
         assert merged.min_start == self._ts(40)
@@ -1776,29 +1792,45 @@ class TestTimeBounds:
         assert merged.max_end == self._ts(110)
 
     def test_merge_drops_missing_start(self) -> None:
-        a = plots.TimeBounds(min_end=self._ts(100))  # no start/max_end
+        a = plots.TimeBounds(min_end=self._ts(100), created_at=self._ts(200))
         b = plots.TimeBounds(
-            min_end=self._ts(50), min_start=self._ts(40), max_end=self._ts(60)
+            min_end=self._ts(50),
+            created_at=self._ts(150),
+            min_start=self._ts(40),
+            max_end=self._ts(60),
         )
         merged = plots.merge_time_bounds([a, b])
         assert merged.min_start == self._ts(40)
         assert merged.max_end == self._ts(60)
 
+    def test_lag_is_frozen_at_created_at(self) -> None:
+        bounds = plots.TimeBounds(
+            min_end=self._ts(int(8e9)), created_at=self._ts(int(10e9))
+        )
+        assert bounds.lag_seconds() == pytest.approx(2.0)
+
+    def test_age_grows_against_now(self) -> None:
+        bounds = plots.TimeBounds(
+            min_end=self._ts(int(8e9)), created_at=self._ts(int(10e9))
+        )
+        assert bounds.age_seconds(now=self._ts(int(25e9))) == pytest.approx(17.0)
+
     def test_format_with_range_shows_interval(self) -> None:
-        now = self._ts(int(10e9))
         bounds = plots.TimeBounds(
             min_end=self._ts(int(8e9)),
+            created_at=self._ts(int(10e9)),
             min_start=self._ts(int(7e9)),
             max_end=self._ts(int(9e9)),
         )
-        text = plots.format_time_info(bounds, now=now)
+        text = plots.format_time_info(bounds)
         assert ' - ' in text
         assert 'Lag: 2.0s' in text
 
     def test_format_without_range_shows_single_time(self) -> None:
-        now = self._ts(int(10e9))
-        bounds = plots.TimeBounds(min_end=self._ts(int(7e9)))
-        text = plots.format_time_info(bounds, now=now)
+        bounds = plots.TimeBounds(
+            min_end=self._ts(int(7e9)), created_at=self._ts(int(10e9))
+        )
+        text = plots.format_time_info(bounds)
         assert ' - ' not in text
         assert 'Lag: 3.0s' in text
 
