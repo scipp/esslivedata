@@ -17,6 +17,7 @@ from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
     JobId,
+    WorkflowId,
     WorkflowOutputsBase,
 )
 from ess.livedata.handlers.workflow_factory import (
@@ -660,6 +661,15 @@ class TestContextBindings:
         assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
+
+    def test_resolve_context_keys_raises_for_unregistered_workflow(self):
+        instrument = Instrument(name='test', detector_names=['det1'])
+        workflow_id = WorkflowId(
+            instrument='test', namespace='spec', name='ghost', version=1
+        )
+
+        with pytest.raises(KeyError, match=r'not.*registered'):
+            instrument.resolve_context_keys(workflow_id, 'det1')
 
 
 class TestInstrumentRegisterSpec:

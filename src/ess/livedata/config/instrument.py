@@ -281,10 +281,17 @@ class Instrument:
         instrument-scope entries — a spec that explicitly declares a binding
         cannot opt out of it via the flag. Context wire names equal their stream
         names, so the returned keys double as the set of gating context streams.
+
+        Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
+        result means "this workflow gates on nothing" and must not be
+        conflated with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
-            return {}
+            raise KeyError(
+                f"Cannot resolve context keys: workflow {workflow_id} is not "
+                "registered with this instrument's workflow factory"
+            )
         instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
