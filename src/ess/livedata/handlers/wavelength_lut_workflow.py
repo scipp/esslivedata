@@ -175,11 +175,14 @@ def _attach_provenance(
     reconstruct the upstream ``LookupTable`` dataclass from the array alone,
     without out-of-band coordination on parameter values. Pulling from
     ``params`` (not ``table``) keeps the units user-facing — the upstream
-    pipeline may convert internally.
+    pipeline may convert internally. The stride is the exception: it is read
+    back from ``table`` so the coord reflects the value actually used, which
+    with auto-detection is guessed from the choppers rather than supplied by
+    ``params``.
     """
     arr = table.array.copy()
     arr.coords['pulse_period'] = params.pulse.get_period()
-    arr.coords['pulse_stride'] = sc.scalar(int(params.pulse.stride))
+    arr.coords['pulse_stride'] = sc.scalar(int(table.pulse_stride))
     arr.coords['distance_resolution'] = params.distance_resolution.get()
     arr.coords['time_resolution'] = params.time_resolution.get()
     return WavelengthLut(arr)
@@ -190,7 +193,10 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
         run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
     )
     wf[PulsePeriod] = params.pulse.get_period()
-    wf[PulseStride[AnyRun]] = int(params.pulse.stride)
+    if not params.pulse.auto_stride:
+        # Otherwise the workflow's guess_pulse_stride_from_choppers provider
+        # derives the stride from the chopper rotation frequencies.
+        wf[PulseStride[AnyRun]] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
     wf[LtotalRange[AnyRun, _LUT_COMPONENT]] = (

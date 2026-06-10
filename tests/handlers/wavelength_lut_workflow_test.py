@@ -21,6 +21,7 @@ from ess.livedata.handlers.wavelength_lut_workflow import (
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
+    Pulse,
     WavelengthLutParams,
 )
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
@@ -164,7 +165,10 @@ class TestNoChopperWorkflow:
 
 
 def _run_chopper_lut(
-    geom: Path, names: list[str], setpoints: dict[str, tuple[float, float]]
+    geom: Path,
+    names: list[str],
+    setpoints: dict[str, tuple[float, float]],
+    params: WavelengthLutParams | None = None,
 ) -> sc.DataArray:
     """Build the chopper LUT workflow, feed setpoint context + trigger, finalize.
 
@@ -173,7 +177,7 @@ def _run_chopper_lut(
     """
     keys = {name: make_chopper_setpoint_keys(name) for name in names}
     wf = create_wavelength_lut_workflow(
-        params=_params(), setpoint_keys=keys, nexus_filename=str(geom)
+        params=params or _params(), setpoint_keys=keys, nexus_filename=str(geom)
     )
     context_keys = {}
     for name in names:
@@ -226,6 +230,36 @@ class TestMultiChopperWorkflow:
         )
         # A different delay setpoint yields a different table.
         assert not np.array_equal(np.nan_to_num(a.values), np.nan_to_num(b.values))
+
+    def test_auto_stride_guessed_from_slow_chopper(
+        self, two_chopper_geometry: Path
+    ) -> None:
+        # auto_stride is the default. A chopper at half the pulse frequency
+        # (7 Hz vs 14 Hz) implies pulse-skipping with stride 2; the workflow's
+        # guess provider derives it and the provenance coord reflects it,
+        # despite params.pulse.stride staying at its default of 1.
+        params = _params()
+        assert params.pulse.auto_stride is True
+        assert params.pulse.stride == 1
+        table = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-7.0, 0.0), 'chopper2': (-14.0, 0.0)},
+            params=params,
+        )
+        assert int(table.coords['pulse_stride'].value) == 2
+
+    def test_manual_stride_overrides_choppers(self, two_chopper_geometry: Path) -> None:
+        # With auto-detection disabled the supplied stride is used verbatim,
+        # ignoring what the chopper frequencies would imply.
+        params = WavelengthLutParams(pulse=Pulse(auto_stride=False, stride=1))
+        table = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-7.0, 0.0), 'chopper2': (-14.0, 0.0)},
+            params=params,
+        )
+        assert int(table.coords['pulse_stride'].value) == 1
 
     def test_missing_chopper_in_artifact_raises(self, tmp_path: Path) -> None:
         # A configured chopper absent from the geometry artifact is not validated
