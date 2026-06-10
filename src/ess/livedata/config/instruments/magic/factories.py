@@ -47,12 +47,12 @@ def setup_factories(instrument: Instrument) -> None:
     _view_config = {
         'magic_detector_a': GeometricViewConfig(
             projection_type='cylinder_mantle_y',
-            resolution={'arc_length': 256, 'y': 220},
+            resolution={'y': 220, 'arc_length': 256},
             pixel_noise=_pixel_noise,
         ),
         'magic_detector_b': GeometricViewConfig(
             projection_type='cylinder_mantle_y',
-            resolution={'arc_length': 256, 'y': 40},
+            resolution={'y': 20, 'arc_length': 256},
             pixel_noise=_pixel_noise,
         ),
     }
