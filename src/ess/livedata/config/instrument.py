@@ -138,7 +138,6 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
-    _event_id_offsets: dict[str, int] = field(default_factory=dict, init=False)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
@@ -358,7 +357,6 @@ class Instrument:
         detector_number: sc.Variable | None = None,
         *,
         detector_group_name: str | None = None,
-        event_id_offset: int = 0,
     ) -> None:
         """
         Configure detector-specific metadata.
@@ -371,18 +369,12 @@ class Instrument:
             Optional explicit detector_number array (e.g., computed arrays for NMX).
         detector_group_name
             Optional detector group name for nexus file loading.
-        event_id_offset
-            Temporary constant added to incoming ``event_id`` values before pixel
-            grouping, for producers that number ``event_id`` in a different origin
-            than ``detector_number``. Remove once the producer is fixed.
         """
         if name not in self.detector_names:
             raise ValueError(
                 f"Detector {name} not in declared detector_names. "
                 f"Available detectors: {self.detector_names}"
             )
-        if event_id_offset:
-            self._event_id_offsets[name] = event_id_offset
         if detector_number is not None:
             self._detector_numbers[name] = detector_number
             return
@@ -405,13 +397,6 @@ class Instrument:
 
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
-
-    def get_event_id_offset(self, name: str) -> int:
-        """Temporary per-detector ``event_id`` offset (0 if unset).
-
-        See :meth:`configure_detector`.
-        """
-        return self._event_id_offsets.get(name, 0)
 
     def configure_pixellated_monitor(
         self,

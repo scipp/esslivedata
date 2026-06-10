@@ -46,11 +46,7 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
                     return None
                 if self._group_by_pixel:
                     detector_number = self._instrument.get_detector_number(key.name)
-                    return GroupByPixel(
-                        ToNXevent_data(),
-                        detector_number,
-                        event_id_offset=self._instrument.get_event_id_offset(key.name),
-                    )
+                    return GroupByPixel(ToNXevent_data(), detector_number)
                 return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)

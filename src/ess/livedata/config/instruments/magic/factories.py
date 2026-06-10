@@ -16,16 +16,6 @@ _detector_number_ranges: dict[str, tuple[int, int]] = {
     'magic_detector_b': (491521, 622592),
 }
 
-#: Temporary per-bank ``event_id`` offsets. The current event producer numbers
-#: ``event_id`` in a global active-channel space that does not line up with
-#: ``detector_number``: bank A starts at 1 (already in range) while bank B's
-#: channels start at 245761 and must be shifted by +245760 to land in its
-#: detector_number range (491521..622592). Remove once the producer is fixed.
-_event_id_offsets: dict[str, int] = {
-    'magic_detector_a': 0,
-    'magic_detector_b': 245760,
-}
-
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize MAGIC-specific factories and workflows.
@@ -51,7 +41,6 @@ def setup_factories(instrument: Instrument) -> None:
             detector_number=sc.arange(
                 'detector_number', start, stop + 1, unit=None, dtype='int32'
             ),
-            event_id_offset=_event_id_offsets[name],
         )
 
     _pixel_noise = sc.scalar(2.0, unit='mm')
