@@ -45,9 +45,11 @@ class FakeJobFactory(JobFactory):
         return result
 
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
-        # For testing, treat every declared aux as a context binding — the
-        # scenario most production workflows with aux expose. Tests that
-        # need a dynamic-aux scenario construct the Job directly.
+        # Test convenience only: gate on every declared aux so gating scenarios
+        # are easy to drive from a config. This is the inverse of production
+        # semantics, where only ContextBindings gate and rendered aux (ROI,
+        # monitors) never does — see TestJobFactoryDoesNotGateOnAux for that
+        # invariant against the real JobFactory.
         aux = config.aux_source_names or {}
         processor = FakeProcessor(context_keys=dict.fromkeys(aux, object))
         self.processors[job_id] = processor
@@ -1638,6 +1640,48 @@ class TestJobFactoryRender:
         assert job.input_stream_names == {'detector1/monitor1'}
 
 
+class TestJobFactoryDoesNotGateOnAux:
+    """Rendered aux sources (ROI, monitor refs) must never appear in gating_streams.
+
+    Only ContextBindings gate a job. Adding aux to gating_streams would deadlock
+    every ROI detector view because ROI streams may never publish.
+    """
+
+    def test_aux_only_workflow_has_empty_gating_streams(self) -> None:
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSources
+
+        instrument = Instrument(name='test')
+        handle = instrument.register_spec(
+            name='aux_only_workflow',
+            version=1,
+            title='Aux Only',
+            description='Workflow with aux but no ContextBinding',
+            source_names=['detector1'],
+            aux_sources=AuxSources({'roi': 'roi_rectangle', 'monitor': 'monitor1'}),
+            outputs=SimpleTestOutputs,
+        )
+
+        @handle.attach_factory()
+        def aux_only_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(
+            identifier=handle.workflow_id,
+            aux_source_names={'roi': 'roi_rectangle', 'monitor': 'monitor1'},
+            job_id=job_id,
+        )
+
+        job = factory.create(job_id=job_id, config=config)
+
+        assert job.gating_streams == set()
+        assert job.missing_context(set()) == set()
+        # Aux streams are still routed as inputs, just not gating.
+        assert job.input_stream_names == {'roi_rectangle', 'monitor1'}
+
+
 class _CtxKeyA:
     """Opaque workflow_key used by ContextBinding tests."""
 
@@ -2407,4 +2451,123 @@ class TestContextStreamGate:
             )
         )
         manager.compute_results()
+        assert manager.get_job_status(job_id) is None
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle actions on pending-context (gated) jobs                   #
+    # ------------------------------------------------------------------ #
+
+    def _drive_to_pending(
+        self, fake_job_factory, *, source: str = "src", aux_stream: str = "ctx_stream"
+    ) -> tuple[JobManager, JobId]:
+        """Return a (manager, job_id) pair with the job in pending_context.
+
+        Schedules a job gated on ``aux_stream``, then pushes one tick of
+        primary-only data so it activates (time-based) but stays gated.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config_with_aux(source, aux_stream))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name=source): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+        return manager, job_id
+
+    def test_get_all_job_statuses_includes_pending_job(self, fake_job_factory):
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        statuses = manager.get_all_job_statuses()
+
+        assert len(statuses) == 1
+        assert statuses[0].job_id == job_id
+        assert statuses[0].state == JobState.pending_context
+
+    def test_stop_pending_job_removes_it(self, fake_job_factory):
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.stop_job(job_id)
+
+        assert manager.get_job_status(job_id) is None
+        assert manager.get_all_job_statuses() == []
+
+    def test_reset_pending_job_re_arms_warning(self, fake_job_factory):
+        """reset_job on a gated job clears any prior error/warning state then
+        re-arms the pending-context warning from the context cache.
+
+        With ``no_cached_context`` the gating stream is still missing after the
+        reset, so the warning is re-populated and the job remains pending.
+        """
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+        # Confirm initial warning is set.
+        assert manager.get_job_status(job_id).warning_message is not None
+
+        manager.reset_job(job_id)
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is not None
+        assert "ctx_stream" in status.warning_message
+
+    def test_reset_pending_job_clears_warning_when_context_now_cached(
+        self, fake_job_factory
+    ):
+        """If the gating stream has appeared in the cache by reset time, the
+        warning is not re-armed (the gate will open on the next tick).
+        """
+        cache = FakeContextCache()
+        manager = JobManager(fake_job_factory, context_reader=cache)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+
+        # Context stream is now available in the cache.
+        cache.values["ctx_stream"] = sc.scalar(99.0)
+        manager.reset_job(job_id)
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is None
+
+    def test_job_command_stop_reaches_pending_job(self, fake_job_factory):
+        """`job_command` with stop action removes a pending-context job."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(job_id=job_id, action=JobAction.stop))
+
+        assert manager.get_job_status(job_id) is None
+
+    def test_job_command_reset_reaches_pending_job(self, fake_job_factory):
+        """`job_command` with reset action re-arms the warning on a pending job."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(job_id=job_id, action=JobAction.reset))
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert "ctx_stream" in status.warning_message
+
+    def test_perform_action_stop_reaches_pending_jobs_without_job_id(
+        self, fake_job_factory
+    ):
+        """A broadcast `job_command` (no job_id, no workflow_id) stops pending jobs."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(action=JobAction.stop))
+
         assert manager.get_job_status(job_id) is None
