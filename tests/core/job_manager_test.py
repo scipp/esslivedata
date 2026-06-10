@@ -70,6 +70,30 @@ def fake_job_factory():
     return FakeJobFactory()
 
 
+def no_cached_context(names: set[str]) -> dict[StreamId, object]:
+    """Context reader with nothing cached: the gate sees only batch contents."""
+    return {}
+
+
+class FakeContextCache:
+    """Dict-backed stand-in for ``MessagePreprocessor.get_context``.
+
+    Tests record published context values in :attr:`values`; like the real
+    preprocessor cache, the latest value of every context stream seen so far
+    stays available.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[str, object] = {}
+
+    def __call__(self, names: set[str]) -> dict[StreamId, object]:
+        return {
+            StreamId(name=name): value
+            for name, value in self.values.items()
+            if name in names
+        }
+
+
 def _make_config(
     source_name: str = "test_source",
     *,
@@ -88,14 +112,14 @@ def _make_config(
 class TestJobManager:
     def test_initial_state(self, fake_job_factory):
         """Test initial state of JobManager."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         assert manager.service_name == 'data_reduction'
         assert len(manager.active_jobs) == 0
 
     def test_schedule_job_creates_job(self, fake_job_factory):
         """Test that scheduling a job creates it using the factory."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
@@ -107,7 +131,7 @@ class TestJobManager:
 
     def test_schedule_multiple_jobs_gives_unique_ids(self, fake_job_factory):
         """Test that scheduling multiple jobs increments job IDs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         config1 = _make_config("source1")
         config2 = _make_config("source2")
@@ -122,7 +146,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         """Test that pushing data activates jobs scheduled to start immediately."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("test_source"))
         assert len(manager.active_jobs) == 0
@@ -141,7 +165,7 @@ class TestJobManager:
 
     def test_push_data_returns_job_statuses(self, fake_job_factory):
         """Test that push_data returns status for each active job."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source2"))
@@ -162,7 +186,7 @@ class TestJobManager:
 
     def test_push_data_handles_job_errors(self, fake_job_factory):
         """Test that push_data handles and reports job errors."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -183,7 +207,7 @@ class TestJobManager:
 
     def test_push_data_activates_jobs_based_on_schedule(self, fake_job_factory):
         """Test that jobs are activated based on their scheduled start time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="early_workflow",
@@ -221,7 +245,7 @@ class TestJobManager:
 
     def test_push_data_feeds_active_jobs(self, fake_job_factory):
         """Test that pushing data feeds all active jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source1"))
@@ -242,7 +266,7 @@ class TestJobManager:
 
     def test_stop_job_scheduled_removes_from_system(self, fake_job_factory):
         """Test stopping a scheduled job removes it from the system."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(
             _make_config(
@@ -267,7 +291,7 @@ class TestJobManager:
 
     def test_stop_job_removes_active_immediately(self, fake_job_factory):
         """Test stopping an active job removes it from the system."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -286,14 +310,14 @@ class TestJobManager:
 
     def test_stop_job_nonexistent_raises_error(self, fake_job_factory):
         """Test stopping a non-existent job raises KeyError."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.stop_job(999)
 
     def test_reset_job_active(self, fake_job_factory):
         """Test resetting an active job calls its reset method."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -318,7 +342,7 @@ class TestJobManager:
 
     def test_reset_job_scheduled(self, fake_job_factory):
         """Test resetting a scheduled job calls its reset method."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(
             _make_config(
@@ -333,14 +357,14 @@ class TestJobManager:
 
     def test_reset_job_nonexistent_raises_error(self, fake_job_factory):
         """Test resetting a non-existent job raises KeyError."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
 
     def test_compute_results_returns_job_results(self, fake_job_factory):
         """Test that compute_results returns results from all active jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source2"))
@@ -363,7 +387,7 @@ class TestJobManager:
 
     def test_compute_results_ignores_stopped_jobs(self, fake_job_factory):
         """Test that compute_results does not return results for stopped jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -386,7 +410,7 @@ class TestJobManager:
 
     def test_job_lifecycle_with_schedule_based_activation(self, fake_job_factory):
         """Test complete job lifecycle with schedule-based activation."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config2 = _make_config(
             "source2",
             name="workflow2",
@@ -448,7 +472,7 @@ class TestJobManager:
 
     def test_multiple_data_accumulation(self, fake_job_factory):
         """Test that multiple data pushes accumulate correctly in jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -485,7 +509,7 @@ class TestJobManager:
 
     def test_jobs_finish_based_on_schedule_end_time(self, fake_job_factory):
         """Test that jobs are marked for finishing based on schedule end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
@@ -517,7 +541,7 @@ class TestJobManager:
 
     def test_multiple_jobs_different_schedule_end_times(self, fake_job_factory):
         """Test handling multiple jobs with different scheduled end times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="workflow1",
@@ -583,7 +607,7 @@ class TestJobManager:
 
     def test_job_finishing_edge_case_exact_schedule_end_time(self, fake_job_factory):
         """Test job finishing when data start_time is exactly scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
@@ -615,7 +639,7 @@ class TestJobManager:
 
     def test_no_premature_job_finishing(self, fake_job_factory):
         """Test jobs don't finish prematurely when data is before scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
@@ -650,7 +674,7 @@ class TestJobManager:
         Test complex scenario with job stopping, schedule-based finishing,
         and continuation.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="workflow1",
@@ -711,7 +735,7 @@ class TestJobManager:
 
     def test_jobs_without_end_time_never_finish_automatically(self, fake_job_factory):
         """Test that jobs without scheduled end_time never finish automatically."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=None),
@@ -735,7 +759,7 @@ class TestJobManager:
 
     def test_schedule_start_time_edge_cases(self, fake_job_factory):
         """Test edge cases for schedule start times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # Test future start
         config_future = _make_config(
@@ -785,7 +809,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         """Test that immediate start (-1) with any end_time is allowed."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # This should be allowed: immediate start with specific end time
         config_valid = _make_config(
@@ -798,7 +822,7 @@ class TestJobManager:
 
     def test_job_with_zero_duration_after_immediate_start(self, fake_job_factory):
         """Test behavior of job with immediate start and very early end time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(50)),
@@ -824,7 +848,7 @@ class TestJobManager:
         """
         Test job activation when data start_time exactly matches scheduled start_time.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(
@@ -847,7 +871,7 @@ class TestJobManager:
 
     def test_job_schedule_edge_case_end_equals_data_time(self, fake_job_factory):
         """Test job finishing when data end_time exactly matches scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
@@ -889,7 +913,7 @@ class TestJobManager:
 
     def test_multiple_jobs_same_schedule_times(self, fake_job_factory):
         """Test multiple jobs with identical start and end times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         schedule = JobSchedule(
             start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
         )
@@ -926,7 +950,7 @@ class TestJobManager:
 
     def test_negative_start_times_other_than_minus_one(self, fake_job_factory):
         """Test behavior with negative start times other than -1."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # Negative start times other than -1 should be treated as regular timestamps
         config = _make_config(
@@ -948,7 +972,7 @@ class TestJobManager:
 
     def test_accumulate_failure_handled_gracefully(self, fake_job_factory):
         """Test that an accumulate failure in the processor is handled gracefully."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -985,7 +1009,7 @@ class TestJobManager:
 
     def test_finalize_failure_handled_gracefully(self, fake_job_factory):
         """Test that a finalize failure in the processor is handled gracefully."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -1023,7 +1047,7 @@ class TestJobManager:
     def test_jobs_with_finalize_errors_will_compute_again_without_new_primary_data(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1052,7 +1076,7 @@ class TestJobManager:
 
     def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
         """Test that warnings from None values in results are tracked in job status."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1116,7 +1140,7 @@ class TestJobManager:
     def test_successful_jobs_will_not_compute_again_without_new_primary_data(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1143,7 +1167,7 @@ class TestJobManager:
     def test_jobs_without_primary_data_not_included_in_compute_results(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config("source1")
         config2 = _make_config("source2")
         job_id1 = manager.schedule_job(config1)
@@ -1182,7 +1206,7 @@ class TestJobManager:
     def test_auxiliary_data_only_does_not_trigger_compute_results(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -1218,7 +1242,7 @@ class TestPushFailureCascade:
 
     def test_failed_push_does_not_trigger_finalize(self, fake_job_factory):
         """When push fails on empty accumulators, compute_results must not finalize."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1250,7 +1274,7 @@ class TestPushFailureCascade:
 
     def test_recovery_after_push_failure(self, fake_job_factory):
         """Job recovers to active state when push succeeds after a failure."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1286,7 +1310,7 @@ class TestPushFailureCascade:
 
     def test_finalize_failure_retries_without_new_push(self, fake_job_factory):
         """Successful push followed by finalize failure retries on next cycle."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1892,7 +1916,9 @@ class TestJobManagerThreading:
         self, n_jobs: int, job_threads: int
     ) -> tuple[JobManager, ThreadTrackingJobFactory, list[JobId]]:
         factory = ThreadTrackingJobFactory()
-        manager = JobManager(factory, job_threads=job_threads)
+        manager = JobManager(
+            factory, job_threads=job_threads, context_reader=no_cached_context
+        )
         job_ids = []
         for i in range(n_jobs):
             source = f"source_{i}"
@@ -1970,7 +1996,9 @@ class TestJobManagerThreading:
         results_by_mode: dict[int, list[JobResult]] = {}
         for job_threads in (1, 4):
             factory = FakeJobFactory()
-            manager = JobManager(factory, job_threads=job_threads)
+            manager = JobManager(
+                factory, job_threads=job_threads, context_reader=no_cached_context
+            )
             for config in configs:
                 manager.schedule_job(config)
 
@@ -2026,13 +2054,13 @@ class TestJobManagerThreading:
 
 class TestPeekPendingStreams:
     def test_returns_empty_when_no_scheduled_jobs(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         assert manager.peek_pending_streams(start_time=100) == set()
 
     def test_returns_aux_and_primary_streams_for_job_ready_to_activate(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -2050,7 +2078,7 @@ class TestPeekPendingStreams:
 
     def test_is_idempotent(self, fake_job_factory):
         """Calling peek multiple times returns the same result (no state mutation)."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -2064,7 +2092,7 @@ class TestPeekPendingStreams:
         assert result1 == result2 == {"src", "stream_a"}
 
     def test_returns_union_of_multiple_jobs(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config_a = _make_config(
             "src_a",
             name="wf_a",
@@ -2090,7 +2118,7 @@ class TestPeekPendingStreams:
     def test_returns_primary_streams_for_jobs_without_aux_sources(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("src", name="wf")
         manager.schedule_job(config)
 
@@ -2104,7 +2132,7 @@ class TestPeekPendingStreams:
         recompute on unchanged values. The context gate (ADR 0002) tracks
         per-job aux availability stickily in :class:`JobManager` instead.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -2142,7 +2170,7 @@ class TestContextStreamGate:
         )
 
     def test_job_with_no_aux_is_never_gated(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("src"))
         manager.push_data(
             WorkflowData(
@@ -2157,7 +2185,7 @@ class TestContextStreamGate:
         assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
 
     def test_job_with_aux_present_processes_normally(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
         manager.push_data(
             WorkflowData(
@@ -2175,7 +2203,7 @@ class TestContextStreamGate:
         assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
 
     def test_missing_aux_gates_and_drops_primary(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
         # Primary arrives, aux does not — job should activate (time-based) but
         # be gated, and the primary batch must not reach the workflow.
@@ -2195,7 +2223,7 @@ class TestContextStreamGate:
         assert fake_job_factory.processors[job_id].accumulate_calls == []
 
     def test_gate_releases_when_aux_arrives(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
         # Tick 1: primary only — gated, primary dropped
         manager.push_data(
@@ -2225,7 +2253,7 @@ class TestContextStreamGate:
         assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
 
     def test_gate_independent_across_jobs(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_a = manager.schedule_job(self._config_with_aux("src_a", "ctx_a"))
         job_b = manager.schedule_job(self._config_with_aux("src_b", "ctx_b"))
         # Only job_a's aux is present
@@ -2244,7 +2272,7 @@ class TestContextStreamGate:
         assert manager.get_job_status(job_b).state == JobState.pending_context
 
     def test_warning_message_lists_all_missing_aux(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="multi_aux",
@@ -2267,18 +2295,20 @@ class TestContextStreamGate:
         assert "stream_c" in status.warning_message
         assert "stream_a" not in status.warning_message
 
-    def test_peek_gated_context_streams_exposes_gated_jobs_context(
+    def test_context_cached_while_gated_is_delivered_when_gate_opens(
         self, fake_job_factory
     ):
-        """A gated job's full context is exposed for cache refill.
+        """Regression: a context value seen while gated must reach the workflow.
 
-        While a job is gated, the orchestrator must refill *all* its context
-        streams from the preprocessor cache each tick — including ones already
-        seen — so the gate-opening batch carries every value at once. A value
-        seen during the gated window but not re-presented would reach
-        ``set_context`` as the essreduce ``None`` seed and crash at finalize.
+        ``stream_a`` arrives (and is cached) on a tick where ``stream_b`` is
+        still missing; the batch where ``stream_b`` finally arrives does not
+        re-present ``stream_a``. The gate refills it from the context cache so
+        the gate-opening batch carries every value at once — otherwise it
+        would land at ``set_context`` as the essreduce ``None`` seed and crash
+        at finalize.
         """
-        manager = JobManager(fake_job_factory)
+        cache = FakeContextCache()
+        manager = JobManager(fake_job_factory, context_reader=cache)
         config = _make_config(
             "src",
             name="multi_aux",
@@ -2286,10 +2316,9 @@ class TestContextStreamGate:
         )
         job_id = manager.schedule_job(config)
 
-        # No active jobs yet: nothing to refill.
-        assert manager.peek_gated_context_streams() == set()
-
-        # Tick 1: stream_a arrives, stream_b missing -> gated.
+        # Tick 1: stream_a arrives (the preprocessor caches it); stream_b is
+        # still missing -> gated.
+        cache.values["stream_a"] = sc.scalar(10.0)
         manager.push_data(
             WorkflowData(
                 start_time=Timestamp.from_ns(100),
@@ -2301,29 +2330,49 @@ class TestContextStreamGate:
             )
         )
         assert manager.get_job_status(job_id).state == JobState.pending_context
-        # Both context streams are exposed, so the already-seen stream_a is
-        # re-presented on the tick stream_b finally arrives.
-        assert manager.peek_gated_context_streams() == {"stream_a", "stream_b"}
 
-        # Tick 2: stream_b arrives (orchestrator would also refill stream_a) -> open.
+        # Tick 2: only stream_b arrives -> stream_a is refilled from the cache
+        # and the gate opens with both values in the batch.
+        cache.values["stream_b"] = sc.scalar(20.0)
         manager.push_data(
             WorkflowData(
                 start_time=Timestamp.from_ns(200),
                 end_time=Timestamp.from_ns(300),
-                data={
-                    StreamId(name="stream_a"): sc.scalar(10.0),
-                    StreamId(name="stream_b"): sc.scalar(20.0),
-                },
+                data={StreamId(name="stream_b"): sc.scalar(20.0)},
             )
         )
         status = manager.get_job_status(job_id)
         assert status.state == JobState.active
-        # Ungated active jobs are not refilled (avoids eager set_context recompute).
-        assert manager.peek_gated_context_streams() == set()
-        # Both context values reached the workflow in one batch.
         processor = fake_job_factory.processors[job_id]
         assert "stream_a" in processor.data
         assert "stream_b" in processor.data
+
+    def test_context_cached_before_job_starts_opens_gate_immediately(
+        self, fake_job_factory
+    ):
+        """A job whose context was published before it started is never gated.
+
+        The motor position was cached ticks ago; the first batch after the
+        job's start time opens the gate via the cache refill even though the
+        batch itself carries no context stream.
+        """
+        cache = FakeContextCache()
+        cache.values["ctx_stream"] = sc.scalar(99.0)
+        manager = JobManager(fake_job_factory, context_reader=cache)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert len(replies) == 1
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert "ctx_stream" in fake_job_factory.processors[job_id].data
 
     def test_gated_job_finishes_at_schedule_end(self, fake_job_factory):
         """A job gated for its whole window still finishes at its scheduled end.
@@ -2332,7 +2381,7 @@ class TestContextStreamGate:
         passes its scheduled ``end_time`` it must be removed, not stranded in the
         pending stage.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -2359,4 +2408,3 @@ class TestContextStreamGate:
         )
         manager.compute_results()
         assert manager.get_job_status(job_id) is None
-        assert manager.peek_gated_context_streams() == set()
