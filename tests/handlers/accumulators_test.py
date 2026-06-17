@@ -414,7 +414,7 @@ class TestNoCopyAccumulatorPair:
 
 
 class TestResettingCumulativeAccumulator:
-    """make_no_copy_accumulator_pair(reset_coord=...) — issue #828 option C."""
+    """make_no_copy_accumulator_pair(reset_coord=...) resets on coord change."""
 
     @staticmethod
     def _hist(values, position):

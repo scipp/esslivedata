@@ -197,7 +197,7 @@ def create_monitor_workflow(
     reset_coord:
         The cumulative histogram resets when this scalar coord changes, so a
         moving monitor restarts accumulation rather than summing across
-        configurations (issue #828). Defaults to ``'position'``: monitor views
+        configurations. Defaults to ``'position'``: monitor views
         are meaningless across a move, and in wavelength mode the position coord
         on the histogram makes summing across a move raise outright. The coord is
         absent in TOA mode, where the reset is a harmless no-op. Pass ``None`` to

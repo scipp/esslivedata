@@ -87,7 +87,7 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
 
 class NoCopyAccumulator(EternalAccumulator):
     """
-    Accumulator that skips deepcopy on read for better performance.
+    Accumulator that skips the deepcopy on read to avoid copy overhead.
 
     The base EternalAccumulator uses deepcopy in _get_value() to ensure safety.
     This accumulator skips that deepcopy, saving ~30ms per read for a 500MB
@@ -102,8 +102,8 @@ class NoCopyAccumulator(EternalAccumulator):
 
     When ``reset_coord`` is given the buffer is discarded whenever incoming data
     carries a different value for that scalar coord, so accumulation restarts in
-    the new configuration rather than summing across a geometry change (issue
-    #828 option C). The histogram carries a coord identifying the geometry it was
+    the new configuration rather than summing across a geometry change. The
+    histogram carries a coord identifying the geometry it was
     computed in (e.g. ``position``/``Ltotal`` for monitors, the detector
     transform for detector views). An absent coord — or ``reset_coord=None`` — is
     a no-op, so behaviour matches a plain cumulative accumulator. The check
@@ -182,8 +182,8 @@ def make_no_copy_accumulator_pair(
     ----------
     reset_coord:
         If given, both accumulators reset whenever incoming data carries a
-        different value for this scalar coord (issue #828 option C), rather than
-        summing across a geometry change. ``None`` keeps plain cumulative
+        different value for this scalar coord, rather than summing across a
+        geometry change. ``None`` keeps plain cumulative
         behaviour.
 
     Returns

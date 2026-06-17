@@ -942,7 +942,7 @@ class TestMonitorMotion:
     def test_cumulative_resets_when_monitor_moves(
         self, wavelength_edges, geometry_filename, lookup_table_filename
     ):
-        """Issue #828 option C: a move resets the cumulative instead of crashing.
+        """A move resets the cumulative instead of crashing.
 
         The monitor workflow defaults to ``reset_coord='position'``, so the stale
         pre-move histogram is discarded and the cumulative restarts from the new
@@ -961,7 +961,7 @@ class TestMonitorMotion:
     def test_disabling_reset_raises_on_move(
         self, wavelength_edges, geometry_filename, lookup_table_filename
     ):
-        """Opting out (``reset_coord=None``) restores the #828 crash.
+        """Opting out (``reset_coord=None``) lets a move crash again.
 
         Documents what the default guards against: the wavelength histogram carries
         a scalar ``position`` coord, so summing the cumulative across a move raises.
