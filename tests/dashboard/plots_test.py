@@ -8,7 +8,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
-from bokeh.models import GlyphRenderer
+from bokeh.models import GlyphRenderer, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
@@ -31,6 +31,21 @@ from ess.livedata.dashboard.slicer_plotter import (
 )
 
 hv.extension('bokeh')
+
+
+def _assert_error_bar_endcaps_colored(error_bars: hv.ErrorBars, color: str) -> None:
+    """Assert the rendered Whisker body and both endcaps use ``color``.
+
+    Endcaps are separate ``TeeHead`` glyphs that default to black, so coloring
+    the Whisker body alone leaves them mismatched.
+    """
+    fig = hv.render(error_bars)
+    whiskers = fig.select(Whisker)
+    assert whiskers, "expected a Whisker glyph for ErrorBars"
+    whisker = whiskers[0]
+    assert whisker.line_color == color
+    assert whisker.upper_head.line_color == color
+    assert whisker.lower_head.line_color == color
 
 
 @pytest.fixture
@@ -630,6 +645,8 @@ class TestLinePlotter:
             'color'
         ]
         assert base_color == error_color
+        if error_type is hv.ErrorBars:
+            _assert_error_bar_endcaps_colored(elements[1], base_color)
 
     def test_error_overlay_renders_responsive(self, data_key):
         """A line+error overlay renders as a responsive (stretch_both) figure."""
@@ -1619,6 +1636,9 @@ class TestOverlay1DPlotter:
         assert isinstance(elements[1], hv.ErrorBars)
         assert isinstance(elements[2], hv.Curve)
         assert isinstance(elements[3], hv.ErrorBars)
+        for base, error in ((elements[0], elements[1]), (elements[2], elements[3])):
+            base_color = hv.Store.lookup_options('bokeh', base, 'style').kwargs['color']
+            _assert_error_bar_endcaps_colored(error, base_color)
 
     def test_error_band_with_variances(self, data_key):
         params = PlotParams1d(

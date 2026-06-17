@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 import holoviews as hv
 import numpy as np
 import scipp as sc
+from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
@@ -807,6 +808,23 @@ _LINE1D_LEAF_ELEMENTS: tuple[type, ...] = (
 )
 
 
+def _color_error_element(el: hv.Element, color: Any) -> hv.Element:
+    """Apply ``color`` to an error element, including ``ErrorBars`` endcaps.
+
+    HoloViews maps ``color`` to the Whisker body line only; its endcaps are
+    separate ``TeeHead`` glyphs whose ``line_color`` otherwise stays black.
+    ``Spread`` (a subclass of ``ErrorBars``) renders as a filled band with no
+    endcaps, so it takes the plain ``color`` path.
+    """
+    if type(el) is hv.ErrorBars:
+        return el.opts(
+            color=color,
+            upper_head=TeeHead(line_color=color),
+            lower_head=TeeHead(line_color=color),
+        )
+    return el.opts(color=color)
+
+
 def _resolve_line1d_mode(
     mode: str, data: sc.DataArray, dim: str | None = None
 ) -> tuple[str, sc.DataArray]:
@@ -1010,7 +1028,8 @@ class LinePlotter(Plotter):
                     dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-            return base * error_method(label=label).opts(color=self._color)
+            error = _color_error_element(error_method(label=label), self._color)
+            return base * error
 
         return base
 
@@ -1371,7 +1390,7 @@ class Overlay1DPlotter(Plotter):
                         mid, value_label=output_display_name, dim_label=dim_label
                     )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-                error_el = error_method(label=curve_label).opts(color=color)
+                error_el = _color_error_element(error_method(label=curve_label), color)
                 elements.append(base)
                 elements.append(error_el)
             else:
