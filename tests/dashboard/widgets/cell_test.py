@@ -27,12 +27,13 @@ class TestFreshnessPill:
         assert FreshnessPill.OLD[0] in html
         assert '41s' in html
 
-    def test_minutes_for_large_lag(self) -> None:
+    def test_minutes_for_large_age(self) -> None:
         assert '3m' in format_freshness_html(200.0)
 
-    def test_tooltip_is_html_escaped(self) -> None:
-        html = format_freshness_html(2.0, tooltip='12:00 <range>')
-        assert 'title="12:00 &lt;range&gt;"' in html
+    def test_no_hover_tooltip_on_pill(self) -> None:
+        # A native title tooltip cannot survive the pill's per-frame re-renders
+        # as the age ticks; detail lives in the toolbar row instead.
+        assert 'title=' not in format_freshness_html(2.0)
 
 
 class TestLayerTimeHtml:

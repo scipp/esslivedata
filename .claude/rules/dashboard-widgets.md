@@ -80,3 +80,19 @@ Python constants rather than CSS variables for centralized color management.
 ## Avoiding flicker
 
 Make sure all widget-updates that touch more than a single widget (or a single widget multiple times) use `pn.io.hold()`.
+
+### Native tooltips on re-rendering panes
+
+A native HTML `title=` tooltip baked into a `pn.pane.HTML` string is torn down
+every time `pane.object` is reassigned — Panel replaces the pane's inner DOM, so
+the browser drops any open hover tooltip. This makes hover tooltips unworkable on
+any element whose content updates frequently (e.g. a live freshness/lag readout
+updating per data frame at ~1 Hz): the tooltip flickers once per update.
+
+Guarding the write (`if pane.object != html`) only helps if the rendered string is
+genuinely piecewise-constant. Live values (timestamps, sub-second lag) defeat it.
+
+For detail that must accompany a live-updating element, put it in a separate
+*visible* label (e.g. a toolbar row) that can redraw freely, not a hover tooltip.
+Encode continuously-changing signals as discrete bands (color/border) so the HTML
+stays constant between threshold crossings.
