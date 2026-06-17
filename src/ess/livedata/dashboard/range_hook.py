@@ -14,8 +14,26 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import numpy as np
+
 Axis = Literal['x', 'y', 'c']
 RangeTargets = dict[Axis, tuple[float, float]]
+
+
+def _coerce_to(value: float, reference: Any) -> Any:
+    """Coerce a float target to ``reference``'s type for assignment.
+
+    Bokeh stores datetime axis ranges as ``np.datetime64`` (matching the unit
+    of the source coord). Range targets are computed in float space (epoch
+    counts for datetime coords; see ``plots._finite_min_max``), so on a
+    datetime axis a raw float would mix incompatible numpy dtypes -- both the
+    ordering comparison below and Bokeh's range patch raise a ``UFuncTypeError``
+    ('less_equal' loop missing for datetime64/float). Cast back to a datetime64
+    of the same unit so the value round-trips and stays comparable.
+    """
+    if isinstance(reference, np.datetime64):
+        return np.datetime64(round(value), np.datetime_data(reference)[0])
+    return value
 
 
 def _ordered_write(
@@ -31,6 +49,8 @@ def _ordered_write(
     first.
     """
     current_hi = getattr(model, hi_attr, None)
+    lo = _coerce_to(lo, current_hi)
+    hi = _coerce_to(hi, current_hi)
     write_hi_first = current_hi is None or hi >= current_hi
     if write_hi_first:
         setattr(model, hi_attr, hi)
