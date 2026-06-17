@@ -29,9 +29,6 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.handlers.wavelength_lut_workflow_specs import (
-    register_wavelength_lut_workflow_spec,
-)
 
 from .streams_parsed import PARSED_STREAMS
 from .views import get_tube_view
@@ -192,6 +189,7 @@ instrument = Instrument(
         'beam_monitor_m3',
         'beam_monitor_m4',
     ],
+    choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
     streams=streams,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
@@ -272,10 +270,6 @@ tube_view_handle = instrument.add_logical_view(
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
-
-# Register the chopperless wavelength lookup-table spec. The factory is attached
-# in factories.py.
-wavelength_lut_handle = register_wavelength_lut_workflow_spec(instrument)
 
 # Register I(Q) workflow spec
 i_of_q_handle = instrument.register_spec(

@@ -56,12 +56,18 @@ def make_timeseries_service_builder(
         stream_counter=stream_counter,
         message_batcher=NaiveMessageBatcher(),
         # Wraps the source so the wavelength_lut workflow's primary
-        # ``chopper_cascade`` trigger is synthesized in-process. This is
-        # scaffolding for an upstream-side gap (the producer does not yet
-        # publish a ``chopper_cascade_reached`` f144); when it does, drop
-        # the wrapper and the workflow becomes a plain f144 consumer.
+        # ``chopper_cascade`` trigger and per-chopper ``delay_setpoint`` streams
+        # are synthesized in-process. This in-process synthesis is expected to
+        # stay (an upstream cascade-trigger signal may never exist); only which
+        # chopper quantities are streamed and how each is treated is provisional.
+        # See ChopperSynthesizer for the seam and the sites a change touches.
         outer_source_wrapper=lambda src: DeviceSynthesizer(
-            ChopperSynthesizer(src), devices=devices
+            ChopperSynthesizer(
+                src,
+                chopper_names=instrument_obj.choppers,
+                delay_atol=instrument_obj.chopper_delay_atol_ns,
+            ),
+            devices=devices,
         ),
     )
 

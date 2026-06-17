@@ -120,6 +120,18 @@ class Instrument:
     name: str
     detector_names: list[str] = field(default_factory=list)
     monitors: list[str] = field(default_factory=list)
+    #: Disk-chopper component names (as in the NeXus geometry artifact). Single
+    #: source of truth for the wavelength-LUT factory (which assembles
+    #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
+    #: the ``ChopperSynthesizer`` wired into the timeseries service.
+    choppers: list[str] = field(default_factory=list)
+    #: Stability tolerance for chopper delay readbacks. The readback stream's
+    #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
+    #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
+    #: must be below this) and change detection (drift since the last lock).
+    #: Default 1 us is tight; loosen per-instrument once real readback noise is
+    #: measured.
+    chopper_delay_atol_ns: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
     context_bindings: list[ContextBinding] = field(default_factory=list)
@@ -129,6 +141,7 @@ class Instrument:
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
+    _wavelength_lut_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
     _logical_view_handles: dict[str, SpecHandle] = field(
         default_factory=dict, init=False
@@ -141,11 +154,27 @@ class Instrument:
             register_timeseries_workflow_specs,
         )
 
+        from .chopper import declare_chopper_setpoint_streams
+
+        # Choppers are an instrument concern: declaring them implies the
+        # synthetic delay_setpoint streams the ChopperSynthesizer emits. Done
+        # before the f144 snapshot below so they register as timeseries sources.
+        declare_chopper_setpoint_streams(self.streams, self.choppers)
+
         for binding in self.context_bindings:
             self._validate_binding_stream_name(binding)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=self._timeseries_source_names()
         )
+        # Choppers imply the wavelength-LUT workflow: its synthetic source, spec,
+        # and per-chopper setpoint context all derive from the chopper list, so
+        # registration is auto-wired here and the factory in load_factories.
+        if self.choppers:
+            from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+                register_wavelength_lut_workflow_spec,
+            )
+
+            self._wavelength_lut_handle = register_wavelength_lut_workflow_spec(self)
 
     def _timeseries_source_names(self) -> list[str]:
         """Plain f144 streams plus merged Device streams, minus device substreams.
@@ -666,6 +695,20 @@ class Instrument:
                     view_config=view_config,
                 )
                 handle.attach_factory()(factory.make_workflow)
+
+        if self.choppers:
+            from ess.livedata.handlers.detector_data_handler import (
+                get_nexus_geometry_filename,
+            )
+            from ess.livedata.handlers.wavelength_lut_workflow import (
+                attach_wavelength_lut_factory,
+            )
+
+            attach_wavelength_lut_factory(
+                self._wavelength_lut_handle,
+                choppers=self.choppers,
+                nexus_filename=str(get_nexus_geometry_filename(self.name)),
+            )
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)

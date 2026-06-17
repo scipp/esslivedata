@@ -10,6 +10,78 @@
             "target_stream": "detector_carriage_target_value",
             "idle_stream": "detector_carriage_idle_flag",
             "ramp_seconds": 3.0
+        },
+        {
+            "stream_name": "bw_chopper1/rotation_speed_setpoint",
+            "label": "BW chopper 1 speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 14.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "bw_chopper2/rotation_speed_setpoint",
+            "label": "BW chopper 2 speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 14.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "fo_chopper1/rotation_speed_setpoint",
+            "label": "FO chopper 1 speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 14.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "fo_chopper2/rotation_speed_setpoint",
+            "label": "FO chopper 2 speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 14.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "bw_chopper1/delay",
+            "label": "BW chopper 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 10000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "bw_chopper2/delay",
+            "label": "BW chopper 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 12000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "fo_chopper1/delay",
+            "label": "FO chopper 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 14000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "fo_chopper2/delay",
+            "label": "FO chopper 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 16000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
         }
     ]
 }

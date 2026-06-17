@@ -34,10 +34,18 @@ class Pulse(pydantic.BaseModel):
     frequency: float = pydantic.Field(
         default=14.0, gt=0.0, description="Pulse frequency in Hz."
     )
+    auto_stride: bool = pydantic.Field(
+        default=True,
+        description=(
+            "Guess the pulse stride from the chopper rotation frequencies "
+            "(choppers at zero frequency are ignored). Disable to set the "
+            "stride manually below."
+        ),
+    )
     stride: int = pydantic.Field(
         default=1,
         ge=1,
-        description="Pulse stride (1 unless pulse-skipping is used).",
+        description="Pulse stride (used only when auto-detection is disabled).",
     )
 
     def get_period(self) -> sc.Variable:
@@ -73,19 +81,6 @@ class LtotalRange(RangeModel):
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
-class Simulation(pydantic.BaseModel):
-    """Simulation knobs."""
-
-    num_simulated_neutrons: int = pydantic.Field(
-        default=1_000_000,
-        ge=1_000,
-        description=(
-            "Neutrons in simulation. Lower for faster turnaround during "
-            "commissioning or tests."
-        ),
-    )
-
-
 class WavelengthLutParams(pydantic.BaseModel):
     """User-facing parameters for the wavelength lookup-table workflow."""
 
@@ -108,11 +103,6 @@ class WavelengthLutParams(pydantic.BaseModel):
         title='Time resolution',
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
-    )
-    simulation: Simulation = pydantic.Field(
-        title='Simulation',
-        description='Simulation knobs.',
-        default_factory=Simulation,
     )
 
 

@@ -342,6 +342,62 @@ A `ValueError` is raised if a rename key doesn't match any parsed entry or if th
 
 A standard time-series histogram workflow is auto-registered for every f144 stream via `Instrument.__post_init__`, so no additional spec registration is needed for these to appear in the dashboard.
 
+## Choppers and the Wavelength Lookup Table
+
+Instruments with disk choppers can compute a wavelength lookup table (LUT) from
+the live chopper-cascade configuration. This is enabled simply by listing the
+chopper component names on the `Instrument`:
+
+```python
+instrument = Instrument(
+    name='instrument_name',
+    detector_names=[...],
+    monitors=[...],
+    streams=streams,
+    choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
+)
+```
+
+The names must match the disk-chopper component names in the NeXus geometry file.
+Declaring `choppers` is the *only* step: there is no spec to register or factory
+to attach by hand. `Instrument.__post_init__` and `load_factories()` auto-wire
+everything when the list is non-empty:
+
+- the `ChopperSynthesizer` in the `timeseries` service (plateau-detects the noisy
+  delay readbacks and emits a synthetic cascade trigger),
+- the synthetic `<chopper>/delay_setpoint` f144 streams the synthesizer injects,
+- the wavelength-LUT workflow spec (under `REDUCTION`, hosted by `timeseries`) and
+  its factory, including the per-chopper setpoint context bindings.
+
+### Requirements
+
+Two preconditions must hold, or auto-wiring fails fast at startup:
+
+- **Setpoint streams.** For each chopper, `PARSED_STREAMS` must already carry the
+  real upstream f144 PVs `<chopper>/rotation_speed_setpoint` (clean speed
+  setpoint) and `<chopper>/delay` (noisy delay readback). The synthetic
+  `<chopper>/delay_setpoint` is declared automatically from the readback's unit.
+  If a `<chopper>/delay` stream is missing, declaration raises immediately —
+  check the chopper names against the parsed stream names (use `rename` if the
+  auto-derived names don't match the convention).
+- **Geometry file.** A NeXus geometry file must be registered for the instrument
+  (see [Geometry Files](#geometry-files)) and must contain the chopper groups;
+  the factory loads the static chopper geometry from
+  `get_nexus_geometry_filename(<instrument>)`.
+
+### Tuning
+
+The plateau-detection tolerance for delay readbacks defaults to 1 µs and can be
+adjusted per instrument once real readback noise is known:
+
+```python
+instrument = Instrument(
+    name='instrument_name',
+    choppers=[...],
+    chopper_delay_atol=1000.0,  # in the delay stream's own unit (ns for LOKI)
+)
+```
+
 ## Detector Configuration in Factories
 
 In `factories.py`, configure detectors with `detector_number` arrays.

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import json
+import random
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
@@ -160,7 +161,22 @@ class LogProducerWidget:
         return config_dir / f'log_producer_{self._instrument}.json'
 
     def _create_slider(self, config: dict) -> pn.widgets.FloatSlider:
-        """Create a slider widget from configuration."""
+        """Create a slider widget from configuration.
+
+        Three slider flavours, discriminated by config keys:
+
+        - **Device drive** (``value_stream`` + ``target_stream``): the slider is
+          a motor setpoint; :class:`_DeviceMotion` animates a readback ramp and
+          DMOV transitions on each change.
+        - **Streaming readback** (``publish_rate_hz``): the slider value plus
+          optional Gaussian noise (``noise_stddev``) is published continuously
+          at the given rate. This simulates a noisy f144 readback (e.g. a
+          chopper delay) so a downstream plateau detector can lock onto it; the
+          plateau follows the slider.
+        - **Simple stream** (``stream_name`` only): one publish per change, plus
+          an initial publish so consumers see a value without operator action
+          (e.g. a chopper rotation_speed_setpoint left at its default).
+        """
         slider = pn.widgets.FloatSlider(
             label=config['label'],
             start=config['min'],
@@ -182,13 +198,34 @@ class LogProducerWidget:
             )
             self._device_motions.append(motion)
             slider.param.watch(lambda event: motion.on_change(event.new), 'value')
+            return slider
+
+        stream_name = config['stream_name']
+        noise_stddev = config.get('noise_stddev')
+        publish_rate_hz = config.get('publish_rate_hz')
+        if publish_rate_hz is not None:
+            interval_ms = max(1, int(1000.0 / float(publish_rate_hz)))
+            pn.state.add_periodic_callback(
+                lambda s=slider, n=stream_name, sd=noise_stddev: self._publish_value(
+                    self._sample(s.value, sd), n
+                ),
+                period=interval_ms,
+            )
         else:
-            stream_name = config['stream_name']
             slider.param.watch(
-                lambda event, name=stream_name: self._publish_value(event.new, name),
+                lambda event, name=stream_name, sd=noise_stddev: self._publish_value(
+                    self._sample(event.new, sd), name
+                ),
                 'value',
             )
+            self._publish_value(self._sample(slider.value, noise_stddev), stream_name)
         return slider
+
+    @staticmethod
+    def _sample(value: float, noise_stddev: float | None) -> float:
+        if noise_stddev is None:
+            return float(value)
+        return float(value) + random.gauss(0.0, noise_stddev)
 
     def _publish_value(self, value: float, stream_name: str) -> None:
         """Publish a single f144 value to the named stream."""
