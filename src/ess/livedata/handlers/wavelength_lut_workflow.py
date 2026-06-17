@@ -2,12 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Wavelength lookup-table workflow.
 
-Builds a Sciline pipeline from :func:`ess.reduce.unwrap.lut.providers` in
-*analytical* mode (chopper-cascade polygon geometry, no neutron simulation) and
-wraps it as a livedata ``Workflow`` via :class:`StreamProcessorWorkflow`. The
-synthetic
-``chopper_cascade`` trigger is a sciline dynamic key consumed by a provider
-that produces ``DiskChoppers``; its value is ignored — only its arrival
+Builds a Sciline pipeline from :func:`ess.reduce.unwrap.GenericUnwrapWorkflow`
+in *analytical* mode (chopper-cascade polygon geometry, no neutron simulation)
+and wraps it as a livedata ``Workflow`` via :class:`StreamProcessorWorkflow`.
+The synthetic ``chopper_cascade`` trigger is a sciline dynamic key consumed by a
+provider that produces ``DiskChoppers``; its value is ignored — only its arrival
 drives a recompute (the trigger is the job's ``allow_bypass`` primary).
 
 The pipeline loads static ``NXdisk_chopper`` geometry from the NeXus artifact

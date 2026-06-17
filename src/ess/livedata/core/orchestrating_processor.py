@@ -101,8 +101,10 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         are silently skipped — this is a normal startup condition (stream
         mapping registered the accumulator before any message arrived).
 
-        Must be called before ``process_jobs`` to ensure no concurrent access
-        to preprocessor-level accumulators from worker threads.
+        Must run on the orchestrator thread while no job worker threads are in
+        flight — either ahead of ``process_jobs`` (the enrichment above) or
+        inside it before the per-job fan-out (the JobManager's context gate,
+        which holds this as its ``context_reader``).
         """
         result: dict[StreamId, Any] = {}
         for stream_id, accumulator in self._accumulators.items():
@@ -159,6 +161,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(
             job_factory=JobFactory(instrument=instrument, service_name=service_name),
+            context_reader=self._message_preprocessor.get_context,
             job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
@@ -241,16 +244,13 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # through, or the chopperless wavelength_lut tick that fires only
         # once). Lets the empty-batch branch run jobs from cached context
         # alone.
+        # Jobs already gated on context are not handled here: the JobManager
+        # refills their gating streams itself inside process_jobs (see
+        # JobManager._open_context_gates), so gate correctness does not depend
+        # on this enrichment. Keeping gated streams out of workflow_data also
+        # keeps truly idle ticks idle (the check below) instead of spinning
+        # while a job waits on context that never comes.
         needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
-        # Active jobs still gated on context need their already-seen context
-        # refilled from the cache so the gate-opening batch carries every value
-        # at once (otherwise a context stream seen during the gated window is
-        # never re-presented and finalizes as None). Only on non-empty ticks:
-        # the gate opens only when a new context stream arrives (a non-empty
-        # batch), and refilling on idle ticks would defeat the idle-sleep below
-        # and spin the CPU while a job waits on context that never comes.
-        if message_batch is not None:
-            needed |= self._job_manager.peek_gated_context_streams()
         missing = needed - {s.name for s in workflow_data.data}
         if missing:
             workflow_data.data.update(self._message_preprocessor.get_context(missing))

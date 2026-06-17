@@ -13,7 +13,7 @@ scippneutron>=25.11.1
 pooch
 structlog>=24.0.0
 essdiffraction>=26.5.0
-essreflectometry>=26.4.0
+essreflectometry>=26.6.0
 esssans
 essspectroscopy>=26.3.0
 holoviews

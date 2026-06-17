@@ -108,9 +108,11 @@ def no_chopper_geometry(tmp_path: Path) -> Path:
 
 def _build_no_chopper_workflow(geom: Path):
     """Build the LUT workflow against a chopper-free geometry file."""
-    return create_wavelength_lut_workflow(
+    wf = create_wavelength_lut_workflow(
         params=_params(), setpoint_keys={}, nexus_filename=str(geom)
     )
+    wf.build()
+    return wf
 
 
 @pytest.fixture
@@ -132,6 +134,7 @@ class TestNoChopperWorkflow:
         wf = create_wavelength_lut_workflow(
             params=params, setpoint_keys={}, nexus_filename=str(no_chopper_geometry)
         )
+        wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
         table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
 

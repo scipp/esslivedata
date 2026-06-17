@@ -200,11 +200,29 @@ class JobManager:
     def __init__(
         self,
         job_factory: JobFactory,
+        *,
+        context_reader: Callable[[set[str]], dict[StreamId, Any]],
         job_threads: int = 1,
     ) -> None:
+        """
+        Parameters
+        ----------
+        job_factory:
+            Factory used to build jobs from workflow configs.
+        context_reader:
+            Reads current values from the preprocessor's context cache for the
+            given stream names; streams without a value yet are absent from the
+            result. The context gate (ADR 0002) treats this cache as the single
+            source of truth for which gating streams are available: each batch
+            is refilled from it before deciding whether a gate opens, so a gate
+            cannot open without its values being deliverable.
+        job_threads:
+            Number of worker threads for job processing (1 = sequential).
+        """
         self.service_name = 'data_reduction'
         self._last_update: int = 0
         self._job_factory = job_factory
+        self._context_reader = context_reader
         self._active_jobs: dict[JobId, Job] = {}
         self._scheduled_jobs: dict[JobId, Job] = {}
         # Jobs that have reached their start time but are gated on context streams
@@ -219,11 +237,6 @@ class JobManager:
         self._job_warning_messages: dict[JobId, str] = {}
         # Track which jobs received primary data since last compute_results
         self._jobs_with_primary_data: set[JobId] = set()
-        # Per-pending-job set of gating stream names seen at any prior tick. The
-        # context gate (ADR 0002) accumulates into this stickily so intermittent
-        # context values stay available; an entry exists only while the job is in
-        # ``_pending_context_jobs`` and is dropped once the job graduates.
-        self._seen_context_streams: dict[JobId, set[str]] = {}
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
@@ -278,7 +291,6 @@ class JobManager:
         self._active_jobs[job_id] = job
         self._job_states[job_id] = JobState.active
         self._job_warning_messages.pop(job_id, None)
-        self._seen_context_streams.pop(job_id, None)
         logger.info(
             "job_activated", job_id=str(job_id), workflow_id=str(job.workflow_id)
         )
@@ -394,15 +406,14 @@ class JobManager:
         self._job_warning_messages.pop(job_id, None)
         # Reset state to match the job's current bucket. A gated job stays gated:
         # context is sticky and independent of run boundaries, so its warning is
-        # re-armed from the streams still missing.
+        # re-armed from the streams still missing in the context cache.
         if job_id in self._active_jobs:
             self._job_states[job_id] = JobState.active
         elif job_id in self._pending_context_jobs:
             self._job_states[job_id] = JobState.pending_context
-            seen = self._seen_context_streams.get(job_id, set())
-            self._job_warning_messages[job_id] = pending_context_warning(
-                job.missing_context(seen)
-            )
+            cached = {s.name for s in self._context_reader(job.gating_streams)}
+            if missing := job.missing_context(cached):
+                self._job_warning_messages[job_id] = pending_context_warning(missing)
         else:
             self._job_states[job_id] = JobState.scheduled
 
@@ -444,8 +455,8 @@ class JobManager:
         Active jobs are not included — refilling their cached context into
         ``WorkflowData.data`` every tick would cause ``set_context`` to fire
         unnecessarily and trigger eager downstream recompute on unchanged
-        values. The context gate (see ADR 0002) tracks per-job aux
-        availability stickily in ``_seen_context_streams`` instead.
+        values. Pending-context jobs are not included either: the context gate
+        refills their gating streams itself (:meth:`_open_context_gates`).
         """
         names: set[str] = set()
         for job_id, job in self._scheduled_jobs.items():
@@ -459,10 +470,13 @@ class JobManager:
 
         Unlike ``process_jobs`` called via ``OrchestratingProcessor.process``,
         this method does not seed context data for newly activated jobs.
-        Callers are responsible for providing complete ``WorkflowData``.
+        Callers are responsible for providing complete ``WorkflowData`` —
+        except for the gating streams of context-gated jobs, which
+        :meth:`_open_context_gates` refills into ``data`` from the context
+        cache.
         """
         self._advance_to_time(data.start_time, data.end_time)
-        self._open_context_gates({s.name for s in data.data})
+        self._open_context_gates(data)
         replies = []
         for job in self.active_jobs:
             job_data = _filter_data_for_job(job, data)
@@ -496,7 +510,7 @@ class JobManager:
         finalization run as a single task, avoiding two fan-out/fan-in cycles.
         """
         self._advance_to_time(data.start_time, data.end_time)
-        self._open_context_gates({s.name for s in data.data})
+        self._open_context_gates(data)
 
         # Build work items (cheap, sequential)
         work_items: list[tuple[Job, JobData, bool]] = []
@@ -526,46 +540,41 @@ class JobManager:
         self._finish_jobs()
         return all_replies, all_results
 
-    def _open_context_gates(self, available: set[str]) -> None:
-        """Graduate pending-context jobs whose gating streams are all available.
+    def _open_context_gates(self, data: WorkflowData) -> None:
+        """Refill cached context into ``data`` and graduate complete pending jobs.
 
-        Folds the tick's ``available`` streams into each pending job's sticky
-        ``_seen_context_streams`` set. A job whose gating streams have all been
-        seen graduates to active (:meth:`_activate_pending_job`); one still
-        missing context keeps an up-to-date pending-context warning. Context is
-        sticky and monotonic, so graduation is one-way: an active job has left
-        the gate for good and is never re-checked here.
+        The preprocessor's context cache (``context_reader``) is the single
+        source of truth for which context streams have a value: ``data`` is
+        enriched from it for every gating stream still absent from the batch,
+        and a job graduates to active (:meth:`_activate_pending_job`) exactly
+        when all its gating streams are present afterwards. Because gate
+        opening and value delivery read the same dict, the gate-opening batch
+        structurally carries every context value the job needs — a gate cannot
+        open without its values being deliverable to ``set_context``. A job
+        still missing context keeps an up-to-date pending-context warning.
+
+        The cache holds every context value ever received, so availability is
+        sticky across ticks (a motor position published once stays available)
+        and graduation is one-way: an active job has left the gate for good
+        and is never re-checked here. Steady-state active jobs get no refill —
+        re-presenting cached context every tick would re-fire ``set_context``
+        and force eager downstream recompute on unchanged values.
 
         See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
         """
+        if not self._pending_context_jobs:
+            return
+        needed: set[str] = set()
+        for job in self._pending_context_jobs.values():
+            needed |= job.gating_streams
+        if missing := needed - {s.name for s in data.data}:
+            data.data.update(self._context_reader(missing))
+        available = {s.name for s in data.data}
         for job_id, job in list(self._pending_context_jobs.items()):
-            seen = self._seen_context_streams.setdefault(job_id, set())
-            seen.update(available & job.input_stream_names)
-            missing = job.missing_context(seen)
-            if missing:
+            if missing := job.missing_context(available):
                 self._job_warning_messages[job_id] = pending_context_warning(missing)
             else:
                 self._activate_pending_job(job_id)
-
-    def peek_gated_context_streams(self) -> set[str]:
-        """Context stream names of jobs currently gated on context.
-
-        The orchestrator refills these from the preprocessor's context cache
-        each tick so that, when the final gating stream finally arrives, the
-        gate-opening batch carries *every* context value at once. Without this,
-        a context stream seen during the gated window (e.g. one chopper's
-        setpoint) is never re-presented and lands at ``set_context`` as the
-        essreduce ``None`` seed, crashing the workflow.
-
-        Steady-state (ungated) active jobs are excluded: refilling their cached
-        context every tick would re-fire ``set_context`` and force eager
-        downstream recompute on unchanged values. See ``peek_pending_streams``
-        and :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
-        """
-        names: set[str] = set()
-        for job in self._pending_context_jobs.values():
-            names.update(job.gating_streams)
-        return names
 
     def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
         # Track primary data updates only after successful add, so that a
@@ -638,7 +647,6 @@ class JobManager:
         self._job_error_messages.pop(job_id, None)
         self._job_warning_messages.pop(job_id, None)
         self._jobs_with_primary_data.discard(job_id)
-        self._seen_context_streams.pop(job_id, None)
 
     def _finish_jobs(self):
         for job_id in self._finishing_jobs:

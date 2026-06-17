@@ -61,21 +61,30 @@ routes the job by `gating_streams`: empty → it becomes `active` at once; non-e
 it enters `pending_context` with a `pending_context_warning`. Only active jobs are
 processed — a pending job is never fed primary data.
 
-`JobManager` tracks a **sticky** per-pending-job set of seen context streams
-(`_seen_context_streams`). Context values arrive intermittently — a motor position
-is published once and then is quiet — so a stream seen on any tick stays available.
-Each tick, `_open_context_gates` folds the tick's available streams into each pending
-job's sticky set and checks `job.missing_context(seen)`:
+The preprocessor's **context cache** is the single source of truth for which
+context streams have a value. `JobManager` holds a `context_reader` onto it; each
+tick, `_open_context_gates` refills the batch from the cache for every gating
+stream of a pending job still absent, then checks `job.missing_context(available)`
+against the post-refill batch:
 
 - non-empty → the job stays pending; its `pending_context_warning(missing)` is
   refreshed to the still-missing streams.
 - empty → the job graduates to `active` (`_activate_pending_job`), dropping its
-  warning and sticky set; its own processing outcome drives its state from there.
+  warning; its own processing outcome drives its state from there.
 
-Graduation is **one-way**: `gating_streams` is fixed and `seen` only grows, so once a
-job is active it has left the gate permanently and is never re-checked, and a job with
-no context never enters the stage at all. The per-tick gate therefore scans only the
-small, transient pending bucket — not every active job.
+Because gate opening and value delivery read the same dict, the gate-opening batch
+structurally carries every context value the job needs — a gate cannot open without
+its values being deliverable to `set_context`. Context values arrive intermittently
+— a motor position is published once and then is quiet — but the cache holds every
+value ever received, so availability is sticky across ticks.
+
+Graduation is **one-way**: `gating_streams` is fixed and the cache only grows, so
+once a job is active it has left the gate permanently and is never re-checked, and a
+job with no context never enters the stage at all. The per-tick gate therefore scans
+only the small, transient pending bucket — not every active job — and refills only
+gating streams of pending jobs, never the cached context of steady-state active jobs
+(which would re-fire `set_context` and force eager downstream recompute on unchanged
+values).
 
 Time-based activation is preserved: `should_start(current_time)` drives the job *out
 of* `scheduled` on time, independent of stream-arrival timing. The readiness gate
@@ -110,18 +119,24 @@ records resolved for the `(spec, source)`. Declarations are the single source of
 truth for which inputs gate; adding a workflow that needs gating requires only the
 standard declaration (ADR 0003), no `JobManager` change.
 
-### Sticky seen-set, not per-tick presence
+### The context cache is the gate's only readiness source
 
-Gating compares against an accumulated `_seen_context_streams` set, not the streams
-present *this* tick. A context value seen once stays available — this matches how
-the preprocessor caches context for `set_context` and lets the gate open on a quiet
-tick once the last stream has been seen.
+Gating compares against the streams present in the batch *after* refilling it from
+the preprocessor's context cache (`context_reader`), not against the streams that
+happened to arrive this tick. The cache holds every context value ever received, so
+a value seen once stays available and the gate can open on a tick where the last
+missing stream finally arrives, with all earlier values refilled alongside it.
+Tracking readiness separately (e.g. a per-job set of seen stream names) was
+rejected: a second sticky store can disagree with the cache, opening a gate whose
+values are not deliverable — the workflow would then finalize against the hidden
+`None` seed, the exact failure this ADR exists to prevent. With a single source,
+gate opening and value delivery cannot diverge.
 
 ### A distinct stage, not a per-tick skip
 
 A gated job is held in its own `_pending_context_jobs` bucket, not left among the
 active jobs with a per-tick "skip if gated" branch. Because `gating_streams` is fixed
-and `seen` only grows, readiness is monotonic: a job graduates once and never
+and the cache only grows, readiness is monotonic: a job graduates once and never
 re-gates. Modelling that as a one-way stage move means the processing loop iterates
 only runnable jobs, the per-tick gate scans only the (small) pending bucket, and a
 job that never needed context never participates in gating at all.
@@ -159,9 +174,13 @@ not started.
 - `JobState.pending_context` is added to the job state machine, backed by a
   `_pending_context_jobs` bucket between `_scheduled_jobs` and `_active_jobs`. Job
   lookup, control, reset, status, and finish handling all account for the new bucket.
+- `JobManager` takes a `context_reader` onto the preprocessor's context cache; the
+  gate's refill-then-check runs entirely inside `JobManager`, so gate correctness
+  does not depend on callers enriching the batch.
 - Tests at JobManager level cover: dynamic aux not gated; context (motion) blocks
-  then unblocks once its stream is seen; the sticky seen-set keeps the gate open on
-  quiet ticks; primary dropped while gated; gates independent across jobs.
+  then unblocks once its stream has a value; a value cached on an earlier tick
+  still opens the gate (and is delivered) when the last stream arrives later;
+  primary dropped while gated; gates independent across jobs.
 - The declaration model that feeds `gating_streams` and `context_keys`, and the
   routing that ensures the gated streams are actually subscribed, are settled in
   ADR 0003.

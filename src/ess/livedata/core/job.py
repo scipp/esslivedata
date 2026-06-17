@@ -225,7 +225,7 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         input_streams:
-            On-disk stream names of every non-primary input the job subscribes
+            Canonical stream names of every non-primary input the job subscribes
             to (see :attr:`input_stream_names`) — user-selected ``AuxSources``
             and framework-routed ``ContextBinding`` wire streams alike. Incoming
             data already arrives keyed by stream name — the same key the
@@ -287,9 +287,10 @@ class Job:
         """
         Gating-stream names that have no value available yet.
 
-        The :class:`JobManager` consults this each tick (against the post-
-        ``get_context`` set of available stream names) to decide whether to
-        gate the job: any missing gating stream indicates a parametric input
+        The :class:`JobManager` consults this each tick (against the stream
+        names present after refilling the batch from the context cache) to
+        decide whether to gate the job: any missing gating stream indicates a
+        parametric input
         whose accumulator has not produced a value, so running the workflow
         would either crash or silently produce data attributed to an
         uninitialised context. Dynamic aux (e.g. monitor streams that

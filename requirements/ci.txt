@@ -13,7 +13,7 @@ charset-normalizer==3.4.7
     # via requests
 colorama==0.4.6
     # via tox
-distlib==0.4.1
+distlib==0.4.2
     # via virtualenv
 filelock==3.29.1
     # via

@@ -16,6 +16,7 @@ from ess.livedata.handlers.detector_view_specs import (
 )
 
 from .utils import (
+    ROI_AUX_NAMES,
     make_fake_detector_number,
     make_fake_nexus_detector_data,
 )
@@ -59,7 +60,10 @@ class TestSpectrumViewIntegration:
         )
         factory = _make_factory_with_spectrum(spec)
         params = make_detector_view_params(spectrum_view=spec)()
-        workflow = factory.make_workflow('detector', params=params)
+        workflow = factory.make_workflow(
+            'detector', params=params, aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -85,7 +89,10 @@ class TestSpectrumViewIntegration:
         factory = _make_factory_with_spectrum(spec, y_size=4, x_size=4)
         Params = make_detector_view_params(spectrum_view=spec)
         params = Params(spectrum_params=_RebinParams(factor=2))
-        workflow = factory.make_workflow('detector', params=params)
+        workflow = factory.make_workflow(
+            'detector', params=params, aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -113,7 +120,10 @@ class TestSpectrumViewIntegration:
             view_config=LogicalViewConfig(transform=logical_transform),
         )
         params = make_detector_view_params()()
-        workflow = factory.make_workflow('detector', params=params)
+        workflow = factory.make_workflow(
+            'detector', params=params, aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=2)
         workflow.accumulate(

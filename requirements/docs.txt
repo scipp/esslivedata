@@ -22,7 +22,7 @@ babel==2.18.0
     # via
     #   pydata-sphinx-theme
     #   sphinx
-beautifulsoup4==4.14.3
+beautifulsoup4==4.15.0
     # via
     #   nbconvert
     #   pydata-sphinx-theme
@@ -209,7 +209,7 @@ stack-data==0.6.3
     # via ipython
 tinycss2==1.5.1
     # via bleach
-tornado==6.5.6
+tornado==6.5.7
     # via
     #   ipykernel
     #   jupyter-client
@@ -230,7 +230,7 @@ traitlets==5.15.1
     #   traittypes
 traittypes==0.2.3
     # via ipydatawidgets
-wcwidth==0.8.0
+wcwidth==0.8.1
     # via prompt-toolkit
 webencodings==0.5.1
     # via

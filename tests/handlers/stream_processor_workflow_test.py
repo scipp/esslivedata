@@ -80,6 +80,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Set context data
         workflow.accumulate(
@@ -114,6 +115,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Accumulate some data
         workflow.accumulate(
@@ -155,6 +157,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Accumulate with only context
         workflow.accumulate(
@@ -190,6 +193,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'simplified_output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         workflow.accumulate(
             {'context': Context(4)},
@@ -215,6 +219,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Only accumulate dynamic data
         workflow.accumulate(
@@ -240,6 +245,7 @@ class TestDeferredContextInjection:
             accumulators=(ProcessedStreamed,),
         )
         workflow.add_context_keys({'context': Context})
+        workflow.build()
 
         workflow.accumulate(
             {'context': Context(5)},
@@ -360,6 +366,22 @@ class TestDeferredContextInjection:
         with pytest.raises(RuntimeError, match='already built'):
             workflow.build(context_keys={'extra': Static})
 
+    def test_accumulate_before_build_raises(self, base_workflow_with_context):
+        """Calling accumulate without build() raises RuntimeError."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        with pytest.raises(RuntimeError, match='before build'):
+            workflow.accumulate(
+                {'context': Context(5)},
+                start_time=Timestamp.from_ns(1000),
+                end_time=Timestamp.from_ns(2000),
+            )
+
 
 # Types for window_outputs tests (need DataArray for assign_coords)
 InputData = NewType('InputData', sc.DataArray)
@@ -398,6 +420,7 @@ class TestWindowOutputs:
                 CumulativeOutput: EternalAccumulator(preprocess=None),
             },
         )
+        workflow.build()
 
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
@@ -426,6 +449,7 @@ class TestWindowOutputs:
             window_outputs=['current'],
             accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
         )
+        workflow.build()
 
         # First accumulate
         workflow.accumulate(
@@ -456,6 +480,7 @@ class TestWindowOutputs:
             window_outputs=['current'],
             accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
         )
+        workflow.build()
 
         # First period
         workflow.accumulate(

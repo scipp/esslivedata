@@ -2,7 +2,22 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for LOKI ContextBinding declarations."""
 
+import pytest
+
 from ess.livedata.config.instruments.loki import factories, specs
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _loki_factories_loaded() -> None:
+    """Attach LOKI factories before either test runs.
+
+    ``setup_factories`` sets ``skip_instrument_contexts`` and the carriage
+    context binding. Without this the opt-out test depends on a sibling module
+    having loaded the factories first (flaky under ``-n auto``). Re-attaching is
+    safe: ``setup_factories`` only overwrites factories and flags, never
+    re-registers specs.
+    """
+    factories.setup_factories(specs.instrument)
 
 
 def test_setup_factories_declares_detector_carriage_context_binding() -> None:
@@ -14,7 +29,6 @@ def test_setup_factories_declares_detector_carriage_context_binding() -> None:
     non-consumers (tube_view) opt out via ``skip_instrument_contexts``.
     """
     instrument = specs.instrument
-    factories.setup_factories(instrument)
 
     matching = [
         ci

@@ -17,6 +17,7 @@ from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
     JobId,
+    WorkflowId,
     WorkflowOutputsBase,
 )
 from ess.livedata.handlers.workflow_factory import (
@@ -390,7 +391,7 @@ class TestContextBindings:
         assert binding.workflow_key is _Key
         assert binding.dependent_sources == frozenset({'det1'})
 
-    def test_load_factories_rejects_binding_with_unknown_dependent_source(self):
+    def test_validate_rejects_binding_with_unknown_dependent_source(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -406,7 +407,7 @@ class TestContextBindings:
         )
 
         with pytest.raises(ValueError, match='ghost'):
-            instrument._validate_binding_dependent_sources()
+            instrument.validate()
 
     def test_validates_duplicate_value_log_subclass_across_bindings(self):
         """Two chain-patch entries with different streams must not share a
@@ -442,7 +443,7 @@ class TestContextBindings:
         )
 
         with pytest.raises(ValueError, match=r'ValueLog subclass.*shared'):
-            instrument._validate_chain_patch_value_log_uniqueness()
+            instrument.validate()
 
     def test_validates_chain_patch_stream_uniqueness(self):
         """Two chain-patch entries for one stream must declare the same
@@ -465,6 +466,13 @@ class TestContextBindings:
             detector_names=['det1', 'det2'],
             streams={'shared': _f144('shared')},
         )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1', 'det2'],
+            outputs=SimpleTestOutputs,
+        )
         instrument.add_context_binding(
             stream_name='shared',
             dependent_sources=['det1'],
@@ -476,7 +484,7 @@ class TestContextBindings:
             workflow_key=_LogB,
         )
         with pytest.raises(ValueError, match='conflicting chain-patch'):
-            instrument._validate_chain_patch_value_log_uniqueness()
+            instrument.validate()
 
     def test_chain_patch_stream_allows_exact_duplicates(self):
         """Repeated identical chain-patch declarations are not a conflict.
@@ -493,13 +501,20 @@ class TestContextBindings:
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'s': _f144('s')}
         )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
         for _ in range(2):
             instrument.add_context_binding(
                 stream_name='s',
                 dependent_sources=['det1'],
                 workflow_key=_Log,
             )
-        instrument._validate_chain_patch_value_log_uniqueness()
+        instrument.validate()
 
     def test_validates_context_vs_aux_field_collision(self):
         """A context stream_name must not match any aux_sources field name.
@@ -529,7 +544,7 @@ class TestContextBindings:
         )
 
         with pytest.raises(ValueError, match='aux_sources field'):
-            instrument._validate_context_binding_wire_name_collisions()
+            instrument.validate()
 
     def test_skip_instrument_contexts_suppresses_context_vs_aux_collision(self):
         """``skip_instrument_contexts`` removes instrument-scope context for the
@@ -554,7 +569,7 @@ class TestContextBindings:
         )
         handle.skip_instrument_contexts()
 
-        instrument._validate_context_binding_wire_name_collisions()
+        instrument.validate()
 
     def test_validates_wire_name_collision_between_instrument_and_spec(self):
         """Instrument- and spec-level ContextBinding entries must not name-collide.
@@ -579,7 +594,7 @@ class TestContextBindings:
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
         with pytest.raises(ValueError, match='collision'):
-            instrument._validate_context_binding_wire_name_collisions()
+            instrument.validate()
 
     def test_no_collision_when_dependent_sources_disjoint(self):
         """Same stream name on instrument and spec scope is fine when the sources
@@ -603,7 +618,7 @@ class TestContextBindings:
         )
 
         # No exception.
-        instrument._validate_context_binding_wire_name_collisions()
+        instrument.validate()
 
     def test_resolve_context_keys_matches_instrument_binding_by_source(self):
         instrument = Instrument(
@@ -660,6 +675,15 @@ class TestContextBindings:
         assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
+
+    def test_resolve_context_keys_raises_for_unregistered_workflow(self):
+        instrument = Instrument(name='test', detector_names=['det1'])
+        workflow_id = WorkflowId(
+            instrument='test', namespace='spec', name='ghost', version=1
+        )
+
+        with pytest.raises(KeyError, match=r'not.*registered'):
+            instrument.resolve_context_keys(workflow_id, 'det1')
 
 
 class TestInstrumentRegisterSpec:

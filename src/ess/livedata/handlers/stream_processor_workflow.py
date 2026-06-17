@@ -70,7 +70,7 @@ class StreamProcessorWorkflow(Workflow):
             instrument- and spec-scope bindings resolved by the routing layer
             are merged in afterwards via :meth:`add_context_keys`, which is
             why construction of the wrapped ``StreamProcessor`` is deferred
-            until :meth:`build` (or first use). The keys must be finalized
+            until :meth:`build`. The keys must be finalized
             before the graph is built because ``StreamProcessor`` bakes them
             into the pruned/precomputed pipeline at construction.
         target_keys:
@@ -171,8 +171,15 @@ class StreamProcessorWorkflow(Workflow):
 
     @property
     def _processor(self) -> streaming.StreamProcessor:
-        self.build()
-        assert self._stream_processor is not None  # noqa: S101  # narrows type after build()
+        # No lazy build: silently materializing here would skip the routing
+        # layer's bindings and move graph validation from job creation to
+        # first data arrival. WorkflowFactory.create builds eagerly; any other
+        # call site must do the same.
+        if self._stream_processor is None:
+            raise RuntimeError(
+                "StreamProcessorWorkflow used before build(); "
+                "WorkflowFactory.create builds it after creation."
+            )
         return self._stream_processor
 
     def accumulate(
