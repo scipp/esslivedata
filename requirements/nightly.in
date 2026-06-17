@@ -15,7 +15,7 @@ structlog>=24.0.0
 essdiffraction>=26.5.0
 essreflectometry>=26.6.0
 esssans
-essspectroscopy>=26.3.0
+essspectroscopy>=26.6.0
 holoviews
 panel>=1.9
 param
