@@ -51,6 +51,8 @@ idna==3.18
     # via
     #   email-validator
     #   requests
+importlib-metadata==9.0.0
+    # via dask
 jinja2==3.1.6
     # via -r base.in
 kiwisolver==1.5.0
@@ -153,3 +155,5 @@ typing-inspection==0.4.2
     # via pydantic
 urllib3==2.7.0
     # via requests
+zipp==4.1.0
+    # via importlib-metadata
