@@ -4,18 +4,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import graphviz
 
+    from ess.livedata.config.stream import ChainPatchBinding
+
 import sciline
 import sciline.typing
 from ess.reduce import streaming
 
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.core.timestamp import Timestamp
 
+from .dynamic_transforms import wire_dynamic_transforms
 from .workflow_factory import Workflow
 
 
@@ -44,11 +48,16 @@ class StreamProcessorWorkflow(Workflow):
         base_workflow:
             The sciline Pipeline to wrap.
         dynamic_keys:
-            Mapping from stream names to sciline keys for dynamic inputs.
+            Mapping from canonical stream name to sciline key for dynamic inputs.
             Dynamic inputs are accumulated across calls via
-            ``StreamProcessor.accumulate()``.
+            ``StreamProcessor.accumulate()``. Factories key every entry by the
+            canonical stream name incoming data arrives under: the primary input
+            by its ``source_name`` and auxiliary inputs by resolving their role
+            through the ``aux_source_names`` map the factory receives (e.g.
+            ``aux_source_names['incident_monitor']``). The role space therefore
+            never enters this mapping.
         context_keys:
-            Mapping from stream names to sciline keys for context inputs.
+            Mapping from stream names to sciline keys for context bindings.
             Context inputs update pipeline parameters via
             ``StreamProcessor.set_context()``. Unlike dynamic inputs, context
             values are **stateful**: a value set in one ``accumulate()`` call
@@ -57,6 +66,13 @@ class StreamProcessorWorkflow(Workflow):
             retains its previous value. If ``set_context`` was never called
             for a key and the underlying sciline pipeline has no default for
             it, ``finalize()`` will raise an ``UnsatisfiedGraphError``.
+            A factory passes only its own internal context here (e.g. ROI);
+            instrument- and spec-scope bindings resolved by the routing layer
+            are merged in afterwards via :meth:`add_context_keys`, which is
+            why construction of the wrapped ``StreamProcessor`` is deferred
+            until :meth:`build`. The keys must be finalized
+            before the graph is built because ``StreamProcessor`` bakes them
+            into the pruned/precomputed pipeline at construction.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -65,19 +81,106 @@ class StreamProcessorWorkflow(Workflow):
         **kwargs:
             Additional arguments passed to StreamProcessor.
         """
-        self._dynamic_keys = dynamic_keys
-        self._context_keys = context_keys if context_keys else {}
+        self._base_workflow = base_workflow
+        self._dynamic_keys = dict(dynamic_keys)
+        self._context_keys = dict(context_keys) if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
+        self._kwargs = kwargs
         self._current_start_time: Timestamp | None = None
         self._current_end_time: Timestamp | None = None
+        self._stream_processor: streaming.StreamProcessor | None = None
+
+    def add_context_keys(self, context_keys: Mapping[str, sciline.typing.Key]) -> None:
+        """Merge additional context bindings before the graph is built.
+
+        Called by the routing layer (``WorkflowFactory.create``) to inject
+        instrument- and spec-scope context bindings resolved per job, so
+        factories need not thread ``context_keys`` through their signature.
+
+        Raises if the wrapped ``StreamProcessor`` has already been built: its
+        context keys are fixed at construction and cannot change afterwards.
+        """
+        if self._stream_processor is not None:
+            raise RuntimeError(
+                "Cannot add context keys after the StreamProcessor is built."
+            )
+        self._context_keys = {**self._context_keys, **context_keys}
+
+    @property
+    def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
+        """Mapping from canonical stream name to sciline key for dynamic inputs.
+
+        :meth:`build` reads it to match each stream name against a binding's
+        ``dependent_sources`` and derive the NeXus component type (the first
+        type-arg of a ``NeXusData[Component, Run]`` key) for f144-driven dynamic
+        transforms. See
+        :func:`ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`.
+        """
+        return dict(self._dynamic_keys)
+
+    @property
+    def base_pipeline(self) -> sciline.Pipeline:
+        """The unbuilt base pipeline, exposed for pre-build patching.
+
+        Raises if the wrapped ``StreamProcessor`` has already been built: the
+        pipeline is baked into the pruned/precomputed graph at construction, so
+        patches must land before :meth:`build`.
+        """
+        if self._stream_processor is not None:
+            raise RuntimeError(
+                "Cannot patch the pipeline after the StreamProcessor is built."
+            )
+        return self._base_workflow
+
+    def build(
+        self,
+        *,
+        context_keys: Mapping[str, sciline.typing.Key] | None = None,
+        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+    ) -> None:
+        """Materialize the wrapped ``StreamProcessor`` from its inputs.
+
+        Injects the routing layer's per-job bindings — ``context_keys`` merge
+        into the ``set_context`` parameters and ``chain_patch_bindings`` wire as
+        f144-driven dynamic transforms — then constructs the ``StreamProcessor``,
+        baking them into the pruned/precomputed graph. Building eagerly (rather
+        than on first ``accumulate``) keeps graph validation and the static-node
+        precompute at job-creation time.
+
+        Idempotent: a second call is a no-op and must not supply bindings, since
+        they could no longer take effect once the graph is built.
+        """
+        bindings = list(chain_patch_bindings)
+        if self._stream_processor is not None:
+            if context_keys or bindings:
+                raise RuntimeError(
+                    "Cannot inject bindings: the StreamProcessor is already built."
+                )
+            return
+        if context_keys:
+            self.add_context_keys(context_keys)
+        wire_dynamic_transforms(self, bindings)
         self._stream_processor = streaming.StreamProcessor(
-            base_workflow,
+            self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
             context_keys=tuple(self._context_keys.values()),
             target_keys=tuple(self._target_keys.values()),
-            **kwargs,
+            **self._kwargs,
         )
+
+    @property
+    def _processor(self) -> streaming.StreamProcessor:
+        # No lazy build: silently materializing here would skip the routing
+        # layer's bindings and move graph validation from job creation to
+        # first data arrival. WorkflowFactory.create builds eagerly; any other
+        # call site must do the same.
+        if self._stream_processor is None:
+            raise RuntimeError(
+                "StreamProcessorWorkflow used before build(); "
+                "WorkflowFactory.create builds it after creation."
+            )
+        return self._stream_processor
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
@@ -95,8 +198,16 @@ class StreamProcessorWorkflow(Workflow):
         # will fail. See aux_sources / render() in workflow_spec.py for how
         # the routing layer ensures only jobs that subscribed to a stream
         # receive its data.
+        #
+        # ValueLog subclasses are typed wrappers around an NXlog DataArray;
+        # the raw payload (a DataArray) is wrapped as key(values=raw) so
+        # each chain-patch binding has a distinct Sciline node identity.
         context = {
-            sciline_key: data[key]
+            sciline_key: (
+                sciline_key(values=data[key])
+                if isinstance(sciline_key, type) and issubclass(sciline_key, ValueLog)
+                else data[key]
+            )
             for key, sciline_key in self._context_keys.items()
             if key in data
         }
@@ -106,12 +217,12 @@ class StreamProcessorWorkflow(Workflow):
             if key in data
         }
         if context:
-            self._stream_processor.set_context(context)
+            self._processor.set_context(context)
         if dynamic:
-            self._stream_processor.accumulate(dynamic)
+            self._processor.accumulate(dynamic)
 
     def finalize(self) -> dict[str, Any]:
-        targets = self._stream_processor.finalize()
+        targets = self._processor.finalize()
         results = {name: targets[key] for name, key in self._target_keys.items()}
 
         # Add time coords to window outputs
@@ -134,7 +245,7 @@ class StreamProcessorWorkflow(Workflow):
         return results
 
     def clear(self) -> None:
-        self._stream_processor.clear()
+        self._processor.clear()
         self._current_start_time = None
         self._current_end_time = None
 
@@ -143,4 +254,4 @@ class StreamProcessorWorkflow(Workflow):
 
         See :py:meth:`ess.reduce.streaming.StreamProcessor.visualize` for parameters.
         """
-        return self._stream_processor.visualize(**kwargs)
+        return self._processor.visualize(**kwargs)

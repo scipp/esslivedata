@@ -927,3 +927,169 @@ class TestTwoPhaseRegistration:
 
         # Verify params is still MyParams (not mutated)
         assert factory[workflow_id].params is MyParams
+
+
+class _CtxKey:
+    pass
+
+
+class _OtherCtxKey:
+    pass
+
+
+class FakeContextWorkflow:
+    """Minimal ``SupportsContext`` workflow for create() injection tests."""
+
+    def __init__(self) -> None:
+        self.context_keys: dict[str, type] = {}
+        self.chain_patch_bindings: list = []
+        self.built = False
+
+    def build(self, *, context_keys=None, chain_patch_bindings=()) -> None:
+        if context_keys:
+            self.context_keys.update(context_keys)
+        self.chain_patch_bindings = list(chain_patch_bindings)
+        self.built = True
+
+    def accumulate(self, data, *, start_time, end_time) -> None: ...
+    def finalize(self) -> dict:
+        return {}
+
+    def clear(self) -> None: ...
+
+
+class TestContextKeyInjection:
+    """``create()`` injects resolved context bindings after the factory returns."""
+
+    def _register(self, factory_func) -> tuple[WorkflowFactory, WorkflowId]:
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument='test-instrument', name='test-workflow', version=1
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='test-workflow',
+            description='Test',
+            params=None,
+            group=REDUCTION,
+        )
+        factory.register_spec(spec).attach_factory()(factory_func)
+        return factory, workflow_id
+
+    def _config(self, workflow_id: WorkflowId) -> WorkflowConfig:
+        return WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name='any', job_number=uuid.uuid4()),
+        )
+
+    def test_context_keys_injected_and_built_eagerly(self) -> None:
+        factory, workflow_id = self._register(lambda: FakeContextWorkflow())
+        workflow = factory.create(
+            source_name='any',
+            config=self._config(workflow_id),
+            context_keys={'rot': _CtxKey},
+        )
+        assert workflow.context_keys == {'rot': _CtxKey}
+        assert workflow.built is True
+
+    def test_build_called_even_without_context_keys(self) -> None:
+        factory, workflow_id = self._register(lambda: FakeContextWorkflow())
+        workflow = factory.create(source_name='any', config=self._config(workflow_id))
+        assert workflow.context_keys == {}
+        assert workflow.built is True
+
+    def test_context_keys_on_non_context_workflow_raises(self) -> None:
+        factory, workflow_id = self._register(make_dummy_workflow)
+        with pytest.raises(TypeError, match='does not consume context'):
+            factory.create(
+                source_name='any',
+                config=self._config(workflow_id),
+                context_keys={'rot': _CtxKey},
+            )
+
+
+class TestSpecHandleAddContextBinding:
+    """Cover :meth:`SpecHandle.add_context_binding` defaults and append semantics."""
+
+    def _register(self, *, source_names: list[str]) -> tuple[WorkflowFactory, object]:
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument='test-instrument', name='test-workflow', version=1
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='test-workflow',
+            description='Test',
+            source_names=source_names,
+            params=None,
+            group=REDUCTION,
+        )
+        handle = factory.register_spec(spec)
+        return factory, handle
+
+    def test_default_dependent_sources_fall_back_to_spec_sources(self) -> None:
+        factory, handle = self._register(source_names=['det1', 'det2'])
+
+        handle.add_context_binding(stream_name='roi', workflow_key=_CtxKey)
+
+        [entry] = factory.registration(handle.workflow_id).context_bindings
+        assert entry.stream_name == 'roi'
+        assert entry.workflow_key is _CtxKey
+        assert entry.dependent_sources == frozenset({'det1', 'det2'})
+
+    def test_explicit_dependent_sources_override_default(self) -> None:
+        factory, handle = self._register(source_names=['det1', 'det2'])
+
+        handle.add_context_binding(
+            stream_name='roi',
+            workflow_key=_CtxKey,
+            dependent_sources=['det1'],
+        )
+
+        [entry] = factory.registration(handle.workflow_id).context_bindings
+        assert entry.dependent_sources == frozenset({'det1'})
+
+    def test_multiple_entries_are_appended(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        handle.add_context_binding(stream_name='roi', workflow_key=_CtxKey)
+        handle.add_context_binding(stream_name='polygon', workflow_key=_OtherCtxKey)
+
+        entries = factory.registration(handle.workflow_id).context_bindings
+        assert [e.stream_name for e in entries] == ['roi', 'polygon']
+        assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
+
+    def test_skip_instrument_contexts_sets_registration_flag(self) -> None:
+        factory, handle = self._register(source_names=['det1'])
+
+        reg = factory.registration(handle.workflow_id)
+        assert reg.skip_instrument_contexts is False
+
+        handle.skip_instrument_contexts()
+
+        reg = factory.registration(handle.workflow_id)
+        assert reg.skip_instrument_contexts is True
+
+    def test_chain_patch_rejected_at_spec_scope(self) -> None:
+        """A :class:`ValueLog` ``workflow_key`` at spec scope is rejected.
+
+        Chain-patching is read only from instrument scope by
+        :attr:`Instrument.chain_patch_bindings`; a spec-scope ValueLog
+        would route the f144 value to a Sciline parameter that no provider
+        consumes — silent-wrong.
+        """
+        import pytest
+
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
+        _, handle = self._register(source_names=['det1'])
+
+        with pytest.raises(ValueError, match=r'chain-patch.*spec scope'):
+            handle.add_context_binding(stream_name='rot', workflow_key=_RotLog)

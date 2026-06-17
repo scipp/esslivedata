@@ -96,7 +96,9 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.projection_handle.attach_factory()
     def _detector_view_workflow_factory(
-        source_name: str, params: DreamDetectorViewParams
+        source_name: str,
+        params: DreamDetectorViewParams,
+        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
         lookup_table_filename = None
@@ -106,7 +108,10 @@ def setup_factories(instrument: Instrument) -> None:
             )
 
         return _detector_view_factory.make_workflow(
-            source_name, params, lookup_table_filename=lookup_table_filename
+            source_name,
+            params,
+            aux_source_names,
+            lookup_table_filename=lookup_table_filename,
         )
 
     # Monitor workflow factory with DREAM-specific TOF configuration
@@ -222,10 +227,12 @@ def setup_factories(instrument: Instrument) -> None:
         wf[powder.types.DspacingBins] = params.dspacing_edges.get_edges()
         return wf
 
-    def _powder_dynamic_keys(source_name: str):
+    def _powder_dynamic_keys(source_name: str, aux_source_names: dict[str, str]):
         return {
             source_name: NeXusData[NXdetector, SampleRun],
-            'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
+            aux_source_names['cave_monitor']: NeXusData[
+                powder.types.CaveMonitor, SampleRun
+            ],
         }
 
     _powder_accumulators = (
@@ -250,7 +257,7 @@ def setup_factories(instrument: Instrument) -> None:
         """Factory for DREAM powder reduction workflow."""
         return StreamProcessorWorkflow(
             _configure_powder_workflow(source_name, params, aux_source_names),
-            dynamic_keys=_powder_dynamic_keys(source_name),
+            dynamic_keys=_powder_dynamic_keys(source_name, aux_source_names),
             target_keys=_focussed_target_keys,
             accumulators=_powder_accumulators,
         )
@@ -268,7 +275,7 @@ def setup_factories(instrument: Instrument) -> None:
         )
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys=_powder_dynamic_keys(source_name),
+            dynamic_keys=_powder_dynamic_keys(source_name, aux_source_names),
             target_keys={
                 **_focussed_target_keys,
                 'i_of_dspacing': powder.types.IntensityDspacing[SampleRun],

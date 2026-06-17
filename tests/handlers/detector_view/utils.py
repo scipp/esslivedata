@@ -111,6 +111,13 @@ def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
     return sc.arange('detector_number', 1, total_pixels + 1, unit=None)
 
 
+# Identity ROI aux-name mapping: tests that feed bare 'roi_rectangle'/'roi_polygon'
+# directly to workflow.accumulate construct the workflow with these so the
+# context_keys wire names match. Production renders per-job-prefixed names; see
+# tests using DetectorROIAuxSources.render for that path.
+ROI_AUX_NAMES = {'roi_rectangle': 'roi_rectangle', 'roi_polygon': 'roi_polygon'}
+
+
 def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
     """Create a DetectorViewScilineFactory configured for testing.
 

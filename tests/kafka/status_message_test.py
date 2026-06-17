@@ -147,6 +147,10 @@ class TestJobStateToNicosStatus:
         assert (
             job_state_to_nicos_status_constant(JobState.warning) == NicosStatus.WARNING
         )
+        assert (
+            job_state_to_nicos_status_constant(JobState.pending_context)
+            == NicosStatus.WARNING
+        )
 
 
 class TestJobStatusPayload:

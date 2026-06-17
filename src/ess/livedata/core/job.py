@@ -97,6 +97,7 @@ class JobState(StrEnum):
     finishing = "finishing"
     error = "error"
     warning = "warning"
+    pending_context = "pending_context"
     stopped = "stopped"
 
 
@@ -206,7 +207,8 @@ class Job:
         workflow_id: WorkflowId,
         processor: Workflow,
         source_names: list[str],
-        aux_source_names: dict[str, str] | None = None,
+        input_streams: set[str],
+        gating_streams: set[str],
         reset_on_run_transition: bool = True,
     ) -> None:
         """
@@ -222,9 +224,18 @@ class Job:
             The Workflow instance that will process data for this job.
         source_names:
             The names of the primary data sources for this job.
-        aux_source_names:
-            Mapping from field names to stream names for auxiliary data sources.
-            None if no auxiliary sources are needed.
+        input_streams:
+            Canonical stream names of every non-primary input the job subscribes
+            to (see :attr:`input_stream_names`) — user-selected ``AuxSources``
+            and framework-routed ``ContextBinding`` wire streams alike. Incoming
+            data already arrives keyed by stream name — the same key the
+            workflow expects, so :meth:`add` needs no remapping. The role→stream
+            mapping is consumed at workflow construction; only the names matter
+            here.
+        gating_streams:
+            Subset of ``input_streams`` whose value must be available before the
+            workflow runs. The :class:`JobManager` gates the job on these per
+            ADR 0002.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         """
@@ -235,18 +246,8 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
-        self._aux_source_mapping: dict[str, str] = aux_source_names or {}
-
-        # Create reverse mapping: stream_name -> list of field_names
-        # This supports multiplexing where one stream maps to multiple fields. In most
-        # cases this is not desirable, but the pydantic model for the aux sources should
-        # perform such validation. Here is not the place to prevent this, since there
-        # may be valid use cases.
-        self._stream_to_fields: dict[str, list[str]] = {}
-        for field_name, stream_name in self._aux_source_mapping.items():
-            if stream_name not in self._stream_to_fields:
-                self._stream_to_fields[stream_name] = []
-            self._stream_to_fields[stream_name].append(field_name)
+        self._input_streams: set[str] = input_streams
+        self._gating_streams: set[str] = gating_streams
 
     @property
     def job_id(self) -> JobId:
@@ -269,14 +270,34 @@ class Job:
         return self._source_names
 
     @property
-    def aux_source_names(self) -> list[str]:
-        """
-        Get the list of auxiliary stream names for routing purposes.
+    def input_stream_names(self) -> set[str]:
+        """Every non-primary stream name this job consumes."""
+        return self._input_streams
 
-        Returns the stream names (values from the mapping) that JobManager
-        should use to route incoming data to this job.
+    @property
+    def gating_streams(self) -> set[str]:
+        """Context stream names whose value must be available before running.
+
+        See :meth:`missing_context` and
+        :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
         """
-        return list(self._aux_source_mapping.values())
+        return self._gating_streams
+
+    def missing_context(self, available: set[str]) -> set[str]:
+        """
+        Gating-stream names that have no value available yet.
+
+        The :class:`JobManager` consults this each tick (against the stream
+        names present after refilling the batch from the context cache) to
+        decide whether to gate the job: any missing gating stream indicates a
+        parametric input
+        whose accumulator has not produced a value, so running the workflow
+        would either crash or silently produce data attributed to an
+        uninitialised context. Dynamic aux (e.g. monitor streams that
+        accumulate over time) is not in this set and does not gate.
+        See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        return self._gating_streams - available
 
     @property
     def reset_on_run_transition(self) -> bool:
@@ -284,17 +305,11 @@ class Job:
 
     def add(self, data: JobData) -> JobReply:
         try:
-            # Remap aux_data keys from stream names to field names for the workflow
-            # Handle multiplexing: one stream may map to multiple fields
-            remapped_aux_data = {}
-            for stream_name, value in data.aux_data.items():
-                field_names = self._stream_to_fields.get(stream_name, [stream_name])
-                for field_name in field_names:
-                    remapped_aux_data[field_name] = value
-
-            # Pass data to workflow with field names (not stream names)
+            # Primary and aux data are both keyed by canonical stream name, which
+            # is exactly how the workflow's dynamic/context keys are keyed (aux
+            # roles are resolved at workflow construction). No remapping needed.
             self._processor.accumulate(
-                {**data.primary_data, **remapped_aux_data},
+                {**data.primary_data, **data.aux_data},
                 start_time=data.start_time,
                 end_time=data.end_time,
             )

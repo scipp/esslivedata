@@ -1,13 +1,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import types
 from typing import Any
 
 import scipp as sc
 
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.core.message import Message, StreamId, StreamKind
-from ess.livedata.core.message_batcher import MessageBatch
-from ess.livedata.core.orchestrating_processor import MessagePreprocessor
+from ess.livedata.core.message_batcher import MessageBatch, NaiveMessageBatcher
+from ess.livedata.core.orchestrating_processor import (
+    MessagePreprocessor,
+    OrchestratingProcessor,
+)
+from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
 from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.handlers.to_nxlog import ToNXlog
 
@@ -61,9 +67,78 @@ class FakeFactory:
 
     def __init__(self, accumulators: dict[str, Accumulator]) -> None:
         self._accumulators = accumulators
+        # Minimal instrument stub: OrchestratingProcessor reads .name at init;
+        # JobFactory stores the object but never calls workflow_factory unless
+        # schedule_job() is invoked (which none of these tests do).
+        self.instrument = types.SimpleNamespace(name='test')
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         return self._accumulators.get(key.name)
+
+
+def _make_processor(
+    factory: FakeFactory,
+    source_messages: list[list[Message]],
+) -> tuple[OrchestratingProcessor, FakeMessageSink]:
+    """Build an OrchestratingProcessor wired to fake I/O for orchestrator-tick tests."""
+    sink = FakeMessageSink()
+    processor = OrchestratingProcessor(
+        source=FakeMessageSource(source_messages),
+        sink=sink,
+        preprocessor_factory=factory,
+        service_name='test_service',
+        message_batcher=NaiveMessageBatcher(),
+    )
+    return processor, sink
+
+
+class TestOrchestratingProcessorIdleTick:
+    def test_truly_idle_tick_publishes_no_data_messages(self):
+        """An empty-input tick (batcher returns None) must not publish data results.
+
+        The idle guard at the bottom of process() should fire and return early
+        without calling process_jobs, so the sink only ever receives status messages.
+        """
+        factory = FakeFactory({})
+        processor, sink = _make_processor(factory, source_messages=[[]])
+
+        processor.process()
+
+        data_messages = [
+            m for m in sink.messages if m.stream.kind == StreamKind.LIVEDATA_DATA
+        ]
+        assert data_messages == []
+
+    def test_data_tick_triggers_preprocessing(self):
+        """When data messages arrive the preprocess path runs (not the idle branch).
+
+        We verify this by checking that the non-context accumulator's get() was
+        called exactly once — which only happens inside preprocess_messages(), not
+        in the idle-branch early-return path.
+        """
+        acc = FakeNonContextAccumulator()
+        stream_id = StreamId(kind=StreamKind.DETECTOR_EVENTS, name='events')
+        factory = FakeFactory({'events': acc})
+        msg = Message(
+            timestamp=Timestamp.from_ns(1_000_000_000),
+            stream=stream_id,
+            value=sc.scalar(1.0),
+        )
+        processor, _ = _make_processor(factory, source_messages=[[msg]])
+
+        processor.process()
+
+        assert acc.get_call_count == 1
+
+    def test_idle_tick_does_not_call_get_on_accumulator(self):
+        """No data in → accumulator's get() must never be invoked on an idle tick."""
+        acc = FakeNonContextAccumulator()
+        factory = FakeFactory({'events': acc})
+        processor, _ = _make_processor(factory, source_messages=[[]])
+
+        processor.process()
+
+        assert acc.get_call_count == 0
 
 
 class TestGetContext:

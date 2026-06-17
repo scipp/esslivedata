@@ -2,14 +2,24 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for detector view workflow via StreamProcessor."""
 
+import uuid
+
 import numpy as np
 import pytest
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
 from ess.livedata.config.models import ROI, Interval, RectangleROI
+from ess.livedata.config.workflow_spec import JobId, WorkflowId
+from ess.livedata.core.job import Job, JobData
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
-from .utils import make_fake_nexus_detector_data, make_test_factory, make_test_params
+from .utils import (
+    ROI_AUX_NAMES,
+    make_fake_nexus_detector_data,
+    make_test_factory,
+    make_test_params,
+)
 
 
 class TestIntegrationWithStreamProcessor:
@@ -23,7 +33,10 @@ class TestIntegrationWithStreamProcessor:
         cumulative outputs should NOT have them (added later by Job).
         """
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -74,7 +87,10 @@ class TestIntegrationWithStreamProcessor:
         """Test the full workflow with accumulate and finalize."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -104,7 +120,10 @@ class TestIntegrationWithStreamProcessor:
         """Test that cumulative accumulates and current resets after finalize."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         # First batch
         events1 = make_fake_nexus_detector_data(
@@ -158,7 +177,10 @@ class TestROISpectraIntegration:
         """Test ROI spectra extraction via context_keys in StreamProcessorWorkflow."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         # Create fake pre-grouped events (format produced by GroupByPixel preprocessor)
         events = make_fake_nexus_detector_data(
@@ -209,7 +231,10 @@ class TestROISpectraIntegration:
         """Test that changing ROI recomputes spectra from full accumulated data."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         # Create events with some reproducibility
         np.random.seed(42)
@@ -268,7 +293,10 @@ class TestROISpectraIntegration:
         implementation and ensures downstream consumers always have current state.
         """
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -322,7 +350,10 @@ class TestROISpectraIntegration:
         the stacked output should have them sorted by index.
         """
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -360,6 +391,59 @@ class TestROISpectraIntegration:
         ], f"Expected sorted indices [2, 5], got {roi_indices}"
 
 
+class TestROIDeliveryViaJob:
+    """ROI delivery through the real Job using rendered per-job wire names."""
+
+    def test_roi_request_via_job_wire_name_reaches_context(self):
+        """ROI arriving under its per-job wire name must reach the workflow.
+
+        Regression for the case where the factory keyed ROI ``context_keys``
+        by bare field names while requests arrive keyed by the rendered
+        ``'{job_id}/roi_rectangle'`` wire name, silently dropping every ROI
+        request (empty readback).
+        """
+        factory = make_test_factory(y_size=4, x_size=4)
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        rendered = DetectorROIAuxSources().render(job_id=job_id)
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=rendered
+        )
+        workflow.build()  # as WorkflowFactory.create does
+
+        job = Job(
+            job_id=job_id,
+            workflow_id=WorkflowId(
+                instrument='dummy', namespace='detector_view', name='x', version=1
+            ),
+            processor=workflow,
+            source_names=['detector'],
+            input_streams=set(rendered.values()),
+            gating_streams=set(),
+        )
+
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+        roi = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        rectangle_request = ROI.to_concatenated_data_array({0: roi})
+
+        data = JobData(
+            primary_data={'detector': RawDetector[SampleRun](events)},
+            aux_data={rendered['roi_rectangle']: rectangle_request},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        _, result = job.process(data, finalize=True)
+        readback = result.data['roi_rectangle']
+        # Non-empty readback means the request reached set_context; a dropped
+        # request yields an empty 'bounds' dim.
+        assert readback.sizes.get('bounds', 0) > 0
+        recovered = ROI.from_concatenated_data_array(readback)
+        assert 0 in recovered
+
+
 class TestUnitHandling:
     """Tests for unit handling in detector view workflow."""
 
@@ -379,7 +463,10 @@ class TestUnitHandling:
         )
 
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=params)
+        workflow = factory.make_workflow(
+            'detector', params=params, aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10
@@ -406,7 +493,10 @@ class TestUnitHandling:
         have the correct coordinates and unit.
         """
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow = factory.make_workflow(
+            'detector', params=make_test_params(), aux_source_names=ROI_AUX_NAMES
+        )
+        workflow.build()
 
         events = make_fake_nexus_detector_data(
             y_size=4, x_size=4, n_events_per_pixel=10

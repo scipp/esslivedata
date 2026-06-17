@@ -5,10 +5,9 @@ import uuid
 import pytest
 
 from ess.livedata.config.instrument import Instrument
-from ess.livedata.config.workflow_spec import AuxSources, JobId
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.handlers.detector_view_specs import (
     CoordinateModeSettings,
-    DetectorROIAuxSources,
     DetectorViewParams,
 )
 from ess.livedata.handlers.workflow_factory import SpecHandle
@@ -96,10 +95,9 @@ class TestRegisterDetectorViewSpecs:
         # source_names should be derived from dict keys
         assert set(spec.source_names) == {"mantle_detector", "endcap_detector"}
 
-    def test_mixed_projections_spec_includes_roi_support(self):
-        """Test that mixed projection spec includes ROI aux sources."""
+    def test_mixed_projections_spec_includes_roi_aux_sources(self):
+        """Test that mixed projection spec exposes ROI auxiliary sources."""
         from ess.livedata.handlers.detector_view_specs import (
-            DetectorROIAuxSources,
             register_detector_view_spec,
         )
 
@@ -115,7 +113,10 @@ class TestRegisterDetectorViewSpecs:
         )
 
         spec = instrument.workflow_factory[handle.workflow_id]
-        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
+        assert set(spec.aux_sources.inputs) == {'roi_rectangle', 'roi_polygon'}
+        # ROI is not a context binding (not gated).
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert reg.context_bindings == ()
 
     def test_single_projection_requires_source_names(self):
         """Test that source_names is required when projection is a string."""
@@ -157,9 +158,8 @@ class TestRegisterDetectorViewSpecs:
         assert spec.source_names == source_names
 
     def test_specs_have_correct_params(self):
-        """Test that registered spec has the correct params and aux_sources types."""
+        """Test that registered spec has the correct params."""
         from ess.livedata.handlers.detector_view_specs import (
-            DetectorROIAuxSources,
             DetectorViewParams,
             register_detector_view_spec,
         )
@@ -174,9 +174,7 @@ class TestRegisterDetectorViewSpecs:
         spec_id = handle.workflow_id
         spec = instrument.workflow_factory[spec_id]
 
-        # Check params and aux_sources are set correctly
         assert spec.params is DetectorViewParams
-        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
 
     def test_no_heavy_imports(self):
         """Test that importing detector_view_specs doesn't import heavy dependencies."""
@@ -194,8 +192,37 @@ class TestRegisterDetectorViewSpecs:
         assert 'ess.reduce.live' not in sys.modules
         assert 'ess.reduce.live.raw' not in sys.modules
 
-    def test_default_uses_detector_roi_aux_sources(self):
-        """Test that not passing aux_sources defaults to DetectorROIAuxSources."""
+
+class TestRegisterDetectorViewSpecROIAuxSources:
+    """ROI auxiliary sources registered by register_detector_view_spec().
+
+    ROI is an auxiliary source, not a gated context binding: the factory wires
+    the ROI streams into ``set_context`` itself and the providers treat a
+    missing/empty request as "no ROI selected", so there is nothing to gate.
+    """
+
+    def test_register_adds_roi_rectangle_and_polygon_aux_sources(self) -> None:
+        from ess.livedata.handlers.detector_view_specs import (
+            DetectorROIAuxSources,
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        source_names = ["detector1", "detector2"]
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection="xy_plane",
+            source_names=source_names,
+        )
+
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
+        assert set(spec.aux_sources.inputs) == {'roi_rectangle', 'roi_polygon'}
+        # ROI is not gated, so no context bindings are declared.
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert reg.context_bindings == ()
+
+    def test_roi_aux_render_prefixes_with_job_id(self) -> None:
         from ess.livedata.handlers.detector_view_specs import (
             register_detector_view_spec,
         )
@@ -205,98 +232,41 @@ class TestRegisterDetectorViewSpecs:
             instrument=instrument,
             projection="xy_plane",
             source_names=["detector1"],
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        assert spec.aux_sources.render(job_id) == {
+            'roi_rectangle': f"{job_id}/roi_rectangle",
+            'roi_polygon': f"{job_id}/roi_polygon",
+        }
+
+    def test_logical_view_with_roi_support_adds_roi_aux_sources(self) -> None:
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        instrument = Instrument(name="test_instrument")
+        handle = instrument.add_logical_view(
+            name='custom_view',
+            title='Custom View',
+            description='',
+            source_names=['detector1'],
+            roi_support=True,
         )
         spec = instrument.workflow_factory[handle.workflow_id]
         assert isinstance(spec.aux_sources, DetectorROIAuxSources)
 
-    def test_custom_aux_sources_overrides_default(self):
-        """Test that passing aux_sources uses the provided spec."""
-        from ess.livedata.handlers.detector_view_specs import (
-            register_detector_view_spec,
-        )
-
-        custom_aux = AuxSources({'position': 'trans_20'})
+    def test_logical_view_without_roi_support_has_no_aux_sources(self) -> None:
         instrument = Instrument(name="test_instrument")
-        handle = register_detector_view_spec(
-            instrument=instrument,
-            projection="xy_plane",
-            source_names=["detector1"],
-            aux_sources=custom_aux,
+        handle = instrument.add_logical_view(
+            name='no_roi_view',
+            title='No ROI',
+            description='',
+            source_names=['detector1'],
+            roi_support=False,
         )
         spec = instrument.workflow_factory[handle.workflow_id]
-        assert spec.aux_sources is custom_aux
-
-
-class TestDetectorROIAuxSources:
-    """Tests for DetectorROIAuxSources auxiliary source model."""
-
-    def test_render_returns_all_roi_geometry_streams(self) -> None:
-        """Test that render() returns streams for all supported ROI geometries."""
-        aux_sources = DetectorROIAuxSources()
-        job_id = JobId(source_name='detector1', job_number=uuid.UUID(int=123))
-
-        rendered = aux_sources.render(job_id)
-
-        assert 'roi_rectangle' in rendered
-        assert 'roi_polygon' in rendered
-        assert len(rendered) == 2
-
-    def test_render_prefixes_stream_names_with_job_id(self) -> None:
-        """Test that render() prefixes stream names with full job_id."""
-        aux_sources = DetectorROIAuxSources()
-        job_id = JobId(source_name='detector1', job_number=uuid.UUID(int=123))
-
-        rendered = aux_sources.render(job_id)
-
-        expected_rectangle = f"detector1/{job_id.job_number}/roi_rectangle"
-        expected_polygon = f"detector1/{job_id.job_number}/roi_polygon"
-        assert rendered['roi_rectangle'] == expected_rectangle
-        assert rendered['roi_polygon'] == expected_polygon
-
-    def test_render_creates_unique_streams_for_different_jobs(self) -> None:
-        """Test that different jobs get unique ROI stream names."""
-        aux_sources = DetectorROIAuxSources()
-        job_id_1 = JobId(source_name='detector1', job_number=uuid.UUID(int=111))
-        job_id_2 = JobId(source_name='detector1', job_number=uuid.UUID(int=222))
-
-        rendered_1 = aux_sources.render(job_id_1)
-        rendered_2 = aux_sources.render(job_id_2)
-
-        # Each job should get unique stream names
-        assert rendered_1['roi_rectangle'] != rendered_2['roi_rectangle']
-        assert rendered_1['roi_polygon'] != rendered_2['roi_polygon']
-
-    def test_render_isolates_roi_streams_per_detector_in_multi_detector_workflow(
-        self,
-    ) -> None:
-        """
-        Test that ROI streams are unique per detector in multi-detector workflows.
-
-        When the same workflow runs on multiple detectors (same job_number),
-        each detector must get its own unique ROI stream to prevent cross-talk.
-        """
-        aux_sources = DetectorROIAuxSources()
-        shared_job_number = uuid.uuid4()
-
-        job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
-        job_id_high_res = JobId(
-            source_name='high_resolution', job_number=shared_job_number
-        )
-
-        rendered_mantle = aux_sources.render(job_id_mantle)
-        rendered_high_res = aux_sources.render(job_id_high_res)
-
-        # Each detector should get unique streams
-        assert rendered_mantle['roi_rectangle'] != rendered_high_res['roi_rectangle']
-        assert rendered_mantle['roi_polygon'] != rendered_high_res['roi_polygon']
-        assert (
-            rendered_mantle['roi_rectangle']
-            == f"mantle/{shared_job_number}/roi_rectangle"
-        )
-        assert (
-            rendered_high_res['roi_rectangle']
-            == f"high_resolution/{shared_job_number}/roi_rectangle"
-        )
+        assert spec.aux_sources is None
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert reg.context_bindings == ()
 
 
 class TestDetectorViewParamsGetActiveRange:

@@ -69,18 +69,22 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
-    # on the cut-workflow graph. Routed via context_keys; not NeXus components
-    # loaded by name.
-    instrument.add_log_context_binding(
+    # on the cut-workflow graph. Direct-bind (no chain patch) — declared at
+    # instrument scope so every spec consuming ``unified_detector`` picks them
+    # up. Non-consumers opt out below, co-located with the bindings they negate:
+    # the detector view sums over banks and the ratemeter is counts-only.
+    instrument.add_context_binding(
         stream_name='detector_tank_angle_r0',
+        dependent_sources={'unified_detector'},
         workflow_key=InstrumentAngle[SampleRun],
-        dependent_sources=['unified_detector'],
     )
-    instrument.add_log_context_binding(
+    instrument.add_context_binding(
         stream_name='rotation_stage',
+        dependent_sources={'unified_detector'},
         workflow_key=SampleAngle[SampleRun],
-        dependent_sources=['unified_detector'],
     )
+    specs.detector_ratemeter_handle.skip_instrument_contexts()
+    specs.unified_detector_view_handle.skip_instrument_contexts()
 
     # Monitor workflow factory (TOA-only)
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
@@ -151,7 +155,6 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-            context_keys=instrument.get_context_keys('unified_detector'),
             target_keys={'cut_data': CutData[SampleRun]},
             accumulators=(CutData[SampleRun],),
         )

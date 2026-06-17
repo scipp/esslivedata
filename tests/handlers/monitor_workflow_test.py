@@ -318,23 +318,8 @@ class TestCreateMonitorWorkflow:
                 lookup_table_filename='/path/to/lookup.h5',
             )
 
-    def test_context_keys_forwarded_to_stream_processor(self, toa_edges):
-        """Test that context_keys are passed through to StreamProcessorWorkflow."""
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
-
-        context_keys = {'position': sc.Variable}
-        workflow = create_monitor_workflow(
-            'monitor_1', toa_edges, context_keys=context_keys
-        )
-        assert isinstance(workflow, StreamProcessorWorkflow)
-        # Verify context_keys are stored on the workflow
-        assert 'position' in workflow._context_keys
-        assert workflow._context_keys['position'] is sc.Variable
-
-    def test_without_context_keys_still_works(self, toa_edges):
-        """Test that omitting context_keys preserves existing behavior."""
+    def test_context_keys_injected_after_creation(self, toa_edges):
+        """Context bindings are injected post-creation, not via the factory."""
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
@@ -342,6 +327,10 @@ class TestCreateMonitorWorkflow:
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
+
+        context_keys = {'position': sc.Variable}
+        workflow.add_context_keys(context_keys)
+        assert workflow._context_keys == context_keys
 
 
 class TestMonitorWorkflowIntegration:
@@ -364,6 +353,7 @@ class TestMonitorWorkflowIntegration:
 
     def test_full_workflow_cycle(self, toa_edges, sample_binned_events):
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # Accumulate data
         workflow.accumulate(
@@ -389,6 +379,7 @@ class TestMonitorWorkflowIntegration:
     def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
         """Delta outputs get time, start_time, end_time coords."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -425,6 +416,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Cumulative output should not have time coords (spans all time)."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
             start_time=Timestamp.from_ns(1000),
@@ -441,6 +433,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Time coords should track first start_time and last end_time."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
         # Multiple accumulate calls before finalize
         workflow.accumulate(
             {'monitor_1': sample_binned_events},
@@ -467,6 +460,7 @@ class TestMonitorWorkflowIntegration:
     def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
         """Time coords should reset between finalize cycles."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # First cycle
         workflow.accumulate(
@@ -493,6 +487,7 @@ class TestMonitorWorkflowIntegration:
     ):
         """Verify cumulative accumulates while window clears each cycle."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # First cycle
         workflow.accumulate(
@@ -520,6 +515,7 @@ class TestMonitorWorkflowIntegration:
     def test_full_workflow_cycle_histogram_mode(self, toa_edges):
         """Test full workflow cycle with histogram-mode monitor data."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
+        workflow.build()
 
         # Create histogram data like Cumulative preprocessor produces
         input_edges = sc.linspace('tof', 0, 10, num=11, unit='ns')
@@ -689,7 +685,7 @@ class TestDreamMonitorWorkflowFactory:
             name='monitor_histogram',
             version=1,
         )
-        factory = instrument.workflow_factory._factories[workflow_id]
+        factory = instrument.workflow_factory.registration(workflow_id).factory
 
         workflow = factory(monitor_name, dream_params_wavelength_mode)
         assert workflow is not None
@@ -743,6 +739,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             geometry_filename=str(geometry_filename),
             lookup_table_filename=str(lookup_table_filename),
         )
+        workflow.build()
 
         # Create histogram data like fake_monitors da00 mode produces
         # Using 'frame_time' which is what the production data uses

@@ -34,13 +34,25 @@ def gather_source_names(
     """
     names: set[str] = set()
     factory = instrument.workflow_factory
-    for wid, spec in factory.items():
-        if factory.get_service(wid) != service:
-            continue
+    service_regs = [reg for reg in factory.registrations() if reg.service == service]
+    for reg in service_regs:
+        spec = reg.spec
         names.update(spec.source_names)
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
+        # Spec-level ContextBinding entries are routed by stream name (the
+        # wire name equals the stream name).
+        for binding in reg.context_bindings:
+            names.add(binding.stream_name)
+    # Instrument-level ContextBinding entries: include when any spec hosted by
+    # this service shares a source with the binding's ``dependent_sources``.
+    for binding in instrument.context_bindings:
+        if any(
+            set(reg.spec.source_names) & binding.dependent_sources
+            for reg in service_regs
+        ):
+            names.add(binding.stream_name)
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

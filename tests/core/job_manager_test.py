@@ -45,7 +45,13 @@ class FakeJobFactory(JobFactory):
         return result
 
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
-        processor = FakeProcessor()
+        # Test convenience only: gate on every declared aux so gating scenarios
+        # are easy to drive from a config. This is the inverse of production
+        # semantics, where only ContextBindings gate and rendered aux (ROI,
+        # monitors) never does — see TestJobFactoryDoesNotGateOnAux for that
+        # invariant against the real JobFactory.
+        aux = config.aux_source_names or {}
+        processor = FakeProcessor(context_keys=dict.fromkeys(aux, object))
         self.processors[job_id] = processor
 
         job = Job(
@@ -53,7 +59,8 @@ class FakeJobFactory(JobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=config.aux_source_names,
+            input_streams=set(aux.values()),
+            gating_streams=set(aux.values()),
         )
 
         self.created_jobs.append((job_id, config))
@@ -63,6 +70,30 @@ class FakeJobFactory(JobFactory):
 @pytest.fixture
 def fake_job_factory():
     return FakeJobFactory()
+
+
+def no_cached_context(names: set[str]) -> dict[StreamId, object]:
+    """Context reader with nothing cached: the gate sees only batch contents."""
+    return {}
+
+
+class FakeContextCache:
+    """Dict-backed stand-in for ``MessagePreprocessor.get_context``.
+
+    Tests record published context values in :attr:`values`; like the real
+    preprocessor cache, the latest value of every context stream seen so far
+    stays available.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[str, object] = {}
+
+    def __call__(self, names: set[str]) -> dict[StreamId, object]:
+        return {
+            StreamId(name=name): value
+            for name, value in self.values.items()
+            if name in names
+        }
 
 
 def _make_config(
@@ -83,14 +114,14 @@ def _make_config(
 class TestJobManager:
     def test_initial_state(self, fake_job_factory):
         """Test initial state of JobManager."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         assert manager.service_name == 'data_reduction'
         assert len(manager.active_jobs) == 0
 
     def test_schedule_job_creates_job(self, fake_job_factory):
         """Test that scheduling a job creates it using the factory."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
@@ -102,7 +133,7 @@ class TestJobManager:
 
     def test_schedule_multiple_jobs_gives_unique_ids(self, fake_job_factory):
         """Test that scheduling multiple jobs increments job IDs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         config1 = _make_config("source1")
         config2 = _make_config("source2")
@@ -117,7 +148,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         """Test that pushing data activates jobs scheduled to start immediately."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("test_source"))
         assert len(manager.active_jobs) == 0
@@ -136,7 +167,7 @@ class TestJobManager:
 
     def test_push_data_returns_job_statuses(self, fake_job_factory):
         """Test that push_data returns status for each active job."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source2"))
@@ -157,7 +188,7 @@ class TestJobManager:
 
     def test_push_data_handles_job_errors(self, fake_job_factory):
         """Test that push_data handles and reports job errors."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -178,7 +209,7 @@ class TestJobManager:
 
     def test_push_data_activates_jobs_based_on_schedule(self, fake_job_factory):
         """Test that jobs are activated based on their scheduled start time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="early_workflow",
@@ -216,7 +247,7 @@ class TestJobManager:
 
     def test_push_data_feeds_active_jobs(self, fake_job_factory):
         """Test that pushing data feeds all active jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source1"))
@@ -237,7 +268,7 @@ class TestJobManager:
 
     def test_stop_job_scheduled_removes_from_system(self, fake_job_factory):
         """Test stopping a scheduled job removes it from the system."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(
             _make_config(
@@ -262,7 +293,7 @@ class TestJobManager:
 
     def test_stop_job_removes_active_immediately(self, fake_job_factory):
         """Test stopping an active job removes it from the system."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -281,14 +312,14 @@ class TestJobManager:
 
     def test_stop_job_nonexistent_raises_error(self, fake_job_factory):
         """Test stopping a non-existent job raises KeyError."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.stop_job(999)
 
     def test_reset_job_active(self, fake_job_factory):
         """Test resetting an active job calls its reset method."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -313,7 +344,7 @@ class TestJobManager:
 
     def test_reset_job_scheduled(self, fake_job_factory):
         """Test resetting a scheduled job calls its reset method."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(
             _make_config(
@@ -328,14 +359,14 @@ class TestJobManager:
 
     def test_reset_job_nonexistent_raises_error(self, fake_job_factory):
         """Test resetting a non-existent job raises KeyError."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
 
     def test_compute_results_returns_job_results(self, fake_job_factory):
         """Test that compute_results returns results from all active jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         _ = manager.schedule_job(_make_config("source1"))
         _ = manager.schedule_job(_make_config("source2"))
@@ -358,7 +389,7 @@ class TestJobManager:
 
     def test_compute_results_ignores_stopped_jobs(self, fake_job_factory):
         """Test that compute_results does not return results for stopped jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -381,7 +412,7 @@ class TestJobManager:
 
     def test_job_lifecycle_with_schedule_based_activation(self, fake_job_factory):
         """Test complete job lifecycle with schedule-based activation."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config2 = _make_config(
             "source2",
             name="workflow2",
@@ -443,7 +474,7 @@ class TestJobManager:
 
     def test_multiple_data_accumulation(self, fake_job_factory):
         """Test that multiple data pushes accumulate correctly in jobs."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         job_id = manager.schedule_job(_make_config("test_source"))
 
@@ -480,7 +511,7 @@ class TestJobManager:
 
     def test_jobs_finish_based_on_schedule_end_time(self, fake_job_factory):
         """Test that jobs are marked for finishing based on schedule end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
@@ -512,7 +543,7 @@ class TestJobManager:
 
     def test_multiple_jobs_different_schedule_end_times(self, fake_job_factory):
         """Test handling multiple jobs with different scheduled end times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="workflow1",
@@ -578,7 +609,7 @@ class TestJobManager:
 
     def test_job_finishing_edge_case_exact_schedule_end_time(self, fake_job_factory):
         """Test job finishing when data start_time is exactly scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
@@ -610,7 +641,7 @@ class TestJobManager:
 
     def test_no_premature_job_finishing(self, fake_job_factory):
         """Test jobs don't finish prematurely when data is before scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(300)),
@@ -645,7 +676,7 @@ class TestJobManager:
         Test complex scenario with job stopping, schedule-based finishing,
         and continuation.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config(
             "source1",
             name="workflow1",
@@ -706,7 +737,7 @@ class TestJobManager:
 
     def test_jobs_without_end_time_never_finish_automatically(self, fake_job_factory):
         """Test that jobs without scheduled end_time never finish automatically."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=None),
@@ -730,7 +761,7 @@ class TestJobManager:
 
     def test_schedule_start_time_edge_cases(self, fake_job_factory):
         """Test edge cases for schedule start times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # Test future start
         config_future = _make_config(
@@ -780,7 +811,7 @@ class TestJobManager:
         self, fake_job_factory
     ):
         """Test that immediate start (-1) with any end_time is allowed."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # This should be allowed: immediate start with specific end time
         config_valid = _make_config(
@@ -793,7 +824,7 @@ class TestJobManager:
 
     def test_job_with_zero_duration_after_immediate_start(self, fake_job_factory):
         """Test behavior of job with immediate start and very early end time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(50)),
@@ -819,7 +850,7 @@ class TestJobManager:
         """
         Test job activation when data start_time exactly matches scheduled start_time.
         """
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(
@@ -842,7 +873,7 @@ class TestJobManager:
 
     def test_job_schedule_edge_case_end_equals_data_time(self, fake_job_factory):
         """Test job finishing when data end_time exactly matches scheduled end_time."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "test_source",
             schedule=JobSchedule(end_time=Timestamp.from_ns(200)),
@@ -884,7 +915,7 @@ class TestJobManager:
 
     def test_multiple_jobs_same_schedule_times(self, fake_job_factory):
         """Test multiple jobs with identical start and end times."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         schedule = JobSchedule(
             start_time=Timestamp.from_ns(100), end_time=Timestamp.from_ns(200)
         )
@@ -921,7 +952,7 @@ class TestJobManager:
 
     def test_negative_start_times_other_than_minus_one(self, fake_job_factory):
         """Test behavior with negative start times other than -1."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
         # Negative start times other than -1 should be treated as regular timestamps
         config = _make_config(
@@ -943,7 +974,7 @@ class TestJobManager:
 
     def test_accumulate_failure_handled_gracefully(self, fake_job_factory):
         """Test that an accumulate failure in the processor is handled gracefully."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -980,7 +1011,7 @@ class TestJobManager:
 
     def test_finalize_failure_handled_gracefully(self, fake_job_factory):
         """Test that a finalize failure in the processor is handled gracefully."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -1018,7 +1049,7 @@ class TestJobManager:
     def test_jobs_with_finalize_errors_will_compute_again_without_new_primary_data(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1047,7 +1078,7 @@ class TestJobManager:
 
     def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
         """Test that warnings from None values in results are tracked in job status."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1111,7 +1142,7 @@ class TestJobManager:
     def test_successful_jobs_will_not_compute_again_without_new_primary_data(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
 
         job_id = manager.schedule_job(config)
@@ -1138,7 +1169,7 @@ class TestJobManager:
     def test_jobs_without_primary_data_not_included_in_compute_results(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config1 = _make_config("source1")
         config2 = _make_config("source2")
         job_id1 = manager.schedule_job(config1)
@@ -1177,7 +1208,7 @@ class TestJobManager:
     def test_auxiliary_data_only_does_not_trigger_compute_results(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("test_source")
         job_id = manager.schedule_job(config)
 
@@ -1213,7 +1244,7 @@ class TestPushFailureCascade:
 
     def test_failed_push_does_not_trigger_finalize(self, fake_job_factory):
         """When push fails on empty accumulators, compute_results must not finalize."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1245,7 +1276,7 @@ class TestPushFailureCascade:
 
     def test_recovery_after_push_failure(self, fake_job_factory):
         """Job recovers to active state when push succeeds after a failure."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1281,7 +1312,7 @@ class TestPushFailureCascade:
 
     def test_finalize_failure_retries_without_new_push(self, fake_job_factory):
         """Successful push followed by finalize failure retries on next cycle."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         job_id = manager.schedule_job(_make_config("test_source"))
 
         processor = fake_job_factory.processors[job_id]
@@ -1363,7 +1394,7 @@ class TestJobFactoryRender:
 
         # Verify that render() was called and result was used
         # The job should have the rendered aux source names with source prefix
-        assert job.aux_source_names == [f'{job_id.source_name}/monitor1']
+        assert job.input_stream_names == {f'{job_id.source_name}/monitor1'}
 
     def test_job_factory_default_render_preserves_names(self) -> None:
         """Test JobFactory with default render() behavior."""
@@ -1413,7 +1444,7 @@ class TestJobFactoryRender:
         job = factory.create(job_id=job_id, config=config)
 
         # Default render should preserve the original names
-        assert set(job.aux_source_names) == {'monitor1', 'monitor2'}
+        assert job.input_stream_names == {'monitor1', 'monitor2'}
 
     def test_job_factory_with_no_aux_sources(self) -> None:
         """Test JobFactory with workflow that has no aux sources."""
@@ -1447,7 +1478,7 @@ class TestJobFactoryRender:
 
         # Should not raise, should create job with empty aux sources
         job = factory.create(job_id=job_id, config=config)
-        assert job.aux_source_names == []
+        assert job.input_stream_names == set()
 
     def test_job_factory_with_empty_aux_source_names(self) -> None:
         """Test JobFactory when config has empty aux_source_names dict with defaults."""
@@ -1486,7 +1517,7 @@ class TestJobFactoryRender:
 
         job = factory.create(job_id=job_id, config=config)
         # Empty dict triggers model defaults, so should use 'monitor1'
-        assert job.aux_source_names == ['monitor1']
+        assert job.input_stream_names == {'monitor1'}
 
     def test_job_factory_render_uses_source_name(self) -> None:
         """Test that render() can use source_name from JobId."""
@@ -1547,8 +1578,8 @@ class TestJobFactoryRender:
         job2 = factory.create(job_id=job_id_2, config=config2)
 
         # Each job should have source-specific stream name
-        assert job1.aux_source_names == ['detector1/roi_rectangle']
-        assert job2.aux_source_names == ['detector2/roi_rectangle']
+        assert job1.input_stream_names == {'detector1/roi_rectangle'}
+        assert job2.input_stream_names == {'detector2/roi_rectangle'}
 
     def test_job_factory_render_with_empty_dict_uses_defaults(self) -> None:
         """Test that empty aux_source_names dict triggers model defaults and render."""
@@ -1606,7 +1637,285 @@ class TestJobFactoryRender:
         job = factory.create(job_id=job_id, config=config)
 
         # Should use default 'monitor1' and render it with source prefix
-        assert job.aux_source_names == ['detector1/monitor1']
+        assert job.input_stream_names == {'detector1/monitor1'}
+
+
+class TestJobFactoryDoesNotGateOnAux:
+    """Rendered aux sources (ROI, monitor refs) must never appear in gating_streams.
+
+    Only ContextBindings gate a job. Adding aux to gating_streams would deadlock
+    every ROI detector view because ROI streams may never publish.
+    """
+
+    def test_aux_only_workflow_has_empty_gating_streams(self) -> None:
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSources
+
+        instrument = Instrument(name='test')
+        handle = instrument.register_spec(
+            name='aux_only_workflow',
+            version=1,
+            title='Aux Only',
+            description='Workflow with aux but no ContextBinding',
+            source_names=['detector1'],
+            aux_sources=AuxSources({'roi': 'roi_rectangle', 'monitor': 'monitor1'}),
+            outputs=SimpleTestOutputs,
+        )
+
+        @handle.attach_factory()
+        def aux_only_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(
+            identifier=handle.workflow_id,
+            aux_source_names={'roi': 'roi_rectangle', 'monitor': 'monitor1'},
+            job_id=job_id,
+        )
+
+        job = factory.create(job_id=job_id, config=config)
+
+        assert job.gating_streams == set()
+        assert job.missing_context(set()) == set()
+        # Aux streams are still routed as inputs, just not gating.
+        assert job.input_stream_names == {'roi_rectangle', 'monitor1'}
+
+
+class _CtxKeyA:
+    """Opaque workflow_key used by ContextBinding tests."""
+
+
+class _CtxKeyB:
+    """Opaque workflow_key used by ContextBinding tests."""
+
+
+def _build_instrument_with_streams():
+    """Build an instrument with the f144 streams used by the ContextBinding tests."""
+    from ess.livedata.config.instrument import Instrument
+    from ess.livedata.config.stream import F144Stream
+
+    def _f(name: str) -> F144Stream:
+        return F144Stream(
+            source=name,
+            topic='topic',
+            units='mm',
+            nexus_path=f'/entry/instrument/{name}/value',
+        )
+
+    return Instrument(
+        name='test',
+        detector_names=['detector1'],
+        streams={
+            'rot': _f('rot'),
+            'temp': _f('temp'),
+            'roi_rectangle': _f('roi_rectangle'),
+        },
+    )
+
+
+class TestJobFactoryContextBinding:
+    """JobFactory.create merges instrument- and spec-scope ContextBinding records.
+
+    Both scopes feed the factory's ``context_keys`` and the job's
+    ``gating_streams``. The wire name equals the declared ``stream_name`` (no
+    per-job suffixing) and there is no cold-start seed — gated context streams
+    have no safe default, so the gate stays closed until the producer publishes.
+    """
+
+    def test_instrument_context_binding_populates_context_keys(self) -> None:
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector1'],
+        )
+
+        captured: dict[str, FakeProcessor] = {}
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job = factory.create(job_id=job_id, config=config)
+
+        # context_keys injected post-creation and the workflow built eagerly.
+        assert captured['proc'].context_keys == {'rot': _CtxKeyA}
+        assert captured['proc'].build_calls == 1
+        # Wire stream equals stream_name: missing with no available streams,
+        # satisfied as soon as 'rot' becomes available.
+        assert job.missing_context(set()) == {'rot'}
+        assert job.missing_context({'rot'}) == set()
+        # The wire stream is routed to the workflow alongside user-selected aux.
+        assert 'rot' in job.input_stream_names
+
+    def test_instrument_context_binding_filters_by_source(self) -> None:
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1', 'detector2'],
+            outputs=SimpleTestOutputs,
+        )
+        # detector_names limited to 'detector1' so use streams not source_names.
+        instrument.add_context_binding(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector2'],
+        )
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            return FakeProcessor()
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        # Job on detector1: outside dependent_sources → no context.
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job = factory.create(job_id=job_id, config=config)
+
+        assert job.missing_context(set()) == set()
+
+    def test_spec_context_binding_populates_context_keys_and_gates(self) -> None:
+        """A spec-scope ContextBinding feeds context_keys and gates the job.
+
+        The future sample-temperature shape: a context stream that is a
+        property of one workflow (declared per-spec, not per-source). The wire
+        name equals the stream_name, the value is delivered via set_context,
+        and the job gates on it until the producer publishes — no seed.
+        """
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyA)
+
+        captured: dict[str, FakeProcessor] = {}
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job = factory.create(job_id=job_id, config=config)
+
+        assert captured['proc'].context_keys == {'temp': _CtxKeyA}
+        assert job.missing_context(set()) == {'temp'}
+        assert job.missing_context({'temp'}) == set()
+        assert 'temp' in job.input_stream_names
+
+    def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
+        """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
+
+        The spec's own bindings, if any, are unaffected.
+        """
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot',
+            workflow_key=_CtxKeyA,
+            dependent_sources=['detector1'],
+        )
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
+        handle.skip_instrument_contexts()
+
+        captured: dict[str, FakeProcessor] = {}
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job = factory.create(job_id=job_id, config=config)
+
+        # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
+        assert captured['proc'].context_keys == {'temp': _CtxKeyB}
+        assert job.missing_context(set()) == {'temp'}
+
+    def test_chain_patch_context_binding_delivers_value_log_in_context_keys(
+        self,
+    ) -> None:
+        """A chain-patch ContextBinding contributes ValueLog subclass.
+
+        A chain-patch ContextBinding contributes its :class:`ValueLog`
+        subclass to the factory's ``context_keys``; the transform path is
+        derived from the binding's ``stream_name`` and consumed by
+        ``dynamic_transforms.wire_dynamic_transforms``.
+        """
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot',
+            dependent_sources=['detector1'],
+            workflow_key=_RotLog,
+        )
+
+        captured: dict[str, FakeProcessor] = {}
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        factory.create(job_id=job_id, config=config)
+
+        assert captured['proc'].context_keys == {'rot': _RotLog}
 
 
 class ThreadTrackingProcessor(FakeProcessor):
@@ -1635,7 +1944,8 @@ class ThreadTrackingJobFactory(FakeJobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=config.aux_source_names,
+            input_streams=set((config.aux_source_names or {}).values()),
+            gating_streams=set(),
         )
         self.created_jobs.append((job_id, config))
         return job
@@ -1650,7 +1960,9 @@ class TestJobManagerThreading:
         self, n_jobs: int, job_threads: int
     ) -> tuple[JobManager, ThreadTrackingJobFactory, list[JobId]]:
         factory = ThreadTrackingJobFactory()
-        manager = JobManager(factory, job_threads=job_threads)
+        manager = JobManager(
+            factory, job_threads=job_threads, context_reader=no_cached_context
+        )
         job_ids = []
         for i in range(n_jobs):
             source = f"source_{i}"
@@ -1728,7 +2040,9 @@ class TestJobManagerThreading:
         results_by_mode: dict[int, list[JobResult]] = {}
         for job_threads in (1, 4):
             factory = FakeJobFactory()
-            manager = JobManager(factory, job_threads=job_threads)
+            manager = JobManager(
+                factory, job_threads=job_threads, context_reader=no_cached_context
+            )
             for config in configs:
                 manager.schedule_job(config)
 
@@ -1784,13 +2098,13 @@ class TestJobManagerThreading:
 
 class TestPeekPendingStreams:
     def test_returns_empty_when_no_scheduled_jobs(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         assert manager.peek_pending_streams(start_time=100) == set()
 
     def test_returns_aux_and_primary_streams_for_job_ready_to_activate(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -1808,7 +2122,7 @@ class TestPeekPendingStreams:
 
     def test_is_idempotent(self, fake_job_factory):
         """Calling peek multiple times returns the same result (no state mutation)."""
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config(
             "src",
             name="wf",
@@ -1822,7 +2136,7 @@ class TestPeekPendingStreams:
         assert result1 == result2 == {"src", "stream_a"}
 
     def test_returns_union_of_multiple_jobs(self, fake_job_factory):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config_a = _make_config(
             "src_a",
             name="wf_a",
@@ -1848,8 +2162,412 @@ class TestPeekPendingStreams:
     def test_returns_primary_streams_for_jobs_without_aux_sources(
         self, fake_job_factory
     ):
-        manager = JobManager(fake_job_factory)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
         config = _make_config("src", name="wf")
         manager.schedule_job(config)
 
         assert manager.peek_pending_streams(start_time=100) == {"src"}
+
+    def test_excludes_active_jobs(self, fake_job_factory):
+        """Active jobs do not contribute streams.
+
+        The orchestrator does not refill cached context for active jobs — doing
+        so would re-fire ``set_context`` every tick and force eager downstream
+        recompute on unchanged values. The context gate (ADR 0002) tracks
+        per-job aux availability stickily in :class:`JobManager` instead.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        config = _make_config(
+            "src",
+            name="wf",
+            aux_source_names={"temp": "temperature"},
+        )
+        manager.schedule_job(config)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="temperature"): sc.scalar(20.0),
+                },
+            )
+        )
+        assert len(manager.active_jobs) == 1
+        # Active job's aux is intentionally absent from the needed-streams set
+        assert "temperature" not in manager.peek_pending_streams(start_time=300)
+
+
+class TestContextStreamGate:
+    """The JobManager holds jobs whose context is not yet available.
+
+    A gated job waits in the ``pending_context`` stage and graduates to active
+    once every gating stream has been seen.
+    See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+    """
+
+    def _config_with_aux(self, source: str, aux_stream: str) -> WorkflowConfig:
+        return _make_config(
+            source,
+            name=f"wf_{source}",
+            aux_source_names={"ctx": aux_stream},
+        )
+
+    def test_job_with_no_aux_is_never_gated(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(_make_config("src"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_job_with_aux_present_processes_normally(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="ctx_stream"): sc.scalar(99.0),
+                },
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_missing_aux_gates_and_drops_primary(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        # Primary arrives, aux does not — job should activate (time-based) but
+        # be gated, and the primary batch must not reach the workflow.
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert replies == []  # gated job is not pushed
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is not None
+        assert "ctx_stream" in status.warning_message
+        # Primary was dropped — no accumulate call
+        assert fake_job_factory.processors[job_id].accumulate_calls == []
+
+    def test_gate_releases_when_aux_arrives(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        # Tick 1: primary only — gated, primary dropped
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        # Tick 2: aux arrives — gate opens
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(200),
+                end_time=Timestamp.from_ns(300),
+                data={
+                    StreamId(name="src"): sc.scalar(2.0),
+                    StreamId(name="ctx_stream"): sc.scalar(99.0),
+                },
+            )
+        )
+        assert len(replies) == 1
+        assert not replies[0].has_error
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        # Only the tick-2 batch processes; tick-1 primary was dropped
+        assert len(fake_job_factory.processors[job_id].accumulate_calls) == 1
+
+    def test_gate_independent_across_jobs(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_a = manager.schedule_job(self._config_with_aux("src_a", "ctx_a"))
+        job_b = manager.schedule_job(self._config_with_aux("src_b", "ctx_b"))
+        # Only job_a's aux is present
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src_a"): sc.scalar(1.0),
+                    StreamId(name="src_b"): sc.scalar(2.0),
+                    StreamId(name="ctx_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        assert manager.get_job_status(job_a).state == JobState.active
+        assert manager.get_job_status(job_b).state == JobState.pending_context
+
+    def test_warning_message_lists_all_missing_aux(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        config = _make_config(
+            "src",
+            name="multi_aux",
+            aux_source_names={"a": "stream_a", "b": "stream_b", "c": "stream_c"},
+        )
+        job_id = manager.schedule_job(config)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="stream_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert "stream_b" in status.warning_message
+        assert "stream_c" in status.warning_message
+        assert "stream_a" not in status.warning_message
+
+    def test_context_cached_while_gated_is_delivered_when_gate_opens(
+        self, fake_job_factory
+    ):
+        """Regression: a context value seen while gated must reach the workflow.
+
+        ``stream_a`` arrives (and is cached) on a tick where ``stream_b`` is
+        still missing; the batch where ``stream_b`` finally arrives does not
+        re-present ``stream_a``. The gate refills it from the context cache so
+        the gate-opening batch carries every value at once — otherwise it
+        would land at ``set_context`` as the essreduce ``None`` seed and crash
+        at finalize.
+        """
+        cache = FakeContextCache()
+        manager = JobManager(fake_job_factory, context_reader=cache)
+        config = _make_config(
+            "src",
+            name="multi_aux",
+            aux_source_names={"a": "stream_a", "b": "stream_b"},
+        )
+        job_id = manager.schedule_job(config)
+
+        # Tick 1: stream_a arrives (the preprocessor caches it); stream_b is
+        # still missing -> gated.
+        cache.values["stream_a"] = sc.scalar(10.0)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="src"): sc.scalar(1.0),
+                    StreamId(name="stream_a"): sc.scalar(10.0),
+                },
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+
+        # Tick 2: only stream_b arrives -> stream_a is refilled from the cache
+        # and the gate opens with both values in the batch.
+        cache.values["stream_b"] = sc.scalar(20.0)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(200),
+                end_time=Timestamp.from_ns(300),
+                data={StreamId(name="stream_b"): sc.scalar(20.0)},
+            )
+        )
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        processor = fake_job_factory.processors[job_id]
+        assert "stream_a" in processor.data
+        assert "stream_b" in processor.data
+
+    def test_context_cached_before_job_starts_opens_gate_immediately(
+        self, fake_job_factory
+    ):
+        """A job whose context was published before it started is never gated.
+
+        The motor position was cached ticks ago; the first batch after the
+        job's start time opens the gate via the cache refill even though the
+        batch itself carries no context stream.
+        """
+        cache = FakeContextCache()
+        cache.values["ctx_stream"] = sc.scalar(99.0)
+        manager = JobManager(fake_job_factory, context_reader=cache)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+
+        replies = manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert len(replies) == 1
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+        assert "ctx_stream" in fake_job_factory.processors[job_id].data
+
+    def test_gated_job_finishes_at_schedule_end(self, fake_job_factory):
+        """A job gated for its whole window still finishes at its scheduled end.
+
+        Context never arrives, so the job stays in ``pending_context``; once data
+        passes its scheduled ``end_time`` it must be removed, not stranded in the
+        pending stage.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        config = _make_config(
+            "src",
+            name="wf",
+            aux_source_names={"ctx": "ctx_stream"},
+            schedule=JobSchedule(end_time=Timestamp.from_ns(175)),
+        )
+        job_id = manager.schedule_job(config)
+        # Tick 1: activates on time but aux is missing -> pending_context.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(150),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+        # Tick 2: data passes the scheduled end_time while still gated.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(180),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(2.0)},
+            )
+        )
+        manager.compute_results()
+        assert manager.get_job_status(job_id) is None
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle actions on pending-context (gated) jobs                   #
+    # ------------------------------------------------------------------ #
+
+    def _drive_to_pending(
+        self, fake_job_factory, *, source: str = "src", aux_stream: str = "ctx_stream"
+    ) -> tuple[JobManager, JobId]:
+        """Return a (manager, job_id) pair with the job in pending_context.
+
+        Schedules a job gated on ``aux_stream``, then pushes one tick of
+        primary-only data so it activates (time-based) but stays gated.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config_with_aux(source, aux_stream))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name=source): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+        return manager, job_id
+
+    def test_get_all_job_statuses_includes_pending_job(self, fake_job_factory):
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        statuses = manager.get_all_job_statuses()
+
+        assert len(statuses) == 1
+        assert statuses[0].job_id == job_id
+        assert statuses[0].state == JobState.pending_context
+
+    def test_stop_pending_job_removes_it(self, fake_job_factory):
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.stop_job(job_id)
+
+        assert manager.get_job_status(job_id) is None
+        assert manager.get_all_job_statuses() == []
+
+    def test_reset_pending_job_re_arms_warning(self, fake_job_factory):
+        """reset_job on a gated job clears any prior error/warning state then
+        re-arms the pending-context warning from the context cache.
+
+        With ``no_cached_context`` the gating stream is still missing after the
+        reset, so the warning is re-populated and the job remains pending.
+        """
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+        # Confirm initial warning is set.
+        assert manager.get_job_status(job_id).warning_message is not None
+
+        manager.reset_job(job_id)
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is not None
+        assert "ctx_stream" in status.warning_message
+
+    def test_reset_pending_job_clears_warning_when_context_now_cached(
+        self, fake_job_factory
+    ):
+        """If the gating stream has appeared in the cache by reset time, the
+        warning is not re-armed (the gate will open on the next tick).
+        """
+        cache = FakeContextCache()
+        manager = JobManager(fake_job_factory, context_reader=cache)
+        job_id = manager.schedule_job(self._config_with_aux("src", "ctx_stream"))
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="src"): sc.scalar(1.0)},
+            )
+        )
+        assert manager.get_job_status(job_id).state == JobState.pending_context
+
+        # Context stream is now available in the cache.
+        cache.values["ctx_stream"] = sc.scalar(99.0)
+        manager.reset_job(job_id)
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert status.warning_message is None
+
+    def test_job_command_stop_reaches_pending_job(self, fake_job_factory):
+        """`job_command` with stop action removes a pending-context job."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(job_id=job_id, action=JobAction.stop))
+
+        assert manager.get_job_status(job_id) is None
+
+    def test_job_command_reset_reaches_pending_job(self, fake_job_factory):
+        """`job_command` with reset action re-arms the warning on a pending job."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(job_id=job_id, action=JobAction.reset))
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert "ctx_stream" in status.warning_message
+
+    def test_perform_action_stop_reaches_pending_jobs_without_job_id(
+        self, fake_job_factory
+    ):
+        """A broadcast `job_command` (no job_id, no workflow_id) stops pending jobs."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager, job_id = self._drive_to_pending(fake_job_factory)
+
+        manager.job_command(JobCommand(action=JobAction.stop))
+
+        assert manager.get_job_status(job_id) is None

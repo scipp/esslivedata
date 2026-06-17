@@ -15,7 +15,7 @@ Provides a collapsible card for each workflow showing:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -47,6 +47,7 @@ class WorkflowWidgetStyles:
         'stopped': StatusColors.MUTED,
         'error': StatusColors.ERROR,
         'warning': StatusColors.WARNING,
+        'pending_context': StatusColors.PENDING,
         'pending': StatusColors.PENDING,
         'finishing': StatusColors.PENDING,
         'scheduled': StatusColors.PENDING,
@@ -57,6 +58,9 @@ class WorkflowWidgetStyles:
     ERROR_BG = ErrorBox.BG
     ERROR_BORDER = ErrorBox.BORDER
     ERROR_TEXT = ErrorBox.TEXT
+    WARNING_MSG_BG = WarningBox.BG
+    WARNING_MSG_BORDER = WarningBox.BORDER
+    WARNING_MSG_TEXT = WarningBox.TEXT
 
     # Output chip colors (unique to workflow outputs display)
     OUTPUT_CHIP_BG = '#e7f1ff'
@@ -76,6 +80,61 @@ class SourceStatus:
     display_title: str
     state: JobState
     error_summary: str | None
+
+
+@dataclass(frozen=True)
+class MessageBox:
+    """A status message to display in the workflow body, with severity."""
+
+    text: str
+    is_error: bool
+
+
+# Priority of job states for worst-state aggregation; higher wins.
+_JOB_STATE_PRIORITY: dict[JobState, int] = {
+    JobState.error: 4,
+    JobState.warning: 3,
+    JobState.pending_context: 2,
+    JobState.stopped: 1,
+    JobState.active: 0,
+}
+
+# Display names for status states whose raw value is not user-friendly.
+_JOB_STATE_DISPLAY_NAMES: dict[JobState, str] = {
+    JobState.pending_context: 'WAITING FOR CONTEXT',
+}
+
+
+def worst_job_state(states: Iterable[JobState]) -> JobState:
+    """Return the highest-priority state for aggregating a workflow's sources.
+
+    Priority is error > warning > pending_context > stopped > active. States not
+    listed in the priority table are treated as lowest priority.
+
+    Parameters
+    ----------
+    states:
+        Job states of the sources contributing to a single workflow.
+
+    Returns
+    -------
+    :
+        The aggregated worst state, defaulting to ``JobState.active`` for an
+        empty input.
+    """
+    worst = JobState.active
+    best_priority = _JOB_STATE_PRIORITY.get(worst, -1)
+    for state in states:
+        priority = _JOB_STATE_PRIORITY.get(state, -1)
+        if priority > best_priority:
+            best_priority = priority
+            worst = state
+    return worst
+
+
+def job_state_display_name(state: JobState) -> str:
+    """Return the user-facing status label for a job state."""
+    return _JOB_STATE_DISPLAY_NAMES.get(state, state.value.upper())
 
 
 @dataclass(frozen=True)
@@ -398,21 +457,27 @@ class WorkflowStatusWidget:
         """Create the collapsible body content."""
         components = []
 
-        # Error message (if any)
-        _, _, _, error_html, _ = self._get_status_and_timing()
-        if error_html:
+        # Error or warning message (if any)
+        _, _, _, message_box, _ = self._get_status_and_timing()
+        if message_box is not None:
+            if message_box.is_error:
+                bg = WorkflowWidgetStyles.ERROR_BG
+                border = WorkflowWidgetStyles.ERROR_BORDER
+                text = WorkflowWidgetStyles.ERROR_TEXT
+            else:
+                bg = WorkflowWidgetStyles.WARNING_MSG_BG
+                border = WorkflowWidgetStyles.WARNING_MSG_BORDER
+                text = WorkflowWidgetStyles.WARNING_MSG_TEXT
             components.append(
                 pn.pane.HTML(
-                    error_html,
+                    message_box.text,
                     sizing_mode='stretch_width',
                     margin=0,
                     styles={
                         'padding': '8px 12px',
-                        'background': WorkflowWidgetStyles.ERROR_BG,
-                        'border-bottom': (
-                            f'1px solid {WorkflowWidgetStyles.ERROR_BORDER}'
-                        ),
-                        'color': WorkflowWidgetStyles.ERROR_TEXT,
+                        'background': bg,
+                        'border-bottom': f'1px solid {border}',
+                        'color': text,
                         'font-size': '12px',
                     },
                 )
@@ -698,7 +763,7 @@ class WorkflowStatusWidget:
         dots = []
         for s in sources:
             color = WorkflowWidgetStyles.STATUS_COLORS.get(
-                s.state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+                s.state.value, WorkflowWidgetStyles.STATUS_COLORS['stopped']
             )
             tooltip = f'{s.display_title}: {s.state.value}'
             if s.error_summary:
@@ -718,16 +783,17 @@ class WorkflowStatusWidget:
 
     def _get_status_and_timing(
         self,
-    ) -> tuple[str, str, str, str | None, list[SourceStatus]]:
-        """Get workflow status, color, timing, error, and per-source statuses.
+    ) -> tuple[str, str, str, MessageBox | None, list[SourceStatus]]:
+        """Get workflow status, color, timing, message, and per-source statuses.
 
         Iterates job statuses once to extract aggregated and per-source info.
 
         Returns
         -------
         :
-            Tuple of (status_text, status_color, timing_text, error_html,
-            per_source_statuses).
+            Tuple of (status_text, status_color, timing_text, message_box,
+            per_source_statuses). ``message_box`` carries the first backend error
+            or, absent any error, the first backend warning message.
         """
         # Deferred import: datetime is only needed for active workflows with
         # a start_time, and importing at module level would add unnecessary
@@ -749,11 +815,12 @@ class WorkflowStatusWidget:
                 [],
             )
 
-        # Single pass over job statuses to collect status, timing, and errors
+        # Single pass over job statuses to collect status, timing, and messages
         has_fresh_backend_status = False
-        worst_state = JobState.active
+        states: list[JobState] = []
         earliest_start = None
-        error_html = None
+        first_error = None
+        first_warning = None
         per_source: dict[str, SourceStatus] = {}
 
         for job_status in self._job_service.job_statuses.values():
@@ -780,16 +847,7 @@ class WorkflowStatusWidget:
                 error_summary=error_summary,
             )
 
-            # Status: priority error > warning > stopped > active
-            if job_status.state == JobState.error:
-                worst_state = JobState.error
-            elif job_status.state == JobState.warning and worst_state != JobState.error:
-                worst_state = JobState.warning
-            elif job_status.state == JobState.stopped and worst_state not in (
-                JobState.error,
-                JobState.warning,
-            ):
-                worst_state = JobState.stopped
+            states.append(job_status.state)
 
             # Timing: track earliest start
             start = job_status.start_time
@@ -797,9 +855,19 @@ class WorkflowStatusWidget:
                 if earliest_start is None or start < earliest_start:
                     earliest_start = start
 
-            # Error: capture first error message
-            if error_html is None and error_summary:
-                error_html = f'Error: {error_summary}'
+            # Capture first error and first warning message
+            if first_error is None and error_summary:
+                first_error = error_summary
+            if first_warning is None and job_status.warning_message:
+                first_warning = job_status.warning_message
+
+        worst_state = worst_job_state(states)
+        if first_error is not None:
+            message_box = MessageBox(text=f'Error: {first_error}', is_error=True)
+        elif first_warning is not None:
+            message_box = MessageBox(text=f'Warning: {first_warning}', is_error=False)
+        else:
+            message_box = None
 
         # Order per-source statuses by workflow spec order
         spec_order = {
@@ -830,9 +898,9 @@ class WorkflowStatusWidget:
                 pending_sources,
             )
 
-        status_text = worst_state.value.upper()
+        status_text = job_state_display_name(worst_state)
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
-            worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+            worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['stopped']
         )
 
         # Build timing text
@@ -856,7 +924,7 @@ class WorkflowStatusWidget:
 
             timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
 
-        return status_text, status_color, timing_text, error_html, per_source_list
+        return status_text, status_color, timing_text, message_box, per_source_list
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""

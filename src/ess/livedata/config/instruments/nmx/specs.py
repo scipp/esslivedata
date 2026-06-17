@@ -7,6 +7,7 @@ NMX instrument spec registration.
 from ess.livedata.config import Instrument, instrument_registry, name_streams
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import (
+    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -44,6 +45,7 @@ panel_xy_view_handle = instrument.register_spec(
     title='Detector counts',
     description='Detector counts per pixel.',
     source_names=detector_names,
+    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
 )

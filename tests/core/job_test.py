@@ -41,7 +41,14 @@ class TestJobResult:
 class FakeProcessor(Workflow):
     """Fake implementation of Workflow for testing."""
 
-    def __init__(self):
+    def __init__(self, context_keys: dict[str, Any] | None = None):
+        # Implements the optional ``SupportsContext`` capability so JobFactory
+        # can inject resolved ContextBinding records after creation. The
+        # ``Workflow`` protocol itself stays free of context — see ADR 0003
+        # § "Workflow protocol stays pure". JobFactory derives the gate set
+        # from ContextBinding records, independent of this capability.
+        self.context_keys: dict[str, Any] = dict(context_keys or {})
+        self.build_calls = 0
         self.data: dict[str, Any] = {}
         self.accumulate_calls = []
         self.finalize_calls = 0
@@ -49,6 +56,16 @@ class FakeProcessor(Workflow):
         self.should_fail_accumulate = False
         self.should_fail_finalize = False
         self.fail_finalize_when_empty = False
+
+    def build(
+        self,
+        *,
+        context_keys: dict[str, Any] | None = None,
+        chain_patch_bindings=(),
+    ) -> None:
+        if context_keys:
+            self.context_keys.update(context_keys)
+        self.build_calls += 1
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int
@@ -98,7 +115,8 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
         workflow_id=sample_workflow_id,
         processor=fake_processor,
         source_names=["test_source"],
-        aux_source_names={"aux_source": "aux_source"},
+        input_streams={"aux_source"},
+        gating_streams=set(),
     )
 
 
@@ -264,6 +282,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Make processor fail
@@ -290,6 +310,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         data = JobData(
@@ -339,6 +361,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return a DataArray
@@ -380,6 +404,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return DataArrays: one with existing time coords,
@@ -429,6 +455,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Timeseries-like output: data indexed by wall-clock timestamps
@@ -465,6 +493,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         fake_processor.data = {
@@ -498,6 +528,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Set up processor to return a DataArray
@@ -525,6 +557,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Add some data successfully
@@ -560,6 +594,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Add some data successfully
@@ -610,6 +646,8 @@ class TestJob:
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["test_source"],
+            input_streams=set(),
+            gating_streams=set(),
         )
 
         # Cause an error
@@ -628,62 +666,27 @@ class TestJob:
 
 
 class TestJobAuxSourceMapping:
-    """Tests for auxiliary source name mapping (field names vs stream names)."""
+    """Tests for auxiliary source routing into the workflow."""
 
-    def test_aux_sources_dict_remaps_keys_to_field_names(
+    def test_aux_data_passes_through_by_stream_name(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test that aux_data keys are remapped from stream names to field names."""
+        """aux_data reaches the workflow keyed by on-disk stream name.
+
+        Aux roles are resolved to stream names at workflow construction, so the
+        Job performs no remapping: incoming stream-named data is forwarded as-is,
+        and the role names never reappear.
+        """
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
-        # Send data with stream names (monitor1, monitor2)
-        data = JobData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # Stream name
-                "monitor2": sc.scalar(20.0),  # Stream name
-            },
-        )
-        job.add(data)
-
-        # Verify workflow received data with field names
-        # (incident_monitor, transmission_monitor)
-        assert len(fake_processor.accumulate_calls) == 1
-        accumulated = fake_processor.accumulate_calls[0]
-        assert "detector1" in accumulated
-        assert "incident_monitor" in accumulated  # Field name, not monitor1
-        assert "transmission_monitor" in accumulated  # Field name, not monitor2
-        assert "monitor1" not in accumulated  # Stream name should not appear
-        assert "monitor2" not in accumulated  # Stream name should not appear
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-        assert accumulated["transmission_monitor"] == sc.scalar(20.0)
-
-    def test_aux_sources_when_field_names_equal_stream_names(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test case where field names and stream names are identical."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_source_names={"monitor1": "monitor1", "monitor2": "monitor2"},
-        )
-
-        # Send data with stream names
         data = JobData(
             start_time=Timestamp.from_ns(100),
             end_time=Timestamp.from_ns(200),
@@ -695,48 +698,46 @@ class TestJobAuxSourceMapping:
         )
         job.add(data)
 
-        # Verify workflow received data with same keys (field names == stream names)
         assert len(fake_processor.accumulate_calls) == 1
         accumulated = fake_processor.accumulate_calls[0]
-        assert "monitor1" in accumulated
-        assert "monitor2" in accumulated
+        assert accumulated["detector1"] == sc.scalar(100.0)
         assert accumulated["monitor1"] == sc.scalar(10.0)
         assert accumulated["monitor2"] == sc.scalar(20.0)
+        # The Job does not remap to roles.
+        assert "incident_monitor" not in accumulated
+        assert "transmission_monitor" not in accumulated
 
-    def test_aux_source_names_property_returns_stream_names(
+    def test_input_stream_names_returns_stream_names(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test that aux_source_names property returns stream names for routing."""
+        """Test that input_stream_names returns stream names for routing."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
-        # The property should return stream names (values) for JobManager routing
-        aux_names = job.aux_source_names
-        assert set(aux_names) == {"monitor1", "monitor2"}
+        assert job.input_stream_names == {"monitor1", "monitor2"}
 
-    def test_aux_sources_empty_dict(
+    def test_empty_input_streams(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test handling of empty aux_sources dict."""
+        """Test handling of empty input_streams."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names={},  # Empty dict
+            input_streams=set(),
+            gating_streams=set(),
         )
 
-        assert job.aux_source_names == []
+        assert job.input_stream_names == set()
 
         data = JobData(
             start_time=Timestamp.from_ns(100),
@@ -749,89 +750,30 @@ class TestJobAuxSourceMapping:
         # Should work fine with no aux data
         assert len(fake_processor.accumulate_calls) == 1
 
-    def test_aux_sources_none(
+    def test_partial_aux_data_passes_through(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test handling of None aux_sources."""
+        """Only the aux streams present in a batch are forwarded."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names=None,
+            input_streams={"monitor1", "monitor2"},
+            gating_streams=set(),
         )
 
-        assert job.aux_source_names == []
-
-    def test_partial_aux_data_with_dict_mapping(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test that only available aux data is remapped and passed."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_source_names={
-                "incident_monitor": "monitor1",
-                "transmission_monitor": "monitor2",
-            },
-        )
-
-        # Send data with only one of the two aux sources
+        # Send data with only one of the two aux streams.
         data = JobData(
             start_time=Timestamp.from_ns(100),
             end_time=Timestamp.from_ns(200),
             primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # Only monitor1, not monitor2
-            },
+            aux_data={"monitor1": sc.scalar(10.0)},
         )
         job.add(data)
 
-        # Verify only the available aux data is passed with correct field name
         assert len(fake_processor.accumulate_calls) == 1
         accumulated = fake_processor.accumulate_calls[0]
-        assert "incident_monitor" in accumulated
-        assert "transmission_monitor" not in accumulated
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-
-    def test_stream_multiplexing_to_multiple_fields(
-        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
-    ):
-        """Test that one stream can be multiplexed to multiple field names."""
-        job_id = JobId(source_name="detector1", job_number=1)
-        job = Job(
-            job_id=job_id,
-            workflow_id=sample_workflow_id,
-            processor=fake_processor,
-            source_names=["detector1"],
-            aux_source_names={
-                "incident_monitor": "monitor1",  # Both fields map to same stream
-                "normalization_monitor": "monitor1",
-            },
-        )
-
-        # Send data with the multiplexed stream
-        data = JobData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            primary_data={"detector1": sc.scalar(100.0)},
-            aux_data={
-                "monitor1": sc.scalar(10.0),  # One stream
-            },
-        )
-        job.add(data)
-
-        # Verify workflow received data with both field names pointing to same value
-        assert len(fake_processor.accumulate_calls) == 1
-        accumulated = fake_processor.accumulate_calls[0]
-        assert "detector1" in accumulated
-        assert "incident_monitor" in accumulated
-        assert "normalization_monitor" in accumulated
-        assert "monitor1" not in accumulated  # Stream name should not appear
-        assert accumulated["incident_monitor"] == sc.scalar(10.0)
-        assert accumulated["normalization_monitor"] == sc.scalar(10.0)
-        assert len(accumulated) == 3  # detector1 + 2 field names
+        assert accumulated["monitor1"] == sc.scalar(10.0)
+        assert "monitor2" not in accumulated

@@ -18,7 +18,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry, name_streams
-from ess.livedata.config.workflow_spec import AuxInput, AuxSources, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -180,24 +180,6 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
-bifrost_aux_sources = AuxSources(
-    {
-        'detector_tank_angle_r0': AuxInput(
-            choices=('detector_tank_angle_r0',),
-            default='detector_tank_angle_r0',
-            title='Detector Rotation',
-            description='Detector bank rotation angle.',
-        ),
-        'rotation_stage': AuxInput(
-            choices=('rotation_stage',),
-            default='rotation_stage',
-            title='Sample Rotation',
-            description='Sample rotation angle.',
-        ),
-    }
-)
-
-
 class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
@@ -314,7 +296,6 @@ qmap_handle = instrument.register_spec(
     description='Map of scattering intensity as function of Q and energy transfer.',
     source_names=['unified_detector'],
     params=BifrostQMapParams,
-    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )
 
@@ -325,7 +306,6 @@ elastic_qmap_handle = instrument.register_spec(
     description='Elastic Q map with predefined axes.',
     source_names=['unified_detector'],
     params=BifrostElasticQMapParams,
-    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )
 
@@ -336,6 +316,5 @@ elastic_qmap_custom_handle = instrument.register_spec(
     description='Elastic Q map with custom axes.',
     source_names=['unified_detector'],
     params=BifrostCustomElasticQMapParams,
-    aux_sources=bifrost_aux_sources,
     outputs=QMapOutputs,
 )

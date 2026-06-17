@@ -3,9 +3,19 @@
 """LOKI instrument factory implementations."""
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.value_log import ValueLog
 
 from . import specs
 from .specs import SansWorkflowParams, TransmissionMode
+
+
+class DetectorCarriageLog(ValueLog):
+    """Per-binding Sciline key for the LOKI rear-bank carriage f144 NXlog.
+
+    Drives the ``detector_carriage`` transformation in ``loki_detector_0``'s
+    ``depends_on`` chain. Distinct subclass so multiple dynamic transforms
+    on a workflow remain distinguishable in Sciline.
+    """
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -51,7 +61,17 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
-    from .specs import LOKI_DYNAMIC_TRANSFORMS
+    # The rear bank's NeXus ``depends_on`` chain has a dynamic ``detector_carriage``
+    # transformation driven by the live f144 carriage readback. Declared at
+    # instrument scope so every spec consuming ``loki_detector_0`` picks it up by
+    # default. ``tube_view`` sums over straw/pixel and does not consume bank
+    # position, so it opts out — co-located here with the binding it negates.
+    instrument.add_context_binding(
+        stream_name='detector_carriage',
+        dependent_sources={'loki_detector_0'},
+        workflow_key=DetectorCarriageLog,
+    )
+    specs.tube_view_handle.skip_instrument_contexts()
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
@@ -102,18 +122,15 @@ def setup_factories(instrument: Instrument) -> None:
             )
             for name, res in _bank_resolutions.items()
         },
-        # Drive the rear bank's NeXus 'detector_carriage' transformation
-        # from the live f144 carriage readback. The mapping is shared with
-        # loki/specs.py so the spec routes the stream only to the consuming
-        # source.
-        dynamic_transforms=LOKI_DYNAMIC_TRANSFORMS,
     )
 
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
     @specs.xy_projection_handle.attach_factory()
     def _detector_view_workflow_factory(
-        source_name: str, params: DetectorViewParams
+        source_name: str,
+        params: DetectorViewParams,
+        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
         lookup_table_filename = None
@@ -121,7 +138,10 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
-            source_name, params, lookup_table_filename=lookup_table_filename
+            source_name,
+            params,
+            aux_source_names,
+            lookup_table_filename=lookup_table_filename,
         )
 
     from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
@@ -182,11 +202,15 @@ def setup_factories(instrument: Instrument) -> None:
             out
         )
 
-    def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
+    def _dynamic_keys(
+        source_name: str, aux_source_names: dict[str, str]
+    ) -> dict[str, sciline.typing.Key]:
         return {
             source_name: NeXusData[NXdetector, SampleRun],
-            'incident_monitor': NeXusData[Incident, SampleRun],
-            'transmission_monitor': NeXusData[Transmission, SampleRun],
+            aux_source_names['incident_monitor']: NeXusData[Incident, SampleRun],
+            aux_source_names['transmission_monitor']: NeXusData[
+                Transmission, SampleRun
+            ],
         }
 
     _accumulators = (
@@ -234,7 +258,7 @@ def setup_factories(instrument: Instrument) -> None:
 
         return StreamProcessorWorkflow(
             wf,
-            dynamic_keys=_dynamic_keys(source_name),
+            dynamic_keys=_dynamic_keys(source_name, aux_source_names),
             target_keys=target_keys,
             accumulators=_accumulators,
         )

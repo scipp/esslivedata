@@ -80,6 +80,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Set context data
         workflow.accumulate(
@@ -114,6 +115,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Accumulate some data
         workflow.accumulate(
@@ -155,6 +157,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Accumulate with only context
         workflow.accumulate(
@@ -190,6 +193,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'simplified_output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         workflow.accumulate(
             {'context': Context(4)},
@@ -215,6 +219,7 @@ class TestStreamProcessorWorkflow:
             target_keys={'output': Output},
             accumulators=(ProcessedStreamed,),
         )
+        workflow.build()
 
         # Only accumulate dynamic data
         workflow.accumulate(
@@ -226,6 +231,156 @@ class TestStreamProcessorWorkflow:
         result = workflow.finalize()
         # Expected: streamed (25) + static (2) = 27
         assert result == {'output': Output(27)}
+
+
+class TestDeferredContextInjection:
+    """Context keys are injectable after construction; the inner processor is
+    built lazily so the routing layer can merge bindings post-creation."""
+
+    def test_context_keys_injected_after_construction(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.add_context_keys({'context': Context})
+        workflow.build()
+
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        # context (5) * static (2) = 10, streamed (10) + 10 = 20
+        assert workflow.finalize() == {'output': Output(20)}
+
+    def test_add_context_keys_merges_with_construction_keys(
+        self, base_workflow_with_context
+    ):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.add_context_keys({'extra': Static})
+        assert workflow._context_keys == {'context': Context, 'extra': Static}
+
+    def test_add_context_keys_after_build_raises(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='after the StreamProcessor is built'):
+            workflow.add_context_keys({'extra': Static})
+
+    def test_dynamic_keys_exposed_for_transform_wiring(
+        self, base_workflow_with_context
+    ):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        assert workflow.dynamic_keys == {'streamed': Streamed}
+
+    def test_base_pipeline_exposed_before_build(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        assert workflow.base_pipeline is workflow._base_workflow
+
+    def test_base_pipeline_after_build_raises(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='after the StreamProcessor'):
+            _ = workflow.base_pipeline
+
+    def test_build_is_idempotent(self, base_workflow_with_context):
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        processor = workflow._stream_processor
+        workflow.build()
+        assert workflow._stream_processor is processor
+
+    def test_build_injects_context_keys(self, base_workflow_with_context):
+        """``build`` merges context keys supplied at build time, not construction."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build(context_keys={'context': Context})
+
+        workflow.accumulate(
+            {'context': Context(5)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'streamed': Streamed(3)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        assert workflow.finalize()['output'] == Output(13)  # 3 + 5 * 2
+
+    def test_build_after_built_rejects_bindings(self, base_workflow_with_context):
+        """Re-supplying bindings after the graph is built fails fast."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        workflow.build()
+        with pytest.raises(RuntimeError, match='already built'):
+            workflow.build(context_keys={'extra': Static})
+
+    def test_accumulate_before_build_raises(self, base_workflow_with_context):
+        """Calling accumulate without build() raises RuntimeError."""
+        workflow = StreamProcessorWorkflow(
+            base_workflow_with_context,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+        with pytest.raises(RuntimeError, match='before build'):
+            workflow.accumulate(
+                {'context': Context(5)},
+                start_time=Timestamp.from_ns(1000),
+                end_time=Timestamp.from_ns(2000),
+            )
 
 
 # Types for window_outputs tests (need DataArray for assign_coords)
@@ -265,6 +420,7 @@ class TestWindowOutputs:
                 CumulativeOutput: EternalAccumulator(preprocess=None),
             },
         )
+        workflow.build()
 
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
@@ -293,6 +449,7 @@ class TestWindowOutputs:
             window_outputs=['current'],
             accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
         )
+        workflow.build()
 
         # First accumulate
         workflow.accumulate(
@@ -323,6 +480,7 @@ class TestWindowOutputs:
             window_outputs=['current'],
             accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
         )
+        workflow.build()
 
         # First period
         workflow.accumulate(

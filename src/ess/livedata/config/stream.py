@@ -85,21 +85,62 @@ class Device(Stream):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class LogContextBinding:
-    """One f144 stream feeding a Sciline workflow key, scoped to dependents.
+class ContextBinding:
+    """Declaration of one context-stream input to a workflow.
 
-    The binding declares that the value of an f144 stream
-    (:attr:`stream_name`, an entry in :attr:`Instrument.streams`) should be
-    routed to a Sciline pipeline as the value of ``workflow_key``, but only
-    when wiring workflows for the spec source names listed in
-    :attr:`dependent_sources`.
+    A context binding declares that the value of a stream
+    (:attr:`stream_name`) should be routed to a Sciline pipeline when
+    wiring workflows for the source names listed in
+    :attr:`dependent_sources`. The :attr:`workflow_key` is the Sciline
+    key receiving the value via ``set_context``. Typed as :class:`Any`
+    because Sciline keys are parameterised generics (e.g.
+    ``InstrumentAngle[SampleRun]``) and Python's type system cannot
+    describe "type of any Sciline key" precisely.
 
-    ``workflow_key`` is typed as :class:`Any` because Sciline keys are
-    parameterised generics (e.g. ``InstrumentAngle[SampleRun]``) and Python's
-    type system cannot describe "type of any Sciline key" precisely.
+    Two flavors share this record:
+
+    - **Direct parameter.** ``workflow_key`` is an arbitrary Sciline key
+      (e.g. ``InstrumentAngle[SampleRun]``). The stream value is fed
+      straight into ``set_context``.
+    - **NXtransformations chain patch.** ``workflow_key`` is a
+      :class:`~ess.livedata.config.value_log.ValueLog` subclass. The
+      chain entry to patch is derived from :attr:`stream_name` (the
+      RBV substream's ``nexus_path``) by
+      :meth:`Instrument.chain_patch_path`.
+      :attr:`Instrument.chain_patch_bindings` collects these bindings by
+      ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
+      a fused per-component patched-chain provider.
+
+    The same record is declared at two scopes: instrument scope
+    (:meth:`Instrument.add_context_binding`, for source properties such as
+    motion) and spec scope
+    (:meth:`ess.livedata.handlers.workflow_factory.SpecHandle.add_context_binding`,
+    for context that is a property of one workflow). Both feed the gate and
+    ``set_context``; the wire name is always the declared :attr:`stream_name`
+    and there is no cold-start seed.
     """
 
     stream_name: str
+    workflow_key: Any
+    dependent_sources: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChainPatchBinding:
+    """A chain-patch :class:`ContextBinding` resolved for transform wiring.
+
+    Carries the binding's pre-resolved NeXus transform path (see
+    :meth:`ess.livedata.config.instrument.Instrument.chain_patch_path`)
+    alongside its :attr:`dependent_sources` and ``ValueLog`` ``workflow_key``.
+    Resolving the path up front lets the wiring step in
+    :mod:`ess.livedata.handlers.dynamic_transforms` run as a pure function of
+    this self-contained data, without re-consulting the instrument's stream
+    topology. The :attr:`stream_name` is retained as the dedup key when
+    grouping patches per component type.
+    """
+
+    stream_name: str
+    transform_path: str
     workflow_key: Any
     dependent_sources: frozenset[str]
 

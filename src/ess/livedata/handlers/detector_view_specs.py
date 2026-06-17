@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal
-
-if TYPE_CHECKING:
-    from .detector_view.types import TransformValueStream
+from typing import ClassVar, Literal
 
 import pydantic
 import scipp as sc
@@ -28,7 +25,6 @@ from ..config import models
 from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     DETECTORS,
-    AuxInput,
     AuxSources,
     JobId,
     OutputView,
@@ -480,44 +476,37 @@ def make_detector_view_params(
     return DetectorViewWithSpectrumParams
 
 
+ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
+
+
 class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
-    Subscribes to all supported ROI geometry streams (rectangle, polygon).
-    The render() method prefixes ROI stream names with the job_id to create
-    job-specific ROI configuration streams, since each job instance needs its
-    own ROIs.
+    Subscribes to the supported ROI geometry streams (rectangle, polygon).
+    :meth:`render` prefixes each stream name with the ``job_id`` so every job
+    instance owns its own ROI configuration stream.
 
-    Optionally also advertises one or more global f144 streams that drive
-    runtime-dynamic NeXus transformation values for specific source_names.
-    These streams are physical properties of the instrument (not job-
-    specific), so they are rendered un-prefixed and only routed to the jobs
-    whose source_name actually consumes them.
+    ROI is an auxiliary source, not a gated context binding: the ROI providers
+    treat a missing or empty request as "no ROI selected" (an empty result),
+    so there is nothing to gate on and no cold-start seed is required. The
+    detector-view factory wires the ROI streams into ``set_context`` itself
+    (see :meth:`DetectorViewFactory.make_workflow`).
     """
 
-    def __init__(
-        self,
-        dynamic_transforms: dict[str, TransformValueStream] | None = None,
-    ) -> None:
-        self._dynamic_transforms = dynamic_transforms or {}
-        inputs: dict[str, str | AuxInput] = {
-            'roi_rectangle': 'roi_rectangle',
-            'roi_polygon': 'roi_polygon',
-        }
-        # Advertise each unique global aux stream so the dashboard schema
-        # and spec validation know it exists. Routing is per-source via
-        # render().
-        for binding in self._dynamic_transforms.values():
-            inputs.setdefault(binding.aux_stream, binding.aux_stream)
-        super().__init__(inputs)
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                'roi_rectangle': 'roi_rectangle',
+                'roi_polygon': 'roi_polygon',
+            }
+        )
 
     def render(
         self,
         job_id: JobId,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render ROI stream names with job-specific prefix, plus any
-        source-specific global aux streams.
+        """Render ROI stream names with a job-specific prefix.
 
         Parameters
         ----------
@@ -530,21 +519,12 @@ class DetectorROIAuxSources(AuxSources):
         -------
         :
             Mapping from ROI geometry keys to job-specific stream names
-            (e.g., ``'{source_name}/{job_number}/roi_rectangle'``), plus
-            any global aux streams bound to this source's NeXus transforms,
-            rendered un-prefixed.
+            (e.g. ``'{job_id}/roi_rectangle'``).
         """
-        rendered: dict[str, str] = {
+        return {
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
-        binding = self._dynamic_transforms.get(job_id.source_name)
-        if binding is not None:
-            rendered[binding.aux_stream] = binding.aux_stream
-        return rendered
-
-
-ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
 
 
 def register_detector_view_spec(
@@ -552,7 +532,6 @@ def register_detector_view_spec(
     instrument: Instrument,
     projection: ProjectionType | dict[str, ProjectionType],
     source_names: list[str] | None = None,
-    aux_sources: AuxSources | None = None,
     spectrum_view: SpectrumViewSpec | None = None,
 ) -> SpecHandle:
     """
@@ -573,10 +552,6 @@ def register_detector_view_spec(
     source_names:
         List of detector source names. Required when projection is a single type.
         When projection is a dict, defaults to the dict keys if not specified.
-    aux_sources:
-        Optional auxiliary source specification. If None (default), uses
-        DetectorROIAuxSources for ROI geometry streams. Instruments that need
-        both ROI and position streams can subclass DetectorROIAuxSources.
     spectrum_view:
         Optional spectrum-view configuration. When provided, the registered
         params/outputs include the spectrum-specific rebin param and the
@@ -642,16 +617,17 @@ def register_detector_view_spec(
     else:
         raise ValueError(f"Unsupported projection: {projection}")
 
-    return instrument.register_spec(
+    handle = instrument.register_spec(
         group=DETECTORS,
         name=name,
         version=1,
         title=title,
         description=description,
         source_names=source_names,
-        aux_sources=aux_sources if aux_sources is not None else DetectorROIAuxSources(),
+        aux_sources=DetectorROIAuxSources(),
         params=make_detector_view_params(spectrum_view=spectrum_view),
         outputs=make_detector_view_outputs(
             roi_support=True, spectrum_view=spectrum_view
         ),
     )
+    return handle

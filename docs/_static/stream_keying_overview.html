@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stream keying across the workflow harness</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e4e7eb;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --raw: #2563eb;
+    --role: #b45309;
+    --stream: #15803d;
+    --sciline: #7c3aed;
+    --warn: #dc2626;
+    --band: #f3f6fb;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  .page { max-width: 1080px; margin: 0 auto; padding: 26px 30px 70px; }
+  h1 { font-size: 1.6rem; margin: 0 0 .2rem; }
+  h2 {
+    font-size: 1.15rem; margin: 2.4rem 0 1rem; padding-bottom: .35rem;
+    border-bottom: 1px solid var(--border); color: var(--ink);
+  }
+  .lead { color: var(--muted); font-size: 1rem; margin: 0 0 1.4rem; max-width: 80ch; }
+  p { max-width: 84ch; }
+  code, .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+  code { font-size: .88em; }
+
+  .intro {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem 1.2rem; margin: 1.2rem 0;
+  }
+  .intro p { margin: .5rem 0; }
+
+  /* key-space colour coding */
+  .k-stream  { color: var(--stream); font-weight: 600; }
+  .k-role    { color: var(--role); font-weight: 600; }
+  .k-sciline { color: var(--sciline); font-weight: 600; }
+  .k-raw     { color: var(--raw); font-weight: 600; }
+
+  /* nested encapsulation boxes */
+  .layer {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+    padding: .8rem 1rem .95rem; margin: .55rem 0;
+  }
+  .layer > .title {
+    font-weight: 700; font-size: .8rem; letter-spacing: .03em; text-transform: uppercase;
+    color: var(--muted);
+    display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+    margin-bottom: .5rem;
+  }
+  .layer > .title .file { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .layer .desc { font-size: .9rem; margin: .15rem 0; }
+
+  .l-adapter { border-left: 4px solid var(--raw); }
+  .l-pre     { border-left: 4px solid var(--stream); }
+  .l-jm      { border-left: 4px solid var(--sciline); }
+  .l-job     { border-left: 4px solid var(--role); }
+  .l-spw     { border-left: 4px solid var(--stream); }
+  .l-sp      { border-left: 4px solid var(--sciline); }
+  .l-pipe    { border-left: 4px solid var(--accent); }
+
+  .flow { text-align: center; color: var(--muted); font-size: 1.3rem; line-height: 1; margin: .1rem 0; }
+  .wire { font-family: "SF Mono", Menlo, monospace; font-size: .82rem; color: var(--muted); text-align: center; margin: .35rem 0; }
+  .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px; background: var(--band); border: 1px solid var(--border); font-size: .78rem; }
+
+  .xlate {
+    border-left: 3px solid var(--warn); background: #fef2f2;
+    padding: .35rem .7rem; margin: .55rem 0; font-size: .85rem; border-radius: 0 6px 6px 0;
+  }
+  .xlate b { color: var(--warn); }
+
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; background: var(--card);
+          border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; background: var(--band); }
+  td.num { color: var(--warn); font-weight: 700; width: 2rem; }
+  td .mono, td.path { font-size: .84rem; }
+  .tag { font-size: .72rem; padding: .08rem .45rem; border-radius: 4px; white-space: nowrap; }
+  .tag.data { background: #dcfce7; color: var(--stream); }
+  .tag.cfg  { background: #fef3c7; color: var(--role); }
+
+  .note { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.2rem; margin-top: 1rem; }
+  .note p { margin: .55rem 0; }
+
+  .legend { display: flex; gap: 1.4rem; flex-wrap: wrap; margin: 1rem 0 0; font-size: .85rem; }
+  .legend span::before { content: "\25CF"; margin-right: .4rem; }
+  .legend .s1::before { color: var(--raw); }
+  .legend .s2::before { color: var(--role); }
+  .legend .s3::before { color: var(--stream); }
+  .legend .s4::before { color: var(--sciline); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Stream keying across the workflow harness</h1>
+<p class="lead">How a neutron-data message is identified at each layer of the reduction stack, and the points where that identifier is translated from one naming scheme to the next.</p>
+
+<div class="intro">
+  <p>A reduction workflow is a <a href="https://scipp.github.io/sciline/">sciline</a> graph: its inputs are addressed by Python <em>types</em> (e.g. <code>NeXusData[Incident, SampleRun]</code>). Data, however, enters the system from Kafka identified by a <code>(topic, source_name)</code> pair, and a user configuring a workflow thinks in terms of a <em>role</em> &mdash; &ldquo;the incident monitor used for normalization&rdquo; &mdash; which may be filled by any of several physical streams.</p>
+  <p>Bridging those views means a message&rsquo;s identifier passes through <strong>four naming schemes</strong> on its way to a provider. This page traces the layers of encapsulation the data flows through, shows which scheme each layer speaks, and pinpoints the three places a translation happens.</p>
+</div>
+
+<div class="legend">
+  <span class="s1"><code>(topic, source_name)</code> &mdash; raw Kafka identity</span>
+  <span class="s2">role &mdash; logical input a workflow consumes</span>
+  <span class="s3">canonical stream_name &mdash; the NeXus name from the instrument config</span>
+  <span class="s4">sciline.Key &mdash; the graph&rsquo;s type-addressed input</span>
+</div>
+
+<h2>A. Layers of encapsulation (outer &rarr; inner)</h2>
+<p>Each box wraps the one below it. A message arrives at the top as raw Kafka bytes and descends until its value reaches a sciline provider. The colour of each identifier marks the scheme it is in.</p>
+
+<div class="wire"><span class="pill k-raw">Kafka message: (topic, source_name, bytes)</span></div>
+<div class="flow">&darr;</div>
+
+<div class="layer l-adapter">
+  <div class="title"><span>MessageAdapter</span><span class="file mono">kafka/message_adapter.py</span></div>
+  <div class="desc"><code>get_stream_id(topic, source_name)</code> &rarr; <code>StreamId(kind, name)</code> via the <code>StreamLUT</code> lookup table.</div>
+  <div class="xlate"><b>Translation 1</b> &nbsp;<span class="k-raw">(topic, source_name)</span> &rarr; <span class="k-stream">stream_name</span> &nbsp;<span class="tag data">data path</span></div>
+</div>
+
+<div class="flow">&darr;</div>
+<div class="wire"><span class="pill">Message(stream=<span class="k-stream">StreamId(name=stream_name)</span>, value=payload)</span></div>
+<div class="flow">&darr;</div>
+
+<div class="layer l-pre">
+  <div class="title"><span>Preprocessors / Accumulators</span><span class="file mono">handlers/</span></div>
+  <div class="desc">Keyed by <code>StreamId</code>; emit <code>WorkflowData.data : { <span class="k-stream">StreamId(name)</span> : value }</code>.</div>
+</div>
+
+<div class="flow">&darr;</div>
+<div class="wire">WorkflowData.data &nbsp;&mdash;&nbsp; <span class="k-stream">canonical stream-name space</span></div>
+<div class="flow">&darr;</div>
+
+<div class="layer l-jm">
+  <div class="title"><span>JobManager</span><span class="file mono">core/job_manager.py</span></div>
+  <div class="desc"><code>_filter_data_for_job</code> splits each batch by <code>stream.name</code>:</div>
+  <div class="desc">&nbsp;&nbsp;&bull; <code>stream.name &isin; job.source_names</code> &rarr; <code>primary_data[<span class="k-stream">stream_name</span>]</code></div>
+  <div class="desc">&nbsp;&nbsp;&bull; <code>stream.name &isin; job.input_stream_names</code> &rarr; <code>aux_data[<span class="k-stream">stream_name</span>]</code> (auxiliary and context payloads alike; demultiplexed at translation 3)</div>
+  <div class="desc">A context gate (<code>job.missing_context(available)</code>) holds the job until each required context stream has a value.</div>
+
+  <div class="layer l-job">
+    <div class="title"><span>Job</span><span class="file mono">core/job.py</span></div>
+    <div class="desc"><code>input_streams</code> / <code>gating_streams</code> : <code>set[<span class="k-stream">stream_name</span>]</code> &mdash; plain name sets, no mapping.</div>
+    <div class="desc"><code>add()</code> forwards <code>{**primary_data, **aux_data}</code> unchanged.</div>
+
+    <div class="layer l-spw">
+      <div class="title"><span>StreamProcessorWorkflow</span><span class="file mono">handlers/stream_processor_workflow.py</span></div>
+      <div class="desc"><code>dynamic_keys</code> : <code>{ <span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> }</code> &mdash; fed to <code>accumulate()</code></div>
+      <div class="desc"><code>context_keys</code> : <code>{ <span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> }</code> &mdash; fed to <code>set_context()</code></div>
+      <div class="xlate"><b>Translation 3</b> &nbsp;<span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> &nbsp;(dict lookup in <code>accumulate</code>; which dict the name is in decides accumulate vs. set_context) &nbsp;<span class="tag data">data path</span></div>
+
+      <div class="layer l-sp">
+        <div class="title"><span>StreamProcessor</span><span class="file mono">ess.reduce.streaming</span></div>
+        <div class="desc"><code>accumulate()</code> / <code>set_context()</code> / <code>finalize()</code> &mdash; addressed by <span class="k-sciline">sciline.Key</span>.</div>
+
+        <div class="layer l-pipe">
+          <div class="title"><span>sciline.Pipeline</span><span class="file mono">pure reduction graph</span></div>
+          <div class="desc"><span class="k-sciline">sciline.Key</span> &rarr; providers &rarr; targets</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="flow">&darr;</div>
+<div class="wire"><code>finalize()</code> &rarr; { output_name : DataArray } &rarr; JobResult &rarr; da00 message &rarr; Kafka</div>
+
+<h2>B. Kinds of workflow input</h2>
+<p>A workflow consumes three kinds of input. All three arrive on the data path keyed by <span class="k-stream">stream_name</span> and all three end up inside the wrapped <code>StreamProcessor</code>, but they differ in how their stream binding is chosen, how they are fed into the sciline graph, and whether they hold up the job.</p>
+
+<table>
+  <thead><tr><th>Input</th><th>What it is</th><th>Stream binding chosen by</th><th>Fed into the graph via</th><th>Gates?</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Primary</strong></td>
+      <td>The detector data being reduced</td>
+      <td>The job&rsquo;s identity (<code>source_name</code>)</td>
+      <td class="mono"><code>accumulate()</code> &mdash; summed over time</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td><strong>Auxiliary</strong><br>(dynamic)</td>
+      <td>Extra measured data, e.g. monitor counts for normalization</td>
+      <td>A user-selected <span class="k-role">role</span> (translation 2)</td>
+      <td class="mono"><code>accumulate()</code> &mdash; summed over time</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td><strong>Context</strong></td>
+      <td>Slowly-varying <em>parameters</em> of the reduction: motion / geometry positions, sample temperature</td>
+      <td>A framework-routed <code>ContextBinding</code> (stream-named)</td>
+      <td class="mono"><code>set_context()</code> &mdash; latest value, persistent</td>
+      <td>yes</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Auxiliary vs. context.</strong> Both are non-primary, but they answer different questions. An auxiliary input is more <em>data to reduce</em>: it is <em>accumulated</em>, so each batch adds to a running total and an empty batch is harmless. A context input is a <em>parameter</em> of the reduction: it is injected with <code>set_context()</code> and is <strong>stateful</strong> &mdash; a value set in one batch persists into every later batch until overwritten, and a batch carrying no new value leaves the parameter unchanged. Because a run with an uninitialized parameter would crash or silently misattribute its output, the <code>JobManager</code> <em>gates</em> the job until each context stream has produced a value (ADR&nbsp;0002); auxiliary inputs never gate.</p>
+
+<p><strong>ROI is a deliberate hybrid.</strong> It is declared as an <code>AuxSources</code> &mdash; a user-selectable input, so its stream binding is chosen at translation 2 like other auxiliary inputs &mdash; but the factory feeds it through <code>set_context()</code> rather than <code>accumulate()</code>, and it does <em>not</em> gate. &ldquo;No ROI selected&rdquo; is a safe default (an empty request), so there is no readiness to wait on (ADR&nbsp;0002). It is not a <code>ContextBinding</code>.</p>
+
+<p><strong>The primary is the degenerate case.</strong> It is a logical slot too &mdash; named by its sciline key, <code>NeXusData[NXdetector, Run]</code> &mdash; but its stream binding is the job&rsquo;s identity (<code>source_name</code>) rather than a user-selectable role, so translation 2 is the identity function and the factory keys it directly, without <code>aux_source_names</code>. Context inputs likewise carry no role: their wire name <em>equals</em> their stream name. Translation 2 therefore touches only auxiliary inputs.</p>
+
+<h2>C. Resolving an auxiliary role to a stream name</h2>
+<p>The <span class="k-role">role</span> scheme is the one a workflow author and a user reason in for auxiliary inputs. It is resolved to a canonical stream name once, in the instrument factory that constructs the workflow &mdash; before any data flows &mdash; so that the workflow object itself is built entirely in the <span class="k-stream">stream-name</span> scheme.</p>
+
+<div class="layer l-job">
+  <div class="title"><span>Instrument factory (e.g. _i_of_q_factory)</span><span class="file mono">config/instruments/&hellip;/factories.py</span></div>
+  <div class="desc">The factory receives <code>aux_source_names</code>, the <span class="k-role">role</span>&nbsp;&rarr;&nbsp;<span class="k-stream">stream</span> map that <code>JobFactory</code> computes via <code>AuxSources.render</code> (defaults overlaid with the user&rsquo;s selection).</div>
+  <div class="desc">It keys <code>dynamic_keys</code> by canonical stream name directly, resolving each role inline:</div>
+  <div class="desc">&nbsp;&nbsp;<code>{ source_name: NeXusData[NXdetector, &hellip;], <span class="k-stream">aux_source_names[<span class="k-role">'incident_monitor'</span>]</span>: NeXusData[Incident, &hellip;] }</code></div>
+  <div class="xlate"><b>Translation 2</b> &nbsp;<span class="k-role">role</span> &rarr; <span class="k-stream">stream_name</span> &nbsp;<span class="tag cfg">factory / build-time &mdash; not on the data path</span></div>
+  <div class="desc" style="margin-top:.5rem;color:var(--muted)">An unknown role raises <code>KeyError</code> at job creation, visible in factory code. The <span class="k-role">role</span> scheme never enters the workflow object.</div>
+</div>
+
+<h2>D. The four naming schemes and their boundaries</h2>
+<table>
+  <thead><tr><th>#</th><th>Boundary</th><th>From &rarr; To</th><th>Performed by</th><th>Path</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="num">1</td>
+      <td>Kafka ingress</td>
+      <td class="mono"><span class="k-raw">(topic, source_name)</span> &rarr; <span class="k-stream">stream_name</span></td>
+      <td class="path"><code>MessageAdapter.get_stream_id</code> + <code>StreamLUT</code></td>
+      <td><span class="tag data">data</span></td>
+    </tr>
+    <tr>
+      <td class="num">2</td>
+      <td>Workflow construction</td>
+      <td class="mono"><span class="k-role">role</span> &rarr; <span class="k-stream">stream_name</span> (building <code>dynamic_keys</code>)</td>
+      <td class="path">Instrument factory, inline <code>aux_source_names[role]</code></td>
+      <td><span class="tag cfg">build-time</span></td>
+    </tr>
+    <tr>
+      <td class="num">3</td>
+      <td>Workflow runtime</td>
+      <td class="mono"><span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span></td>
+      <td class="path"><code>StreamProcessorWorkflow.accumulate</code> (dict lookup)</td>
+      <td><span class="tag data">data</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Invariants worth remembering</h2>
+<div class="note">
+  <p><strong>Only one scheme is on the data path.</strong> Translation 2 happens at construction; once messages flow, the entire stack from <code>WorkflowData</code> down to the <code>StreamProcessorWorkflow</code> dict lookup speaks a single language &mdash; <span class="k-stream">stream_name</span>. Only the innermost shell (<code>StreamProcessor</code> / <code>sciline</code>) speaks <span class="k-sciline">sciline keys</span>.</p>
+  <p><strong>Two independent sources must agree on the canonical name.</strong> The <code>StreamLUT</code> drives translation 1 on ingress; the <code>render</code> / <code>aux_source_names</code> map drives translation 2 in the factory. Nothing cross-checks the two &mdash; a stream that is present in both but spelled differently routes silently to nowhere, surfacing only as an input that never accumulates.</p>
+  <p><strong>The <span class="k-role">role</span> scheme is confined to the config layer.</strong> It lives in <code>AuxSources</code> and the brief <code>aux_source_names[role]</code> lookups in factories, and is fully consumed before the first message moves. Neither the <code>Job</code> nor the runtime path is aware of roles.</p>
+</div>
+
+</div>
+</body>
+</html>
