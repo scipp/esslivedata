@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from ess.livedata.dashboard.range_hook import RangeHandles
 
 
@@ -140,6 +142,23 @@ def test_write_avoids_inverted_range_downward() -> None:
         else:
             seen_end = value
         assert seen_start <= seen_end, f"inverted: start={seen_start} end={seen_end}"
+
+
+def test_write_datetime_axis_coerces_float_targets() -> None:
+    """Bokeh stores datetime ranges as ``np.datetime64``; range targets are
+    floats (epoch counts). The float must be cast back to a datetime64 of the
+    handle's unit so neither the ordering comparison nor Bokeh's range patch
+    mixes datetime64/float (which raises ``UFuncTypeError``)."""
+    lo_dt = np.datetime64('2026-06-17T11:52:00', 'ns')
+    hi_dt = np.datetime64('2026-06-17T11:52:04', 'ns')
+    handle = _StubRange(start=lo_dt, end=hi_dt)
+    target_lo = float(np.datetime64('2026-06-17T11:52:01', 'ns').astype('int64'))
+    target_hi = float(np.datetime64('2026-06-17T11:52:03', 'ns').astype('int64'))
+
+    assert RangeHandles.write(_StubPlot(x_range=handle), 'x', target_lo, target_hi)
+
+    assert handle.start == np.datetime64('2026-06-17T11:52:01', 'ns')
+    assert handle.end == np.datetime64('2026-06-17T11:52:03', 'ns')
 
 
 def test_write_color_mapper_avoids_inversion() -> None:
