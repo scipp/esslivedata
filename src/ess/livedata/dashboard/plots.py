@@ -866,6 +866,7 @@ class LinePlotter(Plotter):
         self._errors = errors
         self._logx = scale_opts.x_scale == PlotScale.log
         self._logy = scale_opts.y_scale == PlotScale.log
+        self._color = hv.Cycle.default_cycles["default_colors"][0]
         self._base_opts: dict[str, Any] = {
             'logx': self._logx,
             'logy': self._logy,
@@ -998,7 +999,7 @@ class LinePlotter(Plotter):
             da, value_label=output_display_name, dim_label=dim_label
         )
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
-        base = base_method(label=label)
+        base = base_method(label=label).opts(color=self._color)
 
         if da.variances is not None and self._errors != 'none':
             if mode == 'histogram':
@@ -1009,7 +1010,7 @@ class LinePlotter(Plotter):
                     dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-            return base * error_method(label=label)
+            return base * error_method(label=label).opts(color=self._color)
 
         return base
 
