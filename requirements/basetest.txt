@@ -53,7 +53,7 @@ essdiffraction==26.6.0
     # via -r basetest.in
 esspolarization==25.10.0
     # via essreflectometry
-essreduce==26.6.0
+essreduce==26.6.1
     # via
     #   essdiffraction
     #   esspolarization
@@ -304,7 +304,7 @@ scipp==26.3.1
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==26.5.0
+scippneutron==26.6.0
     # via
     #   -r basetest.in
     #   essdiffraction
