@@ -126,10 +126,8 @@ class ReductionApp(DashboardBase):
         # Create log producer widget only in dev mode (per-session)
         dev_content = []
         if self._dev:
-            dev_widget = LogProducerWidget(
-                instrument=self._instrument,
-                exit_stack=self._exit_stack,
-            )
+            dev_widget = LogProducerWidget(instrument=self._instrument)
+            pn.state.on_session_destroyed(lambda _ctx: dev_widget.close())
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
         return pn.Column(
