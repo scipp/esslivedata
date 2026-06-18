@@ -5,7 +5,7 @@
 Do not edit by hand. Regenerate with
 ``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
 
-Source: coda_bifrost_999999_00002625.hdf
+Source: coda_bifrost_999999_00007280.hdf
 """
 
 from ess.livedata.config import F144Stream
@@ -167,11 +167,95 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_motion',
         units='mm',
     ),
+    '/entry/instrument/attenuator_1/status': F144Stream(
+        nexus_path='/entry/instrument/attenuator_1/status',
+        source='BIFRO-AttChg:MC-Pne-01:ShtAuxBits07',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/attenuator_2/status': F144Stream(
+        nexus_path='/entry/instrument/attenuator_2/status',
+        source='BIFRO-AttChg:MC-Pne-02:ShtAuxBits07',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/attenuator_3/status': F144Stream(
+        nexus_path='/entry/instrument/attenuator_3/status',
+        source='BIFRO-AttChg:MC-Pne-03:ShtAuxBits07',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/delay',
+        source='BIFRO-ChpSy2:Chop-BWC-101:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/experiment_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-101:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/mechanical_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-101:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/park_angle': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/park_angle',
+        source='BIFRO-ChpSy2:Chop-BWC-101:Pos_R',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/pulse_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-101:BeamPosDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
     '/entry/instrument/bandwidth_chopper_1/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bandwidth_chopper_1/rotation_speed',
         source='BIFRO-ChpSy2:Chop-BWC-101:Spd_R',
         topic='bifrost_choppers',
         units='Hz',
+    ),
+    '/entry/instrument/bandwidth_chopper_1/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_1/rotation_speed_setpoint',
+        source='BIFRO-ChpSy2:Chop-BWC-101:Spd_S',
+        topic='bifrost_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/bandwidth_chopper_2/delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/delay',
+        source='BIFRO-ChpSy2:Chop-BWC-102:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/bandwidth_chopper_2/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/experiment_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-102:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/bandwidth_chopper_2/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/mechanical_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-102:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bandwidth_chopper_2/park_angle': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/park_angle',
+        source='BIFRO-ChpSy2:Chop-BWC-102:Pos_R',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bandwidth_chopper_2/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/pulse_delay',
+        source='BIFRO-ChpSy2:Chop-BWC-102:BeamPosDly-S',
+        topic='bifrost_choppers',
+        units='ns',
     ),
     '/entry/instrument/bandwidth_chopper_2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/bandwidth_chopper_2/rotation_speed',
@@ -179,47 +263,11 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_choppers',
         units='Hz',
     ),
-    '/entry/instrument/blade_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/blade_left/idle_flag',
-        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.DMOV',
-        topic='bifrost_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/blade_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/blade_left/target_value',
-        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.VAL',
-        topic='bifrost_motion',
-        units='mm',
-    ),
-    '/entry/instrument/blade_left/value': F144Stream(
-        nexus_path='/entry/instrument/blade_left/value',
-        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.RBV',
-        topic='bifrost_motion',
-        units='mm',
-    ),
-    '/entry/instrument/blade_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/blade_right/idle_flag',
-        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.DMOV',
-        topic='bifrost_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/blade_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/blade_right/target_value',
-        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.VAL',
-        topic='bifrost_motion',
-        units='mm',
-    ),
-    '/entry/instrument/blade_right/value': F144Stream(
-        nexus_path='/entry/instrument/blade_right/value',
-        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.RBV',
-        topic='bifrost_motion',
-        units='mm',
-    ),
-    '/entry/instrument/delay': F144Stream(
-        nexus_path='/entry/instrument/delay',
-        source='BIFRO-ChpSy1:Chop-PSC-101:TotDly',
+    '/entry/instrument/bandwidth_chopper_2/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/bandwidth_chopper_2/rotation_speed_setpoint',
+        source='BIFRO-ChpSy2:Chop-BWC-102:Spd_S',
         topic='bifrost_choppers',
-        units='ns',
+        units='Hz',
     ),
     '/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/idle_flag': F144Stream(  # noqa: E501
         nexus_path='/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/idle_flag',
@@ -239,9 +287,33 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_motion',
         units='degrees',
     ),
-    '/entry/instrument/experiment_delay': F144Stream(
-        nexus_path='/entry/instrument/experiment_delay',
-        source='BIFRO-ChpSy1:Chop-PSC-101:ChopDly-S',
+    '/entry/instrument/frame_overlap_chopper_1/delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/delay',
+        source='BIFRO-ChpSy1:Chop-FOC-101:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/frame_overlap_chopper_1/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/experiment_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-101:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/frame_overlap_chopper_1/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/mechanical_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-101:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/frame_overlap_chopper_1/park_angle': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/park_angle',
+        source='BIFRO-ChpSy1:Chop-FOC-101:Pos_R',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/frame_overlap_chopper_1/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/pulse_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-101:BeamPosDly-S',
         topic='bifrost_choppers',
         units='ns',
     ),
@@ -251,9 +323,51 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_choppers',
         units='Hz',
     ),
+    '/entry/instrument/frame_overlap_chopper_1/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_1/rotation_speed_setpoint',
+        source='BIFRO-ChpSy1:Chop-FOC-101:Spd_S',
+        topic='bifrost_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/delay',
+        source='BIFRO-ChpSy1:Chop-FOC-201:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/experiment_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-201:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/mechanical_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-201:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/park_angle': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/park_angle',
+        source='BIFRO-ChpSy1:Chop-FOC-201:Pos_R',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/pulse_delay',
+        source='BIFRO-ChpSy1:Chop-FOC-201:BeamPosDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
     '/entry/instrument/frame_overlap_chopper_2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/frame_overlap_chopper_2/rotation_speed',
         source='BIFRO-ChpSy1:Chop-FOC-201:Spd_R',
+        topic='bifrost_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/frame_overlap_chopper_2/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/frame_overlap_chopper_2/rotation_speed_setpoint',
+        source='BIFRO-ChpSy1:Chop-FOC-201:Spd_S',
         topic='bifrost_choppers',
         units='Hz',
     ),
@@ -263,11 +377,113 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/mechanical_delay': F144Stream(
-        nexus_path='/entry/instrument/mechanical_delay',
-        source='BIFRO-ChpSy1:Chop-PSC-101:MechDly-S',
-        topic='bifrost_choppers',
-        units='degrees',
+    '/entry/instrument/jaw_1/blade_left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_left/idle_flag',
+        source='BIFRO-DivSl3:MC-SlYp-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_1/blade_left/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_left/target_value',
+        source='BIFRO-DivSl3:MC-SlYp-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_1/blade_left/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_left/value',
+        source='BIFRO-DivSl3:MC-SlYp-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_1/blade_right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_right/idle_flag',
+        source='BIFRO-DivSl3:MC-SlYm-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_1/blade_right/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_right/target_value',
+        source='BIFRO-DivSl3:MC-SlYm-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_1/blade_right/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_1/blade_right/value',
+        source='BIFRO-DivSl3:MC-SlYm-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_2/blade_left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_left/idle_flag',
+        source='BIFRO-DivSl2:MC-SlYp-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_2/blade_left/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_left/target_value',
+        source='BIFRO-DivSl2:MC-SlYp-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_2/blade_left/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_left/value',
+        source='BIFRO-DivSl2:MC-SlYp-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_2/blade_right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_right/idle_flag',
+        source='BIFRO-DivSl2:MC-SlYm-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_2/blade_right/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_right/target_value',
+        source='BIFRO-DivSl2:MC-SlYm-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_2/blade_right/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_2/blade_right/value',
+        source='BIFRO-DivSl2:MC-SlYm-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_3/blade_left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_left/idle_flag',
+        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_3/blade_left/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_left/target_value',
+        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_3/blade_left/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_left/value',
+        source='BIFRO-DivSl1:MC-SlYp-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_3/blade_right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_right/idle_flag',
+        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.DMOV',
+        topic='bifrost_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/jaw_3/blade_right/target_value': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_right/target_value',
+        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.VAL',
+        topic='bifrost_motion',
+        units='mm',
+    ),
+    '/entry/instrument/jaw_3/blade_right/value': F144Stream(
+        nexus_path='/entry/instrument/jaw_3/blade_right/value',
+        source='BIFRO-DivSl1:MC-SlYm-01:Mtr.RBV',
+        topic='bifrost_motion',
+        units='mm',
     ),
     '/entry/instrument/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
         nexus_path='/entry/instrument/neutron_prod_info/cryo_tt_82025_temperature',
@@ -323,14 +539,32 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tn_data_general',
         units='ms',
     ),
-    '/entry/instrument/park_angle': F144Stream(
-        nexus_path='/entry/instrument/park_angle',
+    '/entry/instrument/pulse_shaping_chopper_1/delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/delay',
+        source='BIFRO-ChpSy1:Chop-PSC-101:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_1/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/experiment_delay',
+        source='BIFRO-ChpSy1:Chop-PSC-101:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_1/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/mechanical_delay',
+        source='BIFRO-ChpSy1:Chop-PSC-101:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_1/park_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/park_angle',
         source='BIFRO-ChpSy1:Chop-PSC-101:Pos_R',
         topic='bifrost_choppers',
         units='degrees',
     ),
-    '/entry/instrument/pulse_delay': F144Stream(
-        nexus_path='/entry/instrument/pulse_delay',
+    '/entry/instrument/pulse_shaping_chopper_1/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/pulse_delay',
         source='BIFRO-ChpSy1:Chop-PSC-101:BeamPosDly-S',
         topic='bifrost_choppers',
         units='ns',
@@ -341,23 +575,53 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='bifrost_choppers',
         units='Hz',
     ),
+    '/entry/instrument/pulse_shaping_chopper_1/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_1/rotation_speed_setpoint',
+        source='BIFRO-ChpSy1:Chop-PSC-101:Spd_S',
+        topic='bifrost_choppers',
+        units='Hz',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_2/delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/delay',
+        source='BIFRO-ChpSy1:Chop-PSC-102:TotDly',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_2/experiment_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/experiment_delay',
+        source='BIFRO-ChpSy1:Chop-PSC-102:ChopDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_2/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/mechanical_delay',
+        source='BIFRO-ChpSy1:Chop-PSC-102:MechDly-S',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_2/park_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/park_angle',
+        source='BIFRO-ChpSy1:Chop-PSC-102:Pos_R',
+        topic='bifrost_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper_2/pulse_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/pulse_delay',
+        source='BIFRO-ChpSy1:Chop-PSC-102:BeamPosDly-S',
+        topic='bifrost_choppers',
+        units='ns',
+    ),
     '/entry/instrument/pulse_shaping_chopper_2/rotation_speed': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper_2/rotation_speed',
         source='BIFRO-ChpSy1:Chop-PSC-102:Spd_R',
         topic='bifrost_choppers',
         units='Hz',
     ),
-    '/entry/instrument/rotation_speed_setpoint': F144Stream(
-        nexus_path='/entry/instrument/rotation_speed_setpoint',
-        source='BIFRO-ChpSy1:Chop-PSC-101:Spd_S',
+    '/entry/instrument/pulse_shaping_chopper_2/rotation_speed_setpoint': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper_2/rotation_speed_setpoint',
+        source='BIFRO-ChpSy1:Chop-PSC-102:Spd_S',
         topic='bifrost_choppers',
         units='Hz',
-    ),
-    '/entry/instrument/status': F144Stream(
-        nexus_path='/entry/instrument/status',
-        source='BIFRO-AttChg:MC-Pne-01:ShtAuxBits07',
-        topic='bifrost_motion',
-        units='dimensionless',
     ),
     '/entry/sample/sample_environment/HTR1/value_log': F144Stream(
         nexus_path='/entry/sample/sample_environment/HTR1/value_log',

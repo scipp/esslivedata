@@ -1,6 +1,6 @@
-# Frame monitors overview
+# Beam monitors overview
 title: Monitors
-description: Frame monitors with latest, rolling window, and since-start views
+description: Beam monitors with latest, rolling window, and since-start views
 nrows: 3
 ncols: 2
 cells:
@@ -15,10 +15,11 @@ cells:
         workflow_id: bifrost/monitor_histogram/1
         view_name: histogram
         source_names:
-        - 090_frame_1
-        - 097_frame_2
-        - 110_frame_3
-        - 111_psd0
+        - psc_monitor
+        - overlap_monitor
+        - bandwidth_monitor
+        - normalization_monitor
+        - elastic_monitor
     plot_name: lines
     params:
       plot_aspect:
@@ -36,10 +37,11 @@ cells:
         workflow_id: bifrost/monitor_histogram/1
         view_name: histogram
         source_names:
-        - 090_frame_1
-        - 097_frame_2
-        - 110_frame_3
-        - 111_psd0
+        - psc_monitor
+        - overlap_monitor
+        - bandwidth_monitor
+        - normalization_monitor
+        - elastic_monitor
     plot_name: lines
     params:
       plot_aspect:
@@ -58,10 +60,11 @@ cells:
         workflow_id: bifrost/monitor_histogram/1
         view_name: histogram
         source_names:
-        - 090_frame_1
-        - 097_frame_2
-        - 110_frame_3
-        - 111_psd0
+        - psc_monitor
+        - overlap_monitor
+        - bandwidth_monitor
+        - normalization_monitor
+        - elastic_monitor
     plot_name: lines
     params:
       plot_aspect:
