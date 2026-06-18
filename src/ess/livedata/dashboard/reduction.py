@@ -77,6 +77,7 @@ class ReductionApp(DashboardBase):
         log_level: int,
         transport: str = 'kafka',
         config_dir: str | None = None,
+        auto_start: bool = False,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
@@ -89,6 +90,7 @@ class ReductionApp(DashboardBase):
             port=5009,  # Default port for reduction dashboard
             transport=transport,
             config_dir=config_dir,
+            auto_start=auto_start,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
@@ -205,6 +207,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Base directory for persistent UI config (workflow/plot YAML). '
         'Overrides LIVEDATA_CONFIG_DIR. Point at a seeded fixture (copied to a '
         'scratch dir, since the dashboard writes to it) to launch pre-configured.',
+    )
+    parser.add_argument(
+        '--auto-start',
+        action='store_true',
+        default=False,
+        help='Commit every workflow that has staged config on startup. Requires '
+        '--transport fake; combine with --config-dir to launch a fully live '
+        'dashboard with no UI interaction (e.g. for screenshots).',
     )
     parser.add_argument(
         '--no-fetch-announcements',

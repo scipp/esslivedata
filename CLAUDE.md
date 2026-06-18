@@ -69,11 +69,13 @@ dashboard writes to this dir, so copy the fixture to a scratch dir first:
 ```sh
 cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
 python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
-    --config-dir "$TMP/cfg" --no-fetch-announcements
+    --config-dir "$TMP/cfg" --auto-start --no-fetch-announcements
 ```
 
-Workflows then come pre-staged (play buttons ready) with grids restored; click play to
-start. Regenerate a fixture by configuring via the UI, then copying the persisted
+Workflows then come pre-staged (play buttons ready) with grids restored. `--auto-start`
+(requires `--transport fake`) commits every staged workflow on launch, so plots render
+with no interaction at all — omit it if you want to drive the play buttons yourself.
+Regenerate a fixture by configuring via the UI, then copying the persisted
 `workflow_configs.yaml` (strip the runtime `current_job`/`previous_job` keys, keep
 `jobs`) and `plot_configs.yaml` from the config dir back into the fixture.
 

@@ -41,14 +41,21 @@ class DashboardBase(ServiceBase, ABC):
         port: int = 5007,
         transport: str = 'kafka',
         config_dir: str | None = None,
+        auto_start: bool = False,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
     ):
+        if auto_start and transport != 'fake':
+            raise ValueError(
+                "auto_start requires transport='fake'; with other transports it "
+                "would issue real start commands (or stay PENDING with no backend)."
+            )
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
         self._instrument = instrument
         self._port = port
         self._dev = dev
+        self._auto_start = auto_start
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
 
@@ -296,6 +303,22 @@ class DashboardBase(ServiceBase, ABC):
     def _start_impl(self) -> None:
         """Start the dashboard service."""
         self._services.start()
+        if self._auto_start:
+            self._auto_start_workflows()
+
+    def _auto_start_workflows(self) -> None:
+        """Commit every workflow that has staged config.
+
+        Drives the normal commit path (as the play button does) for each
+        configured workflow, so that with the fake transport plots come to
+        life on launch without any UI interaction. Intended for seeded
+        UI-test/screenshot runs (see ``--config-dir``).
+        """
+        orchestrator = self._services.job_orchestrator
+        for workflow_id in orchestrator.get_workflow_registry():
+            if orchestrator.get_staged_config(workflow_id):
+                orchestrator.commit_workflow(workflow_id)
+                self._logger.info("auto-started workflow %s", workflow_id)
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
