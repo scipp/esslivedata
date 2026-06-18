@@ -133,6 +133,7 @@ def create_tool_button(
     button_color: str,
     hover_color: str,
     on_click_callback: Callable[[], None],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.Button:
     """
     Create a styled tool button.
@@ -147,6 +148,13 @@ def create_tool_button(
         RGBA color for the hover background.
     on_click_callback:
         Callback function to invoke when the button is clicked.
+    css_classes:
+        Extra CSS classes for the button host element. Tool buttons render as
+        label-less icons, so they carry no stable, queryable identity for tests
+        or automation. Every button additionally gets ``lt-tool`` and
+        ``lt-tool-{icon_name}`` classes; callers pass context (e.g. a workflow
+        name) for finer targeting. These classes have no associated style rules
+        and are visually inert.
 
     Returns
     -------
@@ -162,6 +170,7 @@ def create_tool_button(
         color='light',
         sizing_mode='fixed',
         margin=0,
+        css_classes=['lt-tool', f'lt-tool-{icon_name}', *(css_classes or [])],
         stylesheets=create_tool_button_stylesheet(button_color, hover_color),
     )
     button.on_click(lambda _: on_click_callback())

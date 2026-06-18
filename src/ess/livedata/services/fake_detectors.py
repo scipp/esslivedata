@@ -18,6 +18,7 @@ from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core import IdentityProcessor
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.sink import (
     KafkaSink,
     MessageSerializer,
@@ -117,14 +118,16 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
             for i in range(num_intervals):
                 msg_time = self._last_message_time[name] + (i + 1) * self._interval_ns
                 messages.append(
-                    self._make_message(name=name, size=size, timestamp=msg_time)
+                    self._make_message(
+                        name=name, size=size, timestamp=Timestamp.from_ns(msg_time)
+                    )
                 )
             self._last_message_time[name] += num_intervals * self._interval_ns
 
         return messages
 
     def _make_message(
-        self, name: str, size: int, timestamp: int
+        self, name: str, size: int, timestamp: Timestamp
     ) -> Message[sc.Variable]:
         if self._nexus_data is not None and name in self._nexus_data:
             # Use data from nexus file
@@ -191,12 +194,14 @@ class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
 
             for i in range(num_intervals):
                 msg_time = self._last_message_time[name] + (i + 1) * self._interval_ns
-                messages.append(self._make_message(name=name, timestamp=msg_time))
+                messages.append(
+                    self._make_message(name=name, timestamp=Timestamp.from_ns(msg_time))
+                )
             self._last_message_time[name] += num_intervals * self._interval_ns
 
         return messages
 
-    def _make_message(self, name: str, timestamp: int) -> Message[sc.DataArray]:
+    def _make_message(self, name: str, timestamp: Timestamp) -> Message[sc.DataArray]:
         shape = self._config[name]
         # Generate a random image with some structure (gaussian blob + noise)
         y, x = np.ogrid[: shape[0], : shape[1]]
@@ -241,7 +246,7 @@ class DetectorEv44Serializer(MessageSerializer):
             value = eventdata_ev44.serialise_ev44(
                 source_name=message.stream.name,
                 message_id=0,
-                reference_time=message.timestamp,
+                reference_time=message.timestamp.to_ns(),
                 reference_time_index=0,
                 time_of_flight=message.value['time_of_arrival'].values,
                 pixel_id=message.value['pixel_id'].values,
@@ -264,7 +269,7 @@ class AreaDetectorAd00Serializer(MessageSerializer[sc.DataArray]):
             value = area_detector_ad00.serialise_ad00(
                 source_name=message.stream.name,
                 unique_id=0,
-                timestamp_ns=message.timestamp,
+                timestamp_ns=message.timestamp.to_ns(),
                 data=data,
             )
         except (ValueError, TypeError) as e:
