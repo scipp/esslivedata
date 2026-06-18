@@ -145,6 +145,27 @@ class TestFakeBackend:
         assert isinstance(status, JobStatus)
         assert status.job_id == config.job_id
         assert status.state is JobState.active
+        # start_time drives the dashboard's runtime clock; without it the
+        # workflow stays stuck at "Starting...".
+        assert status.start_time is not None
+
+    def test_status_reemitted_as_heartbeat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Zero update period makes every poll due, so each poll re-emits status.
+        monkeypatch.setattr(
+            'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
+        )
+        spec = _spec(Outputs1D, 'wf1d')
+        backend = FakeBackend(_registry(spec))
+        config = _config(spec)
+        backend.submit(config)
+
+        for _ in range(3):
+            statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
+            assert len(statuses) == 1
+            assert statuses[0].state is JobState.active
+            assert statuses[0].start_time is not None
 
     def test_emits_data_with_matching_result_key(self) -> None:
         spec = _spec(Outputs1D, 'wf1d')

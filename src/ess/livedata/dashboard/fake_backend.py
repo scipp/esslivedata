@@ -47,6 +47,7 @@ from ..core.message import (
     StreamId,
     StreamKind,
 )
+from ..core.timestamp import Timestamp
 from .transport import DashboardResources, NullMessageSink, Transport
 
 logger = structlog.get_logger(__name__)
@@ -159,6 +160,7 @@ class _Job:
         self.update = 0
         self.next_emit = 0.0  # monotonic deadline; 0 => emit immediately
         self.variant = source_variant(config.job_id.source_name)
+        self.start_time = Timestamp.now()
 
     def output_templates(self) -> Mapping[str, sc.DataArray]:
         """Templates for every output field that declares one."""
@@ -197,7 +199,6 @@ class FakeBackend:
             return
         self._jobs[config.job_id] = _Job(config=config, spec=spec)
         self._ack(config.message_id, config.job_id.source_name)
-        self._control.append(self._status(config.job_id, config.identifier))
         logger.info("fake_backend_started", job_id=str(config.job_id))
 
     def _control_job(self, command: JobCommand) -> None:
@@ -217,21 +218,28 @@ class FakeBackend:
         self._control.append(Message(stream=RESPONSES_STREAM_ID, value=ack))
 
     @staticmethod
-    def _status(job_id: JobId, workflow_id: WorkflowId) -> Message:
+    def _status(job: _Job) -> Message:
         status = JobStatus(
-            job_id=job_id, workflow_id=workflow_id, state=JobState.active
+            job_id=job.config.job_id,
+            workflow_id=job.config.identifier,
+            state=JobState.active,
+            start_time=job.start_time,
         )
         return Message(stream=STATUS_STREAM_ID, value=status)
 
     def poll(self) -> Sequence[Message]:
-        """Return queued control messages plus due data updates."""
+        """Return queued control messages plus due status and data updates.
+
+        Each due cycle re-emits the job status, acting as a heartbeat so the
+        dashboard keeps the job ACTIVE rather than letting it go stale.
+        """
         now = time.monotonic()
         with self._lock:
             messages = self._control
             self._control = []
             for job in self._jobs.values():
                 if now >= job.next_emit:
-                    messages = [*messages, *self._emit_data(job)]
+                    messages = [*messages, self._status(job), *self._emit_data(job)]
                     job.next_emit = now + _UPDATE_PERIOD_SECONDS
         return messages
 
