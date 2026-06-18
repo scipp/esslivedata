@@ -1519,12 +1519,13 @@ class TestSubHzGatedStream:
         assert self.MON_HALF in batcher.tracked_streams
 
     def test_sub_hz_alone_delivered_via_timeout(self):
-        """Sub-Hz-only service: timeout drives closure; nothing dropped.
+        """Sub-Hz-only service: timeout drives closure, each pulse delivered.
 
-        Pulses at ``0, 2, ..., 10`` alternate empty/with-msg closures.  A
-        trailing HWM driver flushes the final pulse out of the active
-        window: without it the last pulse is held pending a next HWM
-        advance.
+        With no gated driver, ``_close_batch`` extends ``end_time`` to the
+        newest message rather than stepping one ``batch_length`` per call,
+        so each pulse flushes on arrival and no empty placeholder batches
+        accumulate between pulses.  ``end_time`` tracks the latest pulse and
+        nothing is dropped.
         """
         batcher = RateAwareMessageBatcher(batch_length_s=1.0)  # default timeout
         mon_period = 2_000_000_000
@@ -1537,15 +1538,16 @@ class TestSubHzGatedStream:
             )
             for k in range(pulse_count)
         ]
-        schedule.append(hwm_trigger(11.0))
-        n = 11
-        closed = _run_ticks(batcher, 0.0, schedule, n_batches=n, max_run_s=30.0)
-        assert len(closed) == n
+        closed = _run_ticks(
+            batcher, 0.0, schedule, n_batches=pulse_count, max_run_s=30.0
+        )
+        assert len(closed) == pulse_count
         mon_out = sum(
             1 for b in closed for m in b.messages if m.stream == self.MON_HALF
         )
         assert mon_out == pulse_count
         assert not batcher.is_gating(self.MON_HALF)
+        assert closed[-1].end_time == Timestamp.from_ns((pulse_count - 1) * mon_period)
 
     def test_future_timestamped_held_for_next_batch(self):
         """Sub-Hz msg with ts past window.end (within cap) lands in next batch.
@@ -2157,3 +2159,71 @@ class TestNonGatedStreams:
         r2 = batcher.batch(det_far)
         assert r2 is not None
         assert held in r2.messages
+
+
+class TestNonGatedEndTimeProgression:
+    """``end_time`` progression for a non-gated stream with no gated driver.
+
+    When the only traffic is a non-gated stream (a monitor demoted to
+    sub-Hz, a LOG/timeseries stream, or any stream whose kind is not in
+    ``GATED_STREAM_KINDS``) there is no slot gate to close batches; closure
+    happens via the high-water-mark timeout.  In that case ``_close_batch``
+    extends ``end_time`` to the newest buffered message (mirroring
+    ``SimpleMessageBatcher``) instead of stepping one ``batch_length`` per
+    call, so freshness lag (``now - end_time``) tracks the real data rather
+    than trailing wall-clock linearly -- the production monitor symptom.
+    """
+
+    LOG = StreamId(kind=StreamKind.LOG, name="log")
+
+    def _final_end_time(
+        self, batcher: RateAwareMessageBatcher, drain_calls: int = 50
+    ) -> float:
+        """Drain via empty calls; return the last emitted ``end_time`` (s)."""
+        last = batcher._active_window.start.to_ns() / 1e9
+        for _ in range(drain_calls):
+            r = batcher.batch([])
+            if r is not None:
+                last = r.end_time.to_ns() / 1e9
+        return last
+
+    def test_burst_spanning_many_batches_catches_up(self):
+        """After a burst whose timestamps span 10 batch_lengths, ``end_time``
+        reaches the real max input timestamp -- it does not stall many
+        batch_lengths behind it.
+        """
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=1.2)
+        batcher.batch([msg(0.0, stream=self.LOG)])
+
+        max_ts = 10.0
+        burst = [msg(float(t), stream=self.LOG) for t in range(1, 11)]
+        batcher.batch(burst)
+
+        final = max(
+            batcher._active_window.start.to_ns() / 1e9, self._final_end_time(batcher)
+        )
+        assert final == pytest.approx(max_ts, abs=1.0), (
+            f"end_time stalled at {final}, trailing the real max timestamp "
+            f"{max_ts} by {max_ts - final} batch_lengths"
+        )
+
+    def test_lag_stays_bounded_with_steady_burst_stream(self):
+        """``max_timestamp - end_time`` stays bounded for a steady non-gated
+        stream regardless of how many batch_lengths each ``batch()`` call
+        spans.
+        """
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=1.2)
+        batcher.batch([msg(0.0, stream=self.LOG)])
+
+        max_lag = 0.0
+        max_ts = 0.0
+        t = 1.0
+        for _ in range(20):
+            chunk = [msg(t + j, stream=self.LOG) for j in range(3)]
+            max_ts = max(max_ts, t + 2)
+            r = batcher.batch(chunk)
+            t += 3.0
+            if r is not None:
+                max_lag = max(max_lag, max_ts - r.end_time.to_ns() / 1e9)
+
+        assert max_lag < 5.0, f"Lag grew unbounded: {max_lag}"
