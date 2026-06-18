@@ -2227,3 +2227,40 @@ class TestNonGatedEndTimeProgression:
                 max_lag = max(max_lag, max_ts - r.end_time.to_ns() / 1e9)
 
         assert max_lag < 5.0, f"Lag grew unbounded: {max_lag}"
+
+    def test_demoted_monitor_wall_clock_lag_bounded(self):
+        """Reproduce the production freshness-lag trigger end to end.
+
+        A sub-Hz MONITOR stream is demoted to non-gated (its rate rounds to
+        0, so no grid is built and nothing gates closure).  A process loop
+        drives ``batch()`` once per cycle, with the cycle slower than
+        ``batch_length`` so each call's data spans several batch_lengths --
+        the condition under which ``end_time`` previously trailed wall-clock
+        linearly.  Freshness lag (``now - end_time``) must stay bounded by
+        roughly one cycle plus one pulse gap across a long run, not grow
+        with it.
+        """
+        monitor = StreamId(kind=StreamKind.MONITOR_EVENTS, name="cbm1")
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0)
+        mon_period_s = 1.0 / 0.34  # ~2.94 s between pulses (Bifrost-like)
+        cycle_s = 2.5  # process cycle slower than batch_length
+
+        now = 0.0
+        next_pulse = 0.0
+        last_end = 0.0
+        max_lag = 0.0
+        for _ in range(200):  # ~500 s of wall-clock
+            now += cycle_s
+            chunk: list[Message[str]] = []
+            while next_pulse <= now:
+                chunk.append(msg(next_pulse, stream=monitor))
+                next_pulse += mon_period_s
+            r = batcher.batch(chunk)
+            if r is not None:
+                last_end = r.end_time.to_ns() / 1e9
+            max_lag = max(max_lag, now - last_end)
+
+        assert not batcher.is_gating(monitor), "Sub-Hz monitor must be demoted"
+        assert max_lag < cycle_s + mon_period_s + 1.0, (
+            f"Freshness lag grew unbounded: {max_lag}"
+        )
