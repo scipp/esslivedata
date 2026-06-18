@@ -52,6 +52,12 @@ Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
 
 Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 
+Add `--transport none` to run the dashboard UI without Kafka (port 5009, hardcoded).
+For browser automation / screenshots, target buttons via the stable `lt-tool-*` /
+`lt-wf-*` CSS classes (never coordinates) -- see "Stable CSS hooks for automation" in
+`.claude/rules/dashboard-widgets.md`. Note `--transport none` has no backend, so starting
+a workflow stays PENDING.
+
 ## Tools
 
 `src/ess/livedata/nexus_helpers.py` -- utilities for extracting Kafka topic and source names from NeXus files.
