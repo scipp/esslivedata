@@ -40,6 +40,7 @@ class DashboardBase(ServiceBase, ABC):
         dashboard_name: str,
         port: int = 5007,
         transport: str = 'kafka',
+        config_dir: str | None = None,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
     ):
@@ -55,7 +56,9 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
-        config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
+        config_manager = ConfigStoreManager(
+            instrument=instrument, store_type='file', config_dir=config_dir
+        )
 
         # Setup all dashboard services (includes session registry)
         self._services = DashboardServices(
