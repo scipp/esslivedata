@@ -65,6 +65,8 @@ class SessionUpdater:
 
         # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
         self._custom_handlers: list[Callable[[], None]] = []
+        # Handlers run once when the session is torn down (see cleanup).
+        self._cleanup_handlers: list[Callable[[], None]] = []
         self._periodic_callback: pn.io.PeriodicCallback | None = None
 
         # Browser heartbeat mechanism using ReactiveHTML.
@@ -113,6 +115,24 @@ class SessionUpdater:
         """Unregister a custom handler."""
         if handler in self._custom_handlers:
             self._custom_handlers.remove(handler)
+
+    def register_cleanup_handler(self, handler: Callable[[], None]) -> None:
+        """
+        Register a handler to run once when the session is torn down.
+
+        Use this for releasing per-session resources (e.g. a Kafka producer).
+        Handlers run from :meth:`cleanup`, which fires both on clean browser
+        disconnect (``on_session_destroyed``) and via the heartbeat-based stale
+        session reaper, so resources are released even when Panel's
+        ``on_session_destroyed`` does not fire. Handlers may be invoked from a
+        background thread and must be safe to call there.
+
+        Parameters
+        ----------
+        handler:
+            Callback to invoke on session teardown.
+        """
+        self._cleanup_handlers.append(handler)
 
     def periodic_update(self) -> None:
         """
@@ -178,6 +198,15 @@ class SessionUpdater:
             self._periodic_callback.stop()
 
         self._notification_queue.unregister_session(self._session_id)
+
+        for handler in self._cleanup_handlers:
+            try:
+                handler()
+            except Exception:
+                logger.exception(
+                    "Error in cleanup handler for session %s", self._session_id
+                )
+        self._cleanup_handlers.clear()
 
         self._custom_handlers.clear()
 

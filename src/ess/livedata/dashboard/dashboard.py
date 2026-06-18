@@ -92,8 +92,18 @@ class DashboardBase(ServiceBase, ABC):
             raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
-        """Override this method to create the sidebar content."""
+    def create_sidebar_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
+        """Override this method to create the sidebar content.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater for this browser session. Use
+            ``register_cleanup_handler`` to release per-session resources on
+            session teardown.
+        """
         pass
 
     @abstractmethod
@@ -201,7 +211,7 @@ class DashboardBase(ServiceBase, ABC):
         # Create session updater first so widgets can register handlers
         session_updater = self._create_session_updater()
 
-        sidebar_content = self.create_sidebar_content()
+        sidebar_content = self.create_sidebar_content(session_updater)
         main_content = self.create_main_content(session_updater)
 
         # Append heartbeat widget to sidebar (invisible but required for

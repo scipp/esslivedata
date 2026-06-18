@@ -114,15 +114,22 @@ class LogProducerWidget:
     plus DMOV transitions on each change.
     """
 
-    def __init__(self, instrument: str, exit_stack: ExitStack):
+    def __init__(self, instrument: str):
         self._instrument = instrument
 
-        self._sink = exit_stack.enter_context(
+        # This widget is created per browser session, so the Kafka producer must
+        # live for the session, not the application. The owning exit stack is
+        # closed in close() on session teardown; otherwise every session (and
+        # every dev autoreload) would leak a producer with its background thread
+        # and broker connections, slowing the process over time.
+        self._exit_stack = ExitStack()
+        self._sink = self._exit_stack.enter_context(
             KafkaSink(
                 kafka_config=load_config(namespace=config_names.kafka),
                 serializer=F144Serializer(instrument=instrument),
             )
         )
+        self._periodic_callbacks: list[pn.io.PeriodicCallback] = []
 
         self._throttled_checkbox = pn.widgets.Checkbox(
             label='Continuous updates', value=True, width=300
@@ -205,12 +212,13 @@ class LogProducerWidget:
         publish_rate_hz = config.get('publish_rate_hz')
         if publish_rate_hz is not None:
             interval_ms = max(1, int(1000.0 / float(publish_rate_hz)))
-            pn.state.add_periodic_callback(
+            callback = pn.state.add_periodic_callback(
                 lambda s=slider, n=stream_name, sd=noise_stddev: self._publish_value(
                     self._sample(s.value, sd), n
                 ),
                 period=interval_ms,
             )
+            self._periodic_callbacks.append(callback)
         else:
             slider.param.watch(
                 lambda event, name=stream_name, sd=noise_stddev: self._publish_value(
@@ -235,7 +243,7 @@ class LogProducerWidget:
         )
         msg = Message(value=da, stream=StreamId(kind=StreamKind.LOG, name=stream_name))
         self._sink.publish_messages([msg])
-        logger.info(
+        logger.debug(
             "Stream '%s' - Published message with value: %s", stream_name, value
         )
 
@@ -243,6 +251,20 @@ class LogProducerWidget:
         """Update pn.config.throttled when checkbox value changes."""
         pn.config.throttled = event.new
         logger.info("Throttled mode set to: %s", event.new)
+
+    def close(self) -> None:
+        """Stop streaming callbacks and close the Kafka producer.
+
+        Wire this to ``pn.state.on_session_destroyed`` so the per-session
+        producer and its readback callbacks are released when the browser
+        session ends. Callbacks are stopped before the sink is closed so none
+        can fire against a closed producer.
+        """
+        for callback in self._periodic_callbacks:
+            if callback.running:
+                callback.stop()
+        self._periodic_callbacks.clear()
+        self._exit_stack.close()
 
     @property
     def panel(self) -> pn.viewable.Viewable:
