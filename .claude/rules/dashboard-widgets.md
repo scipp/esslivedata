@@ -43,6 +43,25 @@ def refresh(self):
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
 
+## Stable CSS hooks for automation
+
+Tool buttons render as label-less icons inside per-widget shadow DOM, so they carry
+no text, `title`, or `aria-label` — leaving nothing semantic for browser automation
+(Playwright) or screenshot tooling to target. To avoid brittle coordinate-clicking,
+`create_tool_button()` tags every button with **committed, visually-inert CSS classes**:
+
+- `lt-tool` on all tool buttons, plus `lt-tool-{icon_name}` (e.g. `lt-tool-settings`,
+  `lt-tool-player-play`, `lt-tool-x`).
+- Callers pass `css_classes=[...]` for context. Workflow rows add `lt-wf-{workflow_id.name}`
+  (the WorkflowId *name* slug, not the display title), so a workflow's gear is
+  `.lt-wf-monitor_histogram.lt-tool-settings`.
+
+These classes have no associated style rules — adding/removing them is visually inert.
+Treat them as a stable contract: do not drop them in refactors (a test in
+`buttons_test.py` guards the helper). When adding tool buttons to a view that repeats
+the same icon (e.g. per-grid/per-cell controls in `plot_grid_manager.py`), pass a
+context `css_classes` entry so each instance is uniquely addressable.
+
 ## Model creation and visibility
 
 `pn.Tabs(dynamic=True)` prevents Bokeh model creation for hidden tabs — only the active
