@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import threading
 import time
+import zlib
 from collections.abc import Mapping, Sequence
 from types import TracebackType
 
@@ -70,27 +71,39 @@ def _expand_coord(coord: sc.Variable, dim: str, size: int) -> sc.Variable:
     return sc.linspace(dim, 0.0, float(size), num=size, unit=coord.unit)
 
 
-def _synthesize_values(sizes: Sequence[int], update: int) -> np.ndarray:
-    """Generate plausible-looking data that varies over updates.
+def source_variant(source_name: str) -> float:
+    """Map a source name to a stable phase in ``[0, 1)``.
+
+    Used to give each source of a multi-source workflow a distinct curve, so
+    overlaid lines (e.g. per-monitor histograms) don't lie on top of each other.
+    """
+    return (zlib.crc32(source_name.encode()) % 1000) / 1000.0
+
+
+def _synthesize_values(sizes: Sequence[int], update: int, variant: float) -> np.ndarray:
+    """Generate plausible-looking data that varies over updates and sources.
 
     A wiggling scalar (0-D) or a Gaussian bump (1-D and 2-D) plus mild noise.
-    Amplitude grows with the update count to mimic accumulating statistics.
+    Amplitude grows with the update count to mimic accumulating statistics;
+    ``variant`` shifts peak position, amplitude, and phase so distinct sources
+    look distinct.
     """
-    rng = np.random.default_rng(seed=update)
-    amplitude = 100.0 * (update + 1)
+    rng = np.random.default_rng(seed=(update, int(variant * 1_000_000)))
+    phase = 2.0 * np.pi * variant
+    amplitude = 100.0 * (update + 1) * (0.6 + 0.8 * variant)
     if len(sizes) == 0:
-        signal = np.asarray(50.0 + 50.0 * np.sin(0.5 * update))
+        signal = np.asarray(50.0 + 50.0 * np.sin(0.5 * update + phase))
     elif len(sizes) == 1:
         (nx,) = sizes
         x = np.linspace(0.0, 1.0, nx)
-        center = 0.5 + 0.2 * np.sin(0.3 * update)
+        center = 0.25 + 0.5 * variant + 0.08 * np.sin(0.3 * update)
         signal = amplitude * np.exp(-(((x - center) / 0.12) ** 2))
     elif len(sizes) == 2:
         nx, ny = sizes
         x = np.linspace(0.0, 1.0, nx)[:, None]
         y = np.linspace(0.0, 1.0, ny)[None, :]
-        cx = 0.5 + 0.2 * np.sin(0.3 * update)
-        cy = 0.5 + 0.2 * np.cos(0.3 * update)
+        cx = 0.5 + 0.25 * np.sin(0.3 * update + phase)
+        cy = 0.5 + 0.25 * np.cos(0.3 * update + phase)
         signal = amplitude * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * 0.15**2))
     else:
         signal = np.full(sizes, amplitude, dtype=float)
@@ -99,7 +112,7 @@ def _synthesize_values(sizes: Sequence[int], update: int) -> np.ndarray:
 
 
 def expand_template(
-    template: sc.DataArray, update: int, timestamp_ns: int
+    template: sc.DataArray, update: int, timestamp_ns: int, variant: float = 0.0
 ) -> sc.DataArray:
     """Turn an empty output template into a populated DataArray.
 
@@ -119,9 +132,11 @@ def expand_template(
         Monotonic update counter; varies the data so plots appear live.
     timestamp_ns:
         Wall-clock time of this update, used for the ``time`` coordinate.
+    variant:
+        Per-source phase in ``[0, 1)`` distinguishing overlaid sources.
     """
     sizes = [size or _DEFAULT_DIM_SIZE for size in template.shape]
-    values = _synthesize_values(sizes, update)
+    values = _synthesize_values(sizes, update, variant)
     data = sc.array(
         dims=template.dims, values=values, unit=template.unit, dtype='float64'
     )
@@ -143,6 +158,7 @@ class _Job:
         self.spec = spec
         self.update = 0
         self.next_emit = 0.0  # monotonic deadline; 0 => emit immediately
+        self.variant = source_variant(config.job_id.source_name)
 
     def output_templates(self) -> Mapping[str, sc.DataArray]:
         """Templates for every output field that declares one."""
@@ -229,7 +245,7 @@ class FakeBackend:
                 output_name=output_name,
             )
             stream = StreamId(kind=StreamKind.LIVEDATA_DATA, name=key.model_dump_json())
-            value = expand_template(template, job.update, timestamp_ns)
+            value = expand_template(template, job.update, timestamp_ns, job.variant)
             messages.append(Message(stream=stream, value=value))
         job.update += 1
         return messages

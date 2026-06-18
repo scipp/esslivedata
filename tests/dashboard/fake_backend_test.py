@@ -162,6 +162,26 @@ class TestFakeBackend:
         assert isinstance(data[0].value, sc.DataArray)
         assert data[0].value.sizes == {'x': 64}
 
+    def test_distinct_sources_yield_distinct_data(self) -> None:
+        spec = _spec(Outputs1D, 'wf1d')
+        backend = FakeBackend(_registry(spec))
+        job_number = uuid.uuid4()  # same job, two sources -> overlaid lines
+        for source in ('monitor1', 'monitor2'):
+            backend.submit(
+                WorkflowConfig.from_params(
+                    workflow_id=spec.get_id(),
+                    job_id=JobId(source_name=source, job_number=job_number),
+                    message_id=source,
+                )
+            )
+        data = {
+            ResultKey.model_validate_json(m.stream.name).job_id.source_name: m.value
+            for m in backend.poll()
+            if m.stream.kind is StreamKind.LIVEDATA_DATA
+        }
+        assert set(data) == {'monitor1', 'monitor2'}
+        assert not sc.allclose(data['monitor1'].data, data['monitor2'].data)
+
     def test_emits_one_data_message_per_output_field(self) -> None:
         class MultiOutputs(WorkflowOutputsBase):
             a: sc.DataArray = Field(
