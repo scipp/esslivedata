@@ -1015,16 +1015,20 @@ class LinePlotter(Plotter):
         targets = self._compute_line_range_targets(data, mode)
         if targets:
             self._range_targets[data_key] = targets
-        # Overlaid lines each get a distinct cycle color so multiple sources are
-        # distinguishable; the error element is colored to match.
-        color = self._colors[plot_index % len(self._colors)]
         converter = HvConverter1d(
             da, value_label=output_display_name, dim_label=dim_label
         )
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
-        base = base_method(label=label).opts(color=color)
+        base = base_method(label=label)
 
         if da.variances is not None and self._errors != 'none':
+            # An error element must be colored explicitly to match its line and
+            # to color its endcaps; this picks a distinct cycle color per source
+            # but forfeits HoloViews' cross-overlay auto-cycling. Error-free lines
+            # keep no explicit color so auto-cycling still distinguishes sources
+            # across independently overlaid layers.
+            color = self._colors[plot_index % len(self._colors)]
+            base = base.opts(color=color)
             if mode == 'histogram':
                 # Error elements need midpoint coords (N values, not N+1 edges)
                 converter = HvConverter1d(

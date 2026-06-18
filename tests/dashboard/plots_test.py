@@ -685,6 +685,38 @@ class TestLinePlotter:
             assert w.upper_head.line_color == w.line_color
             assert w.lower_head.line_color == w.line_color
 
+    def test_layered_error_free_lines_get_distinct_colors(self, data_key):
+        """Error-free lines from independent plotters auto-cycle when layered.
+
+        Without errors no explicit color is set, so HoloViews' cross-overlay
+        cycling distinguishes sources even across plotters composed via the
+        cell layer mechanism. (Error bars require explicit colors and therefore
+        still collide across layers; see the per-plotter coloring limitation.)
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        layer_a = plots.LinePlotter.from_params(params)
+        layer_a.compute({'primary': {data_key: data}})
+        layer_b = plots.LinePlotter.from_params(params)
+        layer_b.compute({'primary': {data_key: data}})
+
+        composed = hv.Overlay(
+            [layer_a.get_cached_state(), layer_b.get_cached_state()]
+        ).collate()
+        fig = hv.render(composed)
+        line_colors = [
+            r.glyph.line_color
+            for r in fig.select(GlyphRenderer)
+            if type(r.glyph).__name__ == 'Line'
+        ]
+        assert len(line_colors) == 2
+        assert line_colors[0] != line_colors[1]
+
     def test_error_overlay_renders_responsive(self, data_key):
         """A line+error overlay renders as a responsive (stretch_both) figure."""
         params = PlotParams1d(
