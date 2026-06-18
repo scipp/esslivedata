@@ -597,13 +597,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         if self._any_gating():
             end_time = window.end
         else:
-            # No gridded stream drives closure: the batch closed via the
-            # timeout path.  Advancing ``end_time`` by one batch_length per
-            # call lets it trail wall-clock linearly when traffic spans
-            # several batch_lengths per call (the monitor freshness-lag
-            # defect).  Mirror ``SimpleMessageBatcher`` instead: include all
-            # held-back traffic and extend ``end_time`` to the newest
-            # message, so freshness tracks the real data.
+            # No gridded stream gates closure, so the timeout path closed the
+            # batch.  Stepping ``end_time`` by one batch_length per call would
+            # leave the batch's timestamps behind the data when traffic spans
+            # several batch_lengths per call.  Mirror ``SimpleMessageBatcher``:
+            # include all held-back traffic and set ``end_time`` to the newest
+            # message so the batch covers its real time range.
             messages += self._future + self._overflow
             self._future = []
             self._overflow = []

@@ -2170,8 +2170,8 @@ class TestNonGatedEndTimeProgression:
     happens via the high-water-mark timeout.  In that case ``_close_batch``
     extends ``end_time`` to the newest buffered message (mirroring
     ``SimpleMessageBatcher``) instead of stepping one ``batch_length`` per
-    call, so freshness lag (``now - end_time``) tracks the real data rather
-    than trailing wall-clock linearly -- the production monitor symptom.
+    call, so the batch's timestamps cover the real data rather than trailing
+    behind it when traffic spans several batch_lengths per call.
     """
 
     LOG = StreamId(kind=StreamKind.LOG, name="log")
@@ -2229,16 +2229,14 @@ class TestNonGatedEndTimeProgression:
         assert max_lag < 5.0, f"Lag grew unbounded: {max_lag}"
 
     def test_demoted_monitor_wall_clock_lag_bounded(self):
-        """Reproduce the production freshness-lag trigger end to end.
+        """End-to-end: a sub-Hz monitor under a slow process loop.
 
         A sub-Hz MONITOR stream is demoted to non-gated (its rate rounds to
         0, so no grid is built and nothing gates closure).  A process loop
         drives ``batch()`` once per cycle, with the cycle slower than
-        ``batch_length`` so each call's data spans several batch_lengths --
-        the condition under which ``end_time`` previously trailed wall-clock
-        linearly.  Freshness lag (``now - end_time``) must stay bounded by
-        roughly one cycle plus one pulse gap across a long run, not grow
-        with it.
+        ``batch_length`` so each call's data spans several batch_lengths.
+        ``now - end_time`` must stay bounded by roughly one cycle plus one
+        pulse gap across a long run, not grow with it.
         """
         monitor = StreamId(kind=StreamKind.MONITOR_EVENTS, name="cbm1")
         batcher = RateAwareMessageBatcher(batch_length_s=1.0)
