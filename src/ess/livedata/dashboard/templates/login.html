@@ -97,6 +97,22 @@
     .form-button:active {
       background: #16637f;
     }
+    .login-note {
+      margin-top: 1.25em;
+      padding: 0.75em 1em;
+      background: #f0f7fb;
+      border-left: 3px solid #2596be;
+      border-radius: 4px;
+      font-size: 0.82em;
+      color: #555;
+      line-height: 1.5;
+    }
+    .login-note p + p {
+      margin-top: 0.4em;
+    }
+    .login-note a {
+      color: #2596be;
+    }
     </style>
 </head>
 <body>
@@ -122,6 +138,10 @@
       </div>
       <div class="form-group">
         <button class="form-button" type="submit">Log in</button>
+      </div>
+      <div class="login-note">
+        <p>Note: this is not the ESS Single Sign-On — these are separate credentials.</p>
+        <p>Don't know the credentials? Join <a href="https://ess-eric.slack.com/channels/livedata" target="_blank" rel="noopener">#livedata</a> on Slack.</p>
       </div>
     </form>
   </div>
