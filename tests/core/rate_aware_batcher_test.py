@@ -2228,19 +2228,20 @@ class TestNonGatedEndTimeProgression:
 
         assert max_lag < 5.0, f"Lag grew unbounded: {max_lag}"
 
-    def test_demoted_monitor_wall_clock_lag_bounded(self):
+    @pytest.mark.parametrize("rate_hz", [0.1, 0.2, 0.34, 0.5, 0.7])
+    def test_demoted_monitor_wall_clock_lag_bounded(self, rate_hz: float):
         """End-to-end: a sub-Hz monitor under a slow process loop.
 
-        A sub-Hz MONITOR stream is demoted to non-gated (its rate rounds to
-        0, so no grid is built and nothing gates closure).  A process loop
-        drives ``batch()`` once per cycle, with the cycle slower than
-        ``batch_length`` so each call's data spans several batch_lengths.
-        ``now - end_time`` must stay bounded by roughly one cycle plus one
-        pulse gap across a long run, not grow with it.
+        A sub-Hz MONITOR stream is demoted to non-gated (its rate is below
+        one pulse per batch, so no grid is built and nothing gates closure).
+        A process loop drives ``batch()`` once per cycle, with the cycle
+        slower than ``batch_length`` so each call's data spans several
+        batch_lengths.  ``now - end_time`` must stay bounded by roughly one
+        cycle plus one pulse gap across a long run, not grow with it.
         """
-        monitor = StreamId(kind=StreamKind.MONITOR_EVENTS, name="cbm1")
+        monitor = StreamId(kind=StreamKind.MONITOR_EVENTS, name="mon")
         batcher = RateAwareMessageBatcher(batch_length_s=1.0)
-        mon_period_s = 1.0 / 0.34  # ~2.94 s between pulses (Bifrost-like)
+        mon_period_s = 1.0 / rate_hz
         cycle_s = 2.5  # process cycle slower than batch_length
 
         now = 0.0
@@ -2260,5 +2261,5 @@ class TestNonGatedEndTimeProgression:
 
         assert not batcher.is_gating(monitor), "Sub-Hz monitor must be demoted"
         assert max_lag < cycle_s + mon_period_s + 1.0, (
-            f"Freshness lag grew unbounded: {max_lag}"
+            f"Freshness lag grew unbounded at {rate_hz} Hz: {max_lag}"
         )
