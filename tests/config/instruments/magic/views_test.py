@@ -35,7 +35,7 @@ def _raw_counts(bank: str) -> sc.DataArray:
 
 
 def test_bank_sizes_match_pixel_counts():
-    assert _pixel_count('magic_detector_a') == 491520
+    assert _pixel_count('magic_detector_a') == 245760
     assert _pixel_count('magic_detector_b') == 131072
 
 

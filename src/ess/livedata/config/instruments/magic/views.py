@@ -12,15 +12,21 @@ import scipp as sc
 
 #: Logical voxel structure of the MAGIC detector banks.
 #:
-#: Both banks resemble the DREAM mantle: a vertical cylinder of cathode strips
-#: (along the wire length) and anode wires (into the detector depth), with two
-#: wire planes per detector element. Dimension names and the nesting order are
-#: provisional placeholders chosen to match the known voxel counts; only the
-#: product is currently confirmed, so the fold order may need adjustment once the
-#: hardware numbering convention is known.
+#: ``magic_detector_a`` (main bank) is derived from the NXoff_geometry voxel
+#: centroids of the coda_magic geometry file (245760 voxels). It is a segment of
+#: a vertical (Y-axis) cylinder. ``detector_number`` runs contiguously in C-order
+#: over (wire, strip, segment), i.e. ``segment`` varies fastest and ``wire``
+#: slowest. The axes, deduced from the centroids:
+#:   - ``wire`` (32): anode wires into the detector depth; radius runs 1.02 -> 2.50 m
+#:                    and is slightly slanted in Y (not purely radial).
+#:   - ``strip`` (128): cathode strips along the vertical cylinder axis (~0.99 m).
+#:   - ``segment`` (60): azimuthal segments around the cylinder (~59 deg, ~1 deg each).
+#: The dict order is slowest-to-fastest so that ``fold`` reproduces this layout.
+#:
+#: ``magic_detector_b`` (polarization bank) has no geometry file yet; its sizes and
+#: nesting order are provisional placeholders matching only the known voxel count.
 DETECTOR_BANK_SIZES: dict[str, dict[str, int]] = {
-    # 128 cathode strips x 32 anode wires x 2 wire planes per segment, 60 segments.
-    'magic_detector_a': {'segment': 60, 'strip': 128, 'wire': 32, 'counter': 2},
+    'magic_detector_a': {'wire': 32, 'strip': 128, 'segment': 60},
     # 32 cathode strips x 16 anode wires x 2 wire planes per cassette,
     # 16 cassettes per 15-degree module, 8 modules.
     'magic_detector_b': {

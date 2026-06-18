@@ -12,8 +12,8 @@ from .specs import detector_names
 
 #: detector_number ranges (start, end) per bank, used to generate fake events.
 detector_fakes = {
-    'magic_detector_a': (1, 491520),
-    'magic_detector_b': (491521, 622592),
+    'magic_detector_a': (1, 245760),
+    'magic_detector_b': (245761, 376832),
 }
 
 

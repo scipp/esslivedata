@@ -33,7 +33,7 @@ instrument = Instrument(
     source_metadata={
         'magic_detector_a': SourceMetadata(
             title='Main bank',
-            description='Main detector bank (~500k voxels).',
+            description='Main detector bank (~250k voxels).',
         ),
         'magic_detector_b': SourceMetadata(
             title='Polarization bank',
