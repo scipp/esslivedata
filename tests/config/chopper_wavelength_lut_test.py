@@ -33,6 +33,8 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
+    CutDistances,
+    WavelengthLutParams,
 )
 
 pytestmark = pytest.mark.slow
@@ -46,13 +48,13 @@ def instrument(request):
     return inst
 
 
-def _create_lut_job(instrument) -> tuple:
+def _create_lut_job(instrument, params=None) -> tuple:
     workflow_id = next(
         w for w in instrument.workflow_factory if w.name == WAVELENGTH_LUT_OUTPUT
     )
     job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
     config = WorkflowConfig.from_params(
-        workflow_id=workflow_id, job_id=job_id, params=None, aux_source_names=None
+        workflow_id=workflow_id, job_id=job_id, params=params, aux_source_names=None
     )
     service = instrument.workflow_factory.get_service(workflow_id)
     return JobFactory(instrument, service_name=service).create(
@@ -79,7 +81,10 @@ def test_spec_scope_bindings_define_gating_set(instrument) -> None:
 
 
 def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
-    job = _create_lut_job(instrument)
+    params = WavelengthLutParams(
+        cut_distances=CutDistances(distances='7.0, 12.0')
+    ).model_dump()
+    job = _create_lut_job(instrument, params=params)
     aux = {}
     for chopper in instrument.choppers:
         speed_unit = instrument.streams[speed_setpoint_stream(chopper)].units
@@ -108,8 +113,7 @@ def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     assert bands.unit == sc.units.angstrom
     assert np.isfinite(bands.values).any()
     distances = bands.coords['distance']
-    # Source + one row per chopper, plus a marker per monitor (both test
-    # instruments declare monitors).
-    assert distances.sizes['distance'] > len(instrument.choppers) + 1
+    # Source + one row per chopper + one row per configured cut distance.
+    assert distances.sizes['distance'] == len(instrument.choppers) + 1 + 2
     # Rows are ordered by ascending distance.
     assert sc.allsorted(distances, 'distance')

@@ -17,6 +17,8 @@ import holoviews as hv
 import pydantic
 from pydantic_core import core_schema
 
+from ..parameter_models import parse_number_list
+
 
 class LineDash(StrEnum):
     """Line dash styles for HoloViews plots."""
@@ -38,23 +40,6 @@ class Color(str):
         return core_schema.no_info_after_validator_function(
             cls, core_schema.str_schema()
         )
-
-
-def _parse_number_list(v: str) -> list[int | float]:
-    """Parse a comma-separated string into a list of numbers.
-
-    Example: "10, 20, 30" -> [10, 20, 30]
-    """
-    v = v.strip()
-    if not v:
-        return []
-    try:
-        result = json.loads(f"[{v}]")
-        if isinstance(result, list):
-            return result
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid number: {e}") from e
-    return []
 
 
 def _parse_rectangle_list(v: str) -> list[list[int | float]]:
@@ -263,17 +248,13 @@ class LinesCoordinates(pydantic.BaseModel):
     @classmethod
     def validate_positions(cls, v: str) -> str:
         """Validate line position structure."""
-        positions = _parse_number_list(v)
-        if not positions:
+        if not parse_number_list(v):
             raise ValueError("At least one position is required")
-        for i, pos in enumerate(positions):
-            if not isinstance(pos, int | float):
-                raise ValueError(f"Position {i + 1}: must be a number")
         return v
 
     def parse(self) -> list[float]:
         """Parse validated positions into list of floats."""
-        return [float(p) for p in _parse_number_list(self.positions)]
+        return parse_number_list(self.positions)
 
 
 class LinesStyle(BaseStyle):

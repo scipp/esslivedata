@@ -10,7 +10,7 @@ import scipp as sc
 from ..config.instrument import Instrument
 from ..config.workflow_spec import REDUCTION, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
-from ..parameter_models import LengthUnit, RangeModel, TimeUnit
+from ..parameter_models import LengthUnit, RangeModel, TimeUnit, parse_number_list
 
 #: Logical primary stream name for the synthesized chopper-cascade tick. The
 #: synthesizer emits a single ``LogData`` message with this stream name once
@@ -85,6 +85,35 @@ class LtotalRange(RangeModel):
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
+class CutDistances(pydantic.BaseModel):
+    """Beamline distances at which to show the transmitted wavelength band.
+
+    Each distance adds one curve to the chopper-cascade-bands diagnostic,
+    propagating the cascade forward to that point. Typically the monitor and
+    detector positions, but any point of interest is valid. Entered as a
+    comma-separated list, since the parameter widget has no native list input.
+    """
+
+    distances: str = pydantic.Field(
+        default='',
+        description="Comma-separated distances from the source, e.g. '6.2, 9.8'.",
+    )
+    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+
+    @pydantic.field_validator('distances')
+    @classmethod
+    def _check(cls, v: str) -> str:
+        parse_number_list(v)  # raises on malformed input
+        return v
+
+    def get(self) -> sc.Variable:
+        return sc.array(
+            dims=['distance'],
+            values=parse_number_list(self.distances),
+            unit=self.unit.value,
+        )
+
+
 class WavelengthLutParams(pydantic.BaseModel):
     """User-facing parameters for the wavelength lookup-table workflow."""
 
@@ -107,6 +136,14 @@ class WavelengthLutParams(pydantic.BaseModel):
         title='Time resolution',
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
+    )
+    cut_distances: CutDistances = pydantic.Field(
+        title='Cut distances',
+        description=(
+            'Beamline distances at which to add a curve to the chopper-cascade '
+            'bands diagnostic (typically monitor and detector positions).'
+        ),
+        default_factory=CutDistances,
     )
 
 
@@ -152,8 +189,8 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
         title='Chopper cascade bands',
         description=(
             'Wavelength band transmitted along the beamline: the source and each '
-            'chopper at their exact distances, plus a marker row at each monitor '
-            'position. Plot with the "Overlay 1D" plotter: one curve per distance '
+            'chopper at their exact distances, plus a row at each configured cut '
+            'distance. Plot with the "Overlay 1D" plotter: one curve per distance '
             '(identified by its value in metres). A curve that vanishes (all-NaN) '
             'marks where the beam is blocked. Unlike the lookup table, this '
             'resolves closely-spaced choppers regardless of distance resolution.'
