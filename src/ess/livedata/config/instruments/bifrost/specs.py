@@ -190,13 +190,14 @@ class QMapOutputs(WorkflowOutputsBase):
     )
 
 
-# Monitor names matching group names in Nexus files
+# Monitor names matching group names in Nexus files. Order matches the Kafka
+# ``cbm1``..``cbm5`` source names (see ``_make_cbm_monitors``).
 monitors = [
-    '090_frame_1',
-    '097_frame_2',
-    '110_frame_3',
-    '111_psd0',
-    'bragg_peak_monitor',
+    'psc_monitor',  # cbm1
+    'overlap_monitor',  # cbm2
+    'bandwidth_monitor',  # cbm3
+    'normalization_monitor',  # cbm4
+    'elastic_monitor',  # cbm5
 ]
 
 
