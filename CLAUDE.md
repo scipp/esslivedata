@@ -58,6 +58,27 @@ For browser automation / screenshots, target buttons via the stable `lt-tool-*` 
 `.claude/rules/dashboard-widgets.md`. Note `--transport none` has no backend, so starting
 a workflow stays PENDING.
 
+Add `--transport fake` to run an in-process fake backend (no Kafka): starting a workflow
+in the UI flips it to ACTIVE and feeds plots with data synthesized from each workflow's
+output templates. Use this to verify plots render and to capture screenshots.
+
+To skip clicking through source selection and plot-grid setup, seed the UI from a
+committed fixture (staged workflow configs + plot grids) via `--config-dir`. The
+dashboard writes to this dir, so copy the fixture to a scratch dir first:
+
+```sh
+cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
+python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
+    --config-dir "$TMP/cfg" --auto-start --no-fetch-announcements
+```
+
+Workflows then come pre-staged (play buttons ready) with grids restored. `--auto-start`
+(requires `--transport fake`) commits every staged workflow on launch, so plots render
+with no interaction at all — omit it if you want to drive the play buttons yourself.
+Regenerate a fixture by configuring via the UI, then copying the persisted
+`workflow_configs.yaml` (strip the runtime `current_job`/`previous_job` keys, keep
+`jobs`) and `plot_configs.yaml` from the config dir back into the fixture.
+
 ## Tools
 
 `src/ess/livedata/nexus_helpers.py` -- utilities for extracting Kafka topic and source names from NeXus files.
