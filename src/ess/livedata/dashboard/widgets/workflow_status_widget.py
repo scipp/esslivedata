@@ -287,6 +287,11 @@ class WorkflowStatusWidget:
         """Get the workflow ID for this widget."""
         return self._workflow_id
 
+    @property
+    def _tool_css_class(self) -> str:
+        """CSS class scoping this workflow's tool buttons for automation/tests."""
+        return f'lt-wf-{self._workflow_id.name}'
+
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget.
 
@@ -333,6 +338,7 @@ class WorkflowStatusWidget:
             button_color=StatusColors.MUTED,
             hover_color='rgba(0, 0, 0, 0.05)',
             on_click_callback=lambda: self.set_expanded(not self._expanded),
+            css_classes=[self._tool_css_class, 'lt-wf-expand'],
         )
 
         # Workflow title
@@ -411,6 +417,7 @@ class WorkflowStatusWidget:
                 button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
                 hover_color=HoverColors.SUCCESS,
                 on_click_callback=self._on_commit_click,
+                css_classes=[self._tool_css_class],
             )
             buttons.append(play_btn)
 
@@ -421,6 +428,7 @@ class WorkflowStatusWidget:
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color=ButtonStyles.DANGER_HOVER,
                 on_click_callback=self._on_stop_click,
+                css_classes=[self._tool_css_class],
             )
             buttons.append(stop_btn)
 
@@ -429,6 +437,7 @@ class WorkflowStatusWidget:
                 button_color=StatusColors.MUTED,
                 hover_color=HoverColors.MUTED,
                 on_click_callback=self._on_reset_click,
+                css_classes=[self._tool_css_class],
             )
             buttons.append(reset_btn)
 
@@ -602,6 +611,7 @@ class WorkflowStatusWidget:
             button_color=ButtonStyles.PRIMARY_BLUE,
             hover_color=ButtonStyles.PRIMARY_HOVER,
             on_click_callback=lambda: self._on_gear_click(list(group.source_names)),
+            css_classes=[self._tool_css_class],
         )
 
         buttons = [gear_btn]
@@ -615,6 +625,7 @@ class WorkflowStatusWidget:
                 on_click_callback=lambda: self._on_remove_click(
                     list(group.source_names)
                 ),
+                css_classes=[self._tool_css_class],
             )
             buttons.append(remove_btn)
 

@@ -597,6 +597,40 @@ class TestLinePlotter:
         assert isinstance(elements[0], hv.Histogram)
         assert isinstance(elements[1], hv.ErrorBars)
 
+    @pytest.mark.parametrize(
+        ('mode', 'errors', 'base_type', 'error_type'),
+        [
+            (Line1dRenderMode.line, ErrorDisplay.bars, hv.Curve, hv.ErrorBars),
+            (Line1dRenderMode.line, ErrorDisplay.band, hv.Curve, hv.Spread),
+            (Line1dRenderMode.points, ErrorDisplay.bars, hv.Scatter, hv.ErrorBars),
+        ],
+    )
+    def test_error_elements_match_line_color(
+        self, data_key, mode, errors, base_type, error_type
+    ):
+        params = PlotParams1d(line=Line1dParams(mode=mode, errors=errors))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = plotter.plot(data, data_key)
+        elements = list(result)
+        assert isinstance(elements[0], base_type)
+        assert isinstance(elements[1], error_type)
+        base_color = hv.Store.lookup_options('bokeh', elements[0], 'style').kwargs[
+            'color'
+        ]
+        error_color = hv.Store.lookup_options('bokeh', elements[1], 'style').kwargs[
+            'color'
+        ]
+        assert base_color == error_color
+
     def test_error_overlay_renders_responsive(self, data_key):
         """A line+error overlay renders as a responsive (stretch_both) figure."""
         params = PlotParams1d(

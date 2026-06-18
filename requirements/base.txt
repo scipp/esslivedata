@@ -7,7 +7,7 @@
 #
 annotated-types==0.7.0
     # via pydantic
-certifi==2026.5.20
+certifi==2026.6.17
     # via requests
 charset-normalizer==3.4.7
     # via requests
@@ -23,7 +23,7 @@ cyclebane==24.10.0
     # via sciline
 cycler==0.12.1
     # via matplotlib
-dask==2026.3.0
+dask==2026.6.0
     # via
     #   -r base.in
     #   essreduce
@@ -39,7 +39,7 @@ flatbuffers==25.12.19
     # via ess-streaming-data-types
 fonttools==4.63.0
     # via matplotlib
-fsspec==2026.4.0
+fsspec==2026.6.0
     # via dask
 graphviz==0.21
     # via essreduce
@@ -65,7 +65,7 @@ locket==1.0.0
     # via partd
 markupsafe==3.0.3
     # via jinja2
-matplotlib==3.10.9
+matplotlib==3.11.0
     # via
     #   mpltoolbox
     #   plopp

@@ -16,6 +16,7 @@ from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core import IdentityProcessor
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
     KafkaSink,
@@ -122,7 +123,10 @@ class FakeMonitorSource(MessageSource[sc.Variable | sc.Dataset]):
                 msg_time = self._last_message_time[name] + (j + 1) * self._interval_ns
                 messages.append(
                     self._make_message(
-                        name=name, size=size, timestamp=msg_time, mean_ms=mean_ms
+                        name=name,
+                        size=size,
+                        timestamp=Timestamp.from_ns(msg_time),
+                        mean_ms=mean_ms,
                     )
                 )
             self._last_message_time[name] += num_intervals * self._interval_ns
@@ -130,7 +134,7 @@ class FakeMonitorSource(MessageSource[sc.Variable | sc.Dataset]):
         return messages
 
     def _make_message(
-        self, name: str, size: int, timestamp: int, mean_ms: float
+        self, name: str, size: int, timestamp: Timestamp, mean_ms: float
     ) -> Message[sc.Variable | sc.Dataset]:
         if self._nexus_data is not None and name in self._nexus_data:
             s = slice(self._offset[name], self._offset[name] + size)
@@ -200,7 +204,7 @@ class MonitorEv44Serializer(MessageSerializer[sc.Variable | sc.Dataset]):
             value = eventdata_ev44.serialise_ev44(
                 source_name=message.stream.name,
                 message_id=0,
-                reference_time=message.timestamp,
+                reference_time=message.timestamp.to_ns(),
                 reference_time_index=0,
                 time_of_flight=toa.values,
                 pixel_id=pixel_id,

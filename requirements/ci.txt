@@ -7,15 +7,15 @@
 #
 cachetools==7.1.4
     # via tox
-certifi==2026.5.20
+certifi==2026.6.17
     # via requests
 charset-normalizer==3.4.7
     # via requests
 colorama==0.4.6
     # via tox
-distlib==0.4.2
+distlib==0.4.3
     # via virtualenv
-filelock==3.29.1
+filelock==3.29.4
     # via
     #   python-discovery
     #   tox
@@ -40,7 +40,7 @@ pluggy==1.6.0
     # via tox
 pyproject-api==1.10.1
     # via tox
-python-discovery==1.4.0
+python-discovery==1.4.2
     # via
     #   tox
     #   virtualenv
@@ -54,5 +54,5 @@ tox==4.55.1
     # via -r ci.in
 urllib3==2.7.0
     # via requests
-virtualenv==21.4.2
+virtualenv==21.5.1
     # via tox

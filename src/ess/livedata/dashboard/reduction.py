@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
 import os
+import threading
 import urllib.request
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -108,11 +109,15 @@ class ReductionApp(DashboardBase):
                 self._logger.warning("Failed to fetch announcements: %s", e)
                 return "*Unable to load announcements.*"
 
-        pane = pn.pane.Markdown(read_announcements(), sizing_mode='stretch_width')
+        pane = pn.pane.Markdown("", sizing_mode='stretch_width')
 
-        def refresh():
+        def fetch_and_update():
             pane.object = read_announcements()
 
+        def refresh():
+            threading.Thread(target=fetch_and_update, daemon=True).start()
+
+        refresh()
         pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
         return pane
 
