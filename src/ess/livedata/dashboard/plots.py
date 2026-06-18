@@ -640,7 +640,7 @@ class Plotter:
         resolver = title_resolver or TitleResolver()
         plots: list[hv.Element] = []
         try:
-            for data_key, da in data.items():
+            for plot_index, (data_key, da) in enumerate(data.items()):
                 label = resolver.get_legend_label(
                     data_key.job_id.source_name, data_key.output_name
                 )
@@ -653,6 +653,7 @@ class Plotter:
                     source_display_name=source_display_name,
                     output_display_name=output_display_name,
                     dim_label=resolver.dim,
+                    plot_index=plot_index,
                     **kwargs,
                 )
                 plots.append(plot_element)
@@ -884,7 +885,7 @@ class LinePlotter(Plotter):
         self._errors = errors
         self._logx = scale_opts.x_scale == PlotScale.log
         self._logy = scale_opts.y_scale == PlotScale.log
-        self._color = hv.Cycle.default_cycles["default_colors"][0]
+        self._colors = hv.Cycle.default_cycles["default_colors"]
         self._base_opts: dict[str, Any] = {
             'logx': self._logx,
             'logy': self._logy,
@@ -1006,6 +1007,7 @@ class LinePlotter(Plotter):
         label: str = '',
         output_display_name: str = '',
         dim_label: Callable[[str], str] | None = None,
+        plot_index: int = 0,
         **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
@@ -1013,11 +1015,14 @@ class LinePlotter(Plotter):
         targets = self._compute_line_range_targets(data, mode)
         if targets:
             self._range_targets[data_key] = targets
+        # Overlaid lines each get a distinct cycle color so multiple sources are
+        # distinguishable; the error element is colored to match.
+        color = self._colors[plot_index % len(self._colors)]
         converter = HvConverter1d(
             da, value_label=output_display_name, dim_label=dim_label
         )
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
-        base = base_method(label=label).opts(color=self._color)
+        base = base_method(label=label).opts(color=color)
 
         if da.variances is not None and self._errors != 'none':
             if mode == 'histogram':
@@ -1028,7 +1033,7 @@ class LinePlotter(Plotter):
                     dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-            error = _color_error_element(error_method(label=label), self._color)
+            error = _color_error_element(error_method(label=label), color)
             return base * error
 
         return base

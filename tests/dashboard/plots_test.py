@@ -648,6 +648,43 @@ class TestLinePlotter:
         if error_type is hv.ErrorBars:
             _assert_error_bar_endcaps_colored(elements[1], base_color)
 
+    def test_overlaid_sources_get_distinct_matching_colors(self, data_key):
+        """Each overlaid source gets a distinct color; its error bars match it."""
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        data_key2 = ResultKey(
+            workflow_id=data_key.workflow_id,
+            job_id=JobId(source_name='other_source', job_number=uuid.uuid4()),
+            output_name=data_key.output_name,
+        )
+        plotter.compute({'primary': {data_key: data, data_key2: data}})
+
+        fig = hv.render(plotter.get_cached_state())
+        line_colors = [
+            r.glyph.line_color
+            for r in fig.select(GlyphRenderer)
+            if type(r.glyph).__name__ == 'Line'
+        ]
+        assert len(line_colors) == 2
+        assert line_colors[0] != line_colors[1]
+        whiskers = fig.select(Whisker)
+        whisker_colors = {w.line_color for w in whiskers}
+        assert whisker_colors == set(line_colors)
+        for w in whiskers:
+            assert w.upper_head.line_color == w.line_color
+            assert w.lower_head.line_color == w.line_color
+
     def test_error_overlay_renders_responsive(self, data_key):
         """A line+error overlay renders as a responsive (stretch_both) figure."""
         params = PlotParams1d(
