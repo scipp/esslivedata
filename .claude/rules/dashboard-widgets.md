@@ -62,6 +62,21 @@ Treat them as a stable contract: do not drop them in refactors (a test in
 the same icon (e.g. per-grid/per-cell controls in `plot_grid_manager.py`), pass a
 context `css_classes` entry so each instance is uniquely addressable.
 
+### Driving workflow config flows
+
+A `WorkflowStatusWidget` rebuilds its row (`_build_widget`) only when that workflow's
+state *version* changes — staging, commit, or stop (`job_orchestrator.py`). Steady-state
+status refresh just reassigns badge/dots/timing HTML in place, so it does *not* detach
+elements. Two windows still detach the element under the cursor:
+- **Cold start**: the first refresh tick after page load can fire one rebuild while
+  Bokeh models are still settling. Wait a few seconds after load before the first click.
+- **Multi-step flows**: each stage/commit rebuilds *that* row, so a click landing on a
+  just-mutated row races the rebuild.
+
+Wrap clicks in a small retry-on-detach helper (catch the Playwright timeout, re-locate,
+retry) rather than assuming a single click lands. This is not a continuous re-render —
+untouched rows stay stable.
+
 ## Model creation and visibility
 
 `pn.Tabs(dynamic=True)` prevents Bokeh model creation for hidden tabs — only the active
