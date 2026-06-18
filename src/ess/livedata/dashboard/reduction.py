@@ -192,9 +192,10 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser = Service.setup_arg_parser(description='ESSlivedata Dashboard')
     parser.add_argument(
         '--transport',
-        choices=['kafka', 'none'],
+        choices=['kafka', 'none', 'fake'],
         default='kafka',
-        help='Transport backend for message handling',
+        help='Transport backend for message handling. "fake" runs an in-process '
+        'backend that synthesizes data for started workflows (no Kafka).',
     )
     parser.add_argument(
         '--no-fetch-announcements',

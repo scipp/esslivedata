@@ -58,6 +58,10 @@ For browser automation / screenshots, target buttons via the stable `lt-tool-*` 
 `.claude/rules/dashboard-widgets.md`. Note `--transport none` has no backend, so starting
 a workflow stays PENDING.
 
+Add `--transport fake` to run an in-process fake backend (no Kafka): starting a workflow
+in the UI flips it to ACTIVE and feeds plots with data synthesized from each workflow's
+output templates. Use this to verify plots render and to capture screenshots.
+
 ## Tools
 
 `src/ess/livedata/nexus_helpers.py` -- utilities for extracting Kafka topic and source names from NeXus files.

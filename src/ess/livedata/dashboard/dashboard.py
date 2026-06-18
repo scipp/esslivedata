@@ -14,6 +14,7 @@ from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
+from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
@@ -77,7 +78,7 @@ class DashboardBase(ServiceBase, ABC):
         Parameters
         ----------
         transport:
-            Transport type ('kafka' or 'none')
+            Transport type ('kafka', 'none', or 'fake')
 
         Returns
         -------
@@ -88,6 +89,8 @@ class DashboardBase(ServiceBase, ABC):
             return DashboardKafkaTransport(instrument=self._instrument, dev=self._dev)
         elif transport == 'none':
             return NullTransport()
+        elif transport == 'fake':
+            return FakeBackendTransport(instrument=self._instrument)
         else:
             raise ValueError(f"Unknown transport type: {transport}")
 
@@ -184,7 +187,6 @@ class DashboardBase(ServiceBase, ABC):
 
     def _create_logout_header(self) -> list[pn.viewable.Viewable]:
         """Create a logout button for the header when auth is enabled."""
-        # ruff: disable[E501]
         logout_link = pn.pane.HTML(
             """<div style="text-align: right; padding-right: 8px;">
             <a href="/logout" style="
@@ -198,12 +200,14 @@ class DashboardBase(ServiceBase, ABC):
                 border-radius: 20px;
                 display: inline-block;
                 transition: background 0.2s, border-color 0.2s;
-                " onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.borderColor='white'"
-                onmouseout="this.style.background='none';this.style.borderColor='rgba(255,255,255,0.7)'"
+                "
+                onmouseover="this.style.background='rgba(255,255,255,0.2)';
+                             this.style.borderColor='white'"
+                onmouseout="this.style.background='none';
+                            this.style.borderColor='rgba(255,255,255,0.7)'"
             >Log out</a></div>""",
             sizing_mode='stretch_width',
         )
-        # ruff: enable[E501]
         return [logout_link]
 
     def create_layout(self) -> pn.template.MaterialTemplate:
