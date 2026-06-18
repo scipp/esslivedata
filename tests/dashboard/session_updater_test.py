@@ -111,6 +111,49 @@ class TestSessionUpdater:
         notifications = queue.get_new_events(session_id)
         assert notifications == []
 
+    def test_cleanup_handler_called_on_cleanup(self):
+        registry = SessionRegistry()
+        updater = _make_updater(SessionId('session-1'), registry)
+
+        calls = []
+        updater.register_cleanup_handler(lambda: calls.append(1))
+
+        updater.cleanup()
+
+        assert calls == [1]
+
+    def test_cleanup_handler_invoked_by_stale_session_reaper(self):
+        # The heartbeat-based stale reaper must run cleanup handlers even when
+        # Panel's on_session_destroyed never fires. Negative timeout makes the
+        # session stale immediately, regardless of elapsed time.
+        registry = SessionRegistry(stale_timeout_seconds=-1.0)
+        session_id = SessionId('session-1')
+        updater = _make_updater(session_id, registry)
+
+        calls = []
+        updater.register_cleanup_handler(lambda: calls.append(1))
+
+        cleaned = registry.cleanup_stale_sessions()
+
+        assert session_id in cleaned
+        assert calls == [1]
+
+    def test_cleanup_handler_exception_does_not_block_others(self):
+        registry = SessionRegistry()
+        updater = _make_updater(SessionId('session-1'), registry)
+
+        calls = []
+
+        def boom() -> None:
+            raise RuntimeError("boom")
+
+        updater.register_cleanup_handler(boom)
+        updater.register_cleanup_handler(lambda: calls.append(1))
+
+        updater.cleanup()  # must not raise
+
+        assert calls == [1]
+
     def test_session_id_property(self):
         session_id = SessionId('test-session')
         registry = SessionRegistry()

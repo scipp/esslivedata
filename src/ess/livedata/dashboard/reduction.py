@@ -121,13 +121,19 @@ class ReductionApp(DashboardBase):
         pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
         return pane
 
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
+    def create_sidebar_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
         """Create the sidebar content."""
         # Create log producer widget only in dev mode (per-session)
         dev_content = []
         if self._dev:
             dev_widget = LogProducerWidget(instrument=self._instrument)
-            pn.state.on_session_destroyed(lambda _ctx: dev_widget.close())
+            # Release the per-session Kafka producer on session teardown. Routed
+            # through the session updater (not on_session_destroyed directly) so
+            # the heartbeat-based stale reaper also triggers cleanup when Panel's
+            # on_session_destroyed fails to fire.
+            session_updater.register_cleanup_handler(dev_widget.close)
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
         return pn.Column(
