@@ -62,6 +62,29 @@ Treat them as a stable contract: do not drop them in refactors (a test in
 the same icon (e.g. per-grid/per-cell controls in `plot_grid_manager.py`), pass a
 context `css_classes` entry so each instance is uniquely addressable.
 
+### Driving the dashboard with Playwright
+
+`scripts/drive_dashboard.py` is the committed driving kit (`Dashboard` library class +
+a `--map` / `--launch` / `--screenshot` CLI). Reach for it before hand-rolling
+navigation; run `--map` first to inventory the live tabs and `lt-*` hooks rather than
+screenshotting to rediscover the layout.
+
+**Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
+Plain Playwright CSS locators pierce these, so `page.locator(".lt-tool-settings")` works
+— **but descendant combinators do not cross shadow boundaries.** Target a workflow's
+button with a *compound* selector on one element:
+
+- ✅ `.lt-wf-total_counts.lt-tool-player-stop` (both classes on the same button)
+- ❌ `.lt-wf-total_counts .lt-tool-player-stop` (matches nothing — the descendant
+  crosses a shadow boundary)
+
+**Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
+navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
+titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
+tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). With
+`dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
+*current* tab only — switch tabs before querying that tab's hooks.
+
 ### Driving workflow config flows
 
 A `WorkflowStatusWidget` rebuilds its row (`_build_widget`) only when that workflow's

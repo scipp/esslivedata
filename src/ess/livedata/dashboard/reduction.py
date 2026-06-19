@@ -75,6 +75,7 @@ class ReductionApp(DashboardBase):
         instrument: str = 'dummy',
         dev: bool = False,
         log_level: int,
+        port: int = 5009,
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
@@ -87,7 +88,7 @@ class ReductionApp(DashboardBase):
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
-            port=5009,  # Default port for reduction dashboard
+            port=port,
             transport=transport,
             config_dir=config_dir,
             auto_start=auto_start,
@@ -194,6 +195,13 @@ class ReductionApp(DashboardBase):
 
 def get_arg_parser() -> argparse.ArgumentParser:
     parser = Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=5009,
+        help='Port for the Bokeh server. Override to run several dashboards at '
+        'once or to sidestep a port left in use by a prior instance.',
+    )
     parser.add_argument(
         '--transport',
         choices=['kafka', 'none', 'fake'],
