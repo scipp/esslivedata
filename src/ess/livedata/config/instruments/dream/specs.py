@@ -103,6 +103,13 @@ instrument = Instrument(
     name='dream',
     detector_names=detector_names,
     monitors=monitor_names,
+    choppers=[
+        'pulse_shaping_chopper1',
+        'pulse_shaping_chopper2',
+        'band_chopper',
+        'overlap_chopper',
+        'T0_chopper',
+    ],
     streams=name_streams(PARSED_STREAMS),
     source_metadata={
         'mantle_detector': SourceMetadata(

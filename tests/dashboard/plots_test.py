@@ -1526,6 +1526,35 @@ class TestOverlay1DPlotter:
         assert curve_colors['roi=3'] == colors[3]
         assert curve_colors['roi=5'] == colors[5]
 
+    def test_float_coords_colored_by_position(self, overlay_plotter, data_key):
+        """Closely-spaced float coords must not collapse onto the same color.
+
+        Integer rounding (``int(6.1) == int(6.2) == 6``) would give all three
+        choppers the same color; non-integer coords color by position instead.
+        """
+        colors = hv.Cycle.default_cycles["default_colors"]
+        data = sc.DataArray(
+            sc.array(
+                dims=['distance', 'event_time_offset'],
+                values=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+                unit='angstrom',
+            ),
+            coords={
+                'distance': sc.array(
+                    dims=['distance'], values=[6.155, 6.177, 6.185], unit='m'
+                ),
+                'event_time_offset': sc.array(
+                    dims=['event_time_offset'], values=[10.0, 20.0], unit='us'
+                ),
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        curve_colors = [
+            hv.Store.lookup_options('bokeh', curve, 'style').kwargs.get('color')
+            for curve in result
+        ]
+        assert curve_colors == [colors[0], colors[1], colors[2]]
+
     def test_fallback_to_indices_without_coord(
         self, overlay_plotter, data_2d_no_first_coord, data_key
     ):

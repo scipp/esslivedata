@@ -8,12 +8,36 @@ user interfaces for configuring workflows as well as validation of the inputs on
 frontend.
 """
 
+import json
 from abc import ABC
 from enum import StrEnum
 from pathlib import Path
 
 import scipp as sc
 from pydantic import BaseModel, Field, field_validator
+
+
+def parse_number_list(value: str) -> list[float]:
+    """Parse a comma-separated string of numbers into floats.
+
+    A blank (or whitespace-only) string yields an empty list. Raises
+    ``ValueError`` if any entry is not a number, so it can directly back a
+    pydantic ``field_validator`` for free-text numeric-list inputs — the
+    parameter widget has no native list input, so such lists are entered as
+    text.
+
+    Example: ``"6.2, 9.8, 13"`` -> ``[6.2, 9.8, 13.0]``.
+    """
+    value = value.strip()
+    if not value:
+        return []
+    try:
+        parsed = json.loads(f"[{value}]")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid number list: {e}") from e
+    if any(isinstance(x, bool) or not isinstance(x, int | float) for x in parsed):
+        raise ValueError("All entries must be numbers")
+    return [float(x) for x in parsed]
 
 
 class RangeModel(BaseModel, ABC):

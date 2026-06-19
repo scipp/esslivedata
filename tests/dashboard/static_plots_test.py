@@ -98,7 +98,7 @@ class TestLinesCoordinates:
 
     def test_empty_brackets_rejected(self):
         """Empty brackets is rejected."""
-        with pytest.raises(ValueError, match="must be a number"):
+        with pytest.raises(ValueError, match="must be numbers"):
             LinesCoordinates(positions="[]")
 
     def test_invalid_number(self):
@@ -108,7 +108,7 @@ class TestLinesCoordinates:
 
     def test_non_numeric_values_json(self):
         """Non-numeric values in JSON format raise ValueError."""
-        with pytest.raises(ValueError, match="must be a number"):
+        with pytest.raises(ValueError, match="must be numbers"):
             LinesCoordinates(positions='[1, "two", 3]')
 
 

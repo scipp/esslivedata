@@ -66,6 +66,7 @@ class DetectorHandlerFactory(JobBasedPreprocessorFactoryBase):
 _registry = {
     'geometry-dream-2025-01-01.nxs': 'md5:91aceb884943c76c0c21400ee74ad9b6',
     'geometry-dream-no-shape-2025-05-01.nxs': 'md5:4471e2490a3dd7f6e3ed4aa0a1e0b47d',
+    'geometry-dream-no-shape-2026-06-09.nxs': 'md5:e6ce692b10488789d47a74c805309274',
     'geometry-loki-2025-01-01.nxs': 'md5:8d0e103276934a20ba26bb525e53924a',
     'geometry-loki-2025-03-26.nxs': 'md5:279dc8cf7dae1fac030d724bc45a2572',
     'geometry-loki-2026-02-11.nxs': 'md5:0b40ba0ec640f1c497ec02b233f42ec6',
