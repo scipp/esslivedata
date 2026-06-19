@@ -1,5 +1,5 @@
 ---
-paths: src/ess/livedata/dashboard/widgets/**/*.py
+paths: src/ess/livedata/dashboard/widgets/**/*.py, src/ess/livedata/dashboard/reduction.py, scripts/drive_dashboard.py
 ---
 
 # Dashboard Widget Patterns
@@ -106,6 +106,32 @@ elements. Two windows still detach the element under the cursor:
 Wrap clicks in a small retry-on-detach helper (catch the Playwright timeout, re-locate,
 retry) rather than assuming a single click lands. This is not a continuous re-render —
 untouched rows stay stable.
+
+### Keeping automation working
+
+A UI change can silently break `scripts/drive_dashboard.py`, the `lt-*` contract, or the
+seeded fixtures. When you touch the UI, keep these in sync:
+
+- **New tool button** → build it with `create_tool_button()`; it auto-tags `lt-tool` +
+  `lt-tool-{icon_name}`. If you must hand-roll one (toggling icon, `MenuButton`, etc.),
+  add `css_classes=['lt-tool', 'lt-tool-{semantic}']` by hand **and** a guard test —
+  `buttons_test.py` only covers the helper, so hand-rolled buttons drift unnoticed
+  (see `plot_widgets.py`, `plot_grid_manager.py` for examples + their tests).
+- **Repeated-instance view** (per-row/-cell/-grid controls) → pass a context class so
+  each instance is uniquely addressable (`lt-wf-{name}`, `lt-grid-{slug}`).
+- **New top-level tab** → tabs are Bokeh-owned `.bk-tab` with no hook, so the kit
+  navigates by visible text; add the new title to the tab inventory above so callers
+  aren't searching blind.
+- **New modal** → it opens as `[role=dialog]` and is closed on Escape by
+  `ModalEscapeCloser` automatically; nothing to wire, but verify it appears in the
+  inventory.
+- **Renamed/added workflow or output** → regenerate the affected `ui_config_fixtures`
+  (the drift-guard in `ui_config_fixtures_test.py` fails loudly to remind you).
+- **New instrument you want `--launch` to support** → add a
+  `tests/dashboard/ui_config_fixtures/<instrument>/` fixture (only `dummy` exists today).
+
+After a non-trivial UI change, sanity-check with
+`python scripts/drive_dashboard.py --launch --map` (and `--screenshot`).
 
 ## Model creation and visibility
 
