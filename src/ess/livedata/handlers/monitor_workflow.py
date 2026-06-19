@@ -201,7 +201,11 @@ def create_monitor_workflow(
         are meaningless across a move, and in wavelength mode the position coord
         on the histogram makes summing across a move raise outright. The coord is
         absent in TOA mode, where the reset is a harmless no-op. Pass ``None`` to
-        disable (e.g. reduction-style accumulation across positions).
+        disable (e.g. reduction-style accumulation across positions). Unlike
+        detector views, which need the full transformation (see
+        :data:`~.detector_view.types.DetectorGeometry`), a monitor is a single
+        point with no orientation, so a scalar ``position`` fully captures its
+        placement.
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
