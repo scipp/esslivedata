@@ -103,7 +103,7 @@ class CascadeBands(pydantic.BaseModel):
     )
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
     num_bins: int = pydantic.Field(
-        default=2000,
+        default=1000,
         ge=1,
         description=(
             "Number of event-time-offset bins sampling each curve. Independent "
