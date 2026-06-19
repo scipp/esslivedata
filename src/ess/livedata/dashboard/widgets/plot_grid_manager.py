@@ -117,12 +117,18 @@ class GridRow:
         self._grid_id = grid_id
         self._grid_config = grid_config
 
+        # Per-grid automation hook so each row's repeated tool buttons are
+        # uniquely targetable (e.g. .lt-grid-detectors.lt-tool-pencil). The
+        # title slug also drives the download filename below.
+        context = [f'lt-grid-{_sanitize_filename(grid_config.title)}']
+
         # Move up button
         move_up_button = create_tool_button(
             icon_name='chevron-up',
             button_color=StatusColors.MUTED,
             hover_color=HoverColors.MUTED,
             on_click_callback=on_move_up or (lambda: None),
+            css_classes=context,
         )
         move_up_button.disabled = is_first or on_move_up is None
 
@@ -132,6 +138,7 @@ class GridRow:
             button_color=StatusColors.MUTED,
             hover_color=HoverColors.MUTED,
             on_click_callback=on_move_down or (lambda: None),
+            css_classes=context,
         )
         move_down_button.disabled = is_last or on_move_down is None
 
@@ -150,6 +157,7 @@ class GridRow:
                 button_color='#ffffff',
                 hover_color='rgba(0, 123, 255, 0.8)',
                 on_click_callback=on_edit or (lambda: None),
+                css_classes=context,
             )
             edit_button.stylesheets = [
                 *edit_button.stylesheets,
@@ -162,6 +170,7 @@ class GridRow:
                 button_color=ButtonStyles.PRIMARY_BLUE,
                 hover_color=ButtonStyles.PRIMARY_HOVER,
                 on_click_callback=on_edit or (lambda: None),
+                css_classes=context,
             )
         if on_edit is None:
             edit_button.disabled = True
@@ -178,6 +187,7 @@ class GridRow:
                 if on_toggle_enabled
                 else None
             ),
+            css_classes=context,
         )
         if on_toggle_enabled is None:
             self._toggle_button.disabled = True
@@ -197,6 +207,7 @@ class GridRow:
             button_color=ButtonStyles.DANGER_RED,
             hover_color=ButtonStyles.DANGER_HOVER,
             on_click_callback=on_remove,
+            css_classes=context,
         )
 
         card_styles = (

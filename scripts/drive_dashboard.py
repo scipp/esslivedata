@@ -109,6 +109,18 @@ class Dashboard:
                     raise
                 self.page.wait_for_timeout(1000)
 
+    def open_modal(self, trigger_selector: str, *, retries: int = 3):
+        """Click a trigger and wait for its modal (``[role=dialog]``) to show.
+
+        Returns the dialog locator. Dismiss with ``page.keyboard.press("Escape")``
+        (a ModalEscapeCloser widget makes Escape work from initial focus) or by
+        clicking ``.pnx-dialog-close``.
+        """
+        self.click(trigger_selector, retries=retries)
+        dialog = self.page.locator("[role=dialog]").first
+        dialog.wait_for(state="visible", timeout=10000)
+        return dialog
+
     def screenshot(self, path: str | Path, *, full_page: bool = True) -> None:
         self.page.screenshot(path=str(path), full_page=full_page)
 

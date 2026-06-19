@@ -85,6 +85,13 @@ tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). W
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 
+**Modals.** Settings (gear), edit (pencil), and grid/workflow config open a `pn.Modal`
+rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
+waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
+dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
+focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
+`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`).
+
 ### Driving workflow config flows
 
 A `WorkflowStatusWidget` rebuilds its row (`_build_widget`) only when that workflow's
