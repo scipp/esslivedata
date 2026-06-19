@@ -4,14 +4,14 @@
             "stream_name": "pulse_shaping_chopper1/rotation_speed_setpoint",
             "label": "Pulse-shaping chopper 1 speed setpoint (Hz)",
             "min": 7.0,
-            "max": 14.0,
+            "max": 210.0,
             "step": 7.0,
             "initial": 14.0
         },
         {
             "stream_name": "pulse_shaping_chopper2/rotation_speed_setpoint",
             "label": "Pulse-shaping chopper 2 speed setpoint (Hz, counter-rotating)",
-            "min": -14.0,
+            "min": -196.0,
             "max": -7.0,
             "step": 7.0,
             "initial": -14.0

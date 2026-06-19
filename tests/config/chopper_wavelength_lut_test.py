@@ -19,7 +19,6 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.chopper import (
-    delay_readback_stream,
     delay_setpoint_stream,
     speed_setpoint_stream,
 )
@@ -88,7 +87,7 @@ def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     aux = {}
     for chopper in instrument.choppers:
         speed_unit = instrument.streams[speed_setpoint_stream(chopper)].units
-        delay_unit = instrument.streams[delay_readback_stream(chopper)].units
+        delay_unit = instrument.streams[delay_setpoint_stream(chopper)].units
         aux[speed_setpoint_stream(chopper)] = _nxlog(14.0, speed_unit)
         aux[delay_setpoint_stream(chopper)] = _nxlog(0.0, delay_unit)
     data = JobData(
