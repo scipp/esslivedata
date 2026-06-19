@@ -52,50 +52,17 @@ Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
 
 Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 
-Add `--transport none` to run the dashboard UI without Kafka (default port 5009; use
-`--port` to run several at once or to dodge a port a prior instance still holds).
-For browser automation / screenshots, target buttons via the stable `lt-tool-*` /
-`lt-wf-*` CSS classes (never coordinates) -- see "Stable CSS hooks for automation" in
-`.claude/rules/dashboard-widgets.md`. Note `--transport none` has no backend, so starting
-a workflow stays PENDING.
+`--transport none` runs the UI without Kafka (default port 5009; pass `--port` for a
+second instance or to dodge a port a prior run still holds). With no backend, started
+workflows stay PENDING. `--transport fake` adds an in-process fake backend (no Kafka):
+started workflows go ACTIVE and plots fill with synthesized data.
 
-Add `--transport fake` to run an in-process fake backend (no Kafka): starting a workflow
-in the UI flips it to ACTIVE and feeds plots with data synthesized from each workflow's
-output templates. Use this to verify plots render and to capture screenshots.
-
-To skip clicking through source selection and plot-grid setup, seed the UI from a
-committed fixture (staged workflow configs + plot grids) via `--config-dir`. The
-dashboard writes to this dir, so copy the fixture to a scratch dir first:
-
-```sh
-cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
-python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
-    --port 5011 --config-dir "$TMP/cfg" --auto-start --no-fetch-announcements
-```
-
-Use a port other than 5009 (`--port 5011` above): interactive dev uses 5009.
-
-Workflows then come pre-staged (play buttons ready) with grids restored. `--auto-start`
-(requires `--transport fake`) commits every staged workflow on launch, so plots render
-with no interaction at all — omit it if you want to drive the play buttons yourself.
-Regenerate a fixture by configuring via the UI, then copying the persisted
-`workflow_configs.yaml` (strip the runtime `current_job`/`previous_job` keys, keep
-`jobs`) and `plot_configs.yaml` from the config dir back into the fixture.
-
-**Driving / screenshotting the live dashboard:** `scripts/drive_dashboard.py` is the
-reusable Playwright kit -- don't start blind or re-write navigation boilerplate. It
-exposes a `Dashboard` library class (readiness wait, `goto_tab`, retry-on-detach
-`click`, `screenshot`, `inventory`) and a CLI:
-
-```sh
-python scripts/drive_dashboard.py --map               # inventory a running server: tabs + live lt-* hooks
-python scripts/drive_dashboard.py --launch --tab Detectors --screenshot out.png  # spawn fake backend + fixture, shoot, tear down
-```
-
-`--launch` handles the whole lifecycle (fixture copy, readiness, teardown) on the dummy
-instrument. Run `--map` first to learn what is targetable before scripting clicks; see
-"Driving the dashboard with Playwright" in `.claude/rules/dashboard-widgets.md` for the
-shadow-DOM selector gotcha and tab inventory.
+To drive or screenshot the UI without Kafka, use `scripts/drive_dashboard.py`: `--launch`
+spawns a fake backend seeded from the dummy fixture, drives it, and tears it down;
+`--map` inventories the live tabs and `lt-*` automation hooks. For the library API,
+fixture seeding/regeneration, and automation gotchas (stable `lt-*` hooks, shadow-DOM
+selectors, modals), see the script's module docstring and "Driving the dashboard with
+Playwright" in `.claude/rules/dashboard-widgets.md`.
 
 ## Tools
 

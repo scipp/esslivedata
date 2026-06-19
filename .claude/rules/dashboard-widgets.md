@@ -69,6 +69,24 @@ a `--map` / `--launch` / `--screenshot` CLI). Reach for it before hand-rolling
 navigation; run `--map` first to inventory the live tabs and `lt-*` hooks rather than
 screenshotting to rediscover the layout.
 
+**Launching & seeding.** `--launch` spawns a fake backend (no Kafka) seeded from the
+committed dummy fixture, drives it, and tears it down. To run a server yourself instead
+— e.g. to click the play buttons by hand rather than auto-starting — copy the fixture to
+a scratch dir first (the dashboard writes to its config dir) and point `--config-dir` at
+it, on a port other than 5009 (interactive dev uses 5009):
+
+```sh
+cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
+python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
+    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements
+```
+
+Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
+launch so plots render with no interaction. Regenerate a fixture by configuring via the
+UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
+`current_job`/`previous_job` keys, keep `jobs`) and `plot_configs.yaml` from the config
+dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
+
 **Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
 Plain Playwright CSS locators pierce these, so `page.locator(".lt-tool-settings")` works
 — **but descendant combinators do not cross shadow boundaries.** Target a workflow's
