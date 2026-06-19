@@ -85,13 +85,16 @@ class LtotalRange(RangeModel):
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
-class CutDistances(pydantic.BaseModel):
-    """Beamline distances at which to show the transmitted wavelength band.
+class CascadeBands(pydantic.BaseModel):
+    """Configuration of the *Chopper cascade bands* output.
 
-    Each distance adds one curve to the chopper-cascade-bands diagnostic,
-    propagating the cascade forward to that point. Typically the monitor and
-    detector positions, but any point of interest is valid. Entered as a
-    comma-separated list, since the parameter widget has no native list input.
+    That diagnostic always draws one curve at the source and one at each chopper
+    (at their exact distances). ``distances`` adds *further* curves at arbitrary
+    beamline points, propagating the cascade forward to each (typically the
+    monitor and detector positions, but any point of interest is valid); entered
+    as a comma-separated list, since the parameter widget has no native list
+    input. ``num_bins`` sets how finely every curve samples the
+    event-time-offset axis.
     """
 
     distances: str = pydantic.Field(
@@ -99,6 +102,15 @@ class CutDistances(pydantic.BaseModel):
         description="Comma-separated distances from the source, e.g. '6.2, 9.8'.",
     )
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+    num_bins: int = pydantic.Field(
+        default=2000,
+        ge=1,
+        description=(
+            "Number of event-time-offset bins sampling each curve. Independent "
+            "of the lookup-table time resolution: chosen fine enough to resolve "
+            "narrow transmitted bands across the frame."
+        ),
+    )
 
     @pydantic.field_validator('distances')
     @classmethod
@@ -106,7 +118,7 @@ class CutDistances(pydantic.BaseModel):
         parse_number_list(v)  # raises on malformed input
         return v
 
-    def get(self) -> sc.Variable:
+    def get_distances(self) -> sc.Variable:
         return sc.array(
             dims=['distance'],
             values=parse_number_list(self.distances),
@@ -137,13 +149,15 @@ class WavelengthLutParams(pydantic.BaseModel):
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
     )
-    cut_distances: CutDistances = pydantic.Field(
-        title='Cut distances',
+    cascade_bands: CascadeBands = pydantic.Field(
+        title='Chopper cascade bands',
         description=(
-            'Beamline distances at which to add a curve to the chopper-cascade '
-            'bands diagnostic (typically monitor and detector positions).'
+            'Settings for the "Chopper cascade bands" output. The source and '
+            'every chopper always get a curve; add curves at further beamline '
+            'distances (typically monitor and detector positions) and set their '
+            'event-time-offset sampling here.'
         ),
-        default_factory=CutDistances,
+        default_factory=CascadeBands,
     )
 
 
@@ -188,12 +202,14 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
         default_factory=_empty_wavelength_bands_template,
         title='Chopper cascade bands',
         description=(
-            'Wavelength band transmitted along the beamline: the source and each '
-            'chopper at their exact distances, plus a row at each configured cut '
-            'distance. Plot with the "Overlay 1D" plotter: one curve per distance '
-            '(identified by its value in metres). A curve that vanishes (all-NaN) '
-            'marks where the beam is blocked. Unlike the lookup table, this '
-            'resolves closely-spaced choppers regardless of distance resolution.'
+            'Wavelength band transmitted along the beamline: always one curve at '
+            'the source and one at each chopper (at their exact distances), plus '
+            'a curve at each distance configured in the "Cascade bands" '
+            'parameter section. Plot with the "Overlay 1D" plotter: one curve per '
+            'distance (identified by its value in metres). A curve that vanishes '
+            '(all-NaN) marks where the beam is blocked. Unlike the lookup table, '
+            'this resolves closely-spaced choppers regardless of distance '
+            'resolution.'
         ),
     )
 

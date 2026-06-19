@@ -22,7 +22,7 @@ from ess.livedata.handlers.wavelength_lut_workflow import (
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_LUT_OUTPUT,
-    CutDistances,
+    CascadeBands,
     Pulse,
     WavelengthLutParams,
 )
@@ -124,21 +124,21 @@ def lut(no_chopper_geometry: Path) -> sc.DataArray:
     return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
 
 
-class TestCutDistances:
+class TestCascadeBands:
     def test_empty_default_yields_no_distances(self) -> None:
-        assert CutDistances().get().sizes == {'distance': 0}
+        assert CascadeBands().get_distances().sizes == {'distance': 0}
 
     def test_parses_comma_separated_values(self) -> None:
-        var = CutDistances(distances='6.2, 9.8, 13.0').get()
+        var = CascadeBands(distances='6.2, 9.8, 13.0').get_distances()
         assert var.values.tolist() == [6.2, 9.8, 13.0]
         assert var.unit == sc.Unit('m')
 
     def test_whitespace_only_is_empty(self) -> None:
-        assert CutDistances(distances='   ').get().sizes == {'distance': 0}
+        assert CascadeBands(distances='   ').get_distances().sizes == {'distance': 0}
 
     def test_rejects_non_numeric(self) -> None:
         with pytest.raises(pydantic.ValidationError):
-            CutDistances(distances='6.2, foo')
+            CascadeBands(distances='6.2, foo')
 
 
 class TestNoChopperWorkflow:

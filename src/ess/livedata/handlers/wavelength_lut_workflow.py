@@ -196,7 +196,6 @@ def _attach_provenance(
 
 
 def make_wavelength_bands_from_frames(
-    time_resolution: TimeResolution,
     pulse_period: PulsePeriod,
     pulse_stride: PulseStride[AnyRun],
     frames: ChopperFrameSequence[AnyRun],
@@ -230,9 +229,12 @@ def make_wavelength_bands_from_frames(
     pulse_period = pulse_period.to(unit=time_unit)
     frame_period = pulse_period * pulse_stride
 
-    nbins = 10 * int(frame_period / time_resolution.to(unit=time_unit)) + 1
     time_edges = sc.linspace(
-        'event_time_offset', 0.0, frame_period.value, nbins + 1, unit=pulse_period.unit
+        'event_time_offset',
+        0.0,
+        frame_period.value,
+        params.cascade_bands.num_bins + 1,
+        unit=pulse_period.unit,
     )
 
     def band(frame) -> sc.Variable:
@@ -249,7 +251,7 @@ def make_wavelength_bands_from_frames(
     rows = [(frame.distance.to(unit='m'), frame) for frame in frames]
     rows.extend(
         (distance, frames[distance])
-        for distance in params.cut_distances.get().to(unit='m')
+        for distance in params.cascade_bands.get_distances().to(unit='m')
     )
 
     # Round to whole millimetres so curve labels read cleanly (e.g. 6.145 m)

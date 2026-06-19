@@ -33,7 +33,7 @@ from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
-    CutDistances,
+    CascadeBands,
     WavelengthLutParams,
 )
 
@@ -82,7 +82,7 @@ def test_spec_scope_bindings_define_gating_set(instrument) -> None:
 
 def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     params = WavelengthLutParams(
-        cut_distances=CutDistances(distances='7.0, 12.0')
+        cascade_bands=CascadeBands(distances='7.0, 12.0')
     ).model_dump()
     job = _create_lut_job(instrument, params=params)
     aux = {}
