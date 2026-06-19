@@ -268,6 +268,10 @@ def _create_toolbar_visibility_button(
         sizing_mode='fixed',
         margin=0,
         description=_tip(visible),
+        # Hand-rolled (toggling icon) so it bypasses create_tool_button; tag it
+        # with the stable automation hooks by hand. Icon name varies, so use a
+        # semantic suffix rather than lt-tool-{icon_name}.
+        css_classes=['lt-tool', 'lt-tool-layer-details'],
         stylesheets=create_tool_button_stylesheet(Colors.TEXT_MUTED, HoverColors.MUTED),
     )
     state = {'visible': visible}
@@ -347,6 +351,9 @@ def _create_configure_button_or_menu(
         color='light',
         sizing_mode='fixed',
         margin=0,
+        # MenuButton (dropdown), so it bypasses create_tool_button; tag it with
+        # the same hooks as the single-layer gear for consistent automation.
+        css_classes=['lt-tool', 'lt-tool-settings'],
         stylesheets=stylesheets,
     )
 
