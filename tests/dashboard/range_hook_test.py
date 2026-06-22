@@ -161,6 +161,36 @@ def test_write_datetime_axis_coerces_float_targets() -> None:
     assert handle.end == np.datetime64('2026-06-17T11:52:03', 'ns')
 
 
+def test_write_datetime_axis_after_zoom_uses_axis_type() -> None:
+    """After an interactive zoom Bokeh replaces the ``np.datetime64`` range
+    bounds with epoch-*millisecond* floats. The datetime nature must then be
+    read from the figure's ``DatetimeAxis``, not the bound's dtype, or the
+    epoch-ns float target would be written raw and interpreted as ms -- pushing
+    the axis to the far future and emptying it (issue #992)."""
+    import holoviews as hv
+
+    hv.extension('bokeh')
+    t = np.arange(
+        '2025-01-01T00:00:00',
+        '2025-01-01T00:10:00',
+        np.timedelta64(1, 'm'),
+        dtype='datetime64[ns]',
+    )
+    y = np.arange(len(t), dtype=float)
+    plot = hv.renderer('bokeh').get_plot(hv.Curve((t, y)))
+    xr = plot.handles['x_range']
+    # Simulate the post-zoom state: bounds are now epoch-ms floats.
+    xr.start = float(np.datetime64('2025-01-01T00:02:00', 'ms').astype('int64'))
+    xr.end = float(np.datetime64('2025-01-01T00:05:00', 'ms').astype('int64'))
+
+    target_lo = float(t.min())
+    target_hi = float(t.max())
+    assert RangeHandles.write(plot, 'x', target_lo, target_hi)
+
+    assert xr.start == np.datetime64('2025-01-01T00:00:00', 'ns')
+    assert xr.end == np.datetime64('2025-01-01T00:09:00', 'ns')
+
+
 def test_write_color_mapper_avoids_inversion() -> None:
     mapper = _StubColorMapper(low=0.0, high=1.0)
     RangeHandles.write(_StubPlot(color_mapper=mapper), 'c', 10.0, 11.0)
