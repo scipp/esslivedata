@@ -1,5 +1,5 @@
 ---
-paths: src/ess/livedata/dashboard/widgets/**/*.py
+paths: src/ess/livedata/dashboard/widgets/**/*.py, src/ess/livedata/dashboard/reduction.py, scripts/drive_dashboard.py
 ---
 
 # Dashboard Widget Patterns
@@ -62,6 +62,54 @@ Treat them as a stable contract: do not drop them in refactors (a test in
 the same icon (e.g. per-grid/per-cell controls in `plot_grid_manager.py`), pass a
 context `css_classes` entry so each instance is uniquely addressable.
 
+### Driving the dashboard with Playwright
+
+`scripts/drive_dashboard.py` is the committed driving kit (`Dashboard` library class +
+a `--map` / `--launch` / `--screenshot` CLI). Reach for it before hand-rolling
+navigation; run `--map` first to inventory the live tabs and `lt-*` hooks rather than
+screenshotting to rediscover the layout.
+
+**Launching & seeding.** `--launch` spawns a fake backend (no Kafka) seeded from the
+committed dummy fixture, drives it, and tears it down. To run a server yourself instead
+— e.g. to click the play buttons by hand rather than auto-starting — copy the fixture to
+a scratch dir first (the dashboard writes to its config dir) and point `--config-dir` at
+it, on a port other than 5009 (interactive dev uses 5009):
+
+```sh
+cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
+python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
+    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements
+```
+
+Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
+launch so plots render with no interaction. Regenerate a fixture by configuring via the
+UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
+`current_job`/`previous_job` keys, keep `jobs`) and `plot_configs.yaml` from the config
+dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
+
+**Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
+Plain Playwright CSS locators pierce these, so `page.locator(".lt-tool-settings")` works
+— **but descendant combinators do not cross shadow boundaries.** Target a workflow's
+button with a *compound* selector on one element:
+
+- ✅ `.lt-wf-total_counts.lt-tool-player-stop` (both classes on the same button)
+- ❌ `.lt-wf-total_counts .lt-tool-player-stop` (matches nothing — the descendant
+  crosses a shadow boundary)
+
+**Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
+navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
+titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
+tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). With
+`dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
+*current* tab only — switch tabs before querying that tab's hooks.
+
+**Modals.** Settings (gear), edit (pencil), and grid/workflow config open a `pn.Modal`
+rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
+waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
+dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
+focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
+`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`).
+
 ### Driving workflow config flows
 
 A `WorkflowStatusWidget` rebuilds its row (`_build_widget`) only when that workflow's
@@ -76,6 +124,32 @@ elements. Two windows still detach the element under the cursor:
 Wrap clicks in a small retry-on-detach helper (catch the Playwright timeout, re-locate,
 retry) rather than assuming a single click lands. This is not a continuous re-render —
 untouched rows stay stable.
+
+### Keeping automation working
+
+A UI change can silently break `scripts/drive_dashboard.py`, the `lt-*` contract, or the
+seeded fixtures. When you touch the UI, keep these in sync:
+
+- **New tool button** → build it with `create_tool_button()`; it auto-tags `lt-tool` +
+  `lt-tool-{icon_name}`. If you must hand-roll one (toggling icon, `MenuButton`, etc.),
+  add `css_classes=['lt-tool', 'lt-tool-{semantic}']` by hand **and** a guard test —
+  `buttons_test.py` only covers the helper, so hand-rolled buttons drift unnoticed
+  (see `plot_widgets.py`, `plot_grid_manager.py` for examples + their tests).
+- **Repeated-instance view** (per-row/-cell/-grid controls) → pass a context class so
+  each instance is uniquely addressable (`lt-wf-{name}`, `lt-grid-{slug}`).
+- **New top-level tab** → tabs are Bokeh-owned `.bk-tab` with no hook, so the kit
+  navigates by visible text; add the new title to the tab inventory above so callers
+  aren't searching blind.
+- **New modal** → it opens as `[role=dialog]` and is closed on Escape by
+  `ModalEscapeCloser` automatically; nothing to wire, but verify it appears in the
+  inventory.
+- **Renamed/added workflow or output** → regenerate the affected `ui_config_fixtures`
+  (the drift-guard in `ui_config_fixtures_test.py` fails loudly to remind you).
+- **New instrument you want `--launch` to support** → add a
+  `tests/dashboard/ui_config_fixtures/<instrument>/` fixture (only `dummy` exists today).
+
+After a non-trivial UI change, sanity-check with
+`python scripts/drive_dashboard.py --launch --map` (and `--screenshot`).
 
 ## Model creation and visibility
 

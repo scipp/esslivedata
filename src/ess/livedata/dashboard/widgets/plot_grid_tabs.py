@@ -34,6 +34,7 @@ from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
+from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
@@ -185,7 +186,10 @@ class PlotGridTabs:
         # each .panel access, the modal_container would be reparented repeatedly,
         # breaking its connection to the component tree.
         self._widget = pn.Column(
-            self._tabs, self._modal_container, sizing_mode='stretch_both'
+            self._tabs,
+            self._modal_container,
+            ModalEscapeCloser(),
+            sizing_mode='stretch_both',
         )
 
         # Subscribe to lifecycle events
