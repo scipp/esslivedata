@@ -254,16 +254,35 @@ class PlottingController:
 
 
 def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
-    """Return whether a window-mode choice (latest/window) is meaningful.
+    """Return whether the window controls (mode, duration, aggregation) apply.
 
-    Windowing is meaningful when the view exposes a ``per_update`` stream.
-    Views that are cumulative-only (e.g. ``I(Q)``) lock the mode to
-    ``since_start``.
+    Windowing applies when the view exposes a ``per_update`` stream: the window
+    duration aggregates a span of that stream, independent of whether a
+    ``since_start`` stream also exists. Cumulative-only views (e.g. ``I(Q)``)
+    have no per-update stream to window over, so the controls are hidden and the
+    view locks to ``since_start``.
+
+    Offering ``since_start`` mode on a view that lacks a cumulative stream is
+    rejected at config time (see :func:`since_start_available`), not by hiding
+    the controls -- that would also remove the still-meaningful duration control.
     """
     view = workflow_spec.get_output_view(view_name)
     if view is None:
         return True
     return 'per_update' in view.streams
+
+
+def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
+    """Return whether ``since_start`` mode resolves to a real cumulative stream.
+
+    ``False`` for per-update-only views, where selecting ``since_start`` would
+    silently fall back to the per-update stream (see ``OutputView.field_for``).
+    Permissive for unknown views.
+    """
+    view = workflow_spec.get_output_view(view_name)
+    if view is None:
+        return True
+    return 'since_start' in view.streams
 
 
 def create_extractors_from_params(
