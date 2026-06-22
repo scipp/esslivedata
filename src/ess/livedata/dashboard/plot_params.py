@@ -438,3 +438,16 @@ class PlotParamsBars(PlotParamsBase):
         default_factory=RateNormalizationParams,
         description="Rate normalization options.",
     )
+
+
+class PlotParamsTable(PlotParamsBase):
+    """Parameters for tabular display of 0D scalar data."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description=_WINDOW_DESCRIPTION,
+    )
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
+    )

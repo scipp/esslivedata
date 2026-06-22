@@ -1415,6 +1415,117 @@ class TestBarsPlotter:
         render_to_bokeh(result)
 
 
+class TestTablePlotter:
+    """Tests for TablePlotter with 0D data."""
+
+    @pytest.fixture
+    def table_plotter(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTable
+
+        return plots.TablePlotter.from_params(PlotParamsTable())
+
+    @staticmethod
+    def _key(source: str, output: str) -> ResultKey:
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
+        return ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+            output_name=output,
+        )
+
+    def test_single_source_produces_single_table(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute(
+            {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}}
+        )
+        result = table_plotter.get_cached_state()
+        assert isinstance(result, hv.Table)
+        assert list(result.data['source']) == ['bank0']
+        assert list(result.data['counts']) == [42.0]
+
+    def test_multiple_sources_become_rows_of_one_table(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+            self._key('bank2', 'counts'): sc.DataArray(sc.scalar(30.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert isinstance(result, hv.Table)
+        assert list(result.data['source']) == ['bank0', 'bank1', 'bank2']
+        assert list(result.data['counts']) == [10.0, 20.0, 30.0]
+
+    def test_multiple_outputs_become_columns(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank0', 'rate'): sc.DataArray(sc.scalar(0.5, unit='1/s')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+            self._key('bank1', 'rate'): sc.DataArray(sc.scalar(1.5, unit='1/s')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert isinstance(result, hv.Table)
+        assert [d.name for d in result.vdims] == ['counts', 'rate']
+        assert list(result.data['source']) == ['bank0', 'bank1']
+        assert list(result.data['counts']) == [10.0, 20.0]
+        assert list(result.data['rate']) == [0.5, 1.5]
+
+    def test_missing_combination_is_nan(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'rate'): sc.DataArray(sc.scalar(1.5, unit='1/s')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        import math
+
+        counts = list(result.data['counts'])
+        rate = list(result.data['rate'])
+        assert counts[0] == 10.0
+        assert math.isnan(counts[1])
+        assert math.isnan(rate[0])
+        assert rate[1] == 1.5
+
+    def test_column_unit_and_label_from_resolver(self, table_plotter):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        key = self._key('raw_source', 'raw_output')
+        resolver = TitleResolver(
+            source=lambda _: 'Bank 0', output=lambda _: 'Total counts'
+        )
+        table_plotter.compute(
+            {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}},
+            title_resolver=resolver,
+        )
+        result = table_plotter.get_cached_state()
+        assert list(result.data['source']) == ['Bank 0']
+        vdim = result.vdims[0]
+        assert vdim.label == 'Total counts'
+        assert vdim.unit == 'counts'
+
+    def test_rejects_non_scalar_data(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
+        table_plotter.compute({'primary': {key: data_1d}})
+        # Errors are surfaced in-band as a Text element, matching other plotters.
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_empty_data_shows_no_data(self, table_plotter):
+        table_plotter.compute({'primary': {}})
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_renders_single_datatable(self, table_plotter):
+        from bokeh.models import DataTable
+
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+        }
+        fig = present_figure(table_plotter, data)
+        tables = [m for m in fig.references() if isinstance(m, DataTable)]
+        assert len(tables) == 1
+
+
 class TestOverlay1DPlotter:
     """Tests for Overlay1DPlotter with 2D data."""
 

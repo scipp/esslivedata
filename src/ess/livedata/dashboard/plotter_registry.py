@@ -254,6 +254,7 @@ def _register_all_plotters() -> None:
         ImagePlotter,
         LinePlotter,
         Overlay1DPlotter,
+        TablePlotter,
     )
     from .roi_readback_plots import (
         PolygonsReadbackPlotter,
@@ -319,6 +320,16 @@ def _register_all_plotters() -> None:
             min_dims=0, max_dims=0, multiple_datasets=True
         ),
         factory=BarsPlotter.from_params,
+    )
+
+    plotter_registry.register_plotter(
+        name='table',
+        title='Table',
+        description='Display 0D scalar values as a table, one row per source.',
+        data_requirements=DataRequirements(
+            min_dims=0, max_dims=0, multiple_datasets=True
+        ),
+        factory=TablePlotter.from_params,
     )
 
     plotter_registry.register_plotter(

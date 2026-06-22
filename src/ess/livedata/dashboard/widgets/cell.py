@@ -31,6 +31,7 @@ from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellId,
+    Layer,
     LayerId,
     PlotCell,
     PlotConfig,
@@ -324,7 +325,12 @@ class CellWidget:
 
         # Create content area (placeholder or plot)
         if self._plot is not None:
-            content = self._build_plot_content(self._plot)
+            # Multi-table cells compose into a ready-built pn.Tabs; hv objects
+            # still need wrapping in a HoloViews pane.
+            if isinstance(self._plot, pn.viewable.Viewable):
+                content = self._plot
+            else:
+                content = self._build_plot_content(self._plot)
             border = None
             bg_color = None
         else:
@@ -585,7 +591,26 @@ class CellWidget:
         )
         return plot_pane_wrapper.layout
 
-    def _compose_plot(self) -> hv.DynamicMap | hv.Element | None:
+    def _build_table_tabs(
+        self, layers: list[Layer], dmaps: list[hv.DynamicMap]
+    ) -> pn.Tabs:
+        """Arrange one table pane per layer in a tabbed container.
+
+        Each pane keeps its own DynamicMap and pipe, so the layers update
+        independently — unlike an hv.Overlay of tables, which HoloViews
+        collates into a single Bokeh Tabs whose update path crashes.
+        """
+        tabs = []
+        for layer, dmap in zip(layers, dmaps, strict=True):
+            _, output_title = get_workflow_display_info(
+                self._deps.workflow_registry,
+                layer.config.workflow_id,
+                layer.config.view_name,
+            )
+            tabs.append((output_title, self._build_plot_content(dmap)))
+        return pn.Tabs(*tabs, sizing_mode='stretch_both')
+
+    def _compose_plot(self) -> hv.DynamicMap | hv.Element | pn.viewable.Viewable | None:
         """
         Compose the cell's plot from session-local DynamicMaps or static elements.
 
@@ -597,10 +622,13 @@ class CellWidget:
         Returns
         -------
         :
-            Composed plot from session DMaps/elements, or None if none available.
+            Composed plot from session DMaps/elements, a ``pn.Tabs`` of
+            independent table panes, or None if none available.
         """
         plots = []
+        plot_layers: list[Layer] = []
         has_layout = False
+        has_table = False
         cell_plotters: list = []
         for layer in self._cell.layers:
             layer_id = layer.layer_id
@@ -619,21 +647,33 @@ class CellWidget:
 
             dmap = session_layer.dmap
             if dmap is not None:
-                # Check the DynamicMap's resolved type (set after Bokeh
-                # renders it) and the plotter's cached state.  Either
-                # being a Layout means hooks must be skipped.
-                if isinstance(dmap, hv.DynamicMap) and dmap.type is hv.Layout:
+                # Resolve the element type from the DynamicMap (set after Bokeh
+                # renders it) and the plotter's cached state. A Layout or a
+                # Table means the figure-level hooks must be skipped: Layout
+                # sub-figures carry their own SaveTool, and a Table renders as a
+                # DataTable widget with no figure for the hooks to act on.
+                types: list[type] = []
+                if isinstance(dmap, hv.DynamicMap) and dmap.type is not None:
+                    types.append(dmap.type)
+                if state is not None and state.plotter is not None:
+                    types.append(type(state.plotter.get_cached_state()))
+                if hv.Layout in types:
                     has_layout = True
-                elif (
-                    state is not None
-                    and state.plotter is not None
-                    and isinstance(state.plotter.get_cached_state(), hv.Layout)
-                ):
-                    has_layout = True
+                if hv.Table in types:
+                    has_table = True
                 plots.append(dmap)
+                plot_layers.append(layer)
 
         if not plots:
             return None
+
+        # Tables render as DataTable widgets, not figures. Fusing several with
+        # hv.Overlay collates them into one Bokeh Tabs whose streaming-update
+        # path raises (Tabs has no ``hold_render``), freezing every plot in the
+        # session. Presenting each table in its own pn.Tabs tab keeps them as
+        # independent panes that update on their own pipes.
+        if has_table and len(plots) > 1:
+            return self._build_table_tabs(plot_layers, plots)
 
         result: hv.DynamicMap | hv.Element
         if len(plots) == 1:
@@ -646,9 +686,11 @@ class CellWidget:
             # opts applied afterwards land on the OverlayPlot and persist.
             result = hv.Overlay(plots).collate()
 
-        # Skip hooks for Layouts — each sub-figure has its own SaveTool,
-        # so a single cell-level filename is not meaningful.
-        if has_layout:
+        # Skip figure-level hooks when the cell renders a Layout (each
+        # sub-figure has its own SaveTool, so a single cell-level filename is
+        # not meaningful) or a Table (a DataTable widget has no figure, toolbar,
+        # or sizing handle for the SaveTool/aspect hooks to act on).
+        if has_layout or has_table:
             return result
 
         hooks: list = []

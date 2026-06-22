@@ -27,6 +27,7 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
+    PlotParamsTable,
     PlotParamsTimeseries,
     PlotScale,
     PlotScaleParams,
@@ -1230,6 +1231,94 @@ class BarsPlotter(Plotter):
     def style_opts(self) -> list[hv.Options]:
         return [
             hv.opts.Bars(**self._bars_opts, **self._sizing_opts),
+            *super().style_opts(),
+        ]
+
+
+class TablePlotter(Plotter):
+    """Plotter rendering 0D scalar data as a table.
+
+    Each source name becomes a row; each output name becomes a value column.
+    Unlike most plotters this composes all datasets into a single ``hv.Table``
+    rather than overlaying per-dataset elements: HoloViews tables cannot be
+    meaningfully overlaid (an overlay renders as separate stacked widgets), so
+    multiple columns are produced within one table instead.
+    """
+
+    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
+
+    @classmethod
+    def from_params(cls, params: PlotParamsTable):
+        """Create TablePlotter from PlotParamsTable."""
+        return cls(
+            aspect_params=params.plot_aspect,
+            normalize_to_rate=params.rate.normalize_to_rate,
+        )
+
+    def compute(
+        self,
+        data: dict[str, dict[ResultKey, sc.DataArray]],
+        *,
+        title_resolver: TitleResolver | None = None,
+        **kwargs,
+    ) -> None:
+        primary = data.get(PRIMARY, {})
+        if self._normalize_to_rate:
+            primary = {key: _normalize_to_rate(da) for key, da in primary.items()}
+        self._range_targets = {}
+        resolver = title_resolver or TitleResolver()
+        try:
+            result = self._build_table(primary, resolver)
+        except Exception as e:
+            result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
+                text_align='center', text_baseline='middle', **self._sizing_opts
+            )
+        self._time_bounds = _compute_time_bounds(primary)
+        self._set_cached_state(result)
+
+    def _build_table(
+        self,
+        data: dict[ResultKey, sc.DataArray],
+        resolver: TitleResolver,
+    ) -> hv.Element:
+        """Pivot ``(source, output) -> value`` into a single table element."""
+        if len(data) == 0:
+            return hv.Text(0.5, 0.5, 'No data').opts(
+                text_align='center', text_baseline='middle', **self._sizing_opts
+            )
+
+        rows: list[str] = []
+        columns: dict[str, hv.Dimension] = {}
+        cells: dict[tuple[str, str], float] = {}
+        for data_key, da in data.items():
+            if da.ndim != 0:
+                raise ValueError(f"Expected 0D data, got {da.ndim}D")
+            row = resolver.source(data_key.job_id.source_name)
+            if row not in rows:
+                rows.append(row)
+            output_name = data_key.output_name or 'values'
+            if output_name not in columns:
+                unit = str(da.unit) if da.unit is not None else None
+                label = resolver.get_axis_label(data_key.output_name) or output_name
+                columns[output_name] = hv.Dimension(output_name, label=label, unit=unit)
+            cells[(row, output_name)] = float(da.value)
+
+        table_data: dict[str, list[Any]] = {'source': rows}
+        for output_name in columns:
+            table_data[output_name] = [
+                cells.get((row, output_name), float('nan')) for row in rows
+            ]
+        return hv.Table(
+            table_data,
+            kdims=[hv.Dimension('source', label='Source')],
+            vdims=list(columns.values()),
+        )
+
+    def style_opts(self) -> list[hv.Options]:
+        # HoloViews' Table plot exposes only fixed width/height (no responsive
+        # sizing); container sizing is left to the enclosing Panel pane.
+        return [
+            hv.opts.Table(index_position=None),
             *super().style_opts(),
         ]
 
