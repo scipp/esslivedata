@@ -21,16 +21,16 @@ from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
 from scippnexus import NXmonitor
 
+from .accumulation_mode import AccumulationMode, Cumulative, Current
 from .geometry_signal import geometry_signal
 from .monitor_workflow_types import (
-    CumulativeMonitorHistogram,
+    AccumulatedMonitorHistogram,
     HistogramEdges,
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorCountsInRange,
     MonitorCountsTotal,
     MonitorHistogram,
-    WindowMonitorHistogram,
 )
 
 MONITOR_TRANSFORM = 'monitor_transform'
@@ -130,31 +130,39 @@ def histogram_wavelength_monitor(
     return MonitorHistogram(_histogram_monitor(data, edges, 'wavelength', geometry))
 
 
-def cumulative_view(hist: MonitorHistogram) -> CumulativeMonitorHistogram:
-    """Identity transform for routing to cumulative accumulator."""
-    return CumulativeMonitorHistogram(hist)
+def accumulated_monitor_histogram(
+    hist: MonitorHistogram,
+) -> AccumulatedMonitorHistogram[AccumulationMode]:
+    """Route the histogram to the accumulation-mode-specific accumulator.
+
+    The histogram is computed once and accumulated differently based on the
+    accumulation mode type parameter (cumulative vs window). Sciline
+    instantiates this provider for each concrete mode.
+    """
+    return AccumulatedMonitorHistogram[AccumulationMode](hist)
 
 
-def window_view(hist: MonitorHistogram) -> WindowMonitorHistogram:
-    """Identity transform for routing to window accumulator."""
-    return WindowMonitorHistogram(hist)
-
-
-def counts_total(hist: WindowMonitorHistogram) -> MonitorCountsTotal:
-    """Total counts in window."""
-    return MonitorCountsTotal(hist.sum())
+def counts_total(
+    hist: AccumulatedMonitorHistogram[AccumulationMode],
+) -> MonitorCountsTotal[AccumulationMode]:
+    """Total counts, for the given accumulation mode."""
+    return MonitorCountsTotal[AccumulationMode](hist.sum())
 
 
 def counts_in_range(
-    hist: WindowMonitorHistogram, low: HistogramRangeLow, high: HistogramRangeHigh
-) -> MonitorCountsInRange:
-    """Counts within range filter in window."""
+    hist: AccumulatedMonitorHistogram[AccumulationMode],
+    low: HistogramRangeLow,
+    high: HistogramRangeHigh,
+) -> MonitorCountsInRange[AccumulationMode]:
+    """Counts within range filter, for the given accumulation mode."""
     dim = hist.dim
     # Convert range to histogram coordinate unit
     coord_unit = hist.coords[dim].unit
     low_converted = low.to(unit=coord_unit)
     high_converted = high.to(unit=coord_unit)
-    return MonitorCountsInRange(hist[dim, low_converted:high_converted].sum())
+    return MonitorCountsInRange[AccumulationMode](
+        hist[dim, low_converted:high_converted].sum()
+    )
 
 
 def build_monitor_workflow(
@@ -188,8 +196,7 @@ def build_monitor_workflow(
         raise ValueError(f"Unsupported coordinate mode: {coordinate_mode}")
 
     # Add downstream providers
-    workflow.insert(cumulative_view)
-    workflow.insert(window_view)
+    workflow.insert(accumulated_monitor_histogram)
     workflow.insert(counts_total)
     workflow.insert(counts_in_range)
 
@@ -296,9 +303,8 @@ def create_monitor_workflow(
         workflow[LookupTableFilename] = lookup_table_filename
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
-    # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
-    # MonitorCountsTotal and MonitorCountsInRange are computed from
-    # WindowMonitorHistogram during finalize, not accumulated separately.
+    # Only the histogram is accumulated; the scalar totals are derived from the
+    # accumulated histogram per mode during finalize, not accumulated separately.
     cumulative, window = make_no_copy_accumulator_pair(reset_coord=reset_coord)
     return StreamProcessorWorkflow(
         workflow,
@@ -308,14 +314,16 @@ def create_monitor_workflow(
         # WavelengthMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
         target_keys={
-            'cumulative': CumulativeMonitorHistogram,
-            'current': WindowMonitorHistogram,
-            'counts_total': MonitorCountsTotal,
-            'counts_in_toa_range': MonitorCountsInRange,
+            'cumulative': AccumulatedMonitorHistogram[Cumulative],
+            'current': AccumulatedMonitorHistogram[Current],
+            'counts_total': MonitorCountsTotal[Current],
+            'counts_in_toa_range': MonitorCountsInRange[Current],
+            'counts_total_cumulative': MonitorCountsTotal[Cumulative],
+            'counts_in_toa_range_cumulative': MonitorCountsInRange[Cumulative],
         },
         accumulators={
-            CumulativeMonitorHistogram: cumulative,
-            WindowMonitorHistogram: window,
+            AccumulatedMonitorHistogram[Cumulative]: cumulative,
+            AccumulatedMonitorHistogram[Current]: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

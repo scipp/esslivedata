@@ -4,22 +4,48 @@
 
 from typing import NewType
 
+import sciline
 import scipp as sc
+
+from .accumulation_mode import AccumulationMode
 
 # Input type: Use standard NeXusData[NXmonitor, SampleRun] from ess.reduce
 # The specific monitor is determined by NeXusName[NXmonitor] = source_name
 # Same pattern as detector workflows use NeXusName[NXdetector] = source_name
 
-# Intermediate type (computed once, routed to two accumulators)
+# Intermediate type (computed once, routed to both accumulators)
 MonitorHistogram = NewType('MonitorHistogram', sc.DataArray)
 
-# Output types (identity transforms for routing to different accumulators)
-CumulativeMonitorHistogram = NewType('CumulativeMonitorHistogram', sc.DataArray)
-WindowMonitorHistogram = NewType('WindowMonitorHistogram', sc.DataArray)
 
-# Ratemeter outputs (derived from window histogram)
-MonitorCountsTotal = NewType('MonitorCountsTotal', sc.DataArray)
-MonitorCountsInRange = NewType('MonitorCountsInRange', sc.DataArray)
+class AccumulatedMonitorHistogram(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Monitor histogram parametrized by accumulation mode.
+
+    - AccumulatedMonitorHistogram[Cumulative]: Accumulated forever
+      (EternalAccumulator)
+    - AccumulatedMonitorHistogram[Current]: Current window only (clears
+      after finalize)
+    """
+
+
+class MonitorCountsTotal(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Total monitor counts as 0D scalar, parametrized by accumulation mode."""
+
+
+class MonitorCountsInRange(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Monitor counts within configured range as 0D scalar.
+
+    Parametrized by accumulation mode.
+    """
+
 
 # Configuration types (mode-agnostic names)
 HistogramEdges = NewType('HistogramEdges', sc.Variable)
