@@ -18,14 +18,17 @@ from ess.livedata.config.stream import ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
 from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
 from ess.livedata.handlers.monitor_workflow import (
+    MONITOR_TRANSFORM,
     build_monitor_workflow,
     counts_in_range,
     counts_total,
     create_monitor_workflow,
     cumulative_view,
     histogram_raw_monitor,
+    histogram_wavelength_monitor,
     window_view,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -170,7 +173,7 @@ class TestMonitorWorkflowProviders:
         return sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
 
     def test_histogram_raw_monitor_event_mode(self, sample_events, toa_edges):
-        result = histogram_raw_monitor(sample_events, toa_edges)
+        result = histogram_raw_monitor(sample_events, toa_edges, geometry=None)
         assert isinstance(result, sc.DataArray)
         assert result.dims == ('time_of_arrival',)
         assert result.sizes['time_of_arrival'] == 5  # 6 edges -> 5 bins
@@ -180,7 +183,7 @@ class TestMonitorWorkflowProviders:
 
     def test_histogram_raw_monitor_preserves_edge_unit(self, sample_events):
         edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='us')
-        result = histogram_raw_monitor(sample_events, edges)
+        result = histogram_raw_monitor(sample_events, edges, geometry=None)
         assert result.coords['time_of_arrival'].unit == 'us'
 
     def test_histogram_raw_monitor_histogram_mode(self, toa_edges):
@@ -193,7 +196,7 @@ class TestMonitorWorkflowProviders:
             coords={'tof': input_edges},
         )
         # Rebin to target edges (coarser binning)
-        result = histogram_raw_monitor(histogram, toa_edges)
+        result = histogram_raw_monitor(histogram, toa_edges, geometry=None)
         assert isinstance(result, sc.DataArray)
         assert result.dims == ('time_of_arrival',)
         assert result.sizes['time_of_arrival'] == 5  # 6 edges -> 5 bins
@@ -207,7 +210,7 @@ class TestMonitorWorkflowProviders:
             sc.array(dims=['time_of_arrival'], values=[1.0] * 10, unit='counts'),
             coords={'time_of_arrival': input_edges},
         )
-        result = histogram_raw_monitor(histogram, toa_edges)
+        result = histogram_raw_monitor(histogram, toa_edges, geometry=None)
         assert result.dims == ('time_of_arrival',)
         assert result.sum().value == 10.0
 
@@ -944,10 +947,10 @@ class TestMonitorMotion:
     ):
         """A move resets the cumulative instead of crashing.
 
-        The monitor workflow defaults to ``reset_coord='position'``, so the stale
-        pre-move histogram is discarded and the cumulative restarts from the new
-        configuration -- after the move it matches the post-move window rather than
-        summing across it.
+        The monitor workflow defaults to ``reset_coord=MONITOR_TRANSFORM``, so the
+        stale pre-move histogram is discarded and the cumulative restarts from the
+        new configuration -- after the move it matches the post-move window rather
+        than summing across it.
         """
         workflow = self._build(
             wavelength_edges=wavelength_edges,
@@ -963,8 +966,9 @@ class TestMonitorMotion:
     ):
         """Opting out (``reset_coord=None``) lets a move crash again.
 
-        Documents what the default guards against: the wavelength histogram carries
-        a scalar ``position`` coord, so summing the cumulative across a move raises.
+        Documents what the default guards against: a loaded geometry stamps the
+        scalar ``monitor_transform`` coord (and wavelength mode carries ``position``
+        too), so summing the cumulative across a move raises on the coord mismatch.
         """
         workflow = self._build(
             wavelength_edges=wavelength_edges,
@@ -973,5 +977,111 @@ class TestMonitorMotion:
             reset_coord=None,
         )
         self._cycle(workflow, -4.22, start=0, end=1000)
-        with pytest.raises(sc.DatasetError, match='position'):
+        with pytest.raises(sc.DatasetError, match=r'position|monitor_transform'):
             self._cycle(workflow, -24.0, start=1000, end=2000)
+
+    def test_toa_mode_with_geometry_stamps_reset_signal(self, geometry_filename):
+        """Uniform with the detector view: a loaded geometry stamps the reset
+        signal in TOA mode too, not only wavelength mode. The arrival-time
+        spectrum does shift when the monitor moves (the flight path changes), so
+        the cumulative must reset there as well.
+        """
+        from ess.reduce.nexus.types import RawMonitor
+
+        edges = sc.linspace('time_of_arrival', 0, 71_000_000, num=11, unit='ns')
+        workflow = create_monitor_workflow(
+            'monitor_cave',
+            edges,
+            coordinate_mode='toa',
+            geometry_filename=geometry_filename,
+        )
+        pipeline = workflow.base_pipeline
+        toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0], unit='ns')
+        events = sc.DataArray(
+            sc.ones(sizes={'event': 3}, dtype='float64', unit='counts'),
+            coords={'event_time_offset': toa},
+        )
+        begin = sc.array(dims=['event_time_zero'], values=[0], unit=None, dtype='int64')
+        pipeline[RawMonitor[SampleRun, NXmonitor]] = sc.DataArray(
+            sc.bins(begin=begin, dim='event', data=events)
+        )
+
+        hist = pipeline.compute(MonitorHistogram)
+        assert MONITOR_TRANSFORM in hist.coords
+        assert hist.coords[MONITOR_TRANSFORM].ndim == 0
+
+
+class TestPixellatedMonitorReset:
+    """A pixellated monitor breaks the single-point assumption (issue #780).
+
+    The standard monitor histogram collapses the pixel dimension, dropping the
+    per-pixel ``position`` coord, so a position-based reset cannot see a move. The
+    0-dim ``monitor_transform`` stamped by the histogram providers survives the
+    collapse and resets correctly -- the same signal the detector view uses.
+    """
+
+    @staticmethod
+    def _edges() -> sc.Variable:
+        return sc.linspace('wavelength', 0.5, 3.5, num=4, unit='angstrom')
+
+    @staticmethod
+    def _pixellated_monitor(z_positions: list[float]) -> sc.DataArray:
+        """Binned monitor events over a pixel dim, tagged with per-pixel position."""
+        npix = len(z_positions)
+        pixel = sc.array(dims=['event'], values=list(range(npix)) * 3, dtype='int64')
+        wavelength = sc.array(
+            dims=['event'], values=[1.0, 2.0, 3.0] * npix, unit='angstrom'
+        )
+        events = sc.DataArray(
+            sc.ones(dims=['event'], shape=[3 * npix], unit='counts'),
+            coords={'wavelength': wavelength, 'detector_number': pixel},
+        )
+        binned = events.group('detector_number')
+        binned.coords['position'] = sc.vectors(
+            dims=['detector_number'],
+            values=[[0.0, 0.0, z] for z in z_positions],
+            unit='m',
+        )
+        return binned
+
+    def test_pixel_collapse_drops_position_coord(self):
+        """Histogramming sums over pixels, so the per-pixel position coord is gone."""
+        hist = histogram_wavelength_monitor(
+            self._pixellated_monitor([10.0, 11.0]), self._edges(), geometry=None
+        )
+        assert 'detector_number' not in hist.dims
+        assert 'position' not in hist.coords
+
+    def test_position_reset_silently_fails_for_pixellated_monitor(self):
+        """Reset keyed on the dropped ``position`` coord is a no-op: the cumulative
+        sums across a move instead of restarting -- the bug this change fixes."""
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        before = histogram_wavelength_monitor(
+            self._pixellated_monitor([10.0, 11.0]), self._edges(), geometry=None
+        )
+        after = histogram_wavelength_monitor(
+            self._pixellated_monitor([20.0, 21.0]), self._edges(), geometry=None
+        )
+        cumulative.push(before)
+        cumulative.push(after)
+        assert cumulative.value.sum().value == pytest.approx(
+            before.sum().value + after.sum().value
+        )
+
+    def test_transform_signal_survives_collapse_and_resets(self):
+        """The 0-dim transform stamped by the provider survives the pixel collapse,
+        so the default reset coord restarts accumulation on a move."""
+        near = sc.spatial.translation(value=[0.0, 0.0, 10.0], unit='m')
+        far = sc.spatial.translation(value=[0.0, 0.0, 20.0], unit='m')
+        before = histogram_wavelength_monitor(
+            self._pixellated_monitor([10.0, 11.0]), self._edges(), geometry=near
+        )
+        after = histogram_wavelength_monitor(
+            self._pixellated_monitor([20.0, 21.0]), self._edges(), geometry=far
+        )
+        assert MONITOR_TRANSFORM in before.coords  # survived the collapse
+
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord=MONITOR_TRANSFORM)
+        cumulative.push(before)
+        cumulative.push(after)
+        assert sc.identical(cumulative.value, after)

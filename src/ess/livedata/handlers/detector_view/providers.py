@@ -19,6 +19,7 @@ from ess.reduce.nexus.types import (
 from ess.reduce.unwrap.types import WavelengthDetector
 from scippnexus import NXdetector
 
+from ..geometry_signal import geometry_signal
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     DETECTOR_TRANSFORM,
@@ -151,36 +152,18 @@ def get_screen_metadata(
     return projector.get_screen_metadata(empty_detector)
 
 
-_TRANSFORM_DTYPES = (
-    sc.DType.translation3,
-    sc.DType.affine_transform3,
-    sc.DType.linear_transform3,
-    sc.DType.rotation3,
-)
-
-
 def detector_geometry(
     transform: NeXusTransformation[NXdetector, SampleRun],
 ) -> DetectorGeometry:
     """
     Expose the detector's resolved placement as the geometry-change signal.
 
-    The transformation is recomputed from the (possibly carriage-patched)
-    transformation chain each cycle, so a detector move changes it. It is
-    stamped onto the accumulated histogram by :func:`compute_detector_histogram`
-    and drives the cumulative accumulator's reset-on-move.
-
-    A detector with no ``depends_on`` chain resolves to an identity sentinel
-    (a plain scalar, not a spatial transform): there is no geometry to move, so
-    return ``None`` to stamp no coord. File-less sources likewise override
+    Stamped onto the accumulated histogram by :func:`compute_detector_histogram`
+    to drive the cumulative accumulator's reset-on-move. File-less sources override
     :data:`DetectorGeometry` with ``None`` instead of inserting this provider.
+    See :func:`~ess.livedata.handlers.geometry_signal.geometry_signal`.
     """
-    # ``.value`` is the resolved scalar transform (time-dependence is already
-    # rejected upstream), suitable as a coord the accumulator can compare.
-    value = transform.value
-    if value.dtype not in _TRANSFORM_DTYPES:
-        return DetectorGeometry(None)
-    return DetectorGeometry(value)
+    return DetectorGeometry(geometry_signal(transform))
 
 
 def compute_detector_histogram(
