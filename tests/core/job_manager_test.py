@@ -2571,3 +2571,49 @@ class TestContextStreamGate:
         manager.job_command(JobCommand(action=JobAction.stop))
 
         assert manager.get_job_status(job_id) is None
+
+    def test_job_command_stop_by_workflow_reaches_scheduled_job(self, fake_job_factory):
+        """A `job_command` targeting a workflow_id stops not-yet-active jobs.
+
+        Without this, a scheduled job survives the stop and later activates as a
+        zombie the user believes was stopped.
+        """
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        config = _make_config(
+            "test_source",
+            schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
+        )
+        job_id = manager.schedule_job(config)
+
+        manager.job_command(
+            JobCommand(workflow_id=config.identifier, action=JobAction.stop)
+        )
+
+        assert manager.get_job_status(job_id) is None
+        # Reaching the start time must not resurrect the job.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(250),
+                end_time=Timestamp.from_ns(300),
+                data={StreamId(name="test_source"): sc.scalar(42.0)},
+            )
+        )
+        assert len(manager.active_jobs) == 0
+
+    def test_job_command_broadcast_stop_reaches_scheduled_job(self, fake_job_factory):
+        """Broadcast `job_command` without job_id/workflow_id stops scheduled jobs."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(
+            _make_config(
+                "test_source",
+                schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
+            )
+        )
+
+        manager.job_command(JobCommand(action=JobAction.stop))
+
+        assert manager.get_job_status(job_id) is None
