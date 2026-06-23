@@ -88,6 +88,53 @@ class TestAreaDetectorView:
         expected_cumulative = frame1.data + frame2.data
         assert sc.allclose(result2['cumulative'].data, expected_cumulative)
 
+    def test_restarts_on_incompatible_image_structure(self):
+        """An upstream reconfiguration (changed coords) restarts accumulation."""
+        logical_view = raw.LogicalView(
+            transform=lambda da: da,
+            input_sizes={'y': 4, 'x': 4},
+        )
+        workflow = AreaDetectorView(logical_view)
+
+        def frame(x_offset: float) -> sc.DataArray:
+            return sc.DataArray(
+                sc.ones(dims=['y', 'x'], shape=[4, 4]),
+                coords={
+                    'x': sc.arange('x', 4, dtype='float64') + x_offset,
+                    'y': sc.arange('y', 4, dtype='float64'),
+                },
+            )
+
+        workflow.accumulate(
+            {'detector': frame(0.0)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.finalize()
+
+        # Same shape, shifted coordinate -> += would raise; must restart instead.
+        workflow.accumulate(
+            {'detector': frame(9.0)},
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
+        )
+        result = workflow.finalize()
+
+        # Cumulative reflects only the new accumulation, on the new coords.
+        assert sc.identical(result['cumulative'].coords['x'], frame(9.0).coords['x'])
+        assert sc.allclose(result['cumulative'].data, frame(9.0).data)
+        # Delta baseline was reset, so current is the full new cumulative.
+        assert sc.allclose(result['current'].data, frame(9.0).data)
+
+        # Subsequent matching frames accumulate normally (not stuck).
+        workflow.accumulate(
+            {'detector': frame(9.0)},
+            start_time=Timestamp.from_ns(3000),
+            end_time=Timestamp.from_ns(4000),
+        )
+        result = workflow.finalize()
+        assert sc.allclose(result['cumulative'].data, frame(9.0).data * 2)
+
     def test_clear_resets_state(self):
         logical_view = raw.LogicalView(
             transform=lambda da: da,
