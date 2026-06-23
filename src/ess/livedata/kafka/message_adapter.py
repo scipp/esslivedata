@@ -253,7 +253,10 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
-    schema = 'f144'
+    # No producer lag recorded: the forwarder resends each value on a periodic
+    # heartbeat with the original EPICS source timestamp but a fresh Kafka
+    # CreateTime, so kafka_create - payload measures time-since-last-change, not
+    # producer staleness, and would spuriously flag healthy static PVs as stale.
 
     def __init__(
         self,
@@ -273,7 +276,6 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
             topic=message.topic(), source_name=log_data.source_name
         )
         timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
-        self._record_lag(message, log_data.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 

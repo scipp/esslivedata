@@ -1128,3 +1128,19 @@ class TestAdapterLagRecording:
         adapter.adapt(message)
 
         assert counter.drain_lag() is None
+
+    def test_f144_records_no_lag(self) -> None:
+        # The forwarder resends each value periodically with the original EPICS
+        # source timestamp, so producer lag is meaningless for f144 and is not
+        # recorded even when a broker CreateTime is available.
+        counter = StreamCounter()
+        adapter = KafkaToF144Adapter(stream_counter=counter)
+        message = FakeKafkaMessage(
+            value=make_serialized_f144(),
+            topic="sensors",
+            timestamp=10_000,
+            timestamp_type=1,
+        )
+        adapter.adapt(message)
+
+        assert counter.drain_lag() is None
