@@ -89,7 +89,7 @@ class GeometricViewConfig:
         is per-screen-pixel; document this caveat at registration.
     """
 
-    projection_type: Literal['xy_plane', 'cylinder_mantle_z']
+    projection_type: Literal['xy_plane', 'cylinder_mantle_y', 'cylinder_mantle_z']
     resolution: dict[str, int]
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
     flip_x: bool = False

@@ -78,6 +78,7 @@ _registry = {
     'geometry-odin-2025-09-25.nxs': 'md5:5615a6203813b4ab84a191f7478ceb3c',
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',
     'geometry-estia-2025-12-16.nxs': 'md5:07d33010189a50ee46ee5f649f848ca5',
+    'geometry-magic-2026-06-10.nxs': 'md5:271c8c384529bf5e8bd932fef5c17b3b',
 }
 
 
