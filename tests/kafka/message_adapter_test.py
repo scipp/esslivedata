@@ -1022,3 +1022,51 @@ class TestErrorHandling:
         exception_logs = [log for log in captured if log['log_level'] == 'error']
         assert len(exception_logs) >= 1
         assert "Simulated adapter failure" in str(exception_logs[-1])
+
+
+class TestAdapterLagRecording:
+    def _ev44(self, *, reference_time_ns: int) -> bytes:
+        return eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[reference_time_ns],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+
+    def test_records_producer_lag_keyed_by_topic_source_schema(self) -> None:
+        counter = StreamCounter()
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        # Payload at 2.0 s, broker CreateTime at 10.0 s -> 8.0 s producer lag.
+        message = FakeKafkaMessage(
+            value=self._ev44(reference_time_ns=2_000_000_000),
+            topic="monitors",
+            timestamp=10_000,
+            timestamp_type=1,
+        )
+        adapter.adapt(message)
+
+        report = counter.drain_lag()
+        assert report is not None
+        (lag,) = report.streams
+        assert (lag.topic, lag.source, lag.schema) == ("monitors", "monitor1", "ev44")
+        assert lag.max_s == pytest.approx(8.0)
+        assert lag.count == 1
+
+    def test_skips_when_broker_timestamp_unavailable(self) -> None:
+        counter = StreamCounter()
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        # Default timestamp_type=0 (NOT_AVAILABLE) -> lag cannot be computed.
+        message = FakeKafkaMessage(
+            value=self._ev44(reference_time_ns=2_000_000_000),
+            topic="monitors",
+            timestamp=10_000,
+        )
+        adapter.adapt(message)
+
+        assert counter.drain_lag() is None

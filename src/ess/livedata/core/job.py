@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import logging
 import traceback
 from dataclasses import dataclass
 from enum import StrEnum, auto
@@ -128,12 +129,64 @@ class StreamStats:
     streams: tuple[StreamStat, ...]
 
 
+# Defaults chosen against realistic ESS conditions: inter-host NTP/chrony skew
+# stays in the single-digit-millisecond range and Kafka CreateTime has only
+# millisecond resolution, so 100 ms comfortably clears clock noise while a real
+# "payload from the future" anomaly (seconds) trips the ERROR band. The WARNING
+# band flags data already seconds stale at publish time.
+LAG_WARN_THRESHOLD_S = 2.0
+LAG_FUTURE_TOLERANCE_S = 0.1
+
+
+@dataclass(frozen=True, slots=True)
+class StreamLag:
+    """Lag statistics for one (topic, source, schema) over a time window.
+
+    Lag is ``kafka_create_time - payload_timestamp`` in seconds: how stale a
+    payload already was when the broker recorded it, isolating upstream producer
+    staleness from this service's own consumption delay.
+    """
+
+    topic: str
+    source: str
+    schema: str
+    min_s: float
+    max_s: float
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StreamLagReport:
+    """Per-stream lag for one window, ordered stably by (topic, source, schema)."""
+
+    streams: tuple[StreamLag, ...]
+    warn_threshold_s: float
+    future_tolerance_s: float
+
+    def level(self, lag: StreamLag) -> int:
+        """Python logging level reflecting a single stream's lag.
+
+        ERROR if the payload is meaningfully in the future (clock/logic fault),
+        WARNING if it is more than ``warn_threshold_s`` stale at publish time,
+        otherwise INFO.
+        """
+        if lag.min_s < -self.future_tolerance_s:
+            return logging.ERROR
+        if lag.max_s > self.warn_threshold_s:
+            return logging.WARNING
+        return logging.INFO
+
+
 @runtime_checkable
 class StreamStatsProvider(Protocol):
-    """Provides accumulated per-stream message counts."""
+    """Provides accumulated per-stream message counts and lag."""
 
     def drain(self, window_seconds: float) -> StreamStats:
-        """Return accumulated stats and reset counters."""
+        """Return accumulated counts and reset."""
+        ...
+
+    def drain_lag(self) -> StreamLagReport | None:
+        """Return accumulated per-stream lag and reset, or None if empty."""
         ...
 
 

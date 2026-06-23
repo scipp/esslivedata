@@ -20,6 +20,7 @@ from .job import (
     JobStatus,
     ServiceState,
     ServiceStatus,
+    StreamLagReport,
     StreamStats,
     StreamStatsProvider,
 )
@@ -371,6 +372,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 self._pending_stream_stats = self._stream_stats_provider.drain(
                     window_seconds
                 )
+                self._log_stream_lag(self._stream_stats_provider.drain_lag())
 
             logger.info(
                 'processor_metrics',
@@ -385,6 +387,26 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             self._empty_batches = 0
             self._errors_since_last_metrics = 0
             self._last_metrics_time = timestamp
+
+    def _log_stream_lag(self, report: StreamLagReport | None) -> None:
+        """Log one line per stream at a severity reflecting its lag.
+
+        ERROR for a payload from the future (clock/logic fault upstream),
+        WARNING for data seconds stale at publish time, INFO otherwise.
+        """
+        if report is None:
+            return
+        for lag in report.streams:
+            logger.log(
+                report.level(lag),
+                'stream_lag',
+                topic=lag.topic,
+                source=lag.source,
+                schema=lag.schema,
+                min_lag_s=round(lag.min_s, 3),
+                max_lag_s=round(lag.max_s, 3),
+                count=lag.count,
+            )
 
     def finalize(self, *, error: str | None = None) -> None:
         """Mark jobs as stopped, send final heartbeat, and shut down.
