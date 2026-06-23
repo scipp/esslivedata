@@ -1404,8 +1404,9 @@ class TestTablePlotter:
     @pytest.fixture
     def table_plotter(self):
         from ess.livedata.dashboard.plot_params import PlotParamsTable
+        from ess.livedata.dashboard.table_plotter import TablePlotter
 
-        return plots.TablePlotter.from_params(PlotParamsTable())
+        return TablePlotter.from_params(PlotParamsTable())
 
     @staticmethod
     def _key(source: str, output: str) -> ResultKey:
@@ -1514,8 +1515,9 @@ class TestTablePlotter:
             PlotParamsTable,
             TableFormatParams,
         )
+        from ess.livedata.dashboard.table_plotter import TablePlotter
 
-        return plots.TablePlotter.from_params(
+        return TablePlotter.from_params(
             PlotParamsTable(format=TableFormatParams(**fmt))
         )
 

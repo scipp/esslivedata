@@ -714,8 +714,8 @@ class TestComposeTableLayer:
             PlotConfig,
         )
         from ess.livedata.dashboard.plot_params import PlotParamsTable
-        from ess.livedata.dashboard.plots import TablePlotter
         from ess.livedata.dashboard.session_layer import SessionLayer
+        from ess.livedata.dashboard.table_plotter import TablePlotter
 
         wf = WorkflowId(instrument='test', name='wf', version=1)
         config = PlotConfig(

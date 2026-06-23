@@ -250,7 +250,6 @@ def _register_all_plotters() -> None:
         ImagePlotter,
         LinePlotter,
         Overlay1DPlotter,
-        TablePlotter,
     )
     from .roi_readback_plots import (
         PolygonsReadbackPlotter,
@@ -263,6 +262,7 @@ def _register_all_plotters() -> None:
     from .scipp_to_holoviews import _all_coords_evenly_spaced
     from .slicer_plotter import SlicerPlotter
     from .static_plots import _register_static_plotters
+    from .table_plotter import TablePlotter
 
     plotter_registry.register_plotter(
         name='image',
