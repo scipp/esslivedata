@@ -18,6 +18,8 @@ import scipp as sc
 from ess.reduce.nexus.types import EmptyDetector, Filename, NeXusName, SampleRun
 from scippnexus import NXdetector
 
+from .types import DetectorGeometry
+
 if TYPE_CHECKING:
     from ess.livedata.config.instrument import Instrument
 
@@ -116,6 +118,9 @@ class DetectorNumberSource:
         workflow[EmptyDetector[SampleRun]] = create_empty_detector(
             self._detector_number
         )
+        # No geometry without a file: nothing for the cumulative accumulator to
+        # reset on (logical TOA views are valid across a move).
+        workflow[DetectorGeometry] = DetectorGeometry(None)
 
 
 class InstrumentDetectorSource:
@@ -138,3 +143,6 @@ class InstrumentDetectorSource:
     def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
         detector_number = self._instrument.get_detector_number(source_name)
         workflow[EmptyDetector[SampleRun]] = create_empty_detector(detector_number)
+        # No geometry without a file: nothing for the cumulative accumulator to
+        # reset on (logical TOA views are valid across a move).
+        workflow[DetectorGeometry] = DetectorGeometry(None)
