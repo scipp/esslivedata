@@ -201,6 +201,34 @@ class TestOrchestrator:
         assert sc.identical(data_service[result_key1], data1)
         assert sc.identical(data_service[result_key2], data2)
 
+    def test_update_isolates_poisoned_message_from_rest_of_batch(self) -> None:
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        orchestrator = _make_orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+        )
+
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+        good_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name="detector1", job_number=make_job_number()),
+            output_name='result',
+        )
+        good_data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
+
+        # A message whose stream name is not a valid ResultKey raises in forward().
+        # It must not prevent the valid message that follows it from being stored.
+        source.add_message("not-a-valid-result-key", good_data)
+        source.add_message(good_key.model_dump_json(), good_data)
+
+        orchestrator.update()
+
+        assert good_key in data_service
+        assert sc.identical(data_service[good_key], good_data)
+
     def test_update_overwrites_existing_data(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
