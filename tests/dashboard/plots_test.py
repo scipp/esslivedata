@@ -8,7 +8,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
-from bokeh.models import GlyphRenderer
+from bokeh.models import GlyphRenderer, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
@@ -31,6 +31,21 @@ from ess.livedata.dashboard.slicer_plotter import (
 )
 
 hv.extension('bokeh')
+
+
+def _assert_error_bar_endcaps_colored(error_bars: hv.ErrorBars, color: str) -> None:
+    """Assert the rendered Whisker body and both endcaps use ``color``.
+
+    Endcaps are separate ``TeeHead`` glyphs that default to black, so coloring
+    the Whisker body alone leaves them mismatched.
+    """
+    fig = hv.render(error_bars)
+    whiskers = fig.select(Whisker)
+    assert whiskers, "expected a Whisker glyph for ErrorBars"
+    whisker = whiskers[0]
+    assert whisker.line_color == color
+    assert whisker.upper_head.line_color == color
+    assert whisker.lower_head.line_color == color
 
 
 @pytest.fixture
@@ -630,6 +645,77 @@ class TestLinePlotter:
             'color'
         ]
         assert base_color == error_color
+        if error_type is hv.ErrorBars:
+            _assert_error_bar_endcaps_colored(elements[1], base_color)
+
+    def test_overlaid_sources_get_distinct_matching_colors(self, data_key):
+        """Each overlaid source gets a distinct color; its error bars match it."""
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        data_key2 = ResultKey(
+            workflow_id=data_key.workflow_id,
+            job_id=JobId(source_name='other_source', job_number=uuid.uuid4()),
+            output_name=data_key.output_name,
+        )
+        plotter.compute({'primary': {data_key: data, data_key2: data}})
+
+        fig = hv.render(plotter.get_cached_state())
+        line_colors = [
+            r.glyph.line_color
+            for r in fig.select(GlyphRenderer)
+            if type(r.glyph).__name__ == 'Line'
+        ]
+        assert len(line_colors) == 2
+        assert line_colors[0] != line_colors[1]
+        whiskers = fig.select(Whisker)
+        whisker_colors = {w.line_color for w in whiskers}
+        assert whisker_colors == set(line_colors)
+        for w in whiskers:
+            assert w.upper_head.line_color == w.line_color
+            assert w.lower_head.line_color == w.line_color
+
+    def test_layered_error_free_lines_get_distinct_colors(self, data_key):
+        """Error-free lines from independent plotters auto-cycle when layered.
+
+        Without errors no explicit color is set, so HoloViews' cross-overlay
+        cycling distinguishes sources even across plotters composed via the
+        cell layer mechanism. (Error bars require explicit colors and therefore
+        still collide across layers; see the per-plotter coloring limitation.)
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        layer_a = plots.LinePlotter.from_params(params)
+        layer_a.compute({'primary': {data_key: data}})
+        layer_b = plots.LinePlotter.from_params(params)
+        layer_b.compute({'primary': {data_key: data}})
+
+        composed = hv.Overlay(
+            [layer_a.get_cached_state(), layer_b.get_cached_state()]
+        ).collate()
+        fig = hv.render(composed)
+        line_colors = [
+            r.glyph.line_color
+            for r in fig.select(GlyphRenderer)
+            if type(r.glyph).__name__ == 'Line'
+        ]
+        assert len(line_colors) == 2
+        assert line_colors[0] != line_colors[1]
 
     def test_error_overlay_renders_responsive(self, data_key):
         """A line+error overlay renders as a responsive (stretch_both) figure."""
@@ -1440,6 +1526,35 @@ class TestOverlay1DPlotter:
         assert curve_colors['roi=3'] == colors[3]
         assert curve_colors['roi=5'] == colors[5]
 
+    def test_float_coords_colored_by_position(self, overlay_plotter, data_key):
+        """Closely-spaced float coords must not collapse onto the same color.
+
+        Integer rounding (``int(6.1) == int(6.2) == 6``) would give all three
+        choppers the same color; non-integer coords color by position instead.
+        """
+        colors = hv.Cycle.default_cycles["default_colors"]
+        data = sc.DataArray(
+            sc.array(
+                dims=['distance', 'event_time_offset'],
+                values=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+                unit='angstrom',
+            ),
+            coords={
+                'distance': sc.array(
+                    dims=['distance'], values=[6.155, 6.177, 6.185], unit='m'
+                ),
+                'event_time_offset': sc.array(
+                    dims=['event_time_offset'], values=[10.0, 20.0], unit='us'
+                ),
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        curve_colors = [
+            hv.Store.lookup_options('bokeh', curve, 'style').kwargs.get('color')
+            for curve in result
+        ]
+        assert curve_colors == [colors[0], colors[1], colors[2]]
+
     def test_fallback_to_indices_without_coord(
         self, overlay_plotter, data_2d_no_first_coord, data_key
     ):
@@ -1619,6 +1734,9 @@ class TestOverlay1DPlotter:
         assert isinstance(elements[1], hv.ErrorBars)
         assert isinstance(elements[2], hv.Curve)
         assert isinstance(elements[3], hv.ErrorBars)
+        for base, error in ((elements[0], elements[1]), (elements[2], elements[3])):
+            base_color = hv.Store.lookup_options('bokeh', base, 'style').kwargs['color']
+            _assert_error_bar_endcaps_colored(error, base_color)
 
     def test_error_band_with_variances(self, data_key):
         params = PlotParams1d(

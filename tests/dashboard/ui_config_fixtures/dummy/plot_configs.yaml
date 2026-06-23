@@ -1,0 +1,78 @@
+plot_grids:
+  grids:
+  - title: Detectors
+    nrows: 2
+    ncols: 2
+    cells:
+    - geometry:
+        row: 0
+        col: 0
+        row_span: 2
+        col_span: 1
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/area_panel_xy/1
+            source_names:
+            - area_panel
+            view_name: image
+        plot_name: image
+        params:
+          layout:
+            combine_mode: layout
+            layout_columns: 2
+          plot_aspect:
+            aspect_type: Square
+            ratio: 1.0
+            stretch_mode: Fill width
+          plot_scale:
+            x_scale: linear
+            y_scale: linear
+            color_scale: log
+          ticks:
+            custom_xticks: false
+            xticks: 5
+            custom_yticks: false
+            yticks: 5
+          window:
+            mode: window
+            window_duration_seconds: 0.0
+            aggregation: auto
+          rate:
+            normalize_to_rate: false
+    - geometry:
+        row: 0
+        col: 1
+        row_span: 2
+        col_span: 1
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/panel_0_xy/1
+            source_names:
+            - panel_0
+            view_name: image
+        plot_name: image
+        params:
+          layout:
+            combine_mode: layout
+            layout_columns: 2
+          plot_aspect:
+            aspect_type: Square
+            ratio: 1.0
+            stretch_mode: Fill width
+          plot_scale:
+            x_scale: linear
+            y_scale: linear
+            color_scale: log
+          ticks:
+            custom_xticks: false
+            xticks: 5
+            custom_yticks: false
+            yticks: 5
+          window:
+            mode: window
+            window_duration_seconds: 0.0
+            aggregation: auto
+          rate:
+            normalize_to_rate: false

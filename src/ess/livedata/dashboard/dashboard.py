@@ -14,6 +14,7 @@ from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
+from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
@@ -39,14 +40,22 @@ class DashboardBase(ServiceBase, ABC):
         dashboard_name: str,
         port: int = 5007,
         transport: str = 'kafka',
+        config_dir: str | None = None,
+        auto_start: bool = False,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
     ):
+        if auto_start and transport != 'fake':
+            raise ValueError(
+                "auto_start requires transport='fake'; with other transports it "
+                "would issue real start commands (or stay PENDING with no backend)."
+            )
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
         self._instrument = instrument
         self._port = port
         self._dev = dev
+        self._auto_start = auto_start
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
 
@@ -54,7 +63,9 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
-        config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
+        config_manager = ConfigStoreManager(
+            instrument=instrument, store_type='file', config_dir=config_dir
+        )
 
         # Setup all dashboard services (includes session registry)
         self._services = DashboardServices(
@@ -77,7 +88,7 @@ class DashboardBase(ServiceBase, ABC):
         Parameters
         ----------
         transport:
-            Transport type ('kafka' or 'none')
+            Transport type ('kafka', 'none', or 'fake')
 
         Returns
         -------
@@ -88,12 +99,24 @@ class DashboardBase(ServiceBase, ABC):
             return DashboardKafkaTransport(instrument=self._instrument, dev=self._dev)
         elif transport == 'none':
             return NullTransport()
+        elif transport == 'fake':
+            return FakeBackendTransport(instrument=self._instrument)
         else:
             raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
-        """Override this method to create the sidebar content."""
+    def create_sidebar_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
+        """Override this method to create the sidebar content.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater for this browser session. Use
+            ``register_cleanup_handler`` to release per-session resources on
+            session teardown.
+        """
         pass
 
     @abstractmethod
@@ -174,7 +197,6 @@ class DashboardBase(ServiceBase, ABC):
 
     def _create_logout_header(self) -> list[pn.viewable.Viewable]:
         """Create a logout button for the header when auth is enabled."""
-        # ruff: disable[E501]
         logout_link = pn.pane.HTML(
             """<div style="text-align: right; padding-right: 8px;">
             <a href="/logout" style="
@@ -188,12 +210,14 @@ class DashboardBase(ServiceBase, ABC):
                 border-radius: 20px;
                 display: inline-block;
                 transition: background 0.2s, border-color 0.2s;
-                " onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.borderColor='white'"
-                onmouseout="this.style.background='none';this.style.borderColor='rgba(255,255,255,0.7)'"
+                "
+                onmouseover="this.style.background='rgba(255,255,255,0.2)';
+                             this.style.borderColor='white'"
+                onmouseout="this.style.background='none';
+                            this.style.borderColor='rgba(255,255,255,0.7)'"
             >Log out</a></div>""",
             sizing_mode='stretch_width',
         )
-        # ruff: enable[E501]
         return [logout_link]
 
     def create_layout(self) -> pn.template.MaterialTemplate:
@@ -201,7 +225,7 @@ class DashboardBase(ServiceBase, ABC):
         # Create session updater first so widgets can register handlers
         session_updater = self._create_session_updater()
 
-        sidebar_content = self.create_sidebar_content()
+        sidebar_content = self.create_sidebar_content(session_updater)
         main_content = self.create_main_content(session_updater)
 
         # Append heartbeat widget to sidebar (invisible but required for
@@ -279,6 +303,22 @@ class DashboardBase(ServiceBase, ABC):
     def _start_impl(self) -> None:
         """Start the dashboard service."""
         self._services.start()
+        if self._auto_start:
+            self._auto_start_workflows()
+
+    def _auto_start_workflows(self) -> None:
+        """Commit every workflow that has staged config.
+
+        Drives the normal commit path (as the play button does) for each
+        configured workflow, so that with the fake transport plots come to
+        life on launch without any UI interaction. Intended for seeded
+        UI-test/screenshot runs (see ``--config-dir``).
+        """
+        orchestrator = self._services.job_orchestrator
+        for workflow_id in orchestrator.get_workflow_registry():
+            if orchestrator.get_staged_config(workflow_id):
+                orchestrator.commit_workflow(workflow_id)
+                self._logger.info("auto-started workflow %s", workflow_id)
 
     def run_forever(self) -> None:
         """Run the dashboard server."""

@@ -8,6 +8,7 @@ from ..config.models import PolygonROI, RectangleROI
 from ..config.roi_names import ROIGeometry
 from ..config.workflow_spec import JobId
 from ..core.message import Message, MessageSink, StreamId, StreamKind
+from ..core.timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
 
@@ -53,7 +54,14 @@ class ROIPublisher:
 
         data_array = geometry.roi_class.to_concatenated_data_array(rois)
 
-        msg = Message(value=data_array, stream=stream_id)
+        # ROI requests carry no meaningful event-time: the selection applies to
+        # data accumulated since run start, regardless of when the request was made.
+        # Stamp at epoch 0 so the event-time message batcher treats the request as
+        # already-current and applies it to the next processed window, instead of
+        # holding it until the data watermark catches up to wall-clock-now.
+        msg = Message(
+            value=data_array, stream=stream_id, timestamp=Timestamp.from_ns(0)
+        )
         self._sink.publish_messages([msg])
 
         if rois:

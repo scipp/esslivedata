@@ -1,0 +1,94 @@
+{
+    "sliders": [
+        {
+            "stream_name": "pulse_shaping_chopper1/rotation_speed_setpoint",
+            "label": "Pulse-shaping chopper 1 speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 210.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper2/rotation_speed_setpoint",
+            "label": "Pulse-shaping chopper 2 speed setpoint (Hz, counter-rotating)",
+            "min": -196.0,
+            "max": -7.0,
+            "step": 7.0,
+            "initial": -14.0
+        },
+        {
+            "stream_name": "overlap_chopper/rotation_speed_setpoint",
+            "label": "Overlap chopper speed setpoint (Hz)",
+            "min": 7.0,
+            "max": 14.0,
+            "step": 7.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "band_chopper/rotation_speed_setpoint",
+            "label": "Band-control chopper speed setpoint (Hz)",
+            "min": 14.0,
+            "max": 112.0,
+            "step": 14.0,
+            "initial": 112.0
+        },
+        {
+            "stream_name": "T0_chopper/rotation_speed_setpoint",
+            "label": "T0 chopper speed setpoint (Hz)",
+            "min": 14.0,
+            "max": 28.0,
+            "step": 14.0,
+            "initial": 28.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper1/delay",
+            "label": "Pulse-shaping chopper 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428571.0,
+            "step": 100000.0,
+            "initial": 0.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper2/delay",
+            "label": "Pulse-shaping chopper 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428571.0,
+            "step": 100000.0,
+            "initial": 4900000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "overlap_chopper/delay",
+            "label": "Overlap chopper delay readback (ns)",
+            "min": 0.0,
+            "max": 71428571.0,
+            "step": 100000.0,
+            "initial": 22100000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "band_chopper/delay",
+            "label": "Band-control chopper delay readback (ns)",
+            "min": 0.0,
+            "max": 8928571.0,
+            "step": 10000.0,
+            "initial": 3090000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "T0_chopper/delay",
+            "label": "T0 chopper delay readback (ns)",
+            "min": 0.0,
+            "max": 35714286.0,
+            "step": 50000.0,
+            "initial": 250000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        }
+    ]
+}

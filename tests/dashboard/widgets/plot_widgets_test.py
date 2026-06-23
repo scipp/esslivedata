@@ -20,10 +20,36 @@ from ess.livedata.dashboard.plot_orchestrator import (
 )
 from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
 from ess.livedata.dashboard.widgets.plot_widgets import (
+    _create_configure_button_or_menu,
+    _create_toolbar_visibility_button,
     _format_window_info,
     derive_cell_title,
     get_plot_cell_display_info,
 )
+
+
+class TestPerPanelToolHooks:
+    """Per-panel tools must carry the stable lt-* automation hooks.
+
+    Unlike the create_tool_button-based buttons, these are hand-rolled (a
+    toggling icon, a dropdown menu), so they tag themselves and can silently
+    drift. See .claude/rules/dashboard-widgets.md.
+    """
+
+    def test_toolbar_visibility_toggle_has_layer_details_hook(self) -> None:
+        button = _create_toolbar_visibility_button(
+            visible=True, on_toggle=lambda _: None
+        )
+        assert 'lt-tool' in button.css_classes
+        assert 'lt-tool-layer-details' in button.css_classes
+
+    def test_multi_layer_configure_menu_has_settings_hook(self) -> None:
+        layers = [(LayerId('a'), 'A'), (LayerId('b'), 'B')]
+        menu = _create_configure_button_or_menu(
+            layers=layers, on_configure=lambda _: None
+        )
+        assert 'lt-tool' in menu.css_classes
+        assert 'lt-tool-settings' in menu.css_classes
 
 
 class _FakeParams(pydantic.BaseModel):

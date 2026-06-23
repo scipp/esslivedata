@@ -63,19 +63,19 @@ def test_bifrost_monitors_correctly_mapped() -> None:
     """Bifrost has specific named monitors that must map to correct cbm indices.
 
     The monitor list order must match the cbm indices in production:
-    - cbm1 -> 090_frame_1 (first monitor)
-    - cbm2 -> 097_frame_2 (second monitor)
+    - cbm1 -> psc_monitor (first monitor)
+    - cbm2 -> overlap_monitor (second monitor)
     - etc.
     """
     stream_mapping = streams.get_stream_mapping(instrument='bifrost', dev=False)
 
     # Expected mapping based on Bifrost's monitor list in specs.py
     expected_mapping = {
-        'cbm1': '090_frame_1',
-        'cbm2': '097_frame_2',
-        'cbm3': '110_frame_3',
-        'cbm4': '111_psd0',
-        'cbm5': 'bragg_peak_monitor',
+        'cbm1': 'psc_monitor',
+        'cbm2': 'overlap_monitor',
+        'cbm3': 'bandwidth_monitor',
+        'cbm4': 'normalization_monitor',
+        'cbm5': 'elastic_monitor',
     }
 
     actual_mapping = {

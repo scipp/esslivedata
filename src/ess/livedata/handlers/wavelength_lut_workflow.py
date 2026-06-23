@@ -44,12 +44,14 @@ from ess.reduce.nexus.types import (
 from ess.reduce.nexus.workflow import to_disk_choppers
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
+    ChopperFrameSequence,
     DistanceResolution,
     LookupTable,
     LtotalRange,
     PulsePeriod,
     PulseStride,
     TimeResolution,
+    _estimate_wavelength_by_polygon_centers,
 )
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
@@ -57,6 +59,7 @@ from .dynamic_transforms import synthesise_provider
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
 )
@@ -74,6 +77,11 @@ ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 
 #: Wavelength lookup-table with provenance coords attached.
 WavelengthLut = NewType('WavelengthLut', sc.DataArray)
+
+#: Per-component wavelength bands evaluated at exact chopper distances, indexed
+#: by a ``distance`` dimension (source + one row per chopper, plus one row per
+#: configured cut distance).
+WavelengthBands = NewType('WavelengthBands', sc.DataArray)
 
 #: Sciline key for the user-facing parameter bundle, used by the provenance
 #: provider. Distinct from the individual parameter keys (PulsePeriod, etc.)
@@ -187,6 +195,75 @@ def _attach_provenance(
     return WavelengthLut(arr)
 
 
+def make_wavelength_bands_from_frames(
+    pulse_period: PulsePeriod,
+    pulse_stride: PulseStride[AnyRun],
+    frames: ChopperFrameSequence[AnyRun],
+    params: ParamsKey,
+) -> WavelengthBands:
+    """Wavelength band transmitted at points along the beamline.
+
+    Evaluates the surviving wavelength vs ``event_time_offset`` at the exact
+    distance of every frame in the cascade — the source pulse (distance 0)
+    followed by one row per chopper — plus a row at each user-configured cut
+    distance (typically monitor and detector positions). A row that is entirely
+    NaN means no neutrons are transmitted there, i.e. the upstream chopper
+    blocks the beam. Rows are ordered by ascending distance.
+
+    Cut-distance rows reuse :meth:`FrameSequence.__getitem__`, which propagates
+    the last cascade frame *before* the requested distance forward to it, so a
+    point between or beyond the choppers reflects the physically correct beam
+    state.
+
+    Unlike :func:`make_wavelength_lut_from_polygons`, this does not rasterize
+    onto a uniform distance grid, so closely-spaced choppers stay individually
+    resolved regardless of the table's distance resolution — letting one read
+    off which chopper in a tight cascade blocks the beam.
+
+    Reuses essreduce's (currently private)
+    ``_estimate_wavelength_by_polygon_centers``; once this diagnostic proves its
+    design, the whole function should move upstream into ``ess.reduce.unwrap``.
+    """
+    time_unit = 'us'
+    wavelength_unit = 'angstrom'
+    pulse_period = pulse_period.to(unit=time_unit)
+    frame_period = pulse_period * pulse_stride
+
+    time_edges = sc.linspace(
+        'event_time_offset',
+        0.0,
+        frame_period.value,
+        params.cascade_bands.num_bins + 1,
+        unit=pulse_period.unit,
+    )
+
+    def band(frame) -> sc.Variable:
+        return _estimate_wavelength_by_polygon_centers(
+            subframes=frame.subframes,
+            time_edges=time_edges,
+            time_unit=time_unit,
+            wavelength_unit=wavelength_unit,
+            frame_period=frame_period,
+        )
+
+    # Source + choppers sit at their own frame distances; cut-distance rows
+    # propagate the cascade forward to each configured point.
+    rows = [(frame.distance.to(unit='m'), frame) for frame in frames]
+    rows.extend(
+        (distance, frames[distance])
+        for distance in params.cascade_bands.get_distances().to(unit='m')
+    )
+
+    # Round to whole millimetres so curve labels read cleanly (e.g. 6.145 m)
+    # rather than carrying float-propagation noise.
+    distances = sc.round(sc.concat([d for d, _ in rows], dim='distance'), decimals=3)
+    table = sc.DataArray(
+        data=sc.concat([band(frame) for _, frame in rows], dim='distance'),
+        coords={'distance': distances, 'event_time_offset': time_edges},
+    )
+    return WavelengthBands(sc.sort(table, 'distance'))
+
+
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf = GenericUnwrapWorkflow(
         run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
@@ -204,6 +281,9 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     )
     wf[ParamsKey] = params
     wf.insert(_attach_provenance)
+    # Per-component diagnostic evaluated at exact chopper distances, sidestepping
+    # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
+    wf.insert(make_wavelength_bands_from_frames)
     return wf
 
 
@@ -211,7 +291,10 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         pipeline,
         dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
-        target_keys={WAVELENGTH_LUT_OUTPUT: WavelengthLut},
+        target_keys={
+            WAVELENGTH_LUT_OUTPUT: WavelengthLut,
+            WAVELENGTH_BANDS_OUTPUT: WavelengthBands,
+        },
         accumulators={},
         # The trigger flows straight to the DiskChoppers provider rather than
         # through an accumulator.

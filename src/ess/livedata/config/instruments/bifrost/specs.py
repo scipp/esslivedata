@@ -190,13 +190,14 @@ class QMapOutputs(WorkflowOutputsBase):
     )
 
 
-# Monitor names matching group names in Nexus files
+# Monitor names matching group names in Nexus files. Order matches the Kafka
+# ``cbm1``..``cbm5`` source names (see ``_make_cbm_monitors``).
 monitors = [
-    '090_frame_1',
-    '097_frame_2',
-    '110_frame_3',
-    '111_psd0',
-    'bragg_peak_monitor',
+    'psc_monitor',  # cbm1
+    'overlap_monitor',  # cbm2
+    'bandwidth_monitor',  # cbm3
+    'normalization_monitor',  # cbm4
+    'elastic_monitor',  # cbm5
 ]
 
 
@@ -220,15 +221,18 @@ monitor_handle = register_monitor_workflow_specs(
 
 
 def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataArray:
-    """Reshape raw detector data into ``(arc, detector_number_full)``.
+    """Reshape raw detector data into the 2D ``(arc/tube, channel/pixel)`` image.
 
-    ``arc`` is preserved so the spectrum transform can operate per-arc; the
-    remaining (tube, channel, pixel) axes are flattened into a single
-    ``detector_number_full`` dim of size 2700.
+    The 5 arcs and 3 tubes are stacked along the vertical ``arc/tube`` axis
+    (15 rows) and the 9 channels and 100 pixels along the horizontal
+    ``channel/pixel`` axis (900 columns). This matches the static triplet-bounds
+    grid overlaid on the unified detector view.
     """
     da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
-    return da.to(dtype='float32').flatten(
-        dims=('tube', 'channel', 'pixel'), to='detector_number_full'
+    return (
+        da.to(dtype='float32')
+        .flatten(dims=('arc', 'tube'), to='arc/tube')
+        .flatten(dims=('channel', 'pixel'), to='channel/pixel')
     )
 
 
@@ -247,16 +251,19 @@ def _bifrost_spectrum_transform(
 ) -> sc.DataArray:
     """Reshape the cumulative histogram into ``(arc, detector_number, toa)``.
 
-    ``detector_number_full`` is folded back into an outer ``detector_number``
-    axis of size ``pixels_per_tube`` and an inner ``subpixel`` axis;
-    summing over ``subpixel`` yields ``pixels_per_tube`` pixels per tube.
+    The 2D image stacks ``(arc, tube)`` and ``(channel, pixel)``; unfold both,
+    group adjacent pixels within a tube into ``pixels_per_tube`` output pixels
+    (summing the intervening ``subpixel`` axis), and flatten the per-arc
+    ``(tube, channel, pixel)`` axes into a single ``detector_number`` axis.
     """
     subpixel = 100 // params.pixels_per_tube
-    folded = histogram.fold(
-        'detector_number_full',
-        sizes={'detector_number': -1, 'subpixel': subpixel},
+    grouped = (
+        histogram.fold('arc/tube', sizes={'arc': 5, 'tube': 3})
+        .fold('channel/pixel', sizes={'channel': 9, 'pixel': 100})
+        .fold('pixel', sizes={'pixel': params.pixels_per_tube, 'subpixel': subpixel})
+        .sum('subpixel')
     )
-    return folded.sum('subpixel')
+    return grouped.flatten(dims=('tube', 'channel', 'pixel'), to='detector_number')
 
 
 # Register unified detector view with embedded spectrum output.

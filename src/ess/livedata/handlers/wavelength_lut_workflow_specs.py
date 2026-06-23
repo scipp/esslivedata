@@ -10,7 +10,7 @@ import scipp as sc
 from ..config.instrument import Instrument
 from ..config.workflow_spec import REDUCTION, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
-from ..parameter_models import LengthUnit, RangeModel, TimeUnit
+from ..parameter_models import LengthUnit, RangeModel, TimeUnit, parse_number_list
 
 #: Logical primary stream name for the synthesized chopper-cascade tick. The
 #: synthesizer emits a single ``LogData`` message with this stream name once
@@ -21,6 +21,10 @@ CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 #: Output key returned by the workflow's ``finalize`` and the field name on
 #: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
 WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
+
+#: Output key for the per-component wavelength bands diagnostic. Field name on
+#: :class:`WavelengthLutOutputs`.
+WAVELENGTH_BANDS_OUTPUT = 'chopper_cascade_bands'
 
 
 class Pulse(pydantic.BaseModel):
@@ -81,6 +85,47 @@ class LtotalRange(RangeModel):
     unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
 
 
+class CascadeBands(pydantic.BaseModel):
+    """Configuration of the *Chopper cascade bands* output.
+
+    That diagnostic always draws one curve at the source and one at each chopper
+    (at their exact distances). ``distances`` adds *further* curves at arbitrary
+    beamline points, propagating the cascade forward to each (typically the
+    monitor and detector positions, but any point of interest is valid); entered
+    as a comma-separated list, since the parameter widget has no native list
+    input. ``num_bins`` sets how finely every curve samples the
+    event-time-offset axis.
+    """
+
+    distances: str = pydantic.Field(
+        default='',
+        description="Comma-separated distances from the source, e.g. '6.2, 9.8'.",
+    )
+    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+    num_bins: int = pydantic.Field(
+        default=1000,
+        ge=1,
+        description=(
+            "Number of event-time-offset bins sampling each curve. Independent "
+            "of the lookup-table time resolution: chosen fine enough to resolve "
+            "narrow transmitted bands across the frame."
+        ),
+    )
+
+    @pydantic.field_validator('distances')
+    @classmethod
+    def _check(cls, v: str) -> str:
+        parse_number_list(v)  # raises on malformed input
+        return v
+
+    def get_distances(self) -> sc.Variable:
+        return sc.array(
+            dims=['distance'],
+            values=parse_number_list(self.distances),
+            unit=self.unit.value,
+        )
+
+
 class WavelengthLutParams(pydantic.BaseModel):
     """User-facing parameters for the wavelength lookup-table workflow."""
 
@@ -104,9 +149,32 @@ class WavelengthLutParams(pydantic.BaseModel):
         description='Resolution of the event-time-offset axis in the lookup table.',
         default_factory=TimeResolution,
     )
+    cascade_bands: CascadeBands = pydantic.Field(
+        title='Chopper cascade bands',
+        description=(
+            'Settings for the "Chopper cascade bands" output. The source and '
+            'every chopper always get a curve; add curves at further beamline '
+            'distances (typically monitor and detector positions) and set their '
+            'event-time-offset sampling here.'
+        ),
+        default_factory=CascadeBands,
+    )
 
 
 def _empty_wavelength_lut_template() -> sc.DataArray:
+    """Empty placeholder used by the spec until the first computation."""
+    return sc.DataArray(
+        sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
+        coords={
+            'distance': sc.array(dims=['distance'], values=[], unit='m'),
+            'event_time_offset': sc.array(
+                dims=['event_time_offset'], values=[], unit='us'
+            ),
+        },
+    )
+
+
+def _empty_wavelength_bands_template() -> sc.DataArray:
     """Empty placeholder used by the spec until the first computation."""
     return sc.DataArray(
         sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
@@ -128,6 +196,20 @@ class WavelengthLutOutputs(WorkflowOutputsBase):
         description=(
             'Wavelength as a function of distance and event-time-offset, '
             'computed from the current chopper cascade.'
+        ),
+    )
+    chopper_cascade_bands: sc.DataArray = pydantic.Field(
+        default_factory=_empty_wavelength_bands_template,
+        title='Chopper cascade bands',
+        description=(
+            'Wavelength band transmitted along the beamline: always one curve at '
+            'the source and one at each chopper (at their exact distances), plus '
+            'a curve at each distance configured in the "Cascade bands" '
+            'parameter section. Plot with the "Overlay 1D" plotter: one curve per '
+            'distance (identified by its value in metres). A curve that vanishes '
+            '(all-NaN) marks where the beam is blocked. Unlike the lookup table, '
+            'this resolves closely-spaced choppers regardless of distance '
+            'resolution.'
         ),
     )
 

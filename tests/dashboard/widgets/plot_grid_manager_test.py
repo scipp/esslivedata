@@ -178,6 +178,30 @@ class TestGridRow:
 
         assert isinstance(row.panel, pn.Row)
 
+    def test_tool_buttons_carry_per_grid_automation_hook(
+        self, plot_orchestrator, workflow_registry
+    ):
+        """Each row's tool buttons get an lt-grid-{slug} class for automation.
+
+        Repeated icons (e.g. the pencil) across grids are only uniquely
+        addressable with a per-grid context class. See dashboard-widgets.md.
+        """
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='My Grid', nrows=2, ncols=3)
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='dummy',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+        edit_button = row.panel[3]
+        assert 'lt-grid-my_grid' in edit_button.css_classes
+        assert 'lt-tool-pencil' in edit_button.css_classes
+
     def test_download_button_has_correct_filename(
         self, plot_orchestrator, workflow_registry
     ):

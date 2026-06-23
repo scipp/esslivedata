@@ -1,0 +1,76 @@
+dummy/area_panel_xy/1:
+  jobs:
+    area_panel:
+      aux_source_names: {}
+      params: {}
+dummy/monitor_histogram/1:
+  jobs:
+    monitor1:
+      aux_source_names: {}
+      params:
+        coordinate_mode: &id001
+          mode: toa
+        toa_edges: &id002
+          num_bins: 100
+          scale: linear
+          start: 0.0
+          stop: 71.42857142857143
+          unit: ms
+        toa_range: &id003
+          enabled: false
+          start: 0.0
+          stop: 10.0
+          unit: μs
+    monitor2:
+      aux_source_names: {}
+      params:
+        coordinate_mode: *id001
+        toa_edges: *id002
+        toa_range: *id003
+dummy/panel_0_xy/1:
+  jobs:
+    panel_0:
+      aux_source_names:
+        roi_polygon: roi_polygon
+        roi_rectangle: roi_rectangle
+      params:
+        coordinate_mode:
+          mode: toa
+        pixel_weighting:
+          enabled: false
+          method: pixel_number
+        toa_edges:
+          num_bins: 100
+          scale: linear
+          start: 0.0
+          stop: 71.42857142857143
+          unit: ms
+        toa_range:
+          enabled: false
+          start: 0.0
+          stop: 10.0
+          unit: μs
+        wavelength_edges:
+          num_bins: 100
+          scale: linear
+          start: 1.0
+          stop: 10.0
+          unit: Å
+        wavelength_range:
+          enabled: false
+          start: 0.0
+          stop: 10.0
+          unit: Å
+dummy/timeseries_data/1:
+  jobs:
+    motion1:
+      aux_source_names: {}
+      params: {}
+    motion2:
+      aux_source_names: {}
+      params: {}
+dummy/total_counts/1:
+  jobs:
+    panel_0:
+      aux_source_names: {}
+      params: {}

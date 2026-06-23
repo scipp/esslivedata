@@ -75,7 +75,10 @@ class ReductionApp(DashboardBase):
         instrument: str = 'dummy',
         dev: bool = False,
         log_level: int,
+        port: int = 5009,
         transport: str = 'kafka',
+        config_dir: str | None = None,
+        auto_start: bool = False,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
@@ -85,8 +88,10 @@ class ReductionApp(DashboardBase):
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
-            port=5009,  # Default port for reduction dashboard
+            port=port,
             transport=transport,
+            config_dir=config_dir,
+            auto_start=auto_start,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
@@ -121,15 +126,19 @@ class ReductionApp(DashboardBase):
         pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
         return pane
 
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
+    def create_sidebar_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
         """Create the sidebar content."""
         # Create log producer widget only in dev mode (per-session)
         dev_content = []
         if self._dev:
-            dev_widget = LogProducerWidget(
-                instrument=self._instrument,
-                exit_stack=self._exit_stack,
-            )
+            dev_widget = LogProducerWidget(instrument=self._instrument)
+            # Release the per-session Kafka producer on session teardown. Routed
+            # through the session updater (not on_session_destroyed directly) so
+            # the heartbeat-based stale reaper also triggers cleanup when Panel's
+            # on_session_destroyed fails to fire.
+            session_updater.register_cleanup_handler(dev_widget.close)
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
         return pn.Column(
@@ -187,10 +196,33 @@ class ReductionApp(DashboardBase):
 def get_arg_parser() -> argparse.ArgumentParser:
     parser = Service.setup_arg_parser(description='ESSlivedata Dashboard')
     parser.add_argument(
+        '--port',
+        type=int,
+        default=5009,
+        help='Port for the Bokeh server. Override to run several dashboards at '
+        'once or to sidestep a port left in use by a prior instance.',
+    )
+    parser.add_argument(
         '--transport',
-        choices=['kafka', 'none'],
+        choices=['kafka', 'none', 'fake'],
         default='kafka',
-        help='Transport backend for message handling',
+        help='Transport backend for message handling. "fake" runs an in-process '
+        'backend that synthesizes data for started workflows (no Kafka).',
+    )
+    parser.add_argument(
+        '--config-dir',
+        default=None,
+        help='Base directory for persistent UI config (workflow/plot YAML). '
+        'Overrides LIVEDATA_CONFIG_DIR. Point at a seeded fixture (copied to a '
+        'scratch dir, since the dashboard writes to it) to launch pre-configured.',
+    )
+    parser.add_argument(
+        '--auto-start',
+        action='store_true',
+        default=False,
+        help='Commit every workflow that has staged config on startup. Requires '
+        '--transport fake; combine with --config-dir to launch a fully live '
+        'dashboard with no UI interaction (e.g. for screenshots).',
     )
     parser.add_argument(
         '--no-fetch-announcements',

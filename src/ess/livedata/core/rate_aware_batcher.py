@@ -586,18 +586,41 @@ class RateAwareMessageBatcher(MessageBatcher):
             messages.extend(stream.drain())
         return messages
 
+    def _any_gating(self) -> bool:
+        """True if at least one tracked stream currently gates closure."""
+        return any(stream.is_gating for stream in self._streams.values())
+
     def _close_batch(self, window: _ActiveWindow) -> MessageBatch:
         self._refresh_stream_registry(window)
+        messages = self._drain_window()
+
+        if self._any_gating():
+            end_time = window.end
+        else:
+            # No gridded stream gates closure, so the timeout path closed the
+            # batch.  Stepping ``end_time`` by one batch_length per call would
+            # leave the batch's timestamps behind the data when traffic spans
+            # several batch_lengths per call.  Mirror ``SimpleMessageBatcher``:
+            # include all held-back traffic and set ``end_time`` to the newest
+            # message so the batch covers its real time range.
+            messages += self._future + self._overflow
+            self._future = []
+            self._overflow = []
+            end_time = max((m.timestamp for m in messages), default=window.end)
+            end_time = max(end_time, window.end)
+
         batch = MessageBatch(
-            start_time=window.start, end_time=window.end, messages=self._drain_window()
+            start_time=window.start, end_time=end_time, messages=messages
         )
 
-        new_start = window.end
+        new_start = end_time
         new_window = _ActiveWindow(start=new_start, end=new_start + self._batch_length)
         self._active_window = new_window
         # Drain overflow into the new window.  Timestamps that still fall
         # past the last slot land back in ``_overflow`` and wait for the
-        # next close; gap recovery handles jumps larger than one batch.
+        # next close; gap recovery handles jumps larger than one batch.  In
+        # the non-gating branch both buffers are already drained above, so
+        # these loops are no-ops there.
         overflow = self._overflow
         self._overflow = []
         for msg in overflow:

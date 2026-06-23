@@ -52,11 +52,17 @@ Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
 
 Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 
-Add `--transport none` to run the dashboard UI without Kafka (port 5009, hardcoded).
-For browser automation / screenshots, target buttons via the stable `lt-tool-*` /
-`lt-wf-*` CSS classes (never coordinates) -- see "Stable CSS hooks for automation" in
-`.claude/rules/dashboard-widgets.md`. Note `--transport none` has no backend, so starting
-a workflow stays PENDING.
+`--transport none` runs the UI without Kafka (default port 5009; pass `--port` for a
+second instance or to dodge a port a prior run still holds). With no backend, started
+workflows stay PENDING. `--transport fake` adds an in-process fake backend (no Kafka):
+started workflows go ACTIVE and plots fill with synthesized data.
+
+To drive or screenshot the UI without Kafka, use `scripts/drive_dashboard.py`: `--launch`
+spawns a fake backend seeded from the dummy fixture, drives it, and tears it down;
+`--map` inventories the live tabs and `lt-*` automation hooks. For the library API,
+fixture seeding/regeneration, and automation gotchas (stable `lt-*` hooks, shadow-DOM
+selectors, modals), see the script's module docstring and "Driving the dashboard with
+Playwright" in `.claude/rules/dashboard-widgets.md`.
 
 ## Tools
 
