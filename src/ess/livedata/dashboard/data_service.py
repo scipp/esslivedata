@@ -184,7 +184,11 @@ class DataService(MutableMapping[K, V]):
         updated_keys
             The set of data keys that were updated.
         """
-        for subscriber in self._subscribers:
+        # Iterate over a snapshot: a subscriber's trigger, or a concurrent
+        # unregister from the UI thread, may mutate self._subscribers mid-loop.
+        # Without the copy the list-index iterator would silently skip the
+        # subscriber following a removed one.
+        for subscriber in list(self._subscribers):
             if updated_keys & subscriber.keys:
                 try:
                     subscriber_data = self._build_subscriber_data(subscriber)
