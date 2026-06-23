@@ -139,6 +139,13 @@ def _finite_min_max(
     finite = values[mask]
     if finite.size == 0:
         return None
+    if np.issubdtype(finite.dtype, np.datetime64):
+        # Range targets are bare floats. For a datetime axis the agreed unit is
+        # epoch nanoseconds -- the unit ``range_hook`` reconstructs a datetime64
+        # against. Normalize here so that contract holds regardless of the
+        # source coord's datetime unit (and so ``float()`` does not choke on a
+        # non-ns datetime64 scalar, which converts to ``datetime.datetime``).
+        finite = finite.astype('datetime64[ns]').astype('int64')
     return float(finite.min()), float(finite.max())
 
 

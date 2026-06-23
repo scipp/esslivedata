@@ -47,21 +47,19 @@ def _ordered_write(
     is above the current high, write the high first; otherwise write the low
     first.
 
-    On a datetime axis the float targets (epoch-ns; see
-    ``plots._finite_min_max``) are cast back to ``np.datetime64`` so Bokeh's
-    range patch does not mix incompatible numpy dtypes. ``datetime`` is decided
-    from the figure's axis type, not the current bound's dtype: after a zoom
-    the bound is an epoch-ms float, yet the axis is still datetime.
+    On a datetime axis the float targets are epoch *nanoseconds* by contract
+    (see ``plots._finite_min_max``); they are cast back to ``np.datetime64[ns]``
+    so Bokeh's range patch does not mix incompatible numpy dtypes. The unit is
+    fixed at ns rather than copied from the current bound: the target is an
+    ns count, so interpreting it in any other unit would corrupt the value.
+    ``datetime`` is decided from the figure's axis type, not the current bound's
+    dtype: after a zoom the bound is an epoch-ms float, yet the axis is still
+    datetime.
     """
     current_hi = getattr(model, hi_attr, None)
     if datetime:
-        unit = (
-            np.datetime_data(current_hi)[0]
-            if isinstance(current_hi, np.datetime64)
-            else 'ns'
-        )
-        lo_value: Any = np.datetime64(round(lo), unit)
-        hi_value: Any = np.datetime64(round(hi), unit)
+        lo_value: Any = np.datetime64(round(lo), 'ns')
+        hi_value: Any = np.datetime64(round(hi), 'ns')
         write_hi_first = current_hi is None or _to_ns_float(hi_value) >= _to_ns_float(
             current_hi
         )

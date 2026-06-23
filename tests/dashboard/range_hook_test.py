@@ -146,8 +146,8 @@ def test_write_avoids_inverted_range_downward() -> None:
 
 def test_write_datetime_axis_coerces_float_targets() -> None:
     """Bokeh stores datetime ranges as ``np.datetime64``; range targets are
-    floats (epoch counts). The float must be cast back to a datetime64 of the
-    handle's unit so neither the ordering comparison nor Bokeh's range patch
+    floats (epoch nanoseconds by contract). The float must be cast back to a
+    datetime64[ns] so neither the ordering comparison nor Bokeh's range patch
     mixes datetime64/float (which raises ``UFuncTypeError``)."""
     lo_dt = np.datetime64('2026-06-17T11:52:00', 'ns')
     hi_dt = np.datetime64('2026-06-17T11:52:04', 'ns')
