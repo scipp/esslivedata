@@ -106,8 +106,10 @@ class CellPropertiesModal:
         self.modal.open = True
 
     def _build(self) -> pn.Modal:
-        add_layer_button = pn.widgets.Button(name='Add layer…', button_type='default')
-        add_layer_button.on_click(lambda _: self._on_add())
+        self._add_layer_button = pn.widgets.Button(
+            name='Add layer…', button_type='default'
+        )
+        self._add_layer_button.on_click(lambda _: self._on_add())
         save_button = pn.widgets.Button(name='Save', button_type='primary')
         save_button.on_click(lambda _: self._finish(save=True))
         cancel_button = pn.widgets.Button(name='Cancel')
@@ -119,7 +121,7 @@ class CellPropertiesModal:
                 pn.pane.Markdown('#### Header', margin=(0, 0, 0, 0)),
                 self._text,
                 pn.pane.Markdown('#### Layers', margin=(10, 0, 0, 0)),
-                pn.Row(add_layer_button, pn.Spacer(sizing_mode='stretch_width')),
+                pn.Row(self._add_layer_button, pn.Spacer(sizing_mode='stretch_width')),
                 self._layers_col,
                 pn.Row(
                     pn.Spacer(sizing_mode='stretch_width'),
@@ -203,6 +205,22 @@ class CellPropertiesModal:
 
     def _render_layers(self) -> None:
         existing = frozenset(layer.config.plot_name for layer in self._cell.layers)
+        # A non-overlayable layer (table or layout-mode plot) cannot share a cell,
+        # so no further layer can join it; disable the cell-level add button. The
+        # same reason hides per-layer overlay buttons below.
+        has_non_overlayable = any(
+            not self._plotting_controller.is_overlayable(
+                layer.config.plot_name, layer.config.params
+            )
+            for layer in self._cell.layers
+        )
+        self._add_layer_button.disabled = has_non_overlayable
+        self._add_layer_button.description = (
+            'A table or layout-mode plot cannot share a cell with other layers; '
+            'place a new layer in its own cell.'
+            if has_non_overlayable
+            else None
+        )
         rows: list = []
         for layer in self._cell.layers:
             title, _ = get_plot_cell_display_info(
@@ -211,8 +229,6 @@ class CellPropertiesModal:
                 get_source_title=self._orchestrator.get_source_title,
             )
             controls: list = []
-            # A non-overlayable base (table or layout-mode plot) cannot share a
-            # cell, so adding an overlay onto it would be rejected; don't offer it.
             overlays = (
                 overlay_suggestions_for_layer(
                     layer.config,
