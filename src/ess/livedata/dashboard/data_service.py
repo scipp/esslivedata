@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
@@ -54,6 +55,27 @@ class DataService(MutableMapping[K, V]):
 
     Uses buffers internally for storage, but presents a dict-like interface
     that returns the latest value for each key.
+
+    Thread safety
+    -------------
+    Mutated from two threads: the background ingestion thread (via
+    ``transaction`` / ``__setitem__``) and the UI thread (via
+    ``register_subscriber`` / ``unregister_subscriber``). A single ``RLock``
+    serializes all access to the internal state (buffer manager, subscriber
+    list, pending updates, transaction depth).
+
+    The lock is **never** held while calling ``subscriber.trigger`` (which runs
+    arbitrary compute, including Bokeh document mutation). Data handed to a
+    subscriber is copied out of the buffers under the lock first
+    (see :py:meth:`_build_subscriber_data`), so compute operates on detached
+    data and cannot observe a concurrent buffer mutation. Keeping ``trigger``
+    outside the lock also means no compute-side lock (the Bokeh document lock,
+    or ``ActiveJobRegistry``'s ingestion guard) can deadlock against this one.
+
+    Lock ordering: ``ActiveJobRegistry.ingestion_guard`` -> ``DataService`` lock.
+    The ingestion path and ``ActiveJobRegistry.cleanup`` both hold the guard
+    when they enter ``transaction``; nothing acquires the guard while holding
+    this lock.
     """
 
     def __init__(self) -> None:
@@ -62,20 +84,25 @@ class DataService(MutableMapping[K, V]):
         self._subscribers: list[DataServiceSubscriber[K]] = []
         self._pending_updates: set[K] = set()
         self._transaction_depth = 0
+        self._lock = threading.RLock()
 
     @contextmanager
     def transaction(self):
         """Context manager for batching multiple updates."""
-        self._transaction_depth += 1
+        with self._lock:
+            self._transaction_depth += 1
         try:
             yield
         finally:
             # Stay in transaction until notifications are done. This ensures that
             # subscribers that make further updates during their notification do not
             # trigger intermediate notifications.
-            if self._transaction_depth == 1:
+            with self._lock:
+                at_root = self._transaction_depth == 1
+            if at_root:
                 self._notify()
-            self._transaction_depth -= 1
+            with self._lock:
+                self._transaction_depth -= 1
 
     @property
     def _in_transaction(self) -> bool:
@@ -122,13 +149,24 @@ class DataService(MutableMapping[K, V]):
         -------
         :
             Dictionary mapping keys to extracted data (None values filtered out).
+
+        Notes
+        -----
+        Must be called while holding ``self._lock``. Extracted values are
+        copied so callers can hand them to ``subscriber.trigger`` after
+        releasing the lock: extractors may return views aliasing the buffer's
+        backing store, which a concurrent ``update``/``drop`` would mutate.
         """
         subscriber_data = {}
 
         for key, extractor in subscriber.extractors.items():
             buffered_data = self._buffer_manager.get_buffered_data(key)
             if buffered_data is not None:
-                subscriber_data[key] = extractor.extract(buffered_data)
+                extracted = extractor.extract(buffered_data)
+                # Copy to detach from the buffer's backing store (see docstring).
+                subscriber_data[key] = (
+                    extracted.copy() if extracted is not None else None
+                )
 
         return subscriber_data
 
@@ -143,16 +181,19 @@ class DataService(MutableMapping[K, V]):
         subscriber:
             The subscriber to register.
         """
-        self._subscribers.append(subscriber)
+        with self._lock:
+            self._subscribers.append(subscriber)
 
-        # Add extractors for keys this subscriber needs
-        for key in subscriber.keys:
-            if key in self._buffer_manager:
-                extractor = subscriber.extractors[key]
-                self._buffer_manager.add_extractor(key, extractor)
+            # Add extractors for keys this subscriber needs
+            for key in subscriber.keys:
+                if key in self._buffer_manager:
+                    extractor = subscriber.extractors[key]
+                    self._buffer_manager.add_extractor(key, extractor)
 
-        # Trigger immediately with existing data using subscriber's extractors
-        existing_data = self._build_subscriber_data(subscriber)
+            # Snapshot existing data using subscriber's extractors
+            existing_data = self._build_subscriber_data(subscriber)
+
+        # Trigger outside the lock: compute must not run while holding it.
         subscriber.trigger(existing_data)
 
     def unregister_subscriber(self, subscriber: DataServiceSubscriber[K]) -> bool:
@@ -169,15 +210,20 @@ class DataService(MutableMapping[K, V]):
         :
             True if the subscriber was found and removed, False otherwise.
         """
-        try:
-            self._subscribers.remove(subscriber)
-            return True
-        except ValueError:
-            return False
+        with self._lock:
+            try:
+                self._subscribers.remove(subscriber)
+                return True
+            except ValueError:
+                return False
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
         Notify relevant subscribers about data updates.
+
+        The subscriber data is built under the lock (copying it out of the
+        buffers), then ``trigger`` is called with the lock released so compute
+        never runs while the lock is held.
 
         Parameters
         ----------
@@ -188,52 +234,63 @@ class DataService(MutableMapping[K, V]):
         # unregister from the UI thread, may mutate self._subscribers mid-loop.
         # Without the copy the list-index iterator would silently skip the
         # subscriber following a removed one.
-        for subscriber in list(self._subscribers):
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for subscriber in subscribers:
             if updated_keys & subscriber.keys:
                 try:
-                    subscriber_data = self._build_subscriber_data(subscriber)
+                    with self._lock:
+                        subscriber_data = self._build_subscriber_data(subscriber)
                     subscriber.trigger(subscriber_data)
                 except Exception:
                     logger.exception("Failed to notify subscriber %s", subscriber)
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""
-        buffered_data = self._buffer_manager.get_buffered_data(key)
-        if buffered_data is None:
-            raise KeyError(key)
-        return self._default_extractor.extract(buffered_data)
+        with self._lock:
+            buffered_data = self._buffer_manager.get_buffered_data(key)
+            if buffered_data is None:
+                raise KeyError(key)
+            return self._default_extractor.extract(buffered_data).copy()
 
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
-        if key not in self._buffer_manager:
-            extractors = self._get_extractors(key)
-            self._buffer_manager.create_buffer(key, extractors)
-        self._buffer_manager.update_buffer(key, value)
-        self._pending_updates.add(key)
-        self._notify_if_not_in_transaction()
+        with self._lock:
+            if key not in self._buffer_manager:
+                extractors = self._get_extractors(key)
+                self._buffer_manager.create_buffer(key, extractors)
+            self._buffer_manager.update_buffer(key, value)
+            self._pending_updates.add(key)
+            notify = not self._in_transaction
+        if notify:
+            self._notify()
 
     def __delitem__(self, key: K) -> None:
         """Delete a key and its buffer."""
-        self._buffer_manager.delete_buffer(key)
-        self._pending_updates.add(key)
-        self._notify_if_not_in_transaction()
+        with self._lock:
+            self._buffer_manager.delete_buffer(key)
+            self._pending_updates.add(key)
+            notify = not self._in_transaction
+        if notify:
+            self._notify()
 
     def __iter__(self) -> Iterator[K]:
         """Iterate over keys."""
-        return iter(self._buffer_manager)
+        with self._lock:
+            return iter(list(self._buffer_manager))
 
     def __len__(self) -> int:
         """Return the number of keys."""
-        return len(self._buffer_manager)
-
-    def _notify_if_not_in_transaction(self) -> None:
-        """Notify subscribers if not in a transaction."""
-        if not self._in_transaction:
-            self._notify()
+        with self._lock:
+            return len(self._buffer_manager)
 
     def _notify(self) -> None:
-        # Some updates may have been added while notifying
-        while self._pending_updates:
-            pending = set(self._pending_updates)
-            self._pending_updates.clear()
+        # Some updates may have been added while notifying. Drain pending under
+        # the lock; notify (which triggers compute) without it.
+        while True:
+            with self._lock:
+                if not self._pending_updates:
+                    return
+                pending = set(self._pending_updates)
+                self._pending_updates.clear()
             self._notify_subscribers(pending)

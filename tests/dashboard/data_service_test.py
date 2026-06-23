@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -1203,3 +1204,134 @@ class TestExtractorBasedSubscription:
         # "history" should return all accumulated values with time dimension
         if "history" in last_data:
             assert "time" in last_data["history"].dims
+
+
+class TestThreadSafety:
+    """Tests for concurrent access from the ingestion and UI threads.
+
+    The background ingestion thread mutates buffers via ``transaction`` /
+    ``__setitem__`` while the UI thread (re)configures plots via
+    ``register_subscriber`` / ``unregister_subscriber``. A single lock
+    serializes the internal state, and ``trigger`` runs outside the lock on
+    data copied out of the buffers.
+    """
+
+    def test_getitem_returns_data_detached_from_buffer(self):
+        service = DataService[str, int]()
+        service["key1"] = make_test_data(1, time=1.0)
+
+        first = service["key1"]
+        # A later update must not retroactively change an already-returned value.
+        service["key1"] = make_test_data(2, time=2.0)
+
+        assert first.value == 1
+        # Distinct objects: the returned value is copied, not a buffer view.
+        assert service["key1"] is not service["key1"]
+
+    def test_trigger_runs_without_holding_lock(self):
+        """A subscriber's trigger must not block other threads' locked ops.
+
+        Proves the lock is released around ``trigger``: while one subscriber is
+        mid-trigger, another thread can complete a ``__setitem__`` (which needs
+        the lock) on an unrelated key.
+        """
+        service = DataService[str, int]()
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingSubscriber(DataServiceSubscriber[str]):
+            def __init__(self) -> None:
+                self._extractors = {"key1": LatestValueExtractor()}
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                if store:  # block only on a real data update, not the empty register
+                    entered.set()
+                    release.wait(timeout=5)
+
+        service.register_subscriber(BlockingSubscriber())
+
+        # Ingestion thread enters trigger and blocks there.
+        ingest = threading.Thread(
+            target=lambda: service.__setitem__("key1", make_test_data(1))
+        )
+        ingest.start()
+        assert entered.wait(timeout=5), "trigger was not entered"
+
+        # While trigger is blocked, an unrelated locked op must still complete.
+        other_done = threading.Event()
+
+        def other() -> None:
+            service["key2"] = make_test_data(2)
+            other_done.set()
+
+        other_thread = threading.Thread(target=other)
+        other_thread.start()
+        assert other_done.wait(timeout=5), "lock held during trigger blocked a writer"
+
+        release.set()
+        ingest.join(timeout=5)
+        other_thread.join(timeout=5)
+
+    def test_concurrent_ingestion_and_subscriber_churn(self):
+        """Stress the race the lock fixes: buffer writes vs. subscriber churn.
+
+        The ingestion thread continuously writes to a key while the UI thread
+        registers/unregisters subscribers whose ``FullHistoryExtractor`` forces
+        a Single->Temporal buffer swap (``add_extractor``) on the same key.
+        Without serialization this corrupts buffer state or raises; with the
+        lock it must run cleanly.
+        """
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+
+        service = DataService[str, int]()
+        errors: list[BaseException] = []
+        stop = threading.Event()
+
+        def ingest() -> None:
+            i = 0
+            try:
+                while not stop.is_set():
+                    with service.transaction():
+                        service["key1"] = make_test_data(i, time=float(i))
+                    i += 1
+            except BaseException as exc:
+                errors.append(exc)
+
+        class HistorySubscriber(DataServiceSubscriber[str]):
+            def __init__(self) -> None:
+                self._extractors = {"key1": FullHistoryExtractor()}
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                pass
+
+        def churn() -> None:
+            try:
+                for _ in range(500):
+                    sub = HistorySubscriber()
+                    service.register_subscriber(sub)
+                    service.unregister_subscriber(sub)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                stop.set()
+
+        ingest_thread = threading.Thread(target=ingest)
+        churn_thread = threading.Thread(target=churn)
+        ingest_thread.start()
+        churn_thread.start()
+        churn_thread.join(timeout=30)
+        ingest_thread.join(timeout=30)
+
+        assert not errors, f"concurrent access raised: {errors[0]!r}"
+        assert service["key1"].value >= 0
