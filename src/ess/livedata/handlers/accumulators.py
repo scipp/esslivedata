@@ -87,7 +87,7 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
 
 class NoCopyAccumulator(EternalAccumulator):
     """
-    Accumulator that skips deepcopy on read for better performance.
+    Accumulator that skips the deepcopy on read to avoid copy overhead.
 
     The base EternalAccumulator uses deepcopy in _get_value() to ensure safety.
     This accumulator skips that deepcopy, saving ~30ms per read for a 500MB
@@ -99,7 +99,38 @@ class NoCopyAccumulator(EternalAccumulator):
     Use only when downstream consumers do not modify or store references to
     the returned value. This constraint is met in streaming workflows
     where downstream just serializes the data.
+
+    When ``reset_coord`` is given the buffer is discarded whenever incoming data
+    carries a different value for that scalar coord, so accumulation restarts in
+    the new configuration rather than summing across a geometry change. The
+    histogram carries a coord identifying the geometry it was
+    computed in (e.g. ``position``/``Ltotal`` for monitors, the detector
+    transform for detector views). An absent coord — or ``reset_coord=None`` — is
+    a no-op, so behaviour matches a plain cumulative accumulator. The check
+    short-circuits before the first push and whenever the coord is unchanged, so
+    it adds no measurable overhead.
     """
+
+    def __init__(self, *, reset_coord: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._reset_coord = reset_coord
+
+    def _reset_if_geometry_changed(self, value: Any) -> None:
+        coord = self._reset_coord
+        if coord is None or self._value is None:
+            return
+        new = getattr(value, 'coords', {})
+        stored = getattr(self._value, 'coords', {})
+        if (
+            coord in new
+            and coord in stored
+            and not sc.identical(new[coord], stored[coord])
+        ):
+            self._value = None
+
+    def _do_push(self, value: sc.DataArray) -> None:
+        self._reset_if_geometry_changed(value)
+        super()._do_push(value)
 
     def _get_value(self):
         """Return value directly without deepcopy."""
@@ -114,10 +145,16 @@ class _NoCopyWindowAccumulator(NoCopyAccumulator):
     the NoCopyAccumulator deepcopies on its first push, isolating its buffer, and
     ``+=`` only mutates the left operand (``self._value``), never the right (the input).
 
+    Inherits ``reset_coord`` handling from :class:`NoCopyAccumulator`. The current
+    driving loop pushes exactly once per finalize, so the reset never fires here in
+    practice; carrying it regardless keeps the window correct (discard a partial
+    window straddling a move) should that 1:1 relation ever change.
+
     Must not be constructed directly — use :func:`make_no_copy_accumulator_pair`.
     """
 
     def _do_push(self, value: T) -> None:
+        self._reset_if_geometry_changed(value)
         if self._value is None:
             self._value = value
         else:
@@ -128,9 +165,9 @@ class _NoCopyWindowAccumulator(NoCopyAccumulator):
         self.clear()
 
 
-def make_no_copy_accumulator_pair() -> tuple[
-    NoCopyAccumulator, _NoCopyWindowAccumulator
-]:
+def make_no_copy_accumulator_pair(
+    *, reset_coord: str | None = None
+) -> tuple[NoCopyAccumulator, _NoCopyWindowAccumulator]:
     """Create a paired cumulative/window accumulator that skips redundant copies.
 
     The two accumulators are designed to receive the same shared input. The cumulative
@@ -141,12 +178,23 @@ def make_no_copy_accumulator_pair() -> tuple[
     This pairing is what makes the no-copy optimization safe: because exactly one
     NoCopyAccumulator always deepcopies, no consumer ever mutates the shared input.
 
+    Parameters
+    ----------
+    reset_coord:
+        If given, both accumulators reset whenever incoming data carries a
+        different value for this scalar coord, rather than summing across a
+        geometry change. ``None`` keeps plain cumulative
+        behaviour.
+
     Returns
     -------
     :
         ``(cumulative, window)`` accumulator pair.
     """
-    return NoCopyAccumulator(), _NoCopyWindowAccumulator()
+    return (
+        NoCopyAccumulator(reset_coord=reset_coord),
+        _NoCopyWindowAccumulator(reset_coord=reset_coord),
+    )
 
 
 class LatestValue(streaming.Accumulator[T], Generic[T]):

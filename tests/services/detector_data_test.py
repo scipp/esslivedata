@@ -5,6 +5,7 @@ import logging
 import uuid
 
 import pytest
+import scipp as sc
 from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
@@ -119,6 +120,80 @@ def test_can_configure_and_stop_detector_workflow(
     app.publish_events(size=1000, time=20)
     service.step()
     assert len(sink.messages) == 3 * n_out
+
+
+def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
+    """A detector move resets the cumulative histogram in TOA mode.
+
+    LOKI's rear bank (``loki_detector_0``) rides the ``detector_carriage``, whose
+    f144 position patches the ``depends_on`` transform live. The geometric xy
+    projection stamps that transform as the ``DETECTOR_TRANSFORM`` coord, so a
+    move resets the cumulative accumulator instead of summing across the shifted
+    screen edges. The view is in its default TOA mode -- position matters here
+    even without wavelength, because the move shifts the projection's screen bins.
+    """
+    app = make_detector_app('loki')
+    sink = app.sink
+    service = app.service
+    # The movable xy projection, not tube_view (which ignores carriage position).
+    workflow_id, _ = _get_workflow_from_registry('loki', name='detector_xy_projection')
+
+    source_name = 'loki_detector_0'
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id(source_name)
+    )
+    app.publish_config_message(workflow_config)
+    service.step()
+
+    def prime_carriage(*, position: float, time: int) -> None:
+        # The rear bank consumes the merged detector_carriage device stream; the
+        # synthesizer emits only once all three substreams (RBV, VAL, DMOV) have
+        # been observed at least once.
+        app.publish_log_message(
+            source_name='detector_carriage/target_value', time=time, value=position
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/idle_flag', time=time, value=1
+        )
+        app.publish_log_message(
+            source_name='detector_carriage/value', time=time, value=position
+        )
+
+    def move_carriage(*, position: float, time: int) -> None:
+        # Once primed, the readback (VAL) alone drives the position. Each substream
+        # update emits a merged sample, so the move must use a fresh timestamp: a
+        # sample whose time equals the last one is dropped (see ToNXlog.add).
+        app.publish_log_message(
+            source_name='detector_carriage/value', time=time, value=position
+        )
+
+    n_out = 10
+
+    # Cycle 1: park, accumulate a first batch.
+    prime_carriage(position=5000.0, time=1)
+    app.publish_events(size=2000, time=2)
+    service.step()
+    assert len(sink.messages) == n_out
+    assert sink.messages[0].value.nansum().value == 2000  # cumulative
+    assert sink.messages[1].value.nansum().value == 2000  # current
+
+    # Cycle 2: no move -> cumulative keeps accumulating (no reset).
+    app.publish_events(size=3000, time=4)
+    service.step()
+    assert len(sink.messages) == 2 * n_out
+    assert sink.messages[n_out].value.nansum().value == 5000  # cumulative
+    assert sink.messages[n_out + 1].value.nansum().value == 3000  # current
+
+    # Cycle 3: move the carriage, then accumulate -> cumulative resets.
+    move_carriage(position=6000.0, time=10)
+    app.publish_events(size=1000, time=11)
+    service.step()
+    assert len(sink.messages) == 3 * n_out
+    cumulative = sink.messages[2 * n_out].value
+    current = sink.messages[2 * n_out + 1].value
+    # The pre-move 5000 counts are discarded: cumulative restarts from the move.
+    assert cumulative.nansum().value == 1000
+    assert sc.allclose(cumulative.data, current.data)
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -247,9 +322,7 @@ def test_message_with_unknown_schema_is_ignored(
 
     # Check log messages for warnings
     warning_logs = [log for log in captured if log['log_level'] == 'warning']
-    assert any(
-        "has an unknown schema. Skipping." in log['event'] for log in warning_logs
-    )
+    assert any("unknown schema" in log['event'] for log in warning_logs)
 
 
 def test_message_that_cannot_be_decoded_is_ignored(
