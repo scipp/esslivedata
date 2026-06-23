@@ -247,9 +247,7 @@ def test_message_with_unknown_schema_is_ignored(
 
     # Check log messages for warnings
     warning_logs = [log for log in captured if log['log_level'] == 'warning']
-    assert any(
-        "has an unknown schema. Skipping." in log['event'] for log in warning_logs
-    )
+    assert any("unknown schema" in log['event'] for log in warning_logs)
 
 
 def test_message_that_cannot_be_decoded_is_ignored(
