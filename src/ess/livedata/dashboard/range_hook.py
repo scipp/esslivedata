@@ -40,12 +40,14 @@ def _ordered_write(
 ) -> None:
     """Set ``(lo_attr, hi_attr)`` on ``model`` without ever inverting them.
 
-    Bokeh's ``Document.hold`` is imperative (paired with ``unhold``), not a
-    context manager, so we cannot batch the two writes into one PATCH-DOC
-    dispatch without owning the document state. Instead, order the writes so
-    ``lo <= hi`` holds after each individual property set: when the new high
-    is above the current high, write the high first; otherwise write the low
-    first.
+    The two writes are ordered so ``lo <= hi`` holds after each individual
+    property set: when the new high is above the current high, write the high
+    first; otherwise write the low first. This guards renders that run outside
+    a document hold, where each set dispatches its own PATCH-DOC and a stale
+    intermediate could momentarily invert the range. Per-tick autoscale writes
+    do run under ``session_updater._batched_update`` (``pn.io.hold`` +
+    ``doc.models.freeze``), which collapses both sets into one frame, so the
+    ordering is belt-and-suspenders there rather than load-bearing.
 
     On a datetime axis the float targets are epoch *nanoseconds* by contract
     (see ``plots._finite_min_max``); they are cast back to ``np.datetime64[ns]``
@@ -148,6 +150,9 @@ class RangeHandles:
         handle = cls.x_range(plot) if axis == 'x' else cls.y_range(plot)
         if handle is None:
             return False
+        # The bound-dtype check is a fallback for figures without introspectable
+        # axis state (test stubs, non-HoloViews figures): a ``datetime64`` bound
+        # implies a datetime axis even when ``_axis_is_datetime`` cannot see it.
         datetime = _axis_is_datetime(plot, axis) or isinstance(
             getattr(handle, 'end', None), np.datetime64
         )
