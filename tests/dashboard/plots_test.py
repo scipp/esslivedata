@@ -2469,6 +2469,35 @@ def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.Data
     )
 
 
+class TestTimeseriesScale:
+    """The timeseries x-axis is datetime, so x scale is not configurable."""
+
+    def test_x_scale_not_offered(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
+
+        scale_fields = PlotParamsTimeseries.model_fields[
+            'plot_scale'
+        ].annotation.model_fields
+        assert 'x_scale' not in scale_fields
+        assert 'y_scale' in scale_fields
+
+    def test_x_axis_is_always_linear_y_configurable(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
+
+        params = PlotParamsTimeseries.model_validate({'plot_scale': {'y_scale': 'log'}})
+        plotter = plots.LinePlotter.from_timeseries_params(params)
+        assert plotter._logx is False
+        assert plotter._logy is True
+
+    def test_stray_x_scale_in_config_is_ignored(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
+
+        params = PlotParamsTimeseries.model_validate(
+            {'plot_scale': {'x_scale': 'log', 'y_scale': 'linear'}}
+        )
+        assert plots.LinePlotter.from_timeseries_params(params)._logx is False
+
+
 class TestTimeseriesDownsamplingAndThrottle:
     """Downsampling + throttle in LinePlotter.from_timeseries_params."""
 
