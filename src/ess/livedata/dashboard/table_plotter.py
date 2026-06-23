@@ -16,14 +16,8 @@ from holoviews.plotting.bokeh.tabular import TablePlot
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_roles import PRIMARY
 from .plot_params import PlotParamsTable, TableNotation
-from .plots import (
-    Plotter,
-    TitleResolver,
-    _compute_time_bounds,
-    _normalize_to_rate,
-)
+from .plots import Plotter, TitleResolver
 from .range_hook import Axis
 
 
@@ -58,11 +52,10 @@ hv.Store.register({hv.Table: _FormattedTablePlot}, 'bokeh')
 class TablePlotter(Plotter):
     """Plotter rendering 0D scalar data as a table.
 
-    Each source name becomes a row; each output name becomes a value column.
-    Unlike most plotters this composes all datasets into a single ``hv.Table``
-    rather than overlaying per-dataset elements: HoloViews tables cannot be
-    meaningfully overlaid (an overlay renders as separate stacked widgets), so
-    multiple columns are produced within one table instead.
+    Each source name becomes a row, with a single value column. Unlike most
+    plotters this composes all datasets into a single ``hv.Table`` rather than
+    overlaying per-dataset elements: HoloViews tables cannot be meaningfully
+    overlaid (an overlay renders as separate stacked widgets).
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
@@ -93,78 +86,55 @@ class TablePlotter(Plotter):
             precision=params.format.precision,
         )
 
-    def compute(
-        self,
-        data: dict[str, dict[ResultKey, sc.DataArray]],
-        *,
-        title_resolver: TitleResolver | None = None,
-        **kwargs,
-    ) -> None:
-        primary = data.get(PRIMARY, {})
-        if self._normalize_to_rate:
-            primary = {key: _normalize_to_rate(da) for key, da in primary.items()}
-        self._range_targets = {}
-        resolver = title_resolver or TitleResolver()
-        try:
-            result = self._build_table(primary, resolver)
-        except Exception as e:
-            result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                text_align='center', text_baseline='middle', **self._sizing_opts
-            )
-        self._time_bounds = _compute_time_bounds(primary)
-        self._set_cached_state(result)
-
-    def _build_table(
+    def _build_result(
         self,
         data: dict[ResultKey, sc.DataArray],
         resolver: TitleResolver,
+        **kwargs,
     ) -> hv.Element:
-        """Pivot ``(source, output) -> value`` into a single table element."""
+        """Build a one-column table: one row per source, sharing a value column.
+
+        All datasets reaching a single layer carry the same ``output_name`` (the
+        layer's primary view), so the table has a single value column.
+        """
         if len(data) == 0:
             return hv.Text(0.5, 0.5, 'No data').opts(
                 text_align='center', text_baseline='middle', **self._sizing_opts
             )
 
         rows: list[str] = []
-        columns: dict[str, hv.Dimension] = {}
-        cells: dict[tuple[str, str], float] = {}
+        values: list[float] = []
+        column: hv.Dimension | None = None
         for data_key, da in data.items():
             if da.ndim != 0:
                 raise ValueError(f"Expected 0D data, got {da.ndim}D")
-            row = resolver.source(data_key.job_id.source_name)
-            if row not in rows:
-                rows.append(row)
-            output_name = data_key.output_name or 'values'
-            if output_name not in columns:
+            if column is None:
+                output_name = data_key.output_name or 'values'
                 unit = str(da.unit) if da.unit is not None else None
                 label = resolver.get_axis_label(data_key.output_name) or output_name
-                columns[output_name] = hv.Dimension(output_name, label=label, unit=unit)
+                column = hv.Dimension(output_name, label=label, unit=unit)
+            rows.append(resolver.source(data_key.job_id.source_name))
             value = float(da.value)
             if self._notation is TableNotation.decimal and self._precision < 0:
                 # Negative precision rounds the magnitude (e.g. -3 -> thousands);
                 # numbro format strings cannot express this, so round the value.
                 value = float(np.round(value, self._precision))
-            cells[(row, output_name)] = value
+            values.append(value)
 
-        table_data: dict[str, list[Any]] = {'source': rows}
-        for output_name in columns:
-            table_data[output_name] = [
-                cells.get((row, output_name), float('nan')) for row in rows
-            ]
         return hv.Table(
-            table_data,
+            {'source': rows, column.name: values},
             kdims=[hv.Dimension('source', label='Source')],
-            vdims=list(columns.values()),
+            vdims=[column],
         )
 
     def _value_formatter(self):
         """Bokeh column formatter for value columns, per configured notation.
 
         Right-aligned so consistent precision lines up the decimal point (Bokeh
-        ``DataTable`` has no decimal-separator alignment). NaN/missing cells
-        render as ``-`` (the formatter default). Negative precision is a
+        ``DataTable`` has no decimal-separator alignment). NaN values render as
+        ``-`` (the formatter default). Negative precision is a
         magnitude-rounding hint for decimal notation only (applied to the data,
-        see :meth:`_build_table`); here it floors to zero decimal places.
+        see :meth:`_build_result`); here it floors to zero decimal places.
         """
         decimals = max(self._precision, 0)
         fixed_fmt = '0.' + '0' * decimals if decimals else '0'

@@ -1439,37 +1439,6 @@ class TestTablePlotter:
         assert list(result.data['source']) == ['bank0', 'bank1', 'bank2']
         assert list(result.data['counts']) == [10.0, 20.0, 30.0]
 
-    def test_multiple_outputs_become_columns(self, table_plotter):
-        data = {
-            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
-            self._key('bank0', 'rate'): sc.DataArray(sc.scalar(0.5, unit='1/s')),
-            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
-            self._key('bank1', 'rate'): sc.DataArray(sc.scalar(1.5, unit='1/s')),
-        }
-        table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
-        assert isinstance(result, hv.Table)
-        assert [d.name for d in result.vdims] == ['counts', 'rate']
-        assert list(result.data['source']) == ['bank0', 'bank1']
-        assert list(result.data['counts']) == [10.0, 20.0]
-        assert list(result.data['rate']) == [0.5, 1.5]
-
-    def test_missing_combination_is_nan(self, table_plotter):
-        data = {
-            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
-            self._key('bank1', 'rate'): sc.DataArray(sc.scalar(1.5, unit='1/s')),
-        }
-        table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
-        import math
-
-        counts = list(result.data['counts'])
-        rate = list(result.data['rate'])
-        assert counts[0] == 10.0
-        assert math.isnan(counts[1])
-        assert math.isnan(rate[0])
-        assert rate[1] == 1.5
-
     def test_column_unit_and_label_from_resolver(self, table_plotter):
         from ess.livedata.dashboard.plots import TitleResolver
 
