@@ -1508,6 +1508,26 @@ class TestTablePlotter:
         tables = [m for m in fig.references() if isinstance(m, DataTable)]
         assert len(tables) == 1
 
+    @staticmethod
+    def _plotter(**fmt):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsTable,
+            TableFormatParams,
+        )
+
+        return plots.TablePlotter.from_params(
+            PlotParamsTable(format=TableFormatParams(**fmt))
+        )
+
+    def _value_columns(self, plotter, output='counts'):
+        from bokeh.models import DataTable
+
+        da = sc.DataArray(sc.scalar(10.0, unit='counts'))
+        data = {self._key('bank0', output): da}
+        fig = present_figure(plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        return [c for c in table.columns if c.field != 'source'], table
+
     def test_value_columns_use_scientific_formatter(self, table_plotter):
         from bokeh.models import DataTable, ScientificFormatter, StringFormatter
 
@@ -1521,6 +1541,141 @@ class TestTablePlotter:
         # The source (index) column stays a plain string column.
         assert isinstance(by_field['source'], StringFormatter)
         assert not isinstance(by_field['source'], ScientificFormatter)
+
+    def test_value_columns_are_right_aligned(self):
+        columns, _ = self._value_columns(self._plotter())
+        assert all(c.formatter.text_align == 'right' for c in columns)
+
+    def test_default_precision_is_three(self):
+        columns, _ = self._value_columns(self._plotter())
+        assert columns[0].formatter.precision == 3
+
+    def test_decimal_notation_uses_fixed_point_formatter(self):
+        from bokeh.models import NumberFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.decimal, precision=2)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, NumberFormatter)
+        assert fmt.format == '0.00'
+
+    def test_decimal_notation_zero_precision_drops_decimals(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.decimal, precision=0)
+        )
+        assert columns[0].formatter.format == '0'
+
+    def test_compact_notation_uses_abbreviated_formatter(self):
+        from bokeh.models import NumberFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.compact, precision=1)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, NumberFormatter)
+        assert fmt.format == '0.0a'
+
+    def test_negative_precision_rounds_magnitude_in_decimal_mode(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.decimal, precision=-3)
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(140235.0, unit='counts')
+                    )
+                }
+            }
+        )
+        result = plotter.get_cached_state()
+        assert list(result.data['counts']) == [140000.0]
+
+    def test_negative_precision_ignored_outside_decimal_mode(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.scientific, precision=-3)
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(140235.0, unit='counts')
+                    )
+                }
+            }
+        )
+        result = plotter.get_cached_state()
+        # Value is untouched; rounding only applies to decimal notation.
+        assert list(result.data['counts']) == [140235.0]
+
+    def test_scientific_notation_forces_scientific(self):
+        from bokeh.models import ScientificFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.scientific, precision=2)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, ScientificFormatter)
+        assert fmt.precision == 2
+        # Equal power limits leave no fixed-point window: always scientific.
+        assert fmt.power_limit_low == fmt.power_limit_high == 0
+
+    def test_formatter_applied_to_columns_with_special_characters(self):
+        # Output names with special characters are sanitized into different
+        # Bokeh column fields; the formatter must still reach them.
+        from bokeh.models import ScientificFormatter
+
+        columns, _ = self._value_columns(self._plotter(), output='I(Q)')
+        assert len(columns) == 1
+        assert isinstance(columns[0].formatter, ScientificFormatter)
+
+    def test_formatter_persists_across_streaming_updates(self):
+        # HoloViews rebuilds every column on each streaming update without
+        # re-running hooks; the configured formatter must survive rather than
+        # reverting to the default comma-grouped NumberFormatter.
+        from bokeh.models import DataTable, ScientificFormatter
+
+        plotter = self._plotter()
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(10.0, unit='counts')
+                    )
+                }
+            }
+        )
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        bokeh_plot = render_to_bokeh(presenter.present(pipe))
+
+        # Stream a new value, triggering update_frame's column rebuild.
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(12345.0, unit='counts')
+                    )
+                }
+            }
+        )
+        pipe.send(plotter.get_cached_state())
+
+        table = next(
+            m for m in bokeh_plot.state.references() if isinstance(m, DataTable)
+        )
+        counts = next(c for c in table.columns if c.field == 'counts')
+        assert isinstance(counts.formatter, ScientificFormatter)
+        assert counts.formatter.text_align == 'right'
 
 
 class TestOverlay1DPlotter:
