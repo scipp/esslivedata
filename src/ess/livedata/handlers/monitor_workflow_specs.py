@@ -161,16 +161,27 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_counts',
             title='Total',
-            streams={'per_update': 'counts_total'},
-            description='Total number of monitor events per update interval.',
+            streams={
+                'since_start': 'counts_total_cumulative',
+                'per_update': 'counts_total',
+            },
+            description=(
+                'Total number of monitor events. With "since run start" shows '
+                'the accumulated total; with "latest update" or a window, shows '
+                'recent counts.'
+            ),
         ),
         OutputView(
             name='total_in_range',
             title='Total in range',
-            streams={'per_update': 'counts_in_toa_range'},
+            streams={
+                'since_start': 'counts_in_toa_range_cumulative',
+                'per_update': 'counts_in_toa_range',
+            },
             description=(
-                'Number of monitor events within the configured range filter '
-                'per update interval.'
+                'Number of monitor events within the configured range filter. '
+                'With "since run start" shows the accumulated total; with '
+                '"latest update" or a window, shows recent counts.'
             ),
         ),
     )
@@ -225,6 +236,18 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             'Number of monitor events within the configured range filter '
             'for the latest update interval only. Resets each update interval.'
         ),
+    )
+    counts_total_cumulative: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        title='Total',
+        description='Total number of monitor events accumulated since the start '
+        'of the run.',
+    )
+    counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        title='Total in range',
+        description='Number of monitor events within the configured range filter '
+        'accumulated since the start of the run.',
     )
 
 
