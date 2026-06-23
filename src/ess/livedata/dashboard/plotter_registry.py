@@ -37,7 +37,6 @@ class DataRequirements:
     required_coords: list[str] = field(default_factory=list)
     deny_coords: list[str] = field(default_factory=list)
     required_dim_names: list[str] = field(default_factory=list)
-    multiple_datasets: bool = True
     custom_validators: list[Callable[[sc.DataArray], bool]] = field(
         default_factory=list
     )
@@ -45,9 +44,6 @@ class DataRequirements:
     def validate_data(self, data: dict[Any, sc.DataArray]) -> bool:
         """Validate that the data meets these requirements."""
         if not data:
-            return False
-
-        if not self.multiple_datasets and len(data) > 1:
             return False
 
         for dataset in data.values():
@@ -288,7 +284,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=1,
             max_dims=1,
-            multiple_datasets=True,
             deny_coords=['roi_index'],
         ),
         factory=LinePlotter.from_params,
@@ -306,7 +301,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=0,
             max_dims=0,
-            multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
         factory=LinePlotter.from_timeseries_params,
@@ -316,9 +310,7 @@ def _register_all_plotters() -> None:
         name='bars',
         title='Bars',
         description='Plot 0D scalar values as bars.',
-        data_requirements=DataRequirements(
-            min_dims=0, max_dims=0, multiple_datasets=True
-        ),
+        data_requirements=DataRequirements(min_dims=0, max_dims=0),
         factory=BarsPlotter.from_params,
     )
 
@@ -326,9 +318,7 @@ def _register_all_plotters() -> None:
         name='table',
         title='Table',
         description='Display 0D scalar values as a table, one row per source.',
-        data_requirements=DataRequirements(
-            min_dims=0, max_dims=0, multiple_datasets=True
-        ),
+        data_requirements=DataRequirements(min_dims=0, max_dims=0),
         factory=TablePlotter.from_params,
     )
 
@@ -339,7 +329,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=3,
             max_dims=3,
-            multiple_datasets=False,
             custom_validators=[_all_coords_evenly_spaced],
         ),
         factory=SlicerPlotter.from_params,
@@ -358,7 +347,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=3,
             max_dims=6,
-            multiple_datasets=False,
         ),
         factory=FlattenPlotter.from_params,
         params_factory=make_flatten_params,
@@ -372,9 +360,7 @@ def _register_all_plotters() -> None:
             'Useful for visualizing multiple spectra from a single 2D array '
             '(e.g., ROI spectra stacked along a roi dimension).'
         ),
-        data_requirements=DataRequirements(
-            min_dims=2, max_dims=2, multiple_datasets=False
-        ),
+        data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
     )
 
@@ -389,7 +375,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=0,
             max_dims=0,
-            multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
         factory=CorrelationHistogram1dPlotter.from_params,
@@ -406,7 +391,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(
             min_dims=0,
             max_dims=0,
-            multiple_datasets=True,
             required_extractor=FullHistoryExtractor,
         ),
         factory=CorrelationHistogram2dPlotter.from_params,
@@ -421,14 +405,12 @@ def _register_all_plotters() -> None:
         'max_dims': 1,
         'required_coords': ['roi_index', 'x', 'y'],
         'required_dim_names': ['bounds'],
-        'multiple_datasets': False,
     }
     _polygon_roi_requirements: dict = {
         'min_dims': 1,
         'max_dims': 1,
         'required_coords': ['roi_index', 'x', 'y'],
         'required_dim_names': ['vertex'],
-        'multiple_datasets': False,
     }
 
     # Register ROI rectangle plotters (readback + request)

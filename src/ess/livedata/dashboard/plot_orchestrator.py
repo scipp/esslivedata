@@ -189,16 +189,10 @@ class PlotConfig:
 
 @dataclass
 class Layer:
-    """A layer within a plot cell, combining identity with configuration.
-
-    ``user_label`` is an optional user-defined label shown as the layer's tab
-    title when the cell falls back to a tabbed layout (non-overlayable layers).
-    When ``None`` the tab title is derived from the layer's output.
-    """
+    """A layer within a plot cell, combining identity with configuration."""
 
     layer_id: LayerId
     config: PlotConfig
-    user_label: str | None = None
 
 
 @dataclass
@@ -695,31 +689,6 @@ class PlotOrchestrator:
         self._logger.info('Set cell %s title to %r', cell_id, cell.user_title)
         self._notify_cell_updated(grid_id, cell_id, cell)
 
-    def set_layer_label(self, layer_id: LayerId, label: str | None) -> None:
-        """
-        Set or clear the user-defined label of a layer.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer to label.
-        label
-            New user-defined label, or ``None``/empty to clear it and fall back
-            to the derived tab title.
-        """
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
-        cell = self._grids[grid_id].cells[cell_id]
-        for layer in cell.layers:
-            if layer.layer_id == layer_id:
-                layer.user_label = label or None
-                break
-        else:
-            raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
-        self._persist_to_store()
-        self._logger.info('Set layer %s label to %r', layer_id, label or None)
-        self._notify_cell_updated(grid_id, cell_id, cell)
-
     def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
         """
         Get configuration for a layer.
@@ -759,9 +728,7 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         return self._grids[grid_id].cells[cell_id]
 
-    def add_layer(
-        self, cell_id: CellId, config: PlotConfig, user_label: str | None = None
-    ) -> LayerId:
+    def add_layer(self, cell_id: CellId, config: PlotConfig) -> LayerId:
         """
         Add a new layer to an existing cell.
 
@@ -771,19 +738,27 @@ class PlotOrchestrator:
             ID of the cell to add the layer to.
         config
             Configuration for the new layer.
-        user_label
-            Optional user-defined label for the layer's tab title.
 
         Returns
         -------
         :
             ID of the added layer.
+
+        Raises
+        ------
+        ValueError
+            If the resulting cell would combine a non-overlayable layer (a table
+            or a layout-mode plot) with any other layer.
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
+        self._check_overlayable_composition(
+            [layer.config for layer in cell.layers] + [config]
+        )
+
         layer_id = LayerId(uuid4())
-        layer = Layer(layer_id=layer_id, config=config, user_label=user_label)
+        layer = Layer(layer_id=layer_id, config=config)
         cell.layers.append(layer)
 
         self._layer_to_cell[layer_id] = cell_id
@@ -849,23 +824,26 @@ class PlotOrchestrator:
 
         # Find and replace the layer with new identity
         layer_index: int | None = None
-        user_label: str | None = None
         for i, layer in enumerate(cell.layers):
             if layer.layer_id == layer_id:
                 layer_index = i
-                user_label = layer.user_label
                 break
 
         if layer_index is None:
             raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
+        self._check_overlayable_composition(
+            [
+                new_config if i == layer_index else layer.config
+                for i, layer in enumerate(cell.layers)
+            ]
+        )
+
         # Fully clean up old layer (including cell mapping)
         self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=True)
 
-        # Create new layer with new identity, preserving the user-defined label.
-        new_layer = Layer(
-            layer_id=new_layer_id, config=new_config, user_label=user_label
-        )
+        # Create new layer with new identity
+        new_layer = Layer(layer_id=new_layer_id, config=new_config)
         cell.layers[layer_index] = new_layer
 
         # Set up mapping for new layer
@@ -926,6 +904,21 @@ class PlotOrchestrator:
         self._layer_resolvers.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
+
+    def _check_overlayable_composition(self, configs: list[PlotConfig]) -> None:
+        """Reject a multi-layer cell that contains a non-overlayable layer.
+
+        Tables and layout-mode plotters produce elements that cannot be fused
+        via ``hv.Overlay``, so they must be the sole layer in their cell.
+        """
+        if len(configs) > 1 and not all(
+            self._plotting_controller.is_overlayable(config.plot_name, config.params)
+            for config in configs
+        ):
+            raise ValueError(
+                'A table or layout-mode plot cannot share a cell with other '
+                'layers; place it in its own cell.'
+            )
 
     def _create_and_register_plotter(
         self, layer_id: LayerId, config: PlotConfig
@@ -1340,11 +1333,7 @@ class PlotOrchestrator:
             supports_windowing=supports_windowing,
         )
 
-        return Layer(
-            layer_id=LayerId(uuid4()),
-            config=config,
-            user_label=layer_data.get('user_label'),
-        )
+        return Layer(layer_id=LayerId(uuid4()), config=config)
 
     def get_available_templates(self) -> list[GridSpec]:
         """
@@ -1493,7 +1482,7 @@ class PlotOrchestrator:
     def _serialize_layer(self, layer: Layer) -> dict[str, Any]:
         """Serialize a single layer to dict format."""
         config = layer.config
-        result: dict[str, Any] = {
+        return {
             'data_sources': {
                 role: {
                     'workflow_id': str(ds.workflow_id),
@@ -1505,9 +1494,6 @@ class PlotOrchestrator:
             'plot_name': config.plot_name,
             'params': config.params.model_dump(mode='json'),
         }
-        if layer.user_label is not None:
-            result['user_label'] = layer.user_label
-        return result
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
@@ -1532,7 +1518,7 @@ class PlotOrchestrator:
                         grid_id, cell.geometry, user_title=cell.user_title
                     )
                     for layer in cell.layers:
-                        self.add_layer(cell_id, layer.config, layer.user_label)
+                        self.add_layer(cell_id, layer.config)
                 if not spec.enabled:
                     self.set_grid_enabled(grid_id, enabled=False)
 

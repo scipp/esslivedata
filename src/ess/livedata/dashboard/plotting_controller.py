@@ -252,6 +252,19 @@ class PlottingController:
             plotter.set_roi_publisher(self._roi_publisher)
         return plotter
 
+    def is_overlayable(self, plot_name: str, params: dict | pydantic.BaseModel) -> bool:
+        """Whether a layer with this config can share a cell with other layers.
+
+        Tables and layout-mode plotters produce elements that cannot be fused
+        via ``hv.Overlay``. A config that fails to build is treated as
+        overlayable; the failure surfaces later during plotter creation.
+        """
+        try:
+            plotter = self.create_plotter(plot_name, params=params)
+        except Exception:
+            return True
+        return getattr(plotter, 'is_overlayable', True)
+
 
 def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
     """Return whether a window-mode choice (latest/window) is meaningful.

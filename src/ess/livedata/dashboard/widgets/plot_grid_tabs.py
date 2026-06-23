@@ -17,6 +17,7 @@ import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..notifications import show_error
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -379,7 +380,10 @@ class PlotGridTabs:
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful layer reconfiguration."""
-            self._orchestrator.update_layer_config(layer_id, plot_config)
+            try:
+                self._orchestrator.update_layer_config(layer_id, plot_config)
+            except ValueError as e:
+                show_error(str(e))
 
         current_config = self._orchestrator.get_layer_config(layer_id)
         self._show_config_modal(on_success=on_success, initial_config=current_config)
@@ -399,7 +403,10 @@ class PlotGridTabs:
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful layer configuration."""
-            self._orchestrator.add_layer(cell_id, plot_config)
+            try:
+                self._orchestrator.add_layer(cell_id, plot_config)
+            except ValueError as e:
+                show_error(str(e))
 
         self._show_config_modal(on_success=on_success)
 

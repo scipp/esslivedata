@@ -55,6 +55,11 @@ class FakePlotter:
         return self._cached_state
 
     @property
+    def is_overlayable(self) -> bool:
+        # Mirror a real plotter: a Layout cannot share a figure with siblings.
+        return not isinstance(self._cached_state, hv.Layout)
+
+    @property
     def time_bounds(self):
         return self._time_bounds
 

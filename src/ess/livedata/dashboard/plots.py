@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 import holoviews as hv
 import numpy as np
 import scipp as sc
-from bokeh.models import TeeHead
+from bokeh.models import ScientificFormatter, TeeHead
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
@@ -21,6 +21,7 @@ from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
 from .plot_params import (
+    CombineMode,
     LayoutParams,
     PlotAspect,
     PlotDisplayParams1d,
@@ -431,6 +432,16 @@ class Plotter:
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
     """Per-axis autoscale support. Override per subclass."""
 
+    @property
+    def is_overlayable(self) -> bool:
+        """Whether this plotter's element can share a figure with sibling layers.
+
+        Layout-mode plotters produce an ``hv.Layout``, which cannot be fused via
+        ``hv.Overlay``. Cells use this to forbid such layers (and tables, see
+        :class:`TablePlotter`) from sharing a cell with other layers.
+        """
+        return self.layout_params.combine_mode != CombineMode.layout
+
     def __init__(
         self,
         *,
@@ -675,9 +686,11 @@ class Plotter:
 
         if self.layout_params.combine_mode == 'overlay':
             result = hv.Overlay(plots)
-        elif len(plots) == 1:
-            result = plots[0]
         else:
+            # Always a Layout in layout mode, even for a single dataset, so that
+            # "produces a Layout" is a config-time property (mode only, not the
+            # runtime source count). Cells use this to forbid non-overlayable
+            # layers from sharing a cell.
             result = hv.Layout(plots).cols(self.layout_params.layout_columns)
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
@@ -1247,6 +1260,11 @@ class TablePlotter(Plotter):
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
 
+    @property
+    def is_overlayable(self) -> bool:
+        """Tables render as DataTable widgets that cannot be overlaid."""
+        return False
+
     @classmethod
     def from_params(cls, params: PlotParamsTable):
         """Create TablePlotter from PlotParamsTable."""
@@ -1314,11 +1332,26 @@ class TablePlotter(Plotter):
             vdims=list(columns.values()),
         )
 
+    @staticmethod
+    def _format_numbers_hook(plot, element) -> None:
+        """Apply scientific-notation formatting to numeric table columns.
+
+        HoloViews' default ``NumberFormatter`` shows full fixed-point precision,
+        which is unreadable for the wide dynamic range of scientific values.
+        ``ScientificFormatter`` switches to scientific notation outside
+        ``[1e-3, 1e5]`` (so ``1234567`` reads as ``1.235e+6``) and renders
+        missing/NaN cells as ``-``.
+        """
+        vdims = {dim.name for dim in element.vdims}
+        for column in plot.handles['table'].columns:
+            if column.field in vdims:
+                column.formatter = ScientificFormatter(precision=4)
+
     def style_opts(self) -> list[hv.Options]:
         # HoloViews' Table plot exposes only fixed width/height (no responsive
         # sizing); container sizing is left to the enclosing Panel pane.
         return [
-            hv.opts.Table(index_position=None),
+            hv.opts.Table(index_position=None, hooks=[self._format_numbers_hook]),
             *super().style_opts(),
         ]
 
@@ -1381,8 +1414,6 @@ class Overlay1DPlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create Overlay1DPlotter from PlotParams1d."""
-        from .plot_params import CombineMode
-
         return cls(
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
             aspect_params=params.plot_aspect,

@@ -1017,30 +1017,6 @@ class TestSlicerPlotter:
         result = dmap['slice', 'z', z_value, y_value, x_value]
         assert isinstance(result, hv.Image)
 
-    # === Registry test (unchanged) ===
-
-    def test_multiple_datasets_rejected_by_registry(self, data_3d, data_key):
-        """Test slicer plotter is rejected for multiple datasets by the registry."""
-        from ess.livedata.dashboard.plotter_registry import plotter_registry
-
-        workflow_id2 = WorkflowId(
-            instrument='test_instrument',
-            name='test_workflow',
-            version=1,
-        )
-        job_id2 = JobId(source_name='test_source2', job_number=uuid.uuid4())
-        data_key2 = ResultKey(
-            workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
-        )
-
-        single_data = {data_key: data_3d}
-        compatible = plotter_registry.get_compatible_plotters(single_data)
-        assert 'slicer' in compatible
-
-        multiple_data = {data_key: data_3d, data_key2: data_3d}
-        compatible = plotter_registry.get_compatible_plotters(multiple_data)
-        assert 'slicer' not in compatible
-
     # === Edge coordinate tests ===
 
     def test_edge_coordinates_in_presenter(self, slicer_plotter, data_key):
@@ -1219,10 +1195,14 @@ class TestPlotterOverlayMode:
         # Should contain two elements
         assert len(result) == 2
 
-    def test_non_overlay_mode_with_single_item_returns_raw_plot(
+    def test_layout_mode_with_single_item_returns_layout(
         self, simple_data_1, data_key_1
     ):
-        """Test that non-overlay mode returns raw plot for single item."""
+        """Layout mode always produces a Layout, even for a single item.
+
+        This keeps "produces a Layout" a config-time property (mode only, not
+        the runtime source count), which cell composition relies on.
+        """
         from ess.livedata.dashboard.plot_params import LayoutParams
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
@@ -1232,8 +1212,9 @@ class TestPlotterOverlayMode:
         plotter.compute({'primary': data_dict})
         result = plotter.get_cached_state()
 
-        # Should return raw Curve, not Overlay
-        assert isinstance(result, hv.Curve)
+        assert isinstance(result, hv.Layout)
+        assert len(result) == 1
+        assert isinstance(next(iter(result)), hv.Curve)
 
     def test_empty_data_returns_no_data_text(self):
         """Test that empty data returns 'No data' text element in overlay mode."""
@@ -1265,9 +1246,11 @@ class TestPlotterOverlayMode:
         plotter.compute(data_dict)
         result = plotter.get_cached_state()
 
-        # With layout mode and empty data, returns Text directly
-        assert isinstance(result, hv.Text)
-        assert 'No data' in str(result.data)
+        # Layout mode always wraps in a Layout, even the 'No data' placeholder.
+        assert isinstance(result, hv.Layout)
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'No data' in str(text_element.data)
 
 
 class TestBarsPlotter:
@@ -1525,6 +1508,20 @@ class TestTablePlotter:
         tables = [m for m in fig.references() if isinstance(m, DataTable)]
         assert len(tables) == 1
 
+    def test_value_columns_use_scientific_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+        }
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['counts'], ScientificFormatter)
+        # The source (index) column stays a plain string column.
+        assert isinstance(by_field['source'], StringFormatter)
+        assert not isinstance(by_field['source'], ScientificFormatter)
+
 
 class TestOverlay1DPlotter:
     """Tests for Overlay1DPlotter with 2D data."""
@@ -1695,7 +1692,6 @@ class TestOverlay1DPlotter:
         spec = plotter_registry.get_spec('overlay_1d')
         assert spec.data_requirements.min_dims == 2
         assert spec.data_requirements.max_dims == 2
-        assert spec.data_requirements.multiple_datasets is False
 
     def test_compatible_with_2d_data(self, data_2d_with_roi_coord, data_key):
         """Test that registry identifies overlay_1d as compatible with 2D data."""
@@ -1704,21 +1700,6 @@ class TestOverlay1DPlotter:
         data = {data_key: data_2d_with_roi_coord}
         compatible = plotter_registry.get_compatible_plotters(data)
         assert 'overlay_1d' in compatible
-
-    def test_not_compatible_with_multiple_datasets(
-        self, data_2d_with_roi_coord, data_key
-    ):
-        """Test that overlay_1d is not compatible with multiple datasets."""
-        from ess.livedata.dashboard.plotter_registry import plotter_registry
-
-        key2 = ResultKey(
-            workflow_id=data_key.workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
-            output_name='result2',
-        )
-        data = {data_key: data_2d_with_roi_coord, key2: data_2d_with_roi_coord}
-        compatible = plotter_registry.get_compatible_plotters(data)
-        assert 'overlay_1d' not in compatible
 
     def test_bin_edge_coords_produce_curves_not_histograms(
         self, overlay_plotter, data_key
