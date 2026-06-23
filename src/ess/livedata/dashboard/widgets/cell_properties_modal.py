@@ -15,6 +15,7 @@ layer-composition editor:
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Mapping
 
 import panel as pn
@@ -234,11 +235,34 @@ class CellPropertiesModal:
                     on_click_callback=lambda lid=layer.layer_id: self._on_remove(lid),
                 )
             )
-            title_pane = pn.pane.HTML(
-                title,
+            # Each child defaults to ``align-self: start``, so center the
+            # fixed-size icon buttons against the taller input per-widget (a
+            # container-level ``align-items`` would be overridden).
+            for control in controls:
+                control.align = 'center'
+            # The label doubles as the layer's tab title when the cell falls
+            # back to a tabbed layout; empty falls back to the derived title.
+            # Persist on change immediately: this column is rebuilt on every
+            # add/remove, so a batched edit would be lost on re-render.
+            # ``title`` is HTML (e.g. ``&rarr;``) for the read-only pane elsewhere;
+            # a TextInput placeholder is plain text, so unescape the entities.
+            label_input = pn.widgets.TextInput(
+                value=layer.user_label or '',
+                placeholder=html.unescape(title),
                 sizing_mode='stretch_width',
-                align='center',
-                styles={'overflow': 'hidden'},
+                margin=0,
             )
-            rows.append(pn.Row(title_pane, *controls, sizing_mode='stretch_width'))
+            label_input.param.watch(
+                lambda event, lid=layer.layer_id: self._orchestrator.set_layer_label(
+                    lid, (event.new or '').strip() or None
+                ),
+                'value',
+            )
+            rows.append(
+                pn.Row(
+                    label_input,
+                    *controls,
+                    sizing_mode='stretch_width',
+                )
+            )
         self._layers_col[:] = rows

@@ -2305,6 +2305,91 @@ class TestCellTitle:
         assert parsed.user_title == 'Round trip'
 
 
+class TestLayerLabel:
+    """Tests for user-defined per-layer labels (tab titles)."""
+
+    def test_add_layer_defaults_to_no_label(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        cell = plot_orchestrator.get_cell(cell_id)
+        assert cell.layers[0].layer_id == layer_id
+        assert cell.layers[0].user_label is None
+
+    def test_add_layer_with_label(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id), user_label='Counts'
+        )
+        assert plot_orchestrator.get_cell(cell_id).layers[0].user_label == 'Counts'
+
+    def test_set_layer_label_updates(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        plot_orchestrator.set_layer_label(layer_id, 'Renamed')
+        assert plot_orchestrator.get_cell(cell_id).layers[0].user_label == 'Renamed'
+
+    def test_set_layer_label_empty_clears(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id), user_label='X'
+        )
+        plot_orchestrator.set_layer_label(layer_id, '')
+        assert plot_orchestrator.get_cell(cell_id).layers[0].user_label is None
+
+    def test_set_layer_label_notifies_cell_updated(
+        self, plot_orchestrator, workflow_id
+    ):
+        callback = CallbackCapture()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        before = callback.call_count
+        plot_orchestrator.set_layer_label(layer_id, 'Renamed')
+        assert callback.call_count == before + 1
+
+    def test_update_layer_config_preserves_label(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id), user_label='Keep me'
+        )
+        plot_orchestrator.update_layer_config(
+            layer_id, make_plot_config(workflow_id, output_name='other')
+        )
+        assert plot_orchestrator.get_cell(cell_id).layers[0].user_label == 'Keep me'
+
+    def test_label_serialized_when_set(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id), user_label='Saved'
+        )
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert data['cells'][0]['layers'][0]['user_label'] == 'Saved'
+
+    def test_label_omitted_when_none(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        data = plot_orchestrator.serialize_grid(grid_id)
+        assert 'user_label' not in data['cells'][0]['layers'][0]
+
+    def test_label_round_trips_through_parse(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id), user_label='Round trip'
+        )
+        data = plot_orchestrator.serialize_grid(grid_id)
+        parsed = plot_orchestrator.parse_raw_cell(data['cells'][0])
+        assert parsed.layers[0].user_label == 'Round trip'
+
+
 class TestReplaceGrid:
     """Tests for grid replacement functionality."""
 

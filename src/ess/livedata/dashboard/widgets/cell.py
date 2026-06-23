@@ -16,6 +16,7 @@ disposal to the widget.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -591,24 +592,56 @@ class CellWidget:
         )
         return plot_pane_wrapper.layout
 
-    def _build_table_tabs(
+    def _build_layer_tabs(
         self, layers: list[Layer], dmaps: list[hv.DynamicMap]
     ) -> pn.Tabs:
-        """Arrange one table pane per layer in a tabbed container.
+        """Arrange one pane per layer in a tabbed container.
 
         Each pane keeps its own DynamicMap and pipe, so the layers update
-        independently — unlike an hv.Overlay of tables, which HoloViews
-        collates into a single Bokeh Tabs whose update path crashes.
+        independently. This is the fallback for layers that cannot share a
+        single figure (Tables, Layouts): an hv.Overlay of tables collates into
+        a Bokeh Tabs whose update path crashes, and an hv.Overlay containing a
+        Layout cannot be constructed at all.
+
+        Tab titles prefer the user-defined layer label, falling back to the
+        derived output title; duplicates are disambiguated so no two tabs share
+        a title.
         """
-        tabs = []
-        for layer, dmap in zip(layers, dmaps, strict=True):
+        titles = self._resolve_layer_tab_titles(layers)
+        tabs = [
+            (title, self._build_plot_content(dmap))
+            for title, dmap in zip(titles, dmaps, strict=True)
+        ]
+        return pn.Tabs(*tabs, sizing_mode='stretch_both')
+
+    def _resolve_layer_tab_titles(self, layers: list[Layer]) -> list[str]:
+        """Return a distinct tab title per layer (label > output > +plotter > #)."""
+        base: list[str] = []
+        for layer in layers:
+            if layer.user_label:
+                base.append(layer.user_label)
+                continue
             _, output_title = get_workflow_display_info(
                 self._deps.workflow_registry,
                 layer.config.workflow_id,
                 layer.config.view_name,
             )
-            tabs.append((output_title, self._build_plot_content(dmap)))
-        return pn.Tabs(*tabs, sizing_mode='stretch_both')
+            base.append(output_title)
+
+        # Disambiguate collisions: append the plotter title, then an index.
+        counts = Counter(base)
+        titles: list[str] = []
+        seen: Counter[str] = Counter()
+        for layer, title in zip(layers, base, strict=True):
+            if counts[title] == 1 or layer.user_label:
+                titles.append(title)
+                continue
+            candidate = f'{title} ({layer.config.plot_name})'
+            seen[candidate] += 1
+            if seen[candidate] > 1:
+                candidate = f'{candidate} {seen[candidate]}'
+            titles.append(candidate)
+        return titles
 
     def _compose_plot(self) -> hv.DynamicMap | hv.Element | pn.viewable.Viewable | None:
         """
@@ -623,7 +656,8 @@ class CellWidget:
         -------
         :
             Composed plot from session DMaps/elements, a ``pn.Tabs`` of
-            independent table panes, or None if none available.
+            independent panes (when layers cannot share a figure), or None if
+            none available.
         """
         plots = []
         plot_layers: list[Layer] = []
@@ -667,13 +701,14 @@ class CellWidget:
         if not plots:
             return None
 
-        # Tables render as DataTable widgets, not figures. Fusing several with
-        # hv.Overlay collates them into one Bokeh Tabs whose streaming-update
-        # path raises (Tabs has no ``hold_render``), freezing every plot in the
-        # session. Presenting each table in its own pn.Tabs tab keeps them as
-        # independent panes that update on their own pipes.
-        if has_table and len(plots) > 1:
-            return self._build_table_tabs(plot_layers, plots)
+        # Tables and Layouts cannot share a single figure with sibling layers.
+        # An hv.Overlay of tables collates into one Bokeh Tabs whose streaming-
+        # update path raises (Tabs has no ``hold_render``), freezing every plot
+        # in the session; an hv.Overlay containing a Layout cannot even be
+        # constructed. Present each layer in its own pn.Tabs tab instead, so
+        # they stay independent panes that update on their own pipes.
+        if (has_table or has_layout) and len(plots) > 1:
+            return self._build_layer_tabs(plot_layers, plots)
 
         result: hv.DynamicMap | hv.Element
         if len(plots) == 1:
