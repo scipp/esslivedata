@@ -4,6 +4,8 @@
 
 import pytest
 import scipp as sc
+from ess.reduce.nexus.types import NeXusTransformation, SampleRun
+from scippnexus import NXdetector
 
 from ess.livedata.handlers.detector_view.projectors import make_logical_projector
 from ess.livedata.handlers.detector_view.providers import (
@@ -11,9 +13,11 @@ from ess.livedata.handlers.detector_view.providers import (
     compute_detector_histogram,
     counts_in_range,
     counts_total,
+    detector_geometry,
     detector_image,
 )
 from ess.livedata.handlers.detector_view.types import (
+    DETECTOR_TRANSFORM,
     AccumulatedHistogram,
     Cumulative,
     Current,
@@ -75,6 +79,7 @@ class TestComputeDetectorHistogram:
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
+            geometry=None,
         )
 
         assert 'event_time_offset' in result.dims
@@ -95,6 +100,7 @@ class TestComputeDetectorHistogram:
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
+            geometry=None,
         )
 
         # Should have x and event_time_offset dims, y was reduced
@@ -116,6 +122,7 @@ class TestComputeDetectorHistogram:
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
+            geometry=None,
         )
 
         # Output should have user's dimension name and unit
@@ -123,6 +130,62 @@ class TestComputeDetectorHistogram:
         assert 'event_time_offset' not in result.dims
         assert result.coords['time_of_arrival'].unit == 'ms'
         assert sc.allclose(result.coords['time_of_arrival'], bins)
+
+    def test_geometry_stamped_as_reset_coord_when_provided(self):
+        """A non-None geometry is stamped so the accumulator can reset on a move."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        transform = make_logical_transform(4, 4)
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
+        screen_binned = projector.project_events(sc.values(data))
+        geometry = sc.spatial.translation(value=[0.0, 0.0, 5.0], unit='m')
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+            geometry=geometry,
+        )
+
+        assert DETECTOR_TRANSFORM in result.coords
+        assert sc.identical(result.coords[DETECTOR_TRANSFORM], geometry)
+
+    def test_geometry_none_stamps_no_coord(self):
+        """File-less sources (geometry=None) leave no reset coord on the output."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        transform = make_logical_transform(4, 4)
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
+        screen_binned = projector.project_events(sc.values(data))
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+            geometry=None,
+        )
+
+        assert DETECTOR_TRANSFORM not in result.coords
+
+
+class TestDetectorGeometry:
+    """Tests for the detector_geometry provider."""
+
+    def test_spatial_transform_is_exposed_as_reset_signal(self):
+        """A real placement transform becomes the geometry signal."""
+        transform = sc.spatial.translation(value=[0.0, 0.0, 5.0], unit='m')
+        result = detector_geometry(
+            NeXusTransformation[NXdetector, SampleRun](value=transform)
+        )
+        assert sc.identical(result, transform)
+
+    def test_identity_sentinel_yields_none(self):
+        """A detector with no depends_on chain (scalar sentinel) has no signal."""
+        sentinel = sc.scalar(1)  # essreduce identity placeholder
+        result = detector_geometry(
+            NeXusTransformation[NXdetector, SampleRun](value=sentinel)
+        )
+        assert result is None
 
 
 class TestAccumulatedHistogramProvider:

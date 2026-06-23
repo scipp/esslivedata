@@ -218,3 +218,67 @@ class TestDetectorRatemeter:
 
         assert 'time' in result.coords
         assert result.coords['time'].unit == 'ns'
+
+
+class TestUnifiedDetectorViewLayout:
+    """Image and spectrum layouts the static triplet-bounds grid depends on.
+
+    The grid overlay (a second plot layer) is drawn in fixed coordinates for a
+    15-row by 900-column image, so the image must stack (arc, tube) as rows and
+    (channel, pixel) as columns. These pin that contract.
+    """
+
+    @pytest.fixture
+    def raw_detector(self) -> sc.DataArray:
+        """Raw combined detector data with dims (arc, tube, channel, pixel).
+
+        Values are bounded so float32 count sums stay exact for conservation.
+        """
+        n = 5 * 3 * 9 * 100
+        values = sc.array(
+            dims=['flat'],
+            values=[i % 7 for i in range(n)],
+            unit='counts',
+            dtype='float64',
+        )
+        return sc.DataArray(
+            values.fold('flat', sizes={'arc': 5, 'tube': 3, 'channel': 9, 'pixel': 100})
+        )
+
+    @pytest.fixture
+    def cumulative_histogram(self, raw_detector: sc.DataArray) -> sc.DataArray:
+        """Cumulative histogram: the 2D image with an appended spectral axis."""
+        image = specs._logical_view(raw_detector, 'unified_detector')
+        n_toa = 7
+        return sc.DataArray(
+            sc.broadcast(
+                image.data, dims=[*image.dims, 'toa'], shape=[*image.shape, n_toa]
+            ).copy()
+        )
+
+    def test_logical_view_produces_15x900_image(
+        self, raw_detector: sc.DataArray
+    ) -> None:
+        image = specs._logical_view(raw_detector, 'unified_detector')
+        assert image.dims == ('arc/tube', 'channel/pixel')
+        assert image.sizes == {'arc/tube': 15, 'channel/pixel': 900}
+
+    @pytest.mark.parametrize('pixels_per_tube', [1, 10, 100])
+    def test_spectrum_transform_groups_pixels_per_arc(
+        self, cumulative_histogram: sc.DataArray, pixels_per_tube: int
+    ) -> None:
+        params = specs.BifrostSpectrumParams(pixels_per_tube=pixels_per_tube)
+        spectrum = specs._bifrost_spectrum_transform(cumulative_histogram, params)
+        assert spectrum.dims == ('arc', 'detector_number', 'toa')
+        assert spectrum.sizes == {
+            'arc': 5,
+            'detector_number': 3 * 9 * pixels_per_tube,
+            'toa': cumulative_histogram.sizes['toa'],
+        }
+
+    def test_spectrum_transform_conserves_counts(
+        self, cumulative_histogram: sc.DataArray
+    ) -> None:
+        params = specs.BifrostSpectrumParams(pixels_per_tube=10)
+        spectrum = specs._bifrost_spectrum_transform(cumulative_histogram, params)
+        assert_identical(spectrum.sum().data, cumulative_histogram.sum().data)

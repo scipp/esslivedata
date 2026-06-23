@@ -34,6 +34,25 @@ def test_roi_publisher_publishes_single_roi():
     assert 'roi_index' in msg.value.coords
 
 
+def test_roi_publisher_stamps_request_with_epoch_zero():
+    """ROI requests are clock-independent and carry the epoch-0 sentinel.
+
+    This lets the event-time message batcher apply the selection to the current
+    window instead of holding it until the data watermark reaches wall-clock-now.
+    """
+    sink = FakeMessageSink()
+    publisher = ROIPublisher(sink=sink)
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+    roi = RectangleROI(
+        x=Interval(min=1.0, max=5.0, unit=None),
+        y=Interval(min=2.0, max=6.0, unit=None),
+    )
+
+    publisher.publish(job_id, rois={0: roi}, geometry=RECT_GEOMETRY)
+
+    assert sink.messages[0].timestamp.to_ns() == 0
+
+
 def test_roi_publisher_publishes_multiple_rois():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)

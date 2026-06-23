@@ -105,8 +105,26 @@ class UnmappedStreamError(KeyError):
     """
 
 
+class IgnoredMessageError(Exception):
+    """Raised to silently drop an expected-but-unused message.
+
+    Used for schemas that are known to share a topic with data we consume but
+    that we deliberately ignore (e.g. EPICS ``al00`` alarm and ``ep01``
+    connection-status messages on forwarder log topics). Distinct from
+    ``WrongSchemaException``, which signals a genuinely unexpected schema worth
+    a warning.
+    """
+
+
 class MessageAdapter(Protocol, Generic[T, U]):
     def adapt(self, message: T) -> U: ...
+
+
+class NullAdapter(MessageAdapter[KafkaMessage, Any]):
+    """Silently drops every message routed to it by raising IgnoredMessageError."""
+
+    def adapt(self, message: KafkaMessage) -> Any:
+        raise IgnoredMessageError
 
 
 class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
@@ -534,12 +552,19 @@ class AdaptingMessageSource(MessageSource[U]):
         for msg in raw_messages:
             try:
                 adapted.append(self._adapter.adapt(msg))
+            except IgnoredMessageError:
+                # Expected-but-unused schema (e.g. al00/ep01); drop silently.
+                continue
             except UnmappedStreamError:
                 # Already recorded in the stream counter by get_stream_id.
                 if self._raise_on_error:
                     raise
-            except streaming_data_types.exceptions.WrongSchemaException:
-                logger.warning('Message %s has an unknown schema. Skipping.', msg)
+            except streaming_data_types.exceptions.WrongSchemaException as e:
+                logger.warning(
+                    'Skipping message with unknown schema',
+                    topic=msg.topic() if hasattr(msg, 'topic') else None,
+                    detail=str(e),
+                )
                 self._record_error(msg)
                 if self._raise_on_error:
                     raise

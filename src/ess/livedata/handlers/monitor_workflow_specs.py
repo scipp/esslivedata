@@ -184,7 +184,11 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
         ),
         title='Histogram',
-        description='Monitor histogram accumulated since the start of the run.',
+        description=(
+            'Monitor histogram accumulated since the start of the run. '
+            'In wavelength mode accumulation restarts if the monitor moves; in '
+            'TOA mode a move is not detected and counts accumulate across it.'
+        ),
     )
     current: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(

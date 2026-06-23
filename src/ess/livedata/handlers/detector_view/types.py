@@ -190,6 +190,30 @@ DetectorHistogram = NewType('DetectorHistogram', sc.DataArray)
 """Histogram with screen dims + event coordinate - computed once, shared by
 accumulators."""
 
+DetectorGeometry = NewType('DetectorGeometry', sc.Variable | None)
+"""Scalar geometry signal stamped onto the histogram as the ``DETECTOR_TRANSFORM``
+coord, used by the cumulative accumulator to reset on a detector move.
+
+Holds the detector's resolved ``NeXusTransformation`` (the live, carriage-driven
+placement). A rigid move changes it; the coord is projection- and mode-independent,
+so it works identically for geometric and logical views and for TOA and wavelength
+modes. ``None`` for file-less sources (no geometry, e.g. logical TOA views built from
+a bare ``detector_number``): no coord is stamped and the reset is a no-op.
+
+Why the transformation and not ``position``? The accumulator compares a single
+coord via ``sc.identical``, so the signal must be a 0-dim (scalar) coord that
+survives ``hist``/``sum``/slicing. Pixel ``position`` is a per-pixel array, not a
+scalar, and the accumulator runs on *projected* histograms where the per-pixel
+geometry is gone — reducing it to a projection-specific scalar would need bespoke
+per-projection code and could miss moves (e.g. in-plane translation or rotation
+that leaves a plane distance unchanged). A single origin point is scalar but
+rotation-blind. The ``NeXusTransformation`` is itself a 0-dim Variable encoding
+the full rigid placement (rotation + translation), so it is the only signal that
+is both a propagating scalar and sensitive to every rigid move."""
+
+DETECTOR_TRANSFORM = 'detector_transform'
+"""Coord name carrying :data:`DetectorGeometry` on the accumulated histogram."""
+
 
 # Spectrum view types: derived from AccumulatedHistogram[Cumulative] via a
 # per-instrument transform. The transform reshapes or partially sums the
