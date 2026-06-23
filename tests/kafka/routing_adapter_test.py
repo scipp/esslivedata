@@ -6,6 +6,7 @@ import pytest
 
 from ess.livedata.config.instruments import available_instruments
 from ess.livedata.config.streams import get_stream_mapping
+from ess.livedata.kafka.message_adapter import FakeKafkaMessage, IgnoredMessageError
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_mapping import InputStreamKey, StreamMapping
 
@@ -94,6 +95,26 @@ class TestWithRoutesFromMapping:
             .build()
         )
         assert "log" in adapter._routes
+
+    @pytest.mark.parametrize('schema', ['al00', 'ep01'])
+    def test_log_route_drops_status_schemas(
+        self, infra_kwargs: dict, schema: str
+    ) -> None:
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={},
+            monitors={},
+            logs={InputStreamKey(topic="log", source_name="s"): "l"},
+            **infra_kwargs,
+        )
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=mapping)
+            .with_routes_from_mapping()
+            .build()
+        )
+        message = FakeKafkaMessage(value=f"xxxx{schema}".encode(), topic="log")
+        with pytest.raises(IgnoredMessageError):
+            adapter.adapt(message)
 
     def test_adds_area_detector_route_when_present(self, infra_kwargs: dict) -> None:
         mapping = StreamMapping(
