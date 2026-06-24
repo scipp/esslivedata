@@ -69,12 +69,19 @@ class KafkaMessage(Protocol):
 
 class FakeKafkaMessage(KafkaMessage):
     def __init__(
-        self, *, key: bytes = b'', value: bytes, topic: str, timestamp: int = 0
+        self,
+        *,
+        key: bytes = b'',
+        value: bytes,
+        topic: str,
+        timestamp: int = 0,
+        timestamp_type: int = 0,
     ):
         self._key = key
         self._value = value
         self._topic = topic
         self._timestamp = timestamp
+        self._timestamp_type = timestamp_type
 
     def error(self) -> Any | None:
         return None
@@ -86,7 +93,7 @@ class FakeKafkaMessage(KafkaMessage):
         return self._value
 
     def timestamp(self) -> tuple[int, int]:
-        return (0, self._timestamp)
+        return (self._timestamp_type, self._timestamp)
 
     def topic(self) -> str:
         return self._topic
@@ -137,6 +144,10 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
     the Kafka topics.
     """
 
+    #: Wire (flatbuffer) schema identifier, e.g. 'ev44'; set by subclasses that
+    #: carry a payload timestamp and record lag.
+    schema: str
+
     def __init__(
         self,
         *,
@@ -165,8 +176,26 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
             self._stream_counter.record(topic, source_name, resolved)
         return stream_id
 
+    def _record_lag(
+        self, message: KafkaMessage, source_name: str, timestamp: Timestamp
+    ) -> None:
+        """Record producer lag (Kafka create time minus payload time) in the
+        stream counter, keyed by (topic, source, wire schema).
+        """
+        if self._stream_counter is None:
+            return
+        kind, kafka_ms = message.timestamp()
+        if kind == 0:  # confluent_kafka.TIMESTAMP_NOT_AVAILABLE
+            return
+        lag_s = (kafka_ms * 1_000_000 - timestamp.to_ns()) / 1e9
+        self._stream_counter.record_lag(
+            message.topic(), source_name, self.schema, lag_s
+        )
+
 
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
+    schema = 'ev44'
+
     def adapt(self, message: KafkaMessage) -> Message[eventdata_ev44.EventData]:
         ev44 = eventdata_ev44.deserialise_ev44(message.value())
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
@@ -175,6 +204,7 @@ class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
             timestamp = Timestamp.from_ns(ev44.reference_time[-1])
         else:
             timestamp = Timestamp.from_ms(message.timestamp()[1])
+        self._record_lag(message, ev44.source_name, timestamp)
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
 
@@ -206,6 +236,8 @@ def _extract_reference_time(
 
 
 class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
+    schema = 'da00'
+
     def adapt(self, message: KafkaMessage) -> Message[list[dataarray_da00.Variable]]:
         da00: dataarray_da00.da00_DataArray_t
         da00 = dataarray_da00.deserialise_da00(message.value())  # type: ignore[reportAssignmentType]
@@ -216,10 +248,16 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         timestamp = (
             ref_time if ref_time is not None else Timestamp.from_ns(da00.timestamp_ns)
         )
+        self._record_lag(message, da00.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
+    # No producer lag recorded: the forwarder resends each value on a periodic
+    # heartbeat with the original EPICS source timestamp but a fresh Kafka
+    # CreateTime, so kafka_create - payload measures time-since-last-change, not
+    # producer staleness, and would spuriously flag healthy static PVs as stale.
+
     def __init__(
         self,
         *,
@@ -332,6 +370,8 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
     The stream kind stays MONITOR_EVENTS so the standard preprocessor handles it.
     """
 
+    schema = 'ev44'
+
     def __init__(
         self,
         stream_lut: StreamLUT,
@@ -350,9 +390,8 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
         buffer = message.value()
         eventdata_ev44.check_schema_identifier(buffer, eventdata_ev44.FILE_IDENTIFIER)
         event = Event44Message.Event44Message.GetRootAs(buffer, 0)
-        stream = self.get_stream_id(
-            topic=message.topic(), source_name=event.SourceName().decode("utf-8")
-        )
+        source_name = event.SourceName().decode("utf-8")
+        stream = self.get_stream_id(topic=message.topic(), source_name=source_name)
         reference_time = event.ReferenceTimeAsNumpy()
         time_of_arrival = event.TimeOfFlightAsNumpy()
 
@@ -370,6 +409,7 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
             )
         else:
             value = MonitorEvents(time_of_arrival=time_of_arrival, unit='ns')
+        self._record_lag(message, source_name, timestamp)
         return Message(timestamp=timestamp, stream=stream, value=value)
 
 
@@ -415,10 +455,13 @@ class Da00ToScippAdapter(
 
 
 class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
+    schema = 'ad00'
+
     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
         ad00 = area_detector_ad00.deserialise_ad00(message.value())
         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
         timestamp = Timestamp.from_ns(ad00.timestamp_ns)
+        self._record_lag(message, ad00.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=ad00)
 
 
