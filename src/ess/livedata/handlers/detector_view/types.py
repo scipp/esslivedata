@@ -11,13 +11,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, NewType, TypeVar
+from typing import TYPE_CHECKING, Literal, NewType
 
 import sciline
 import scipp as sc
 
+from ..accumulation_mode import AccumulationMode, Cumulative, Current
+
 if TYPE_CHECKING:
     from ..detector_view_specs import SpectrumViewSpec
+
+__all__ = ['AccumulationMode', 'Cumulative', 'Current']
 
 # Coordinate mode for detector view workflow
 CoordinateMode = Literal['toa', 'tof', 'wavelength']
@@ -27,19 +31,6 @@ CoordinateMode = Literal['toa', 'tof', 'wavelength']
 - 'tof': Time-of-flight (uses GenericTofWorkflow, TofDetector)
 - 'wavelength': Wavelength (uses GenericTofWorkflow, WavelengthDetector) - future
 """
-
-
-# Accumulation mode marker types
-class Current:
-    """Marker type for window accumulation (clears after finalize)."""
-
-
-class Cumulative:
-    """Marker type for cumulative accumulation (accumulates forever)."""
-
-
-AccumulationMode = TypeVar('AccumulationMode', Current, Cumulative)
-"""Type variable for accumulation mode, constrained to Window or Cumulative."""
 
 
 @dataclass(frozen=True, slots=True)

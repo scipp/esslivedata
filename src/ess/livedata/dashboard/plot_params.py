@@ -357,9 +357,26 @@ class TimeseriesDownsamplingParams(pydantic.BaseModel):
     )
 
 
+class TimeseriesScaleParams(pydantic.BaseModel):
+    """Axis scaling for the timeseries plotter.
+
+    The x-axis is always an absolute datetime axis, on which log scale is
+    meaningless (it would depend on the arbitrary epoch zero), so only the
+    y-axis scale is offered.
+    """
+
+    y_scale: PlotScale = pydantic.Field(
+        default=PlotScale.linear, description="Scale for y-axis", title="Y Axis Scale"
+    )
+
+
 class PlotParamsTimeseries(PlotDisplayParams1d):
     """Parameters for the timeseries plotter (downsampling + display)."""
 
+    plot_scale: TimeseriesScaleParams = pydantic.Field(
+        default_factory=TimeseriesScaleParams,
+        description="Scaling options for the plot axes.",
+    )
     downsampling: TimeseriesDownsamplingParams = pydantic.Field(
         default_factory=TimeseriesDownsamplingParams,
         description=_TIMESERIES_DOWNSAMPLING_DESCRIPTION,

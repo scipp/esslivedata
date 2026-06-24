@@ -1229,6 +1229,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         if self._plotter_selection is None:
             return
 
+        if not self._validate_window_mode(params):
+            return
+
         # Create primary data source
         primary_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
@@ -1262,6 +1265,33 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             params=params,
             supports_windowing=self._supports_windowing,
         )
+
+    def _validate_window_mode(
+        self, params: pydantic.BaseModel | dict[str, Any]
+    ) -> bool:
+        """Reject ``since_start`` mode on views without a cumulative stream.
+
+        Returns ``True`` if the configuration may proceed. Otherwise shows an
+        error and returns ``False`` so the modal stays open.
+        """
+        from ess.livedata.dashboard.plot_params import WindowMode
+        from ess.livedata.dashboard.plotting_controller import since_start_available
+
+        window = getattr(params, 'window', None)
+        if window is None or window.mode is not WindowMode.since_start:
+            return True
+        if self._plotter_selection is None:
+            return True
+        spec = self._workflow_registry.get(self._plotter_selection.workflow_id)
+        if spec is None or since_start_available(
+            spec, self._plotter_selection.view_name
+        ):
+            return True
+        show_error(
+            "'Since run start' is not available for this output: it has no "
+            "cumulative stream. Choose 'Latest update'."
+        )
+        return False
 
 
 class PlotConfigModal:

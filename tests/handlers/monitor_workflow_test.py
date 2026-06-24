@@ -18,29 +18,29 @@ from ess.livedata.config.stream import ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.handlers.accumulation_mode import Cumulative, Current
 from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
 from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
 from ess.livedata.handlers.monitor_workflow import (
     MONITOR_TRANSFORM,
+    accumulated_monitor_histogram,
     build_monitor_workflow,
     counts_in_range,
     counts_total,
     create_monitor_workflow,
-    cumulative_view,
     histogram_raw_monitor,
     histogram_wavelength_monitor,
-    window_view,
 )
 from ess.livedata.handlers.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
 from ess.livedata.handlers.monitor_workflow_types import (
+    AccumulatedMonitorHistogram,
     HistogramEdges,
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorHistogram,
-    WindowMonitorHistogram,
 )
 from ess.livedata.parameter_models import (
     TimeUnit,
@@ -214,25 +214,22 @@ class TestMonitorWorkflowProviders:
         assert result.dims == ('time_of_arrival',)
         assert result.sum().value == 10.0
 
-    def test_cumulative_view_returns_same_data(self):
+    def test_accumulated_monitor_histogram_returns_same_data(self):
         hist = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'))
-        result = cumulative_view(MonitorHistogram(hist))
+        result = accumulated_monitor_histogram(MonitorHistogram(hist))
         assert sc.identical(result, hist)
 
-    def test_window_view_returns_same_data(self):
-        hist = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'))
-        result = window_view(MonitorHistogram(hist))
-        assert sc.identical(result, hist)
-
-    def test_counts_total(self):
+    @pytest.mark.parametrize('mode', [Current, Cumulative])
+    def test_counts_total(self, mode):
         hist = sc.DataArray(
             sc.array(dims=['time_of_arrival'], values=[1.0, 2.0, 3.0], unit='counts')
         )
-        result = counts_total(WindowMonitorHistogram(hist))
+        result = counts_total(AccumulatedMonitorHistogram[mode](hist))
         assert result.value == 6.0
         assert result.unit == 'counts'
 
-    def test_counts_in_range(self):
+    @pytest.mark.parametrize('mode', [Current, Cumulative])
+    def test_counts_in_range(self, mode):
         edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
         hist = sc.DataArray(
             sc.array(dims=['time_of_arrival'], values=[1.0, 2.0, 3.0, 4.0, 5.0]),
@@ -241,7 +238,7 @@ class TestMonitorWorkflowProviders:
         # Select bins 1-3 (values 2.0, 3.0, 4.0)
         low = HistogramRangeLow(sc.scalar(2, unit='ns'))
         high = HistogramRangeHigh(sc.scalar(8, unit='ns'))
-        result = counts_in_range(WindowMonitorHistogram(hist), low, high)
+        result = counts_in_range(AccumulatedMonitorHistogram[mode](hist), low, high)
         assert result.value == 9.0  # 2 + 3 + 4
 
 
@@ -381,12 +378,16 @@ class TestMonitorWorkflowIntegration:
         assert 'current' in results
         assert 'counts_total' in results
         assert 'counts_in_toa_range' in results
+        assert 'counts_total_cumulative' in results
+        assert 'counts_in_toa_range_cumulative' in results
 
         # Check counts
         assert results['cumulative'].sum().value == 5.0
         assert results['current'].sum().value == 5.0
         assert results['counts_total'].value == 5.0
         assert results['counts_in_toa_range'].value == 5.0
+        assert results['counts_total_cumulative'].value == 5.0
+        assert results['counts_in_toa_range_cumulative'].value == 5.0
 
     def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
         """Delta outputs get time, start_time, end_time coords."""
@@ -439,6 +440,9 @@ class TestMonitorWorkflowIntegration:
         assert 'time' not in results['cumulative'].coords
         assert 'start_time' not in results['cumulative'].coords
         assert 'end_time' not in results['cumulative'].coords
+        # Cumulative scalar totals also span all time, so no time coords.
+        assert 'time' not in results['counts_total_cumulative'].coords
+        assert 'time' not in results['counts_in_toa_range_cumulative'].coords
 
     def test_time_coords_track_first_start_last_end(
         self, toa_edges, sample_binned_events
@@ -521,8 +525,12 @@ class TestMonitorWorkflowIntegration:
 
         # Cumulative has accumulated both cycles
         assert results2['cumulative'].sum().value == 10.0
+        assert results2['counts_total_cumulative'].value == 10.0
+        assert results2['counts_in_toa_range_cumulative'].value == 10.0
         # Current only has the latest cycle
         assert results2['current'].sum().value == 5.0
+        assert results2['counts_total'].value == 5.0
+        assert results2['counts_in_toa_range'].value == 5.0
 
     def test_full_workflow_cycle_histogram_mode(self, toa_edges):
         """Test full workflow cycle with histogram-mode monitor data."""
