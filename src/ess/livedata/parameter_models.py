@@ -14,7 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import scipp as sc
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def parse_number_list(value: str) -> list[float]:
@@ -89,13 +89,11 @@ class EdgesModel(BaseModel, ABC):
             raise ValueError('stop must be greater than start')
         return v
 
-    @field_validator('start')
-    @classmethod
-    def start_must_be_positive_if_log(cls, v, info):
-        log = info.data.get('log')
-        if log and v <= 0:
-            raise ValueError('start must be positive if log is True')
-        return v
+    @model_validator(mode='after')
+    def start_must_be_positive_if_log(self):
+        if self.scale == Scale.LOG and self.start <= 0:
+            raise ValueError("start must be positive when scale is 'log'")
+        return self
 
 
 class TimeUnit(StrEnum):
