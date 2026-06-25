@@ -378,12 +378,14 @@ class WorkflowStatusWidget:
         self._status_badge = pn.pane.HTML(
             self._make_status_badge_html(status, status_color),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            margin=(0, 0),
             styles={'display': 'flex', 'align-items': 'center'},
         )
 
         self._device_badge = pn.pane.HTML(
             self._make_device_badge_html(),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            margin=(0, 0),
             styles={'display': 'flex', 'align-items': 'center'},
             css_classes=['lt-wf-device-badge'],
         )
@@ -408,7 +410,7 @@ class WorkflowStatusWidget:
             title_html,
             pn.Spacer(width=12),
             self._status_badge,
-            pn.Spacer(width=8),
+            pn.Spacer(width=6),
             self._device_badge,
             pn.Spacer(width=8),
             self._status_dots,
@@ -1111,10 +1113,11 @@ class WorkflowStatusWidget:
             action()
             return
 
-        names = ', '.join(device_names)
+        names = ''.join(f'<li>{name}</li>' for name in device_names)
         message = (
-            f'This workflow currently exposes the NICOS device(s): '
-            f'<b>{names}</b>.<br><br>'
+            f'This workflow currently exposes the NICOS device(s):'
+            f'<ul style="margin: 4px 0 8px 0; padding-left: 20px; '
+            f'font-weight: 600;">{names}</ul>'
             f'Choosing to {action_label} is disruptive <i>if</i> NICOS is using '
             f'the device — we cannot tell whether a scan is active. Proceed?'
         )
@@ -1302,7 +1305,7 @@ class WorkflowStatusListWidget:
         left: list[pn.viewable.Viewable] = []
         if len(self._device_contract) > 0:
             devices_btn = pn.widgets.Button(
-                label='Derived devices',
+                label='NICOS devices',
                 color='light',
                 width=120,
                 height=28,

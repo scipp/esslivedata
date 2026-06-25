@@ -28,6 +28,14 @@ if TYPE_CHECKING:
     from ..job_orchestrator import JobOrchestrator
     from ..session_updater import SessionUpdater
 
+_DESCRIPTION = (
+    'This dashboard publishes selected scalar workflow outputs to NICOS as '
+    'derived devices, following the instrument device contract. A device is '
+    'readable by NICOS only while its owning workflow job is running (see State '
+    'below); stopping, resetting, or reconfiguring that workflow takes the '
+    'device offline and may disrupt a NICOS scan that relies on it.'
+)
+
 
 class DerivedDevicesOverview:
     """Modal listing every NICOS device the contract declares, with live state.
@@ -57,11 +65,16 @@ class DerivedDevicesOverview:
         self._body = pn.Column(sizing_mode='stretch_width')
         self.modal = pn.Modal(
             pn.Column(
-                pn.pane.Markdown('### Derived devices', margin=(0, 0, 5, 0)),
+                pn.pane.Markdown('### NICOS derived devices', margin=(0, 0, 5, 0)),
+                pn.pane.HTML(
+                    f'<div style="font-size: 12px; color: {Colors.TEXT_MUTED}; '
+                    f'line-height: 1.5; margin-bottom: 10px;">{_DESCRIPTION}</div>',
+                    sizing_mode='stretch_width',
+                ),
                 self._body,
                 sizing_mode='stretch_width',
             ),
-            name='Derived devices',
+            name='NICOS derived devices',
             margin=20,
             width=520,
         )
@@ -100,64 +113,57 @@ class DerivedDevicesOverview:
         registry = self._orchestrator.get_workflow_registry()
 
         if not devices:
-            rows: list[pn.viewable.Viewable] = [
-                pn.pane.HTML(
-                    f'<span style="font-size: 13px; color: {Colors.TEXT_MUTED};">'
-                    'No derived devices are declared for this instrument.</span>',
-                    sizing_mode='stretch_width',
-                )
-            ]
+            content = pn.pane.HTML(
+                f'<span style="font-size: 13px; color: {Colors.TEXT_MUTED};">'
+                'No derived devices are declared for this instrument.</span>',
+                sizing_mode='stretch_width',
+            )
         else:
-            rows = [self._header_row()]
+            items = []
             for device in devices:
                 spec = registry.get(device.workflow_id)
                 workflow_title = (
                     spec.title if spec is not None else str(device.workflow_id)
                 )
-                source_title = self._orchestrator.get_source_title(device.source_name)
-                rows.append(
-                    self._device_row(
+                items.append(
+                    self._device_item_html(
                         device.device_name,
-                        source_title,
+                        self._orchestrator.get_source_title(device.source_name),
                         workflow_title,
                         is_running=device.is_running_in(running),
                     )
                 )
+            content = pn.pane.HTML(''.join(items), sizing_mode='stretch_width')
 
         with pn.io.hold():
-            self._body[:] = rows
+            self._body[:] = [content]
 
     @staticmethod
-    def _header_row() -> pn.pane.HTML:
-        return pn.pane.HTML(
-            '<div style="display: grid; '
-            'grid-template-columns: 1.2fr 1fr 1.4fr 0.8fr; gap: 8px; '
-            f'font-size: 11px; color: {Colors.TEXT_MUTED}; '
-            'text-transform: uppercase; letter-spacing: 0.5px; '
-            f'padding: 4px 0; border-bottom: 1px solid {Colors.BORDER};">'
-            '<span>Device</span><span>Source</span>'
-            '<span>Workflow</span><span>State</span></div>',
-            sizing_mode='stretch_width',
-        )
-
-    @staticmethod
-    def _device_row(
+    def _device_item_html(
         device: str, source: str, workflow: str, *, is_running: bool
-    ) -> pn.pane.HTML:
+    ) -> str:
+        """One device as a two-line list item: name, then ``source · workflow``.
+
+        State is right-aligned so the badges line up regardless of name length;
+        the device name gets the full row width and rarely needs to wrap.
+        """
         if is_running:
-            state_html = (
+            state = (
                 f'<span style="color: {StatusColors.SUCCESS}; font-weight: 600;">'
                 'running</span>'
             )
         else:
-            state_html = f'<span style="color: {Colors.TEXT_MUTED};">stopped</span>'
-        return pn.pane.HTML(
-            '<div style="display: grid; '
-            'grid-template-columns: 1.2fr 1fr 1.4fr 0.8fr; gap: 8px; '
-            f'font-size: 12px; color: {Colors.TEXT}; '
-            f'padding: 4px 0; border-bottom: 1px solid {Colors.BORDER};">'
-            f'<span style="font-weight: 600;">{device}</span>'
-            f'<span>{source}</span><span>{workflow}</span>'
-            f'{state_html}</div>',
-            sizing_mode='stretch_width',
+            state = f'<span style="color: {Colors.TEXT_MUTED};">stopped</span>'
+        return (
+            '<div style="display: flex; justify-content: space-between; '
+            'align-items: baseline; gap: 12px; padding: 8px 0; '
+            f'border-bottom: 1px solid {Colors.BORDER};">'
+            '<div style="min-width: 0;">'
+            f'<div style="font-weight: 600; color: {Colors.TEXT}; '
+            f'font-size: 13px; overflow-wrap: anywhere;">{device}</div>'
+            f'<div style="font-size: 11px; color: {Colors.TEXT_MUTED}; '
+            f'margin-top: 2px;">{source} · {workflow}</div>'
+            '</div>'
+            f'<span style="flex: none; font-size: 12px;">{state}</span>'
+            '</div>'
         )
