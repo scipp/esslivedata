@@ -191,3 +191,24 @@ def test_missing_contract_file_yields_empty(registry) -> None:
     instrument = instrument_registry['dream']
     contract = DeviceContract.from_instrument(instrument)
     assert len(contract) == 0
+
+
+def test_bifrost_contract_loads_and_validates() -> None:
+    # Guards the shipped bifrost contract against workflow-spec drift: every
+    # entry must resolve against the live registry and be scalar-cumulative.
+    get_config('bifrost')
+    instrument = instrument_registry['bifrost']
+    contract = DeviceContract.from_instrument(instrument)
+    wid = WorkflowId.from_string('bifrost/monitor_histogram/1')
+    monitors = {entry.source_name for entry in contract}
+    assert monitors == {
+        'psc_monitor',
+        'overlap_monitor',
+        'bandwidth_monitor',
+        'normalization_monitor',
+        'elastic_monitor',
+    }
+    assert all(
+        contract.is_device(wid, monitor, 'counts_total_cumulative')
+        for monitor in monitors
+    )

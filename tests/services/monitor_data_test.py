@@ -17,12 +17,18 @@ import pytest
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.message import StreamKind
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
 
 def _job_id(source: str) -> JobId:
     return JobId(source_name=source, job_number=uuid.uuid4())
+
+
+def _data_messages(sink) -> list:
+    """Workflow result messages, excluding the NICOS device projection."""
+    return [m for m in sink.messages if m.stream.kind == StreamKind.LIVEDATA_DATA]
 
 
 def _get_workflow_from_registry(
@@ -79,14 +85,14 @@ def test_can_configure_and_stop_monitor_workflow(
 
     def latest_outputs() -> dict[str, object]:
         outputs: dict[str, object] = {}
-        for msg in sink.messages[-n_target:]:
+        for msg in _data_messages(sink)[-n_target:]:
             result_key = json.loads(msg.stream.name)
             outputs[result_key['output_name']] = msg.value
         return outputs
 
     app.publish_monitor_events(size=2000, time=2)
     service.step()
-    assert len(sink.messages) == n_target
+    assert len(_data_messages(sink)) == n_target
     outputs = latest_outputs()
     assert outputs['cumulative'].values.sum() == 2000
     assert outputs['current'].values.sum() == 2000
@@ -94,11 +100,11 @@ def test_can_configure_and_stop_monitor_workflow(
     assert outputs['counts_total_cumulative'].value == 2000
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == n_target
+    assert len(_data_messages(sink)) == n_target
 
     app.publish_monitor_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 2 * n_target
+    assert len(_data_messages(sink)) == 2 * n_target
     outputs = latest_outputs()
     assert outputs['cumulative'].values.sum() == 5000
     assert outputs['current'].values.sum() == 3000
@@ -110,7 +116,7 @@ def test_can_configure_and_stop_monitor_workflow(
     # Later time
     app.publish_monitor_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 3 * n_target
+    assert len(_data_messages(sink)) == 3 * n_target
     assert latest_outputs()['cumulative'].values.sum() == 7000
 
     # Stop workflow
@@ -120,4 +126,4 @@ def test_can_configure_and_stop_monitor_workflow(
     service.step()
     app.publish_monitor_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 3 * n_target
+    assert len(_data_messages(sink)) == 3 * n_target
