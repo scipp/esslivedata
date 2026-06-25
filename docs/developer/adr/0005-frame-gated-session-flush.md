@@ -105,8 +105,20 @@ of the frame just shown) and otherwise on a slow stall cadence
 
 ## Consequences
 
-- Display latency drops from up to one 1000 ms poll period to roughly one 100 ms
-  tick; the pill reads near the pipeline lag right after each frame.
+- The *polling* component of display latency drops from up to one 1000 ms period
+  to roughly one 100 ms tick. For a single visible layer that is the entire
+  wait, so single-plot latency improves ~10x. A multi-layer burst still runs
+  every visible layer's `compute()` serially on the ingestion thread before the
+  burst commits, so the first-computed layer's wait is that residual serial
+  compute *plus* the 100 ms tick -- unchanged except for the polling term this
+  change removes. Cutting the serial compute (per-tab ordering, parallel
+  compute) is a separate concern, out of scope here.
+- The per-layer pill lag (`created_at − min_end`) and the headline age
+  (`now_flush − min_end`) differ by exactly the display latency, so they
+  coincide only for the last-computed layer of a burst (and any single-plot
+  tab); the first-computed layer's age sits a full burst-compute above its lag.
+  The end-to-end age is identical for every layer in a burst, since one flush
+  shows them all.
 - Multi-plot updates remain synchronized (one `hold`+`freeze` flush per burst).
 - `PlotOrchestrator` gains a `frame_generation(grid_id)` accessor;
   `DashboardServices` owns the `FrameClock` and commits it; the ingestion idle
