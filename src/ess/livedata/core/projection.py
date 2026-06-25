@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Projection of scalar-cumulative workflow outputs onto the NICOS device topic.
+"""Projection of designated workflow outputs onto the NICOS device topic.
 
-A NICOS *derived device* is a scalar-cumulative workflow output designated in
-the per-instrument :class:`~ess.livedata.config.device_contract.DeviceContract`.
-The :class:`Projector` selects such outputs from each job result and republishes
-them on a dedicated, low-volume Kafka topic keyed by a stable *device name* —
-free of the ``job_number`` carried by the main data path — so NICOS sees a
-stable device identity across reconfigurations.
+A NICOS *derived device* is a workflow output designated in the per-instrument
+:class:`~ess.livedata.config.device_contract.DeviceContract`. The
+:class:`Projector` selects the contracted outputs from each job result and
+republishes them on a dedicated, low-volume Kafka topic keyed by a stable
+*device name* — free of the ``job_number`` carried by the main data path — so
+NICOS sees a stable device identity across reconfigurations. Which outputs are
+eligible is decided once, when the contract is loaded; the projector trusts the
+contract and projects whatever it designates.
 
 Each projected message carries a 0-D ``generation_token`` coordinate (the job's
 creation time in nanoseconds since the epoch), letting consumers detect when the
@@ -18,7 +20,7 @@ from __future__ import annotations
 
 import scipp as sc
 
-from ..config.device_contract import DeviceContract, is_scalar_cumulative
+from ..config.device_contract import DeviceContract
 from .job import JobResult
 from .message import Message, StreamId, StreamKind
 from .timestamp import Timestamp
@@ -42,7 +44,7 @@ class Projector:
         self._device_contract = device_contract
 
     def project(self, results: list[JobResult]) -> list[Message[sc.DataArray]]:
-        """Project designated scalar-cumulative outputs of the given results.
+        """Project the contracted outputs of the given results.
 
         The generation token is read from each result's ``generation_token``
         field (stamped by the JobManager at production time), so a finishing
@@ -65,35 +67,20 @@ class Projector:
         for result in results:
             if result.data is None or result.generation_token is None:
                 continue
+            token = sc.scalar(result.generation_token.to_ns(), unit='ns')
             for output_name, da in result.data.items():
-                message = self._project_output(
-                    result, output_name, da, result.generation_token
+                device_name = self._device_contract.device_name(
+                    result.workflow_id, result.job_id.source_name, output_name
                 )
-                if message is not None:
-                    messages.append(message)
+                if device_name is None:
+                    continue
+                messages.append(
+                    Message(
+                        timestamp=result.start_time or Timestamp.from_ns(0),
+                        stream=StreamId(
+                            kind=StreamKind.LIVEDATA_PROJECTION, name=device_name
+                        ),
+                        value=da.assign_coords({GENERATION_TOKEN_COORD: token}),
+                    )
+                )
         return messages
-
-    def _project_output(
-        self,
-        result: JobResult,
-        output_name: str,
-        da: object,
-        token: Timestamp,
-    ) -> Message[sc.DataArray] | None:
-        if not isinstance(da, sc.DataArray):
-            return None
-        if not is_scalar_cumulative(da):
-            return None
-        device_name = self._device_contract.device_name(
-            result.workflow_id, result.job_id.source_name, output_name
-        )
-        if device_name is None:
-            return None
-        projected = da.assign_coords(
-            {GENERATION_TOKEN_COORD: sc.scalar(token.to_ns(), unit='ns')}
-        )
-        return Message(
-            timestamp=result.start_time or Timestamp.from_ns(0),
-            stream=StreamId(kind=StreamKind.LIVEDATA_PROJECTION, name=device_name),
-            value=projected,
-        )

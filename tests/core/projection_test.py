@@ -62,14 +62,13 @@ def job_id() -> JobId:
 def result(job_id: JobId) -> JobResult:
     data = sc.DataGroup(
         {
-            # (a) in-contract, scalar-cumulative -> projected.
+            # (a) in the contract -> projected.
             'counts_total_cumulative': sc.DataArray(sc.scalar(42, unit='counts')),
-            # (b) non-eligible runtime output (has time coord).
+            # (b), (c) not in the contract -> skipped, regardless of shape.
             'cumulative': sc.DataArray(
                 sc.scalar(7, unit='counts'),
                 coords={'time': sc.scalar(0, unit='ns')},
             ),
-            # (c) not in the contract.
             'current': sc.DataArray(sc.scalar(3, unit='counts')),
         }
     )
@@ -83,7 +82,7 @@ def result(job_id: JobId) -> JobResult:
     )
 
 
-def test_projects_only_eligible_contracted_output(
+def test_projects_only_contracted_output(
     projector: Projector, result: JobResult
 ) -> None:
     messages = projector.project([result])
