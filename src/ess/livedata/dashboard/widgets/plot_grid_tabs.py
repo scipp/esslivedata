@@ -9,6 +9,7 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 
@@ -41,6 +42,11 @@ from .plot_grid_manager import PlotGridManager
 from .styles import Colors
 
 logger = structlog.get_logger(__name__)
+
+# Cadence for advancing the freshness pill while no new data arrives. Between
+# data frames the pill only ages a stalled stream, which carries no new
+# information, so we refresh it at most this often rather than every poll tick.
+_FRESHNESS_STALL_INTERVAL_S = 1.0
 
 
 class _BatchedTabs(pn.Tabs):
@@ -127,6 +133,9 @@ class PlotGridTabs:
         # visible tab changed; -1 forces a flush on the first poll.
         self._last_flushed_generation: int = -1
         self._last_active_grid_id: GridId | None = None
+        # Wall-clock (monotonic) of the last freshness-pill refresh, throttling
+        # the stall-aging path between data frames.
+        self._last_freshness_update: float = 0.0
 
         # Shared dependencies handed to every CellWidget. Built once; the
         # callbacks route modal interactions back here (modal container lives
@@ -715,15 +724,22 @@ class PlotGridTabs:
 
         # Refresh the freshness/lag indicator for active-grid cells. Runs after
         # rebuilds so cells recreated this poll update their fresh pane handle.
-        # The freshness pill (data age) is recomputed against the current wall
-        # clock every poll, so a stalled stream visibly grows stale rather than
-        # freezing. The per-layer time/lag row only changes on a new frame, so
-        # it is refreshed with the gated data flush to avoid per-tick churn.
+        # The pill refreshes in step with the data flush (so it reads the actual
+        # lag of the frame just shown) and otherwise only on the slow stall
+        # cadence -- ticking it every poll just animates aging with no new info.
+        # The per-layer time/lag row only changes on a new frame, so it tracks
+        # the data flush too.
+        now_mono = time.monotonic()
+        stalled = now_mono - self._last_freshness_update
+        freshness_due = flush_due or stalled >= _FRESHNESS_STALL_INTERVAL_S
+        if freshness_due:
+            self._last_freshness_update = now_mono
         for cell_id, per_layer in active_cell_bounds.items():
             cell_widget = self._cells.get(cell_id)
             if cell_widget is None:
                 continue
-            cell_widget.update_freshness(list(per_layer.values()))
+            if freshness_due:
+                cell_widget.update_freshness(list(per_layer.values()))
             if flush_due:
                 for layer_id, bounds in per_layer.items():
                     cell_widget.update_layer_time(layer_id, bounds)
