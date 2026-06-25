@@ -1,139 +1,130 @@
 # NICOS derived devices: mechanism
 
-Status: design agreed, not implemented. Several pieces are explicitly unsolved
-(see Open dependencies). This document records the decision tree and, equally
-important, the rejected alternatives and why -- so it is not re-litigated.
+NICOS drives counting and multi-day scans against derived quantities computed by
+ESSlivedata (monitor/detector total counts, fitted peak statistics). It needs
+these as a **static list of devices**, addressed by a **stable** identifier, on a
+**dedicated low-volume topic**, and must not have them reset/stopped/reconfigured
+by accident.
 
 The dashboard UI/UX (activation, gating, warnings) is a separate, composable
 plan: `nicos-derived-devices-ui.md`.
 
-## Problem
+## Projection onto a dedicated, stable-keyed topic
 
-NICOS drives counting and multi-day scans against derived quantities computed by
-ESSlivedata (monitor/detector total counts, fitted peak statistics). NICOS needs
-these as a **static list of devices**, addressable by a **stable** identifier,
-delivered on a **low-volume dedicated topic** (so it need not subscribe to the
-heavy result-data topic). These jobs must not be reset/stopped/reconfigured by
-accident.
+NICOS does **not** consume the internal result stream (keyed by `ResultKey` =
+`WorkflowId + JobId + output_name`, where `JobId` carries a random `job_number`).
+ESSlivedata publishes a **projection** of designated outputs onto a dedicated
+topic:
 
-The historical blocker was device naming: results are identified by `ResultKey`
-(`WorkflowId + JobId + output_name`) embedded in the message payload, and `JobId`
-carries a random `job_number` (UUID). External keys are therefore unstable across
-job restarts.
-
-## Decision: a dedicated stable-keyed projection
-
-NICOS does **not** consume the internal result stream. ESSlivedata publishes a
-**projection** of designated outputs onto a dedicated topic:
-
-- **Scope**: scalar, cumulative outputs only (e.g. `counts_total`). These already
-  exist as 0-D `DataArray`s. NICOS reads the current value; it does not
-  re-accumulate (its stated preference).
+- **Scope**: scalar, cumulative outputs only (e.g. `counts_total`), already 0-D
+  `DataArray`s. NICOS reads the current value; it does not re-accumulate (its
+  stated preference).
 - **Identity**: `WorkflowId (instrument + name + version) + source_name +
-  output_name`. The random `job_number` is dropped from the external identity.
+  output_name`. The random `job_number` is not part of the external identity.
   Including `version` makes drift fail-fast (see Contract).
-- **Wire schema**: `da00` or `f144` -- NICOS consumes both. Free, deferrable
-  choice; `f144` makes a scalar device byte-identical to an EPICS PV.
+- **Wire schema**: `da00`. It carries the signal, its error bar, and a generation
+  token (below) as named variables. `f144` cannot carry the token (it is a lone
+  scalar) and is not used.
 - **Topic**: dedicated low-volume topic (a one-line addition to
   `stream_kind_to_topic`).
 
-Because the projection is dedicated and stable-keyed, **no consumer needs to
-detect a job transition from the data stream**. This is the crux: the naming
-problem dissolves rather than being chosen.
+The stable identity gives NICOS a static device list. It does **not** by itself
+signal when the accumulation was reset (job start/stop, config change, backend
+restart): a cumulative value dropping to zero is otherwise indistinguishable from
+a real low reading. The generation token carries that signal.
 
-### Liveness and validity (sibling signals, EPICS-native)
+## Generation token
 
-- **Liveness**: NICOS uses **heartbeat staleness** (it already does this for real
-  devices). `ep01` connection-status is **not** used -- its native meaning
-  ("transient loss, value persists") is the opposite of what a reset would mean,
-  so overloading it for "forget the past" would force fragile sequence
-  interpretation against the grain of how NICOS reads `ep01` for PVs.
-- **Validity**: `al00` alarm `INVALID` marks a value not to be trusted (peak with
-  too few counts). Optional, deferrable, native to NICOS.
+The projected `da00` carries an extra named variable -- a **generation token**
+that increases on every job transition (start/stop, reconfigure). It is per job
+(`(workflow, source)`), replicated into each output's projection. A change tells
+NICOS the prior accumulation was reset and the value begins a fresh series, not a
+continuation.
 
-### No stream-borne reset signal
+- **Derivation**: the job's start time (ns since epoch), captured at job creation.
+  `JobNumber` is a random UUID with no timestamp (`config/workflow_spec.py`), so
+  the token cannot come from the id. ns resolution avoids collisions between rapid
+  transitions.
+- **Restart-safe without persistence**: a later job always has a later start time,
+  so the token increases monotonically across backend restarts with no stored
+  counter.
+- **No schema change**: `da00` is a list of named variables; the token is one more
+  beside signal/errors. NICOS already surfaces non-signal variables (e.g.
+  `reference_time`).
 
-Deliberate reconfiguration is **gated** in the dashboard (UI plan) and does not
-happen mid-scan. Unexpected reset = backend restart mid-scan, which is out of
-scope (manual recovery). Hence no epoch/generation/tombstone field is needed on
-the wire. Should that change, it must be an **explicit** field, never inferred
-from `start_time` (which is per-window for sliding accumulators and thus not a
-uniform epoch signal) or from `ep01`.
+Backend restart resets cumulative values to zero; NICOS does not re-accumulate.
+The token makes the reset **detectable** (it jumps), so NICOS does not mistake the
+reset value for a real reading. Recovering the lost accumulation is manual; we
+bank on backend stability. If restarts prove frequent, the bounded escalation is
+**accumulator checkpointing** for simple additive devices only -- never generic
+raw-data replay, which is intractable for reduction workflows whose normalization
+needs longer windows than the update period.
 
-## Decision: unified jobs + UI gating (not isolation)
+## Liveness and validity
 
-One job per `(workflow, source)`, shared by dashboard and NICOS. No dedicated
-NICOS jobs, no separate orchestrator, no fixed `job_number`.
+- **Liveness**: not in v1. If NICOS needs to distinguish "job alive, value static"
+  from "job gone", it subscribes to the existing job heartbeat. `ep01`
+  connection-status is not used.
+- **Validity**: no separate channel. The `da00` error bar carries the uncertainty;
+  NICOS scripts whatever statistic/threshold it needs (e.g. rejecting a peak with
+  too few counts). `al00`/`ep01` do not apply -- NICOS receives EPICS PVs directly,
+  not via Kafka.
 
-Rationale: even a "dedicated" NICOS job must remain reconfigurable, so physical
-isolation provides no guarantee a UI gate doesn't. Dedicated jobs also cost
-duplicate processing of the same raw stream (heavy for detector banks) and a
-permanent parallel code path. Protection against accidental reset/stop/reconfigure
-is therefore a **gate** in the dashboard, scoped to outputs currently exposed as
-devices. See the UI plan.
+## Unified jobs, gated in the UI
 
-## Decision: static versioned contract
+One job per `(workflow, source)`, shared by dashboard and NICOS. No dedicated NICOS
+jobs, no separate orchestrator, no fixed `job_number`.
+
+Even a dedicated NICOS job must remain reconfigurable, so physical isolation gives
+no guarantee a UI gate doesn't, while costing duplicate processing of the same raw
+stream (heavy for detector banks) and a permanent parallel code path. Protection
+against accidental reset/stop/reconfigure is a **gate** in the dashboard, scoped to
+outputs currently exposed as devices (UI plan).
+
+The gate and the token are complementary: the gate guards against *accidental*
+disruption, while *intentional* transitions and restarts still reset the
+accumulation and NICOS detects those via the token regardless of gating.
+
+## Contract
 
 The `(workflow, source, output) -> device` mapping is a **shared, versioned yaml**
 (NICOS dislikes runtime-published config). Two layers compose:
 
 - The **yaml** defines the *namespace* of devices that may exist -- NICOS's static
-  list. `WorkflowId.version` is part of the device identity, so a breaking change
-  retires the old device name (it goes silent, NICOS notices via staleness) rather
-  than silently changing semantics behind a stable name. **Fail-fast.**
+  list. `WorkflowId.version` is part of device identity, so a breaking change
+  retires the old device name (it goes silent, NICOS notices) rather than silently
+  changing semantics behind a stable name. **Fail-fast.**
 - **Activation** (UI plan) controls whether a given device's projection is
-  currently *published*. The yaml says what can exist; activation says what is
-  live right now.
+  currently *published*. The yaml says what can exist; activation says what is live
+  now.
 
 An entry that cannot be resolved against the instrument's registry (wrong
-workflow/version) must be surfaced **loudly** (dashboard-visible), not dropped to
-a `log.info`, since it is a misconfiguration of a scan-critical contract.
+workflow/version) is surfaced **loudly** (dashboard-visible), not dropped to a
+`log.info` -- it is a misconfiguration of a scan-critical contract.
 
-## Open dependencies (unsolved -- do not present as done)
+## Implementation
 
-1. **Stable-keyed liveness (core dependency).** The current job heartbeat on
-   `{instrument}_livedata_heartbeat` (x5f2, `core/orchestrating_processor.py`
-   `_report_status`, `kafka/x5f2_compat.py`) is keyed `source_name:job_number` and
-   its payload carries the full `JobId`. A stable-keyed projection consumer will
-   **not** match it. NICOS-via-heartbeat-staleness requires emitting job liveness
-   under the stable identity (`WorkflowId + source_name + output_name`, no
-   `job_number`). Unimplemented; the scheme does not work without it.
-2. **Backend restart resilience.** Cumulative values reset on restart; NICOS does
-   not re-accumulate. Decision: bank on backend stability, recover manually.
-   *Measure restart frequency in production* before building anything. If
-   warranted, escalate to **accumulator checkpointing** (snapshot/reload state)
-   for simple additive devices only -- never generic raw-data replay, which is
-   intractable for reduction workflows whose normalization needs longer windows
-   than the update period.
-3. **`al00` validity** for non-additive (peak) devices.
-4. **Projection placement.** Where the projection is produced (inline in
-   `orchestrating_processor` vs. a dedicated projector) and how it derives the
-   stable `source_name` and the scalar value. Implementation detail; resolve at
-   build time.
+Producing the projection: derive the stable `source_name`, extract the scalar
+value, attach the generation token from the owning job's start timestamp, and
+publish to the dedicated topic. The natural home is the sink/serialization path
+that already turns results into `da00`. The exact seam (inline in
+`orchestrating_processor` vs. a dedicated projector) is settled at build time; it
+does not affect the wire contract above.
 
 ## Rejected alternatives
 
-- **(a) Fixed `job_number` for NICOS jobs** (current branch): keeps `job_number`
-  in the identity, needs a parallel `NicosOrchestrator`, curated fixed-id yaml, and
-  a dedicated stream kind. Replaced -- the projection makes `job_number`
-  irrelevant to NICOS.
-- **(b) Replicate result with a fixed id part in `ResultKey`**: still bakes
-  `job_number` semantics into the key and duplicates the result; same selection
-  problem as (a).
-- **(c) Move `JobId` out of `ResultKey` (dashboard-wide refactor)**: was thought
-  to be forced by NICOS. It is **not** -- the projection decouples NICOS from
-  `ResultKey` entirely. (c) becomes an optional internal cleanup judged on
-  dashboard merits alone, off the critical path.
-- **Delta stream, NICOS accumulates**: elegant for additive quantities (dissolves
-  epoch/restart entirely) but non-additive peak devices cannot be expressed as
-  deltas, and NICOS prefers not to accumulate. Parked as a possible future
-  optimization, not the spine.
-- **`ep01` as a reset/epoch signal**: awkward and fragile (see Liveness).
-
-## Net effect
-
-The months-long identity puzzle (a/b/c) is dissolved, not chosen: a dedicated,
-stable-keyed, low-volume projection plus heartbeat-based liveness means no
-consumer needs a transition signal in the data. The remaining work is real but
-bounded, and the genuine risk now lives in one named place -- stable-keyed
-liveness -- rather than diffused across the schema.
+- **Fixed `job_number` for NICOS jobs**: keeps `job_number` in the identity, needs
+  a parallel orchestrator, a curated fixed-id yaml, and a dedicated stream kind.
+  The projection makes `job_number` irrelevant to NICOS.
+- **Replicate the result with a fixed id part in `ResultKey`**: still bakes
+  `job_number` semantics into the key and duplicates the result.
+- **Move `JobId` out of `ResultKey` (dashboard-wide refactor)**: not forced by
+  NICOS -- the projection decouples NICOS from `ResultKey` entirely. It is an
+  optional internal cleanup judged on dashboard merits alone, off this critical
+  path.
+- **Delta stream, NICOS accumulates**: elegant for additive quantities, but
+  non-additive peak devices cannot be expressed as deltas, and NICOS prefers not to
+  accumulate.
+- **`ep01` as a reset/epoch signal**: its native meaning ("transient loss, value
+  persists") is the opposite of a reset, forcing fragile sequence interpretation.
+  The generation token is an explicit field instead.
