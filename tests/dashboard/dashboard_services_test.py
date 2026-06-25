@@ -7,6 +7,7 @@ import threading
 from confluent_kafka import KafkaException
 
 from ess.livedata.dashboard.dashboard_services import DashboardServices
+from ess.livedata.dashboard.frame_clock import FrameClock
 
 
 class _FakeRegistry:
@@ -32,6 +33,7 @@ def _make_loop_target(orchestrator: _FakeOrchestrator) -> DashboardServices:
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
+    target.frame_clock = FrameClock()
     target.transport_failure_calls = 0
 
     def _on_transport_failure() -> None:
@@ -73,6 +75,7 @@ def test_update_loop_continues_on_generic_exception() -> None:
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
+    target.frame_clock = FrameClock()
     target.transport_failure_calls = 0
 
     def _on_transport_failure() -> None:

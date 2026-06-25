@@ -21,6 +21,7 @@ from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
+from .frame_clock import FrameClock
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .notification_queue import NotificationQueue
@@ -95,7 +96,11 @@ class DashboardServices:
         # Background update thread state
         self._update_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._update_interval = 0.2  # seconds
+        self._update_interval = 0.05  # seconds
+
+        # Advanced once per completed data-burst frame by the ingestion loop;
+        # read by per-session poll loops to coalesce synchronized plot flushes.
+        self.frame_clock = FrameClock()
 
         # Setup all services
         self._setup_data_infrastructure()
@@ -154,6 +159,11 @@ class DashboardServices:
             except Exception:
                 logger.exception("orchestrator_update_error")
 
+            # A burst is fully drained and computed once update() returns, so
+            # publish the frame now. No-op unless a visible layer was recomputed,
+            # so empty/hidden-only passes do not trigger session flushes.
+            self.frame_clock.commit()
+
             # Only sleep if update was quick (no work to do), to avoid busy-wait.
             # If there was real work, loop immediately to check for more data.
             elapsed = time.monotonic() - start
@@ -210,6 +220,7 @@ class DashboardServices:
             raw_templates=raw_templates,
             instrument_config=self.instrument_config,
             plot_data_service=self.plot_data_service,
+            frame_clock=self.frame_clock,
         )
         logger.info("PlotOrchestrator setup complete")
 

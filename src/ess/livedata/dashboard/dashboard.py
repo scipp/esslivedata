@@ -164,7 +164,7 @@ class DashboardBase(ServiceBase, ABC):
         )
 
     def _start_periodic_callback(
-        self, session_updater: SessionUpdater, period: int = 1000
+        self, session_updater: SessionUpdater, period: int = 100
     ) -> None:
         """
         Start the periodic callback for a session.
@@ -174,7 +174,10 @@ class DashboardBase(ServiceBase, ABC):
         session_updater:
             The session updater to drive with the periodic callback.
         period:
-            The period in milliseconds for the periodic update step.
+            The period in milliseconds for the periodic update step. Kept short
+            so a freshly computed frame reaches the browser promptly; the actual
+            plot-data flush is gated per data-burst frame (see PlotGridTabs), so
+            faster polling adds only cheap no-op scans, not extra Bokeh work.
         """
         session_id = session_updater.session_id
         session_registry = self._services.session_registry
