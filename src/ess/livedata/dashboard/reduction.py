@@ -14,10 +14,12 @@ from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
 from ess.livedata import Service
+from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
+from .widgets.derived_devices_overview import DerivedDevicesOverview
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -96,6 +98,11 @@ class ReductionApp(DashboardBase):
             basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
         self._fetch_announcements = fetch_announcements
+        # Load (and validate) the NICOS derived-device contract once. Fails loud
+        # on an invalid contract, before any session is served.
+        self._device_contract = DeviceContract.from_instrument(
+            self._services.instrument_config
+        )
         self._logger.info("Reduction dashboard initialized")
 
     def _create_announcements_pane(self) -> pn.pane.Markdown:
@@ -141,8 +148,16 @@ class ReductionApp(DashboardBase):
             session_updater.register_cleanup_handler(dev_widget.close)
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
+        derived_devices = DerivedDevicesOverview(
+            orchestrator=self._services.job_orchestrator,
+            device_contract=self._device_contract,
+        )
+        derived_devices.register_periodic_refresh(session_updater)
+
         return pn.Column(
             *dev_content,
+            derived_devices.panel,
+            pn.layout.Divider(),
             self._create_announcements_pane(),
         )
 
@@ -153,6 +168,7 @@ class ReductionApp(DashboardBase):
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
+            device_contract=self._device_contract,
         )
 
         system_status_widget = SystemStatusWidget(

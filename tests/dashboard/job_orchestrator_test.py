@@ -1638,3 +1638,33 @@ class TestStoppedJobDataRetention:
         orchestrator.commit_workflow(workflow_id)
 
         assert unrelated_key in data_service
+
+
+class TestGetRunningWorkflowSources:
+    """Tests for the running-sources accessor used by device derivation."""
+
+    def test_empty_when_no_jobs_committed(self, workflow_with_params: WorkflowSpec):
+        orchestrator = make_orchestrator(workflow_with_params)
+        assert orchestrator.get_running_workflow_sources() == {}
+
+    def test_reports_committed_sources(self, workflow_with_params: WorkflowSpec):
+        workflow_id = workflow_with_params.get_id()
+        orchestrator = make_orchestrator(workflow_with_params)
+
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        assert orchestrator.get_running_workflow_sources() == {workflow_id: {"det_1"}}
+
+    def test_omits_workflow_after_stop(self, workflow_with_params: WorkflowSpec):
+        workflow_id = workflow_with_params.get_id()
+        orchestrator = make_orchestrator(workflow_with_params)
+
+        orchestrator.commit_workflow(workflow_id)
+        assert workflow_id in orchestrator.get_running_workflow_sources()
+
+        orchestrator.stop_workflow(workflow_id)
+        assert workflow_id not in orchestrator.get_running_workflow_sources()

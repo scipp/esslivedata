@@ -584,6 +584,26 @@ class JobOrchestrator:
             return None
         return state.current.job_number
 
+    def get_running_workflow_sources(self) -> dict[WorkflowId, set[SourceName]]:
+        """Return the source names of every currently-running job, by workflow.
+
+        A workflow's job is "running" when it has a committed (current) JobSet.
+        The returned mapping omits workflows with no active job. It is the
+        live projection the dashboard intersects with the device contract to
+        decide which outputs are currently exposed as NICOS devices.
+
+        Returns
+        -------
+        :
+            Mapping from workflow ID to the set of source names with a running
+            job. Workflows without an active job are absent from the mapping.
+        """
+        return {
+            workflow_id: set(state.current.jobs)
+            for workflow_id, state in self._workflows.items()
+            if state.current is not None
+        }
+
     def get_stopped_reason(self, workflow_id: WorkflowId) -> StoppedReason | None:
         """Get the reason why a workflow was stopped, if any."""
         state = self._workflows.get(workflow_id)
