@@ -9,13 +9,14 @@ A NICOS *derived device* is a scalar, cumulative workflow output (e.g.
 
 is a versioned, per-instrument YAML contract shared by the backend (which
 decides what to project onto a Kafka topic) and the dashboard (which decides
-which outputs are "devices"). This module owns the loader, the validated
-read API, and the single definition of the eligibility predicate
-:func:`is_scalar_cumulative`.
+which outputs are "devices"). This module owns the loader and the validated
+read API.
 
 The contract is validated against the live workflow registry at load time and
 fails loud on any inconsistency, so a malformed or stale contract cannot
-silently mis-route a device.
+silently mis-route a device. Which outputs are sensible as devices is the
+contract author's responsibility; the loader only checks that each entry
+resolves to a real workflow output.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
-import scipp as sc
 import yaml
 from pydantic import BaseModel, Field
 
@@ -33,29 +33,6 @@ if TYPE_CHECKING:
     from .instrument import Instrument
 
 CONTRACT_FILENAME = 'device_contract.yaml'
-
-
-def is_scalar_cumulative(da: sc.DataArray) -> bool:
-    """Whether a DataArray template is a scalar-cumulative quantity.
-
-    Scalar-cumulative outputs are 0-D DataArrays that accumulate over a run
-    and carry no ``time`` coordinate (which would mark them as a per-update
-    timeseries instead). This is the eligibility criterion for exposing an
-    output as a NICOS derived device, defined here so the backend and
-    dashboard share a single source of truth.
-
-    Parameters
-    ----------
-    da:
-        Output template DataArray (typically a field ``default_factory``
-        result from a :class:`WorkflowSpec` outputs model).
-
-    Returns
-    -------
-    :
-        True if ``da`` is 0-D and has no ``time`` coordinate.
-    """
-    return da.ndim == 0 and 'time' not in da.coords
 
 
 class DeviceContractError(ValueError):
@@ -256,8 +233,6 @@ class DeviceContract:
         - a ``workflow_id`` that does not parse or is absent from ``registry``;
         - a ``source_name`` not declared by the spec's ``source_names``;
         - an ``output_name`` absent from the spec's outputs;
-        - an output whose template is not scalar-cumulative
-          (see :func:`is_scalar_cumulative`);
         - a duplicate ``(workflow_id, source_name, output_name)`` key;
         - a duplicate ``device_name``.
 
@@ -320,23 +295,9 @@ class DeviceContract:
                 f"declared sources: {spec.source_names}"
             )
 
-        field_info = spec.outputs.model_fields.get(entry.output_name)
-        if field_info is None:
+        if entry.output_name not in spec.outputs.model_fields:
             raise DeviceContractError(
                 f"Unknown output_name {entry.output_name!r} for workflow "
                 f"{entry.workflow_id!r} (device {entry.device_name!r}); "
                 f"declared outputs: {sorted(spec.outputs.model_fields)}"
-            )
-
-        if not field_info.default_factory:
-            raise DeviceContractError(
-                f"Output {entry.output_name!r} of workflow {entry.workflow_id!r} "
-                f"(device {entry.device_name!r}) has no template (default_factory); "
-                "cannot verify scalar-cumulative eligibility"
-            )
-        if not is_scalar_cumulative(field_info.default_factory()):
-            raise DeviceContractError(
-                f"Output {entry.output_name!r} of workflow {entry.workflow_id!r} "
-                f"(device {entry.device_name!r}) is not scalar-cumulative "
-                "(must be 0-D with no 'time' coordinate)"
             )

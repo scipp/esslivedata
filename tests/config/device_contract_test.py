@@ -9,7 +9,6 @@ mocking. Validation failure modes are exercised against this live registry.
 from __future__ import annotations
 
 import pytest
-import scipp as sc
 from pydantic import ValidationError
 
 from ess.livedata.config.device_contract import (
@@ -17,7 +16,6 @@ from ess.livedata.config.device_contract import (
     DeviceContractEntry,
     DeviceContractError,
     DeviceContractFileEntry,
-    is_scalar_cumulative,
 )
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import get_config
@@ -48,21 +46,6 @@ def _entry(**overrides: str) -> DeviceContractEntry:
     }
     fields.update(overrides)
     return DeviceContractEntry(**fields)
-
-
-def test_is_scalar_cumulative_true_for_0d_without_time() -> None:
-    da = sc.DataArray(sc.scalar(0, unit='counts'))
-    assert is_scalar_cumulative(da)
-
-
-def test_is_scalar_cumulative_false_for_0d_with_time() -> None:
-    da = sc.DataArray(sc.scalar(0, unit='counts'), coords={'time': sc.scalar(0)})
-    assert not is_scalar_cumulative(da)
-
-
-def test_is_scalar_cumulative_false_for_1d() -> None:
-    da = sc.DataArray(sc.zeros(dims=['x'], shape=[3], unit='counts'))
-    assert not is_scalar_cumulative(da)
 
 
 @pytest.fixture
@@ -151,20 +134,6 @@ def test_unknown_source_raises(registry) -> None:
 def test_unknown_output_raises(registry) -> None:
     entry = _entry(output_name='no_such_output')
     with pytest.raises(DeviceContractError, match='Unknown output_name'):
-        DeviceContract.from_entries([entry], registry)
-
-
-def test_non_scalar_output_raises(registry) -> None:
-    # 'cumulative' is a 1-D histogram output: not scalar-cumulative.
-    entry = _entry(output_name='cumulative')
-    with pytest.raises(DeviceContractError, match='not scalar-cumulative'):
-        DeviceContract.from_entries([entry], registry)
-
-
-def test_time_coord_output_raises(registry) -> None:
-    # 'counts_total' is 0-D but carries a 'time' coord (per-update timeseries).
-    entry = _entry(output_name='counts_total')
-    with pytest.raises(DeviceContractError, match='not scalar-cumulative'):
         DeviceContract.from_entries([entry], registry)
 
 

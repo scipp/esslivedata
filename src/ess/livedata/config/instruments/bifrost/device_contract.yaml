@@ -3,10 +3,8 @@
 #
 # NICOS derived-device contract for the bifrost instrument.
 #
-# Exposes each monitor's cumulative total counts as a NICOS device. Eligible
-# outputs are 0-D and carry no 'time' coordinate (see
-# device_contract.is_scalar_cumulative). Validated against the live workflow
-# registry at load time.
+# Exposes each monitor's cumulative total counts as a NICOS device. Validated
+# against the live workflow registry at load time.
 entries:
   - workflow_id: bifrost/monitor_histogram/1
     output_name: counts_total_cumulative
