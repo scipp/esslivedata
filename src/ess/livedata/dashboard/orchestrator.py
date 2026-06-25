@@ -74,7 +74,17 @@ class Orchestrator:
         with self._active_job_registry.ingestion_guard():
             with self._data_service.transaction():
                 for message in messages:
-                    self.forward(stream_id=message.stream, value=message.value)
+                    # Isolate per-message failures: a single poisoned stream (e.g.
+                    # corrupt payload, or data whose shape no longer fits its buffer)
+                    # must not abort the loop and drop every message sorted after it,
+                    # which would repeat on every polling cycle. Log and continue.
+                    try:
+                        self.forward(stream_id=message.stream, value=message.value)
+                    except Exception:
+                        self._logger.exception(
+                            "Failed to forward message from stream %s; skipping",
+                            message.stream,
+                        )
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
