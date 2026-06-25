@@ -783,7 +783,7 @@ class LagSupportingConsumer:
         return [FakeTopicPartition(self._topic, p) for p in self._partitions]
 
     def get_watermark_offsets(
-        self, tp: FakeTopicPartition, timeout: float = 1.0
+        self, tp: FakeTopicPartition, timeout: float = 1.0, cached: bool = False
     ) -> tuple[int, int]:
         return self._watermarks[(tp.topic, tp.partition)]
 
