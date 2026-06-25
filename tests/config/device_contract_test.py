@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import pytest
 import scipp as sc
+from pydantic import ValidationError
 
 from ess.livedata.config.device_contract import (
     DeviceContract,
     DeviceContractEntry,
     DeviceContractError,
+    DeviceContractFileEntry,
     is_scalar_cumulative,
 )
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -193,22 +195,89 @@ def test_missing_contract_file_yields_empty(registry) -> None:
     assert len(contract) == 0
 
 
+BIFROST_MONITOR_WORKFLOW = 'bifrost/monitor_histogram/1'
+BIFROST_MONITORS = [
+    'psc_monitor',
+    'overlap_monitor',
+    'bandwidth_monitor',
+    'normalization_monitor',
+    'elastic_monitor',
+]
+
+
+@pytest.fixture
+def bifrost_registry():
+    get_config('bifrost')
+    return instrument_registry['bifrost'].workflow_factory
+
+
 def test_bifrost_contract_loads_and_validates() -> None:
     # Guards the shipped bifrost contract against workflow-spec drift: every
     # entry must resolve against the live registry and be scalar-cumulative.
     get_config('bifrost')
     instrument = instrument_registry['bifrost']
     contract = DeviceContract.from_instrument(instrument)
-    wid = WorkflowId.from_string('bifrost/monitor_histogram/1')
+    wid = WorkflowId.from_string(BIFROST_MONITOR_WORKFLOW)
     monitors = {entry.source_name for entry in contract}
-    assert monitors == {
-        'psc_monitor',
-        'overlap_monitor',
-        'bandwidth_monitor',
-        'normalization_monitor',
-        'elastic_monitor',
-    }
+    assert monitors == set(BIFROST_MONITORS)
     assert all(
         contract.is_device(wid, monitor, 'counts_total_cumulative')
         for monitor in monitors
     )
+
+
+def test_file_entry_expands_per_source_with_template(bifrost_registry) -> None:
+    file_entry = DeviceContractFileEntry(
+        workflow_id=BIFROST_MONITOR_WORKFLOW,
+        output_name='counts_total_cumulative',
+        source_names=BIFROST_MONITORS,
+        device_name='{source_name}_counts_total',
+    )
+    contract = DeviceContract.from_file_entries([file_entry], bifrost_registry)
+    assert [e.device_name for e in contract] == [
+        f'{m}_counts_total' for m in BIFROST_MONITORS
+    ]
+
+
+def test_single_source_literal_device_name(bifrost_registry) -> None:
+    file_entry = DeviceContractFileEntry(
+        workflow_id=BIFROST_MONITOR_WORKFLOW,
+        output_name='counts_total_cumulative',
+        source_names=['psc_monitor'],
+        device_name='psc_counts',
+    )
+    contract = DeviceContract.from_file_entries([file_entry], bifrost_registry)
+    assert len(contract) == 1
+    assert contract.entries[0].device_name == 'psc_counts'
+
+
+def test_multiple_sources_without_placeholder_raises(bifrost_registry) -> None:
+    file_entry = DeviceContractFileEntry(
+        workflow_id=BIFROST_MONITOR_WORKFLOW,
+        output_name='counts_total_cumulative',
+        source_names=['psc_monitor', 'overlap_monitor'],
+        device_name='monitor_counts',  # no placeholder -> collides
+    )
+    with pytest.raises(DeviceContractError, match='Duplicate device_name'):
+        DeviceContract.from_file_entries([file_entry], bifrost_registry)
+
+
+def test_unknown_placeholder_in_template_raises(bifrost_registry) -> None:
+    file_entry = DeviceContractFileEntry(
+        workflow_id=BIFROST_MONITOR_WORKFLOW,
+        output_name='counts_total_cumulative',
+        source_names=['psc_monitor'],
+        device_name='{nope}_counts',
+    )
+    with pytest.raises(DeviceContractError, match='placeholder'):
+        DeviceContract.from_file_entries([file_entry], bifrost_registry)
+
+
+def test_empty_source_names_rejected_by_schema() -> None:
+    with pytest.raises(ValidationError):
+        DeviceContractFileEntry(
+            workflow_id=BIFROST_MONITOR_WORKFLOW,
+            output_name='counts_total_cumulative',
+            source_names=[],
+            device_name='x',
+        )

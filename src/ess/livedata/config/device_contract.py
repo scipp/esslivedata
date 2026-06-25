@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import scipp as sc
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .workflow_spec import WorkflowId, WorkflowSpec
 
@@ -62,6 +62,16 @@ class DeviceContractError(ValueError):
     """Raised when a device contract is inconsistent with the registry."""
 
 
+def _render_device_name(template: str, source_name: str) -> str:
+    """Render a device-name template for a source, failing loud on bad placeholders."""
+    try:
+        return template.format(source_name=source_name)
+    except (KeyError, IndexError) as exc:
+        raise DeviceContractError(
+            f"Invalid device_name template {template!r}: unknown placeholder {exc}"
+        ) from exc
+
+
 class DeviceContractEntry(BaseModel, frozen=True):
     """A single ``(WorkflowId, source_name, output_name) -> device_name`` mapping.
 
@@ -89,10 +99,38 @@ class DeviceContractEntry(BaseModel, frozen=True):
         return (self.workflow_id, self.source_name, self.output_name)
 
 
+class DeviceContractFileEntry(BaseModel):
+    """A grouped contract entry: one workflow output across several sources.
+
+    Expands to one :class:`DeviceContractEntry` per source. ``device_name`` is a
+    template formatted with ``source_name`` for each source; include the
+    ``{source_name}`` placeholder to derive a distinct device name per source
+    (required when more than one source is listed, otherwise the names collide).
+
+    Parameters
+    ----------
+    workflow_id:
+        String form of the :class:`WorkflowId`, ``"instrument/name/version"``.
+    output_name:
+        Pydantic field name of the workflow output (e.g.
+        ``counts_total_cumulative``), not the user-facing view name.
+    source_names:
+        Data sources the workflow runs on (e.g. monitor or detector names).
+    device_name:
+        NICOS device-name template. A literal (no ``{source_name}``) is allowed
+        only for a single source.
+    """
+
+    workflow_id: str
+    output_name: str
+    source_names: list[str] = Field(min_length=1)
+    device_name: str
+
+
 class DeviceContractFile(BaseModel):
     """On-disk model of a device-contract YAML file."""
 
-    entries: list[DeviceContractEntry] = []
+    entries: list[DeviceContractFileEntry] = []
 
 
 class DeviceContract:
@@ -169,7 +207,31 @@ class DeviceContract:
         contract_file = DeviceContractFile.model_validate(
             yaml.safe_load(resource.read_text()) or {}
         )
-        return cls.from_entries(contract_file.entries, registry)
+        return cls.from_file_entries(contract_file.entries, registry)
+
+    @classmethod
+    def from_file_entries(
+        cls,
+        file_entries: list[DeviceContractFileEntry],
+        registry: Mapping[WorkflowId, WorkflowSpec],
+    ) -> DeviceContract:
+        """Expand grouped file entries to per-source entries and validate.
+
+        Each :class:`DeviceContractFileEntry` expands to one
+        :class:`DeviceContractEntry` per source, with ``device_name`` rendered
+        from its template; the result is validated by :meth:`from_entries`.
+        """
+        resolved = [
+            DeviceContractEntry(
+                workflow_id=file_entry.workflow_id,
+                source_name=source_name,
+                output_name=file_entry.output_name,
+                device_name=_render_device_name(file_entry.device_name, source_name),
+            )
+            for file_entry in file_entries
+            for source_name in file_entry.source_names
+        ]
+        return cls.from_entries(resolved, registry)
 
     @classmethod
     def from_instrument(cls, instrument: Instrument) -> DeviceContract:

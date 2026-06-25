@@ -9,22 +9,11 @@
 # registry at load time.
 entries:
   - workflow_id: bifrost/monitor_histogram/1
-    source_name: psc_monitor
     output_name: counts_total_cumulative
-    device_name: psc_monitor_counts_total
-  - workflow_id: bifrost/monitor_histogram/1
-    source_name: overlap_monitor
-    output_name: counts_total_cumulative
-    device_name: overlap_monitor_counts_total
-  - workflow_id: bifrost/monitor_histogram/1
-    source_name: bandwidth_monitor
-    output_name: counts_total_cumulative
-    device_name: bandwidth_monitor_counts_total
-  - workflow_id: bifrost/monitor_histogram/1
-    source_name: normalization_monitor
-    output_name: counts_total_cumulative
-    device_name: normalization_monitor_counts_total
-  - workflow_id: bifrost/monitor_histogram/1
-    source_name: elastic_monitor
-    output_name: counts_total_cumulative
-    device_name: elastic_monitor_counts_total
+    device_name: "{source_name}_counts_total"
+    source_names:
+      - psc_monitor
+      - overlap_monitor
+      - bandwidth_monitor
+      - normalization_monitor
+      - elastic_monitor
