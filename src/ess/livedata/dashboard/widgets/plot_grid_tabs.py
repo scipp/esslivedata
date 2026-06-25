@@ -46,7 +46,11 @@ logger = structlog.get_logger(__name__)
 # Cadence for advancing the freshness pill while no new data arrives. Between
 # data frames the pill only ages a stalled stream, which carries no new
 # information, so we refresh it at most this often rather than every poll tick.
-_FRESHNESS_STALL_INTERVAL_S = 1.0
+# Kept comfortably above the backend's ~1 s publish cadence so that for a
+# healthy stream each data flush resets the timer before it fires: the stall
+# path then never triggers and the pill updates once per frame, avoiding a
+# beat between the flush and the timer that would double-update the age.
+_FRESHNESS_STALL_INTERVAL_S = 2.0
 
 
 class _BatchedTabs(pn.Tabs):
