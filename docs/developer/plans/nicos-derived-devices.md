@@ -79,7 +79,7 @@ Even a dedicated NICOS job must remain reconfigurable, so physical isolation giv
 no guarantee a UI gate doesn't, while costing duplicate processing of the same raw
 stream (heavy for detector banks) and a permanent parallel code path. Protection
 against accidental reset/stop/reconfigure is a **gate** in the dashboard, scoped to
-outputs currently exposed as devices (UI plan).
+running workflows that bear a device per the yaml contract (UI plan).
 
 The gate and the token are complementary: the gate guards against *accidental*
 disruption, while *intentional* transitions and restarts still reset the
@@ -88,15 +88,18 @@ accumulation and NICOS detects those via the token regardless of gating.
 ## Contract
 
 The `(workflow, source, output) -> device` mapping is a **shared, versioned yaml**
-(NICOS dislikes runtime-published config). Two layers compose:
+(NICOS dislikes runtime-published config). It is the single source of truth, read
+by the backend:
 
-- The **yaml** defines the *namespace* of devices that may exist -- NICOS's static
-  list. `WorkflowId.version` is part of device identity, so a breaking change
-  retires the old device name (it goes silent, NICOS notices) rather than silently
-  changing semantics behind a stable name. **Fail-fast.**
-- **Activation** (UI plan) controls whether a given device's projection is
-  currently *published*. The yaml says what can exist; activation says what is live
-  now.
+- The yaml is NICOS's static device list. `WorkflowId.version` is part of device
+  identity, so a breaking change retires the old device name (it goes silent, NICOS
+  notices) rather than silently changing semantics behind a stable name.
+  **Fail-fast.**
+- A device is **live whenever its owning `(workflow, source)` job is running**. The
+  backend projects every yaml-listed output of a running job; there is no runtime
+  activation toggle and no dashboard->backend control channel. Liveness is
+  predictable from "contract intersect running jobs", matching NICOS's static-list
+  preference.
 
 An entry that cannot be resolved against the instrument's registry (wrong
 workflow/version) is surfaced **loudly** (dashboard-visible), not dropped to a

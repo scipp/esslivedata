@@ -1,117 +1,97 @@
 # NICOS derived devices: dashboard UI/UX
 
 Composes with the backend/identity design in `nicos-derived-devices.md`. This plan
-owns the dashboard surface: how an operator exposes a scalar workflow output as a
-NICOS *derived device*, and how the owning job is protected from accidental reset /
-stop / reconfigure while a device is exposed -- without locking unrelated
-workflows.
+owns the dashboard surface: how an operator sees which running workflows are exposed
+to NICOS as derived devices, and how those jobs are protected from accidental reset /
+stop / reconfigure -- without locking unrelated workflows.
 
 Out of scope: device naming / identity, topic projection, the static
 `(workflow, source, output) -> device` contract (companion plan).
 
-## Model: per-output activation, gated where control already lives
+## Model: derived from the contract, no runtime activation
 
-A derived device is a designated scalar output of a running job, projected under a
-stable identity (`WorkflowId + source_name + output_name`). The dashboard exposes
-one control: a per-output **"expose to NICOS" activation toggle** on the workflow
-card. Activating an output:
+A derived device is a scalar output listed in the shared yaml contract. The backend
+projects every yaml-listed output of a running `(workflow, source)` job, so a device
+is **live iff its owning job is running**. There is no per-output "expose" toggle, no
+persisted activation state, and no dashboard->backend control channel -- exposure is
+declared once, in the yaml, and the dashboard only *reflects* and *protects* it.
 
-1. signals the backend to project that `(workflow, source, output)` (mechanism in
-   the companion plan), and
-2. marks the owning workflow as **device-bearing**, gating subsequent reset / stop /
-   reconfigure of that workflow behind explicit confirmation.
+The dashboard's role is read-only plus protection:
 
-Activation is a **standing declaration of intent to expose** -- persisted and
-visible. "Device is live" and "controls are gated" are one explicit state.
+- show which running workflows bear a device (static lookup against the contract);
+- gate reset / stop / reconfigure on those workflows behind explicit confirmation;
+- offer a read-only overview of what is currently exposed.
 
-**Gating, not isolation.** Even a dedicated job must be reconfigurable, so a UI gate
-scoped to device-bearing workflows protects exactly what needs protecting while
-leaving unrelated workflows friction-free. A dashboard-wide lock is the wrong
-granularity for a multi-day, mixed-use dashboard: it conflates "I am being careful"
-with "this output is a device", and to know which changes to confirm it would need
-the same per-output activation state anyway.
+**Why no activation toggle.** Runtime on/off would add a control channel and
+persisted state the backend design does not have, and it fights NICOS's static-list
+premise -- liveness would depend on an operator's UI state rather than on the
+contract plus job state. A device cannot be exposed without its job running anyway,
+and the projection is low-volume and harmless when NICOS is not scanning it, so
+suppressing it buys nothing. If selective per-output suppression is ever genuinely
+needed, it is a clean later addition.
+
+**Lifecycle is workflow-level.** A job produces all its outputs together; start /
+stop / reset / reconfigure act on the whole `(workflow, source)` job, never on a
+single output. The per-output grain lives entirely in the yaml (which outputs are
+devices); the gate acts on the owning job, the only granularity at which lifecycle
+operations exist.
 
 ## Where it attaches
 
-All workflow control already flows through one component, `JobOrchestrator`
-(`commit_workflow`, `stop_workflow`, `reset_workflow`), driven from the per-workflow
-card in `WorkflowStatusWidget`. The card already renders a workflow's outputs as
-chips (`_create_outputs_section`, iterating `spec.get_output_views()`) -- the
-natural anchor for a per-output activation control -- and round-trips per-workflow
-state through the per-instrument `ConfigStore`. Activation has a home here with no
-new infrastructure and no second orchestrator.
+All workflow control already flows through `JobOrchestrator` (`commit_workflow`,
+`stop_workflow`, `reset_workflow`), driven from the per-workflow card in
+`WorkflowStatusWidget`. "Is this a device-bearing workflow?" is answered by a static
+lookup: does a running job's `(workflow, source, output)` appear in the contract. No
+new orchestrator, no new persisted state, no new store.
 
-The existing prototype (a separate `NicosOrchestrator`, a sidebar modal over a
-curated `config/nicos_workflows.py` list, fixed `job_number`s) is **removed**: the
-unified-job model supersedes it. Its reusable ideas are the device-bearing badge
-and the running-state lockdown of controls.
-
-## State, persistence, restart
-
-- Activation is keyed by the **stable external identity** `(WorkflowId,
-  source_name, output_name)` -- the key NICOS uses -- never by `job_number`. A
-  `job_number` change (job restart) must not drop a device.
-- Owned by `JobOrchestrator`, persisted in the existing per-workflow `ConfigStore`
-  entry as an `active_devices` set, loaded on init. No new store, no new file.
-- On dashboard startup the activation set is the **dashboard-owned source of
-  truth**: the dashboard re-asserts the projection to the backend from it and
-  re-derives the gated state. Activation survives restart because it mirrors a
-  deliberate operator declaration, not transient job state.
-
-## Multi-user / multi-browser
-
-Orchestrator and `ConfigStore` are singletons shared across sessions; widgets are
-per-session and rebuild on a polled version counter (see
-`.claude/rules/dashboard-widgets.md`). Toggling activation mutates shared
-`JobOrchestrator` state and bumps the workflow's version; every session's card
-rebuilds on its next tick. The confirmation gate re-reads live shared state **inside
-the orchestrator method**, not only in the widget, so a stop that races a deactivate
-cannot act on stale state.
+A self-contained prototype (a separate `NicosOrchestrator`, a sidebar modal over a
+curated `config/nicos_workflows.py` list, fixed `job_number`s) lives on the unmerged
+`nicos-workflows` branch. The unified-job model supersedes it, so that branch is
+abandoned rather than merged -- there is nothing to delete here. Lift its reusable
+ideas as inspiration: the device-bearing badge styling and the running-state
+lockdown of controls.
 
 ## Concrete UI changes
 
 All within the existing Workflows surface; no parallel control plane.
 
-1. **Per-output activation toggle** in
-   `WorkflowStatusWidget._create_outputs_section`. Shown only on eligible outputs
-   (scalar cumulative; the eligibility predicate is shared with the backend
-   contract) and enabled only when that source has an active job. Activating a
-   not-yet-running output is rejected with guidance ("start the workflow first") --
-   there is no "device exists but nothing publishes it" state. Granularity is per
-   `(output, source)`, grouped in the card by source (mirroring existing staging
-   grouping). Uses `create_tool_button` with `lt-tool` / `lt-wf-{name}` hooks per
-   the automation contract.
-2. **Device-bearing badge** on the card header when any output is active (reusing
-   the prototype's badge styling), visible without expanding the card.
-3. **Confirmation dialog** intercepting stop / reset / reconfigure and
-   output-deactivation, only for device-bearing workflows. It names the affected
-   device(s). Deactivation stops the projection immediately (no grace period). The
-   dashboard cannot know whether NICOS is actively scanning a device (one-way
-   publish, separate system), so the dialog states plainly that the change is
-   disruptive *iff* NICOS happens to be using the device -- it does not imply
-   certainty. Each control action on a device-bearing workflow is confirmed
-   individually; no batching.
+1. **Device-bearing badge** on the card header when a running workflow has at least
+   one output in the contract (reusing the `nicos-workflows` prototype's badge
+   styling). Marks the gated state at a glance.
+2. **Per-output device marker** on the output chips in `_create_outputs_section`,
+   indicating which outputs are exposed as devices (read-only; membership predicate
+   shared with the backend contract).
+3. **Confirmation dialog** intercepting stop / reset / reconfigure, only for
+   device-bearing workflows. It names the affected device(s). The dashboard cannot
+   know whether NICOS is actively scanning a device (one-way publish, separate
+   system), so the dialog states plainly that the change is disruptive *iff* NICOS
+   happens to be using the device -- it does not imply certainty. Each action is
+   confirmed individually; no batching. Desired warning/confirmation popups/modals
+   can be pulled from the (otherwise discarded) alternative approach in branch
+   `figure-of-merit`. Note that *staging* new config should be allowed (user preparing
+   for next scan), but *commit* must be gated.
 4. **Read-only "Derived devices" overview** -- a sidebar modal (shape borrowed from
-   the prototype's list widget) driven by the live activation set, not a curated
-   yaml: device identity, source, owning workflow, run state, and a deep-link to the
-   owning card. No controls.
+   the `nicos-workflows` prototype's list widget) listing currently exposed devices
+   (contract
+   intersect running jobs): device identity, source, owning workflow, run state, and
+   a deep-link to the owning card. No controls.
+
+## Multi-user / multi-browser
+
+Nothing new to persist or reconcile: device-bearing status is derived each refresh
+from shared `JobOrchestrator` job state and the static contract. Widgets are
+per-session and rebuild on the polled version counter (see
+`.claude/rules/dashboard-widgets.md`). The confirmation gate re-reads live job state
+**inside the orchestrator method**, not only in the widget, so a stop that races a
+job restart cannot act on stale state.
 
 ## Phased implementation
 
-1. Remove the prototype (`nicos_orchestrator.py`, `nicos_panel.py`,
-   `config/nicos_workflows.py`, and their wiring in `dashboard_services.py` /
-   `reduction.py`), landed alongside the unified-job backend change so nothing
-   references fixed `job_number`s.
-2. Add the activation set to `JobOrchestrator` state + `ConfigStore` persistence;
-   query/mutate methods, version bumping. Unit-test load/persist/restart keyed by
-   stable identity.
-3. Per-output activation toggle + device-bearing header badge, enabled only for
-   running sources and eligible outputs.
-4. Confirmation gate on stop / reset / reconfigure / deactivate, reading live shared
-   state, naming affected devices.
-5. Read-only derived-devices overview modal.
-6. Re-assert dashboard activation to the backend projection on startup (per State,
-   persistence, restart).
+1. Device-bearing predicate (running job intersect contract) + header badge +
+   per-output device marker in `WorkflowStatusWidget`.
+2. Confirmation gate on stop / reset / reconfigure for device-bearing workflows,
+   reading live job state, naming affected devices.
+3. Read-only derived-devices overview modal.
 
-Phases 2-5 are dashboard-only; they depend on the backend only for the eligibility
-predicate and the persisted-shape agreement.
+All phases are dashboard-only; they depend on the backend only for the shared
+contract / membership predicate.
