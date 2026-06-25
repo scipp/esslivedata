@@ -44,17 +44,19 @@ Decouple the flush *trigger* from the clock while keeping the flush *itself* on
 the session thread, coordinated by a frame counter.
 
 A `FrameClock` (one per `DashboardServices`, shared with `PlotOrchestrator`)
-carries a monotonic `generation`. The ingestion thread calls `mark()` whenever a
-visible layer is recomputed (`PlotOrchestrator._run_compute`) and `commit()`
-once a drained burst is done (after each `Orchestrator.update()` in the loop);
-`commit()` advances `generation` only if something was marked.
+carries a `generation` counter keyed by grid (tab). The ingestion thread calls
+`mark(grid_id)` whenever a visible layer is recomputed
+(`PlotOrchestrator._run_compute`) and `commit()` once a drained burst is done
+(after each `Orchestrator.update()` in the loop); `commit()` advances the
+generation of every grid marked since the last commit.
 
 The per-session poll period drops to 100 ms, but `_poll_for_plot_updates` gates
 the data flush (`update_pipe` → `pipe.send`, plus the per-layer time/lag row) on
-`generation` having advanced since this session last flushed, or the active tab
-having changed. The cheap per-tick work -- lifecycle/version scan, layer
-activation, freshness-pill aging -- still runs every tick. All session-bound
-mutation stays inside the periodic callback, so the threading constraint holds.
+the *active grid's* generation having advanced since this session last flushed,
+or the active tab having changed. The cheap per-tick work -- lifecycle/version
+scan, layer activation, freshness-pill aging -- still runs every tick. All
+session-bound mutation stays inside the periodic callback, so the threading
+constraint holds.
 
 The freshness pill refreshes in step with the data flush (reading the true lag
 of the frame just shown) and otherwise on a slow stall cadence
@@ -84,6 +86,12 @@ of the frame just shown) and otherwise on a slow stall cadence
   layers holding a viewer interest token (the active tab), so `mark()` -- placed
   in `_run_compute` -- inherently tracks only visible recomputes. Hidden tabs
   stash without computing and never advance the generation.
+- **Generation keyed per grid, not global.** With multiple sessions each showing
+  a different tab, a single global counter would wake every session on any tab's
+  data: harmless for the data push (dirty-gated, so it shows nothing wrong) but
+  it would re-tick each session's freshness pill on other tabs' frames, undoing
+  the per-frame pill cadence. Keying the generation by grid means a session is
+  woken only by bursts in the tab it is displaying.
 - **`pipe.send` stays dirty-gated** by `has_pending_update`, so it fires at most
   at the data rate regardless of poll frequency. The faster poll therefore adds
   only cheap no-op scans, not extra Bokeh model work.
@@ -100,9 +108,9 @@ of the frame just shown) and otherwise on a slow stall cadence
 - Display latency drops from up to one 1000 ms poll period to roughly one 100 ms
   tick; the pill reads near the pipeline lag right after each frame.
 - Multi-plot updates remain synchronized (one `hold`+`freeze` flush per burst).
-- `PlotOrchestrator` gains a `frame_generation` property; `DashboardServices`
-  owns the `FrameClock` and commits it; the ingestion idle sleep dropped to
-  50 ms so burst detection is not the new floor.
+- `PlotOrchestrator` gains a `frame_generation(grid_id)` accessor;
+  `DashboardServices` owns the `FrameClock` and commits it; the ingestion idle
+  sleep dropped to 50 ms so burst detection is not the new floor.
 - The pill's stall cadence is coupled to the backend publish cadence. This is
   accepted: at slower cadences ticking the age every 2 s is reasonable.
 - A rare burst split across the ingestion idle gap yields two generations, hence

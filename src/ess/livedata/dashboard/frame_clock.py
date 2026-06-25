@@ -1,21 +1,27 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Cross-thread frame counter coordinating session flushes with data bursts."""
+"""Per-key frame counter coordinating session flushes with data bursts."""
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Hashable
 
 
 class FrameClock:
     """Signals completed data-burst frames to per-session poll loops.
 
-    The ingestion thread calls :meth:`mark` whenever a visible layer is
-    recomputed and :meth:`commit` once a burst has finished draining, which
-    advances :attr:`generation`. Each session's periodic callback reads
-    ``generation`` to decide when a coalesced plot flush is due, so all layers
-    from one burst repaint in a single frame instead of being scattered across
-    poll ticks.
+    The ingestion thread calls :meth:`mark` with a key (a grid id) whenever a
+    visible layer in that group is recomputed, and :meth:`commit` once a burst
+    has finished draining, which advances the :meth:`generation` of every marked
+    key. Each session's periodic callback reads the generation of the key it is
+    showing (its active tab) to decide when a coalesced flush is due, so all
+    layers from one burst repaint in a single frame instead of being scattered
+    across poll ticks.
+
+    Keying by group rather than a single global counter keeps the signal scoped:
+    a session is only woken by bursts in the tab it is actually displaying, not
+    by data arriving for some other session's tab.
 
     Keeping the flush on the session callback (rather than pushing from the
     ingestion thread) preserves the requirement that session-bound objects are
@@ -24,23 +30,22 @@ class FrameClock:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._generation = 0
-        self._pending = False
+        self._generation: dict[Hashable, int] = {}
+        self._pending: set[Hashable] = set()
 
-    def mark(self) -> None:
-        """Record that a visible layer was recomputed (a frame is forming)."""
+    def mark(self, key: Hashable) -> None:
+        """Record that a layer in ``key`` was recomputed (a frame is forming)."""
         with self._lock:
-            self._pending = True
+            self._pending.add(key)
 
     def commit(self) -> None:
-        """Advance the generation if a frame is pending; called on burst end."""
+        """Advance every pending key's generation; called on burst end."""
         with self._lock:
-            if self._pending:
-                self._pending = False
-                self._generation += 1
+            for key in self._pending:
+                self._generation[key] = self._generation.get(key, 0) + 1
+            self._pending.clear()
 
-    @property
-    def generation(self) -> int:
-        """Monotonic counter incremented once per completed data-burst frame."""
+    def generation(self, key: Hashable) -> int:
+        """Counter incremented once per completed data-burst frame for ``key``."""
         with self._lock:
-            return self._generation
+            return self._generation.get(key, 0)

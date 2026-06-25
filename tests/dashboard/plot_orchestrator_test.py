@@ -2568,9 +2568,9 @@ class TestFrameGeneration:
 
         # mark() fired during compute, but the generation only advances when the
         # ingestion loop commits the drained burst.
-        assert orchestrator.frame_generation == 0
+        assert orchestrator.frame_generation(grid_id) == 0
         clock.commit()
-        assert orchestrator.frame_generation == 1
+        assert orchestrator.frame_generation(grid_id) == 1
 
     def test_hidden_layer_data_arrival_does_not_advance_generation(
         self,
@@ -2604,4 +2604,47 @@ class TestFrameGeneration:
         )
 
         clock.commit()
-        assert orchestrator.frame_generation == 0
+        assert orchestrator.frame_generation(grid_id) == 0
+
+    def test_generation_is_scoped_per_grid(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        plot_cell,
+    ):
+        """A recompute only advances the generation of its own grid.
+
+        This is the multi-session case: a session showing grid B must not be
+        woken by a burst that recomputes a layer in grid A. Grid B's layer is
+        left without a viewer token (hidden tab), so it never computes and never
+        marks its grid even though it subscribes to the same data.
+        """
+        from ess.livedata.dashboard.frame_clock import FrameClock
+
+        clock = FrameClock()
+        orchestrator = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            clock,
+        )
+        grid_a = orchestrator.add_grid(title='Grid A', nrows=3, ncols=3)
+        grid_b = orchestrator.add_grid(title='Grid B', nrows=3, ncols=3)
+        # Grid A is visible (token acquired); grid B is hidden (no token).
+        add_cell_with_layer(orchestrator, grid_a, plot_cell[0], plot_cell[1])
+        cell_b = orchestrator.add_cell(grid_b, plot_cell[0])
+        orchestrator.add_layer(cell_b, plot_cell[1])
+
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(
+            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
+        )
+        clock.commit()
+
+        assert orchestrator.frame_generation(grid_a) == 1
+        assert orchestrator.frame_generation(grid_b) == 0

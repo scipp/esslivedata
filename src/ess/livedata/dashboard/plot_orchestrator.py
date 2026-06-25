@@ -415,10 +415,15 @@ class PlotOrchestrator:
         # Load persisted configurations
         self._load_from_store()
 
-    @property
-    def frame_generation(self) -> int:
-        """Counter advanced once per completed data-burst frame (see FrameClock)."""
-        return self._frame_clock.generation
+    def frame_generation(self, grid_id: GridId | None) -> int:
+        """Counter advanced once per completed data-burst frame for a grid.
+
+        Returns 0 for ``None`` (e.g. a non-grid tab), so a session showing no
+        grid never sees a frame advance. See :class:`FrameClock`.
+        """
+        if grid_id is None:
+            return 0
+        return self._frame_clock.generation(grid_id)
 
     @property
     def instrument(self) -> str:
@@ -1007,10 +1012,13 @@ class PlotOrchestrator:
         task = state.stash_pending(data, title_resolver=title_resolver)
         if task is not None:
             self._dispatch_compute_task(layer_id, task)
-            # A visible layer was recomputed on the ingestion thread; arm the
-            # frame so the loop's commit() advances the generation once the
-            # burst is drained, triggering one synchronized session flush.
-            self._frame_clock.mark()
+            # A visible layer was recomputed on the ingestion thread; arm its
+            # grid's frame so the loop's commit() advances that grid's
+            # generation once the burst is drained, waking only the sessions
+            # showing that tab for one synchronized flush.
+            grid_id = self._cell_to_grid.get(self._layer_to_cell[layer_id])
+            if grid_id is not None:
+                self._frame_clock.mark(grid_id)
 
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.

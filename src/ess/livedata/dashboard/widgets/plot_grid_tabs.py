@@ -627,13 +627,15 @@ class PlotGridTabs:
         active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         active_grid_id = self._get_active_grid_id()
 
-        # Flush plot data only when a new data-burst frame is ready (so all
-        # layers from one burst repaint in a single frame, never staggered
-        # across poll ticks) or when the visible tab changed (newly shown cells
-        # must render their latest data without waiting for the next frame). The
-        # cheap per-tick work below -- version/lifecycle scan, layer activation,
-        # freshness-pill aging -- always runs so it stays responsive.
-        generation = self._orchestrator.frame_generation
+        # Flush plot data only when a new data-burst frame is ready for the
+        # visible tab (so all its layers from one burst repaint in a single
+        # frame, never staggered across poll ticks) or when the visible tab
+        # changed (newly shown cells must render their latest data without
+        # waiting for the next frame). Scoping the generation per grid means
+        # data arriving for another session's tab does not wake this session.
+        # The cheap per-tick work below -- version/lifecycle scan, layer
+        # activation, freshness-pill aging -- always runs so it stays responsive.
+        generation = self._orchestrator.frame_generation(active_grid_id)
         flush_due = (
             generation != self._last_flushed_generation
             or active_grid_id != self._last_active_grid_id
