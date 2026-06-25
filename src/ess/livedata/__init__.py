@@ -44,7 +44,6 @@ from .core import (
     ServiceBase,
     StreamId,
     StreamKind,
-    compact_messages,
 )
 
 __all__ = [
@@ -60,6 +59,5 @@ __all__ = [
     "ServiceBase",
     "StreamId",
     "StreamKind",
-    "compact_messages",
     "format_version",
 ]

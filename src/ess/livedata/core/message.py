@@ -104,14 +104,3 @@ class MessageSink(Protocol, Generic[Tout]):
         Args:
             messages: A list of messages to publish.
         """
-
-
-def compact_messages(messages: list[Message[T]]) -> list[Message[T]]:
-    """
-    Compact messages by removing outdates ones, keeping only the latest for each key.
-    """
-    latest = {}
-    for msg in sorted(messages, reverse=True):  # Newest first
-        if msg.stream not in latest:
-            latest[msg.stream] = msg
-    return sorted(latest.values())

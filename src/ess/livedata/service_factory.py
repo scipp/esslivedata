@@ -36,7 +36,6 @@ from .kafka.source import (
 )
 from .kafka.stream_counter import StreamCounter
 from .logging_config import configure_logging
-from .sinks import PlotToPngSink
 
 logger = structlog.get_logger(__name__)
 
@@ -262,12 +261,6 @@ class DataServiceRunner:
             help='Number of threads for parallel job execution (1=sequential)',
         )
         self._parser.add_argument(
-            '--sink-type',
-            choices=['kafka', 'png'],
-            default='kafka',
-            help='Select sink type: kafka or png',
-        )
-        self._parser.add_argument(
             '--batcher',
             choices=list(_INNER_BATCHER_FACTORIES),
             default='simple',
@@ -320,7 +313,6 @@ class DataServiceRunner:
         consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
         kafka_config = load_config(namespace=config_names.kafka)
 
-        sink_type = args.pop('sink_type')
         job_threads = args.pop('job_threads')
         batcher_name = args.pop('batcher')
         check = args.pop('check')
@@ -345,15 +337,12 @@ class DataServiceRunner:
                 overridden_by_builder=True,
             )
 
-        if sink_type == 'kafka':
-            kafka_sink = KafkaSink(
-                kafka_config=kafka_config,
-                serializer=make_default_sink_serializer(
-                    instrument=builder.instrument,
-                ),
-            )
-        else:
-            kafka_sink = PlotToPngSink()
+        kafka_sink = KafkaSink(
+            kafka_config=kafka_config,
+            serializer=make_default_sink_serializer(
+                instrument=builder.instrument,
+            ),
+        )
 
         with ExitStack() as resources:
             sink = resources.enter_context(kafka_sink)
