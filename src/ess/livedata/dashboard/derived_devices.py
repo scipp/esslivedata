@@ -30,8 +30,11 @@ from ess.livedata.config.workflow_spec import OutputView, WorkflowId
 
 
 @dataclass(frozen=True)
-class ExposedDevice:
-    """A NICOS derived device currently exposed by a running job.
+class ContractDevice:
+    """A NICOS derived device declared in the contract.
+
+    Identity only -- whether it is currently *live* (its owning job running) is
+    derived separately via :func:`is_running_in`.
 
     Parameters
     ----------
@@ -50,11 +53,31 @@ class ExposedDevice:
     source_name: str
     output_name: str
 
+    def is_running_in(self, running_sources: Mapping[WorkflowId, set[str]]) -> bool:
+        """Whether this device's owning ``(workflow, source)`` job is running."""
+        return self.source_name in running_sources.get(self.workflow_id, set())
+
+
+def all_devices(contract: DeviceContract) -> list[ContractDevice]:
+    """Every device the contract declares, in declaration order.
+
+    Static: independent of run state.
+    """
+    return [
+        ContractDevice(
+            device_name=entry.device_name,
+            workflow_id=WorkflowId.from_string(entry.workflow_id),
+            source_name=entry.source_name,
+            output_name=entry.output_name,
+        )
+        for entry in contract
+    ]
+
 
 def exposed_devices(
     running_sources: Mapping[WorkflowId, set[str]],
     contract: DeviceContract,
-) -> list[ExposedDevice]:
+) -> list[ContractDevice]:
     """Return the devices currently exposed = contract ∩ running jobs.
 
     A contract entry is exposed when its owning ``(workflow_id, source_name)``
@@ -73,38 +96,26 @@ def exposed_devices(
     :
         Exposed devices, in contract declaration order.
     """
-    result: list[ExposedDevice] = []
-    for entry in contract:
-        workflow_id = WorkflowId.from_string(entry.workflow_id)
-        if entry.source_name in running_sources.get(workflow_id, set()):
-            result.append(
-                ExposedDevice(
-                    device_name=entry.device_name,
-                    workflow_id=workflow_id,
-                    source_name=entry.source_name,
-                    output_name=entry.output_name,
-                )
-            )
-    return result
+    return [
+        device
+        for device in all_devices(contract)
+        if device.is_running_in(running_sources)
+    ]
 
 
-def is_device_bearing(
-    workflow_id: WorkflowId,
-    running_sources: Mapping[WorkflowId, set[str]],
-    contract: DeviceContract,
-) -> bool:
-    """Whether the workflow currently exposes any device.
+def declared_device_names(
+    workflow_id: WorkflowId, contract: DeviceContract
+) -> list[str]:
+    """All device names the contract declares for ``workflow_id`` (any source).
 
-    True iff some running source of ``workflow_id`` has an in-contract output.
+    Static: independent of run state. Used by the header badge, which marks that
+    a workflow feeds NICOS regardless of whether its job is currently running.
     """
-    running = running_sources.get(workflow_id, set())
-    if not running:
-        return False
-    return any(
-        WorkflowId.from_string(entry.workflow_id) == workflow_id
-        and entry.source_name in running
-        for entry in contract
-    )
+    return [
+        device.device_name
+        for device in all_devices(contract)
+        if device.workflow_id == workflow_id
+    ]
 
 
 def affected_device_names(

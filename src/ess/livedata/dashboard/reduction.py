@@ -19,7 +19,6 @@ from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
-from .widgets.derived_devices_overview import DerivedDevicesOverview
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -148,16 +147,8 @@ class ReductionApp(DashboardBase):
             session_updater.register_cleanup_handler(dev_widget.close)
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
-        derived_devices = DerivedDevicesOverview(
-            orchestrator=self._services.job_orchestrator,
-            device_contract=self._device_contract,
-        )
-        derived_devices.register_periodic_refresh(session_updater)
-
         return pn.Column(
             *dev_content,
-            derived_devices.panel,
-            pn.layout.Divider(),
             self._create_announcements_pane(),
         )
 

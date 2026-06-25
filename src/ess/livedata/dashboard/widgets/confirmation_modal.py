@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 import panel as pn
 
-from .styles import Colors
+from .styles import Colors, WarningBox
 
 
 class ConfirmationModal:
@@ -60,18 +60,26 @@ class ConfirmationModal:
         )
         confirm_btn.on_click(lambda _: self._finish(confirm=True))
         cancel_btn = pn.widgets.Button(
-            label='Cancel', css_classes=['lt-confirm-cancel']
+            label='Cancel', color='light', css_classes=['lt-confirm-cancel']
         )
         cancel_btn.on_click(lambda _: self._finish(confirm=False))
 
+        title_html = pn.pane.HTML(
+            f'<div style="font-size: 16px; font-weight: 700; '
+            f'color: {Colors.TEXT_DARK}; margin-bottom: 4px;">{title}</div>'
+        )
+        warning_html = pn.pane.HTML(
+            f'<div style="background: {WarningBox.BG}; '
+            f'border-left: 4px solid {WarningBox.BORDER}; '
+            f'color: {WarningBox.TEXT}; padding: 10px 12px; border-radius: 4px; '
+            f'font-size: 13px; line-height: 1.45;">{message}</div>',
+            sizing_mode='stretch_width',
+        )
+
         self.modal = pn.Modal(
             pn.Column(
-                pn.pane.Markdown(f'### {title}', margin=(0, 0, 5, 0)),
-                pn.pane.HTML(
-                    message,
-                    sizing_mode='stretch_width',
-                    styles={'font-size': '13px', 'color': Colors.TEXT},
-                ),
+                title_html,
+                warning_html,
                 pn.Row(
                     pn.Spacer(sizing_mode='stretch_width'),
                     cancel_btn,

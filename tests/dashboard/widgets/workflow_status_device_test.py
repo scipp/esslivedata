@@ -203,20 +203,29 @@ class TestGate:
 
 
 class TestBadge:
-    def test_badge_empty_when_not_running(self, widget):
-        assert widget._make_device_badge_html() == ''
-
-    def test_badge_present_when_device_bearing(self, widget, orchestrator, workflow_id):
-        _run(orchestrator, workflow_id, 'monitor1')
+    def test_badge_present_when_contract_declares_device(self, widget):
+        # Static: present regardless of run state, naming the declared device.
         html = widget._make_device_badge_html()
-        assert 'DEVICE' in html
+        assert 'NICOS' in html
         assert 'mon1_total' in html
 
-    def test_badge_empty_for_non_contract_running_source(
-        self, widget, orchestrator, workflow_id
+    def test_badge_present_while_running(self, widget, orchestrator, workflow_id):
+        _run(orchestrator, workflow_id, 'monitor1')
+        html = widget._make_device_badge_html()
+        assert 'NICOS' in html
+        assert 'mon1_total' in html
+
+    def test_badge_empty_without_contract(
+        self, workflow_id, spec, orchestrator, job_service
     ):
-        _run(orchestrator, workflow_id, 'monitor2')
-        assert widget._make_device_badge_html() == ''
+        plain = WorkflowStatusWidget(
+            workflow_id=workflow_id,
+            workflow_spec=spec,
+            orchestrator=orchestrator,
+            job_service=job_service,
+            device_contract=DeviceContract(()),
+        )
+        assert plain._make_device_badge_html() == ''
 
 
 class TestMarker:
@@ -224,7 +233,7 @@ class TestMarker:
         widget.set_expanded(True)
         section = widget._create_outputs_section()
         html = _collect_html(section)
-        assert 'DEV' in html
+        assert 'NICOS' in html
         assert 'mon1_total' in html
 
     def test_marker_absent_without_contract(
@@ -238,7 +247,7 @@ class TestMarker:
             device_contract=DeviceContract(()),
         )
         section = plain._create_outputs_section()
-        assert 'DEV' not in _collect_html(section)
+        assert 'NICOS' not in _collect_html(section)
 
 
 def _click(widget, css_class: str) -> None:

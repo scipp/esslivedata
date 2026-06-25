@@ -27,7 +27,7 @@ from ess.livedata.core.job import JobState
 
 from ..derived_devices import (
     affected_device_names,
-    is_device_bearing,
+    declared_device_names,
     view_device_names,
 )
 from ..format_utils import extract_error_summary
@@ -36,6 +36,7 @@ from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
 from .confirmation_modal import ConfirmationModal
+from .derived_devices_overview import DerivedDevicesOverview
 from .icons import get_icon
 from .styles import Colors, ErrorBox, HoverColors, StatusColors, WarningBox
 
@@ -308,15 +309,6 @@ class WorkflowStatusWidget:
     def _tool_css_class(self) -> str:
         """CSS class scoping this workflow's tool buttons for automation/tests."""
         return f'lt-wf-{self._workflow_id.name}'
-
-    def _is_device_bearing(self) -> bool:
-        """Whether this workflow currently exposes any NICOS device.
-
-        Reads the orchestrator's live running-sources snapshot, so it reflects
-        state at call time rather than the last widget rebuild.
-        """
-        running = self._orchestrator.get_running_workflow_sources()
-        return is_device_bearing(self._workflow_id, running, self._device_contract)
 
     def _affected_device_names(self) -> list[str]:
         """Device names a disruptive action on this workflow would affect now."""
@@ -728,7 +720,7 @@ class WorkflowStatusWidget:
                     f'<span title="{tooltip}" style="margin-left: 6px; '
                     f'padding: 0 5px; border-radius: 8px; font-size: 10px; '
                     f'font-weight: bold; color: white; '
-                    f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">DEV</span>'
+                    f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">NICOS</span>'
                 )
             chips_html += (
                 f'<span style="display: inline-flex; align-items: center; '
@@ -814,19 +806,21 @@ class WorkflowStatusWidget:
         )
 
     def _make_device_badge_html(self) -> str:
-        """Generate HTML for the NICOS device-bearing badge.
+        """Generate HTML for the NICOS device badge.
 
-        Empty unless the workflow is currently running and exposing a device;
-        the badge names the affected devices in its tooltip.
+        Static: shown whenever the contract declares a device for this workflow,
+        regardless of run state, marking that the workflow feeds NICOS. The
+        badge names the declared devices in its tooltip. Liveness is conveyed
+        separately by the status badge and per-source dots.
         """
-        names = self._affected_device_names()
+        names = declared_device_names(self._workflow_id, self._device_contract)
         if not names:
             return ''
         tooltip = 'NICOS device(s): ' + ', '.join(names)
         return (
             f'<span title="{tooltip}" style="padding: 2px 8px; border-radius: 3px; '
             f'font-size: 11px; font-weight: bold; color: white; '
-            f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">DEVICE</span>'
+            f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">NICOS</span>'
         )
 
     @staticmethod
@@ -1239,6 +1233,11 @@ class WorkflowStatusListWidget:
         self._is_visible: Callable[[], bool] | None = None
         self._populated: bool = False
 
+        self._derived_devices = DerivedDevicesOverview(
+            orchestrator=orchestrator,
+            device_contract=self._device_contract,
+        )
+
         workflow_registry = orchestrator.get_workflow_registry()
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {
             workflow_id: WorkflowStatusWidget(
@@ -1252,8 +1251,14 @@ class WorkflowStatusListWidget:
                 workflow_registry.items(), key=lambda x: x[1].title
             )
         }
+        # Zero-height container the derived-devices modal is mounted into on
+        # first open. Mounting a pn.Modal at render time inside the dynamic
+        # Workflows tab re-registers its callbacks on tab activation; lazy
+        # mounting on user action (as the per-workflow modals do) avoids that.
+        self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
         self._panel = pn.Column(
             self._create_header_row(),
+            self._modal_container,
             sizing_mode='stretch_width',
             margin=(10, 10),
         )
@@ -1294,13 +1299,34 @@ class WorkflowStatusListWidget:
         )
         collapse_all_btn.on_click(lambda e: self._collapse_all())
 
+        left: list[pn.viewable.Viewable] = []
+        if len(self._device_contract) > 0:
+            devices_btn = pn.widgets.Button(
+                label='Derived devices',
+                color='light',
+                width=120,
+                height=28,
+                margin=(0, 4, 0, 0),
+                stylesheets=compact_btn_css,
+                css_classes=['lt-derived-devices-open'],
+            )
+            devices_btn.on_click(lambda e: self._show_derived_devices())
+            left.append(devices_btn)
+
         return pn.Row(
+            *left,
             pn.Spacer(sizing_mode='stretch_width'),
             expand_all_btn,
             collapse_all_btn,
             sizing_mode='stretch_width',
             margin=(0, 0, 8, 0),
         )
+
+    def _show_derived_devices(self) -> None:
+        """Mount (once) and open the derived-devices overview modal."""
+        if self._derived_devices.modal not in self._modal_container:
+            self._modal_container.append(self._derived_devices.modal)
+        self._derived_devices.open()
 
     def _expand_all(self) -> None:
         """Expand all workflow widgets."""
@@ -1338,6 +1364,7 @@ class WorkflowStatusListWidget:
         """
         self._is_visible = is_visible
         session_updater.register_custom_handler(self._refresh_all)
+        self._derived_devices.register_periodic_refresh(session_updater)
         # Populate as soon as the session is connected. onload callbacks run
         # with pn.state.curdoc set (unlike session-factory code), so
         # pn.io.hold() is effective and all workflow panels are inserted

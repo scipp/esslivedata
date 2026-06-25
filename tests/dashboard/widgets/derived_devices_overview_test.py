@@ -112,13 +112,22 @@ def _body_html(overview: DerivedDevicesOverview) -> str:
     return ''.join(parts)
 
 
-def test_empty_when_nothing_running(orchestrator, contract):
+def test_empty_message_when_contract_has_no_devices(orchestrator):
+    overview = DerivedDevicesOverview(
+        orchestrator=orchestrator, device_contract=DeviceContract(())
+    )
+    html = _body_html(overview)
+    assert 'No derived devices are declared' in html
+
+
+def test_lists_declared_device_as_stopped_when_not_running(orchestrator, contract):
     overview = DerivedDevicesOverview(
         orchestrator=orchestrator, device_contract=contract
     )
     html = _body_html(overview)
-    assert 'No devices are currently exposed' in html
-    assert 'mon1_total' not in html
+    assert 'mon1_total' in html
+    assert 'Monitor' in html  # workflow title
+    assert 'stopped' in html
 
 
 def test_lists_running_device(orchestrator, contract, workflow_id):
@@ -137,11 +146,11 @@ def test_lists_running_device(orchestrator, contract, workflow_id):
     assert 'running' in html
 
 
-def test_refresh_rebuilds_on_state_change(orchestrator, contract, workflow_id):
+def test_refresh_reflects_state_change(orchestrator, contract, workflow_id):
     overview = DerivedDevicesOverview(
         orchestrator=orchestrator, device_contract=contract
     )
-    assert 'mon1_total' not in _body_html(overview)
+    assert 'stopped' in _body_html(overview)
 
     orchestrator.clear_staged_configs(workflow_id)
     orchestrator.stage_config(
@@ -150,4 +159,4 @@ def test_refresh_rebuilds_on_state_change(orchestrator, contract, workflow_id):
     orchestrator.commit_workflow(workflow_id)
 
     overview._refresh()
-    assert 'mon1_total' in _body_html(overview)
+    assert 'running' in _body_html(overview)

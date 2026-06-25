@@ -25,10 +25,11 @@ from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.derived_devices import (
-    ExposedDevice,
+    ContractDevice,
     affected_device_names,
+    all_devices,
+    declared_device_names,
     exposed_devices,
-    is_device_bearing,
     view_device_names,
 )
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
@@ -129,7 +130,7 @@ class TestExposedDevices:
     def test_running_source_exposes_its_device(self, workflow_id, contract):
         running = {workflow_id: {'monitor1'}}
         assert exposed_devices(running, contract) == [
-            ExposedDevice(
+            ContractDevice(
                 device_name='mon1_total',
                 workflow_id=workflow_id,
                 source_name='monitor1',
@@ -154,22 +155,34 @@ class TestExposedDevices:
         assert exposed_devices(running, DeviceContract(())) == []
 
 
-class TestIsDeviceBearing:
-    def test_false_when_not_running(self, workflow_id, contract):
-        assert not is_device_bearing(workflow_id, {}, contract)
+class TestAllDevices:
+    def test_lists_all_contract_devices_regardless_of_running(
+        self, workflow_id, contract
+    ):
+        names = [d.device_name for d in all_devices(contract)]
+        assert names == ['mon1_total', 'mon2_total']
 
-    def test_false_when_running_source_not_in_contract(self, workflow_id, contract):
-        running = {workflow_id: {'monitor_other'}}
-        assert not is_device_bearing(workflow_id, running, contract)
-
-    def test_true_when_running_source_in_contract(self, workflow_id, contract):
+    def test_is_running_in_reflects_snapshot(self, workflow_id, contract):
         running = {workflow_id: {'monitor1'}}
-        assert is_device_bearing(workflow_id, running, contract)
+        states = {
+            d.device_name: d.is_running_in(running) for d in all_devices(contract)
+        }
+        assert states == {'mon1_total': True, 'mon2_total': False}
 
-    def test_false_for_other_workflow(self, workflow_id, contract):
+    def test_empty_contract(self):
+        assert all_devices(DeviceContract(())) == []
+
+
+class TestDeclaredDeviceNames:
+    def test_lists_workflow_devices_regardless_of_running(self, workflow_id, contract):
+        assert declared_device_names(workflow_id, contract) == [
+            'mon1_total',
+            'mon2_total',
+        ]
+
+    def test_empty_for_other_workflow(self, contract):
         other = WorkflowId(instrument='dummy', name='other', version=1)
-        running = {other: {'monitor1'}}
-        assert not is_device_bearing(other, running, contract)
+        assert declared_device_names(other, contract) == []
 
 
 class TestAffectedDeviceNames:
@@ -235,7 +248,6 @@ class TestWithRealOrchestrator:
 
         running = orchestrator.get_running_workflow_sources()
         assert running == {workflow_id: {'monitor1'}}
-        assert is_device_bearing(workflow_id, running, contract)
         assert affected_device_names(workflow_id, running, contract) == ['mon1_total']
 
     def test_stop_clears_device_bearing(self, orchestrator, workflow_id, contract):
@@ -247,4 +259,4 @@ class TestWithRealOrchestrator:
         orchestrator.stop_workflow(workflow_id)
 
         running = orchestrator.get_running_workflow_sources()
-        assert not is_device_bearing(workflow_id, running, contract)
+        assert affected_device_names(workflow_id, running, contract) == []
