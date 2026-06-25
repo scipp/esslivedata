@@ -142,7 +142,6 @@ class BackgroundMessageSource(KafkaMessageSource):
         self._batches_dropped_since_last_metrics = 0
 
         # Lag monitoring (computed in a separate thread to avoid blocking consumption)
-        self._lag_query_timeout = 0.1
         self._lag_lock = threading.Lock()
         self._cached_lag: dict[str, Any] | None = None
         self._lag_thread: threading.Thread | None = None
@@ -374,8 +373,12 @@ class BackgroundMessageSource(KafkaMessageSource):
     def _compute_consumer_lag(self) -> dict[str, Any] | None:
         """Compute consumer lag per partition.
 
-        Called by the lag monitor thread. Uses a short timeout to avoid
-        blocking for too long if the broker is slow to respond.
+        Called by the lag monitor thread. Uses cached watermark offsets to
+        avoid issuing ListOffsetsRequests to the broker: the high watermark is
+        piggybacked on every FetchResponse for partitions we actively consume,
+        so no network round-trip is needed. Querying the broker directly
+        (cached=False) competes with long-poll FetchRequests on the same broker
+        connection and times out, producing REQTMOUT log spam.
         """
         # The KafkaConsumer protocol only requires `consume`. `assignment` and
         # `get_watermark_offsets` are provided by `confluent_kafka.Consumer`
@@ -392,9 +395,7 @@ class BackgroundMessageSource(KafkaMessageSource):
 
             for tp in assignment:
                 try:
-                    _low, high = self._consumer.get_watermark_offsets(
-                        tp, timeout=self._lag_query_timeout
-                    )
+                    _low, high = self._consumer.get_watermark_offsets(tp, cached=True)
                     position = self._consumer.position([tp])[0].offset
                     if position >= 0 and high >= 0:
                         partition_lag = high - position
