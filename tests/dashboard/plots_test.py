@@ -1456,6 +1456,49 @@ class TestTablePlotter:
         assert vdim.label == 'Total counts'
         assert vdim.unit == 'counts'
 
+    def test_homogeneous_units_share_value_column_header(self, table_plotter):
+        # When every row carries the same unit, it belongs in the value-column
+        # header and there is no dedicated unit column.
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.vdims] == ['counts']
+        assert result.vdims[0].unit == 'counts'
+
+    def test_heterogeneous_units_get_dedicated_column(self, table_plotter):
+        # Device data forwarded by the timeseries service shares an output_name
+        # but not a unit; mixed units move into a dedicated 'unit' column and the
+        # value-column header carries no unit.
+        data = {
+            self._key('motor', 'delta'): sc.DataArray(sc.scalar(45.5, unit='deg')),
+            self._key('temperature', 'delta'): sc.DataArray(sc.scalar(298.0, unit='K')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.vdims] == ['delta', 'unit']
+        assert result.vdims[0].unit is None
+        assert list(result.data['source']) == ['motor', 'temperature']
+        assert list(result.data['delta']) == [45.5, 298.0]
+        assert list(result.data['unit']) == ['deg', 'K']
+
+    def test_unit_column_keeps_string_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        data = {
+            self._key('motor', 'delta'): sc.DataArray(sc.scalar(45.5, unit='deg')),
+            self._key('temperature', 'delta'): sc.DataArray(sc.scalar(298.0, unit='K')),
+        }
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['delta'], ScientificFormatter)
+        # The unit column is a plain string column, not a numeric one.
+        assert isinstance(by_field['unit'], StringFormatter)
+        assert not isinstance(by_field['unit'], ScientificFormatter)
+
     def test_rejects_non_scalar_data(self, table_plotter):
         key = self._key('bank0', 'counts')
         data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))

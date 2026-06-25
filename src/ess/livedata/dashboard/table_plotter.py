@@ -11,7 +11,6 @@ import numpy as np
 import param
 import scipp as sc
 from bokeh.models import NumberFormatter, ScientificFormatter
-from holoviews.core.util import dimension_sanitizer
 from holoviews.plotting.bokeh.tabular import TablePlot
 
 from ess.livedata.config.workflow_spec import ResultKey
@@ -37,11 +36,12 @@ class _FormattedTablePlot(TablePlot):
 
     def _get_columns(self, element, data):
         columns = super()._get_columns(element, data)
-        if self.value_formatter is None or not element.kdims:
+        if self.value_formatter is None:
             return columns
-        index_field = dimension_sanitizer(element.kdims[0].name)
+        # Only numeric value columns get the formatter; string columns (source
+        # index, per-row unit) keep HoloViews' default StringFormatter.
         for column in columns:
-            if column.field != index_field:
+            if np.asarray(data[column.field]).dtype.kind in 'iuf':
                 column.formatter = self.value_formatter()
         return columns
 
@@ -92,10 +92,14 @@ class TablePlotter(Plotter):
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
-        """Build a one-column table: one row per source, sharing a value column.
+        """Build a table: one row per source, sharing a value column.
 
         All datasets reaching a single layer carry the same ``output_name`` (the
-        layer's primary view), so the table has a single value column.
+        layer's primary view), so the table has a single value column. Rows may
+        nonetheless carry different units (e.g. device data forwarded by the
+        ``timeseries`` service: a motor angle and a temperature share an output
+        but not a unit). With a single shared unit it goes in the value-column
+        header; with mixed units a dedicated ``Unit`` column is added instead.
         """
         if len(data) == 0:
             return hv.Text(0.5, 0.5, 'No data').opts(
@@ -104,16 +108,16 @@ class TablePlotter(Plotter):
 
         rows: list[str] = []
         values: list[float] = []
-        column: hv.Dimension | None = None
+        units: list[str] = []
+        output_name = 'values'
+        label: str | None = None
         for data_key, da in data.items():
             if da.ndim != 0:
                 raise ValueError(f"Expected 0D data, got {da.ndim}D")
-            if column is None:
-                output_name = data_key.output_name or 'values'
-                unit = str(da.unit) if da.unit is not None else None
-                label = resolver.get_axis_label(data_key.output_name) or output_name
-                column = hv.Dimension(output_name, label=label, unit=unit)
+            output_name = data_key.output_name or 'values'
+            label = resolver.get_axis_label(data_key.output_name) or output_name
             rows.append(resolver.source(data_key.job_id.source_name))
+            units.append('' if da.unit is None else str(da.unit))
             value = float(da.value)
             if self._notation is TableNotation.decimal and self._precision < 0:
                 # Negative precision rounds the magnitude (e.g. -3 -> thousands);
@@ -121,10 +125,22 @@ class TablePlotter(Plotter):
                 value = float(np.round(value, self._precision))
             values.append(value)
 
+        kdims = [hv.Dimension('source', label='Source')]
+        if len(set(units)) > 1:
+            value_dim = hv.Dimension(output_name, label=label)
+            unit_dim = hv.Dimension('unit', label='Unit')
+            return hv.Table(
+                {'source': rows, value_dim.name: values, unit_dim.name: units},
+                kdims=kdims,
+                vdims=[value_dim, unit_dim],
+            )
+
+        unit = next(iter(units)) or None
+        value_dim = hv.Dimension(output_name, label=label, unit=unit)
         return hv.Table(
-            {'source': rows, column.name: values},
-            kdims=[hv.Dimension('source', label='Source')],
-            vdims=[column],
+            {'source': rows, value_dim.name: values},
+            kdims=kdims,
+            vdims=[value_dim],
         )
 
     def _value_formatter(self):
