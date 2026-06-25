@@ -29,11 +29,10 @@ if TYPE_CHECKING:
     from ..session_updater import SessionUpdater
 
 _DESCRIPTION = (
-    'This dashboard publishes selected scalar workflow outputs to NICOS as '
-    'derived devices, following the instrument device contract. A device is '
-    'readable by NICOS only while its owning workflow job is running (see State '
-    'below); stopping, resetting, or reconfiguring that workflow takes the '
-    'device offline and may disrupt a NICOS scan that relies on it.'
+    'Selected workflow outputs are published as devices to NICOS. A device is '
+    'readable by NICOS only while its owning workflow job is running. Stopping, '
+    'resetting, or reconfiguring that workflow takes the device offline and will '
+    'disrupt a count command or scan command in NICOS that relies on a given device.'
 )
 
 

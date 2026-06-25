@@ -1115,7 +1115,7 @@ class WorkflowStatusWidget:
 
         names = ''.join(f'<li>{name}</li>' for name in device_names)
         message = (
-            f'This workflow currently exposes the NICOS device(s):'
+            f'This workflow currently exposes the following device(s) to NICOS:'
             f'<ul style="margin: 4px 0 8px 0; padding-left: 20px; '
             f'font-weight: 600;">{names}</ul>'
             f'Choosing to {action_label} is disruptive <i>if</i> NICOS is using '
@@ -1153,7 +1153,8 @@ class WorkflowStatusWidget:
     def _on_commit_click(self) -> None:
         """Handle commit button click. Gated when device-bearing."""
         self._gate_disruptive_action(
-            'commit', lambda: self._orchestrator.commit_workflow(self._workflow_id)
+            'restart with modified config',
+            lambda: self._orchestrator.commit_workflow(self._workflow_id),
         )
 
     def refresh(self) -> None:
