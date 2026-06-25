@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import types
 import uuid
 from typing import Any
 
@@ -88,10 +87,11 @@ class FakeFactory:
 
     def __init__(self, accumulators: dict[str, Accumulator]) -> None:
         self._accumulators = accumulators
-        # Minimal instrument stub: OrchestratingProcessor reads .name at init;
-        # JobFactory stores the object but never calls workflow_factory unless
-        # schedule_job() is invoked (which none of these tests do).
-        self.instrument = types.SimpleNamespace(name='test')
+        # OrchestratingProcessor loads the device contract from this instrument
+        # at construction, so it must be a package-backed instrument. 'tbl' has
+        # no device_contract.yaml, yielding an empty contract — these tests do
+        # not schedule jobs, so the contract content is irrelevant.
+        self.instrument = Instrument(name='tbl')
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         return self._accumulators.get(key.name)
@@ -299,7 +299,9 @@ class TestEmptyBatchContextReplay:
 
     @staticmethod
     def _make_instrument() -> tuple[Instrument, Any]:
-        instrument = Instrument(name='test_orch')
+        # 'tbl' is a package-backed instrument with no device_contract.yaml, so
+        # OrchestratingProcessor loads an empty contract at construction.
+        instrument = Instrument(name='tbl')
         handle = instrument.register_spec(
             service='timeseries',
             name='replay_probe',

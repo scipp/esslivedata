@@ -26,6 +26,7 @@ class StreamKind(StrEnum):
     LIVEDATA_COMMANDS = "livedata_commands"
     LIVEDATA_RESPONSES = "livedata_responses"
     LIVEDATA_DATA = "livedata_data"
+    LIVEDATA_PROJECTION = "livedata_projection"
     LIVEDATA_ROI = "livedata_roi"
     LIVEDATA_STATUS = "livedata_status"
     RUN_CONTROL = "run_control"

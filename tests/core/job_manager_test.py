@@ -83,6 +83,18 @@ def no_cached_context(names: set[str]) -> dict[StreamId, object]:
     return {}
 
 
+class _FakeClock:
+    """Deterministic stand-in for ``Timestamp.now``: ticks 1ns per call."""
+
+    def __init__(self, *, start: int = 0) -> None:
+        self._ns = start
+
+    def __call__(self) -> Timestamp:
+        ts = Timestamp.from_ns(self._ns)
+        self._ns += 1
+        return ts
+
+
 class FakeContextCache:
     """Dict-backed stand-in for ``MessagePreprocessor.get_context``.
 
@@ -149,6 +161,127 @@ class TestJobManager:
         assert job_id1.job_number != job_id2.job_number
         assert job_id1.source_name == "source1"
         assert job_id2.source_name == "source2"
+
+    def test_schedule_job_assigns_generation_token(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+
+        assert manager.generation_token(job_id) is not None
+
+    def test_generation_token_stable_between_transitions(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+        token = manager.generation_token(job_id)
+
+        # No transition occurred, so a later read returns the same token.
+        assert manager.generation_token(job_id) == token
+
+    def test_successive_jobs_get_distinct_tokens(self, fake_job_factory, monkeypatch):
+        """A reconfigure yields a new JobId and a freshly minted token.
+
+        The token is a change-detector, not a monotonic counter; with a
+        controlled clock we can assert it advances, but production correctness
+        only relies on it differing across generations.
+        """
+        clock = _FakeClock(start=1000)
+        monkeypatch.setattr(Timestamp, "now", clock)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id1 = manager.schedule_job(_make_config("source1"))
+        job_id2 = manager.schedule_job(_make_config("source1"))
+
+        assert job_id1 != job_id2
+        assert manager.generation_token(job_id1) == Timestamp.from_ns(1000)
+        assert manager.generation_token(job_id2) == Timestamp.from_ns(1001)
+
+    def test_generation_token_cleared_on_stop(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+        assert manager.generation_token(job_id) is not None
+
+        manager.stop_job(job_id)
+
+        assert manager.generation_token(job_id) is None
+
+    def test_reset_remints_generation_token(self, fake_job_factory, monkeypatch):
+        """A reset starts a new generation under the same JobId, re-minting the
+        token so NICOS can tell a post-reset zero from a genuine low reading."""
+        clock = _FakeClock(start=5000)
+        monkeypatch.setattr(Timestamp, "now", clock)
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+        original = manager.generation_token(job_id)
+
+        manager.reset_job(job_id)
+        after_reset = manager.generation_token(job_id)
+
+        assert after_reset != original
+        assert after_reset == Timestamp.from_ns(5001)
+
+    def test_reminted_token_is_stamped_on_subsequent_result(self, fake_job_factory):
+        """After a reset, results carry the re-minted token, not the original."""
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+        data = WorkflowData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data={StreamId(name="test_source"): sc.scalar(42.0)},
+        )
+        manager.push_data(data)
+
+        manager.reset_job(job_id)
+        remined_token = manager.generation_token(job_id)
+
+        manager.push_data(data)
+        (result,) = manager.compute_results()
+
+        assert result.generation_token == remined_token
+
+    def test_result_carries_generation_token(self, fake_job_factory):
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(_make_config("test_source"))
+        token = manager.generation_token(job_id)
+        data = WorkflowData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data={StreamId(name="test_source"): sc.scalar(42.0)},
+        )
+        manager.push_data(data)
+
+        (result,) = manager.compute_results()
+
+        assert result.generation_token == token
+
+    def test_finishing_job_result_carries_token_despite_removal(self, fake_job_factory):
+        """A scheduled-end job is finalized and its tracking removed in the same
+        pass; the stamped token must survive on the final result (BUG 2)."""
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        config = _make_config(
+            "test_source",
+            schedule=JobSchedule(end_time=Timestamp.from_ns(150)),
+        )
+        job_id = manager.schedule_job(config)
+        token = manager.generation_token(job_id)
+
+        # Single pass: activates, finalizes (end_time reached), and removes the
+        # job — clearing its token registry entry within process_jobs.
+        data = WorkflowData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            data={StreamId(name="test_source"): sc.scalar(42.0)},
+        )
+        _, results = manager.process_jobs(data)
+
+        assert manager.generation_token(job_id) is None  # tracking removed
+        (result,) = results
+        assert result.generation_token == token
 
     def test_push_data_activates_scheduled_jobs_with_immediate_start(
         self, fake_job_factory
