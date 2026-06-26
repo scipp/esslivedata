@@ -25,7 +25,8 @@ class FrameClock:
 
     Keeping the flush on the session callback (rather than pushing from the
     ingestion thread) preserves the requirement that session-bound objects are
-    mutated only in their own document context.
+    mutated only in their own document context; mutating them off that context
+    corrupts the document and misroutes updates to the wrong tab (see ADR 0005).
     """
 
     def __init__(self) -> None:

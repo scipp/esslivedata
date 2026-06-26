@@ -17,9 +17,14 @@ that session's HoloViews `Pipe` via `pipe.send`.
 
 The push could only happen on the session callback because session-bound objects
 (`hv.streams.Pipe`, `DynamicMap`, `pn.io.hold`) **must** be mutated in their own
-Bokeh document context, on that session's IOLoop. Mutating them from the
-ingestion thread corrupts the document and misroutes updates to the wrong tab
-(Panel #5488). This is a hard constraint, not a preference.
+Bokeh document context, on that session's IOLoop. Panel cannot even resolve the
+right session context from a background thread: `pn.state` reflects the *current*
+session, which is absent off the session IOLoop (Panel #5488). Mutating
+session-bound objects from the ingestion thread therefore corrupts the document
+and misroutes updates to the wrong tab -- the empirical failure that drove the
+per-session polling architecture (original root-cause analysis: `git show
+2b349005a:docs/developer/plans/multi-session-architecture.md`). This is a hard
+constraint, not a preference.
 
 The session callback ran at a fixed 1000 ms period, unrelated to data arrival.
 Consequences (issue #1011):
