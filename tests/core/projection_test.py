@@ -2,14 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the NICOS device projection.
 
-Uses the real ``dummy`` instrument registry and real workflow specs. The
-generation token is carried on each :class:`JobResult` (stamped by the
-JobManager), so the projector needs no live registry.
+Uses the real ``dummy`` instrument registry and real workflow specs, so the
+projector needs no live registry. Devices are cumulative outputs carrying a
+``start_time`` coordinate (stamped by the JobManager); the projector republishes
+them under their stable device name with that coordinate riding along.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import uuid
 
 import pytest
@@ -22,13 +22,13 @@ from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobResult
 from ess.livedata.core.message import StreamKind
-from ess.livedata.core.projection import GENERATION_TOKEN_COORD, Projector
+from ess.livedata.core.projection import Projector
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 
 MONITOR_WORKFLOW = 'dummy/monitor_histogram/1'
 DEVICE_NAME = 'monitor1_counts_total'
-TOKEN = Timestamp.from_ns(123_456_789)
+START_TIME = Timestamp.from_ns(1000)
 
 
 @pytest.fixture(scope='module')
@@ -62,8 +62,12 @@ def job_id() -> JobId:
 def result(job_id: JobId) -> JobResult:
     data = sc.DataGroup(
         {
-            # (a) in the contract -> projected.
-            'counts_total_cumulative': sc.DataArray(sc.scalar(42, unit='counts')),
+            # (a) in the contract -> projected. Carries the start_time coord the
+            # JobManager stamps on cumulative outputs.
+            'counts_total_cumulative': sc.DataArray(
+                sc.scalar(42, unit='counts'),
+                coords={'start_time': START_TIME.to_scipp()},
+            ),
             # (b), (c) not in the contract -> skipped, regardless of shape.
             'cumulative': sc.DataArray(
                 sc.scalar(7, unit='counts'),
@@ -75,10 +79,9 @@ def result(job_id: JobId) -> JobResult:
     return JobResult(
         job_id=job_id,
         workflow_id=WorkflowId.from_string(MONITOR_WORKFLOW),
-        start_time=Timestamp.from_ns(1000),
+        start_time=START_TIME,
         end_time=Timestamp.from_ns(2000),
         data=data,
-        generation_token=TOKEN,
     )
 
 
@@ -102,24 +105,26 @@ def test_projection_uses_result_timestamp(
     assert message.timestamp == result.start_time
 
 
-def test_projection_attaches_generation_token_coord(
+def test_projection_carries_start_time_coord(
     projector: Projector, result: JobResult
 ) -> None:
+    # NICOS uses start_time as the generation change-detector; the projector
+    # must pass it through untouched.
     (message,) = projector.project([result])
 
-    coord = message.value.coords[GENERATION_TOKEN_COORD]
-    assert coord.value == TOKEN.to_ns()
+    coord = message.value.coords['start_time']
+    assert coord.value == START_TIME.to_ns()
     assert coord.unit == 'ns'
 
 
-def test_result_without_token_is_skipped(
+def test_result_without_data_is_skipped(
     projector: Projector, result: JobResult
 ) -> None:
-    # A result whose generation could not be stamped is not projected (avoids
-    # publishing a device stream we cannot mark).
-    untokened = dataclasses.replace(result, generation_token=None)
+    import dataclasses
 
-    assert projector.project([untokened]) == []
+    no_data = dataclasses.replace(result, data=None)
+
+    assert projector.project([no_data]) == []
 
 
 def test_empty_contract_projects_nothing(
@@ -131,24 +136,11 @@ def test_empty_contract_projects_nothing(
     assert projector.project([result]) == []
 
 
-def test_projection_carries_the_results_own_token(
-    projector: Projector, result: JobResult
-) -> None:
-    # The projected token follows the result, not any external lookup: a
-    # re-minted (changed) token on the result propagates to the coordinate.
-    new_token = Timestamp.from_ns(987_654_321)
-    retoned = dataclasses.replace(result, generation_token=new_token)
-
-    (message,) = projector.project([retoned])
-
-    assert message.value.coords[GENERATION_TOKEN_COORD].value == new_token.to_ns()
-
-
-def test_serialized_da00_carries_device_source_name_and_token(
+def test_serialized_da00_carries_device_source_name_and_start_time(
     projector: Projector, result: JobResult
 ) -> None:
     """End-to-end: the projected message serializes to da00 with the device name
-    as source_name and the generation token as a da00 variable."""
+    as source_name and the start_time as a da00 variable."""
     (message,) = projector.project([result])
     serializer = make_default_sink_serializer(instrument='dummy')
 
@@ -158,6 +150,6 @@ def test_serialized_da00_carries_device_source_name_and_token(
     decoded = dataarray_da00.deserialise_da00(serialized.value)
     assert decoded.source_name == DEVICE_NAME
     var_names = {var.name for var in decoded.data}
-    assert GENERATION_TOKEN_COORD in var_names
-    token_var = next(v for v in decoded.data if v.name == GENERATION_TOKEN_COORD)
-    assert int(token_var.data) == TOKEN.to_ns()
+    assert 'start_time' in var_names
+    start_var = next(v for v in decoded.data if v.name == 'start_time')
+    assert int(start_var.data) == START_TIME.to_ns()

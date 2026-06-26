@@ -5,11 +5,11 @@
 
 A development stand-in for NICOS while it has no counterpart: a live web view
 with one row per contract device showing the current value (+/- error), the
-generation token, and a flash when the token jumps (accumulation reset). It
-exercises the three things the projection promises NICOS -- the value is
-*receivable* on a dedicated topic, *identifiable* by a stable device name (free
-of the random ``job_number``), and carries a *generation token* that lets a
-reset be told apart from a genuine low reading.
+generation marker, and a flash when it jumps (accumulation reset). It exercises
+the three things the projection promises NICOS -- the value is *receivable* on a
+dedicated topic, *identifiable* by a stable device name (free of the random
+``job_number``), and carries a ``start_time`` coordinate that lets a reset be
+told apart from a genuine low reading.
 
 A single background thread drains the ``{instrument}_livedata_projection`` Kafka
 topic into the ``Device`` objects; each browser session just renders their
@@ -40,9 +40,9 @@ from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.core.message import StreamKind
-from ess.livedata.core.projection import GENERATION_TOKEN_COORD
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp
 
+GENERATION_COORD = 'start_time'  # marks the current accumulation generation
 RESET_FLASH_S = 4.0  # how long a generation change stays highlighted
 
 
@@ -53,16 +53,20 @@ class Device:
         self.name = name
         self.value: float | None = None
         self.error: float | None = None
-        self.token: int | None = None
+        self.generation: int | None = None
         self.updates = 0
         self.resets = 0
         self.last_reset_at: float | None = None  # monotonic time of last reset
 
-    def update(self, value: float, error: float | None, token: int | None) -> None:
-        if token is not None and self.token is not None and token != self.token:
+    def update(self, value: float, error: float | None, generation: int | None) -> None:
+        if (
+            generation is not None
+            and self.generation is not None
+            and generation != self.generation
+        ):
             self.resets += 1
             self.last_reset_at = time.monotonic()
-        self.value, self.error, self.token = value, error, token
+        self.value, self.error, self.generation = value, error, generation
         self.updates += 1
 
     @property
@@ -73,10 +77,10 @@ class Device:
         )
 
 
-def _format_token(token_ns: int | None) -> str:
-    if token_ns is None:
+def _format_generation(generation_ns: int | None) -> str:
+    if generation_ns is None:
         return "&mdash;"
-    dt = datetime.datetime.fromtimestamp(token_ns / 1e9, tz=datetime.timezone.utc)
+    dt = datetime.datetime.fromtimestamp(generation_ns / 1e9, tz=datetime.timezone.utc)
     return dt.strftime("%H:%M:%S")
 
 
@@ -93,10 +97,10 @@ def _extract(buf: bytes) -> tuple[str, float, float | None, int | None]:
     da00 = dataarray_da00.deserialise_da00(buf)
     da = da00_to_scipp(da00.data)
     error = None if da.variance is None else float(da.variance) ** 0.5
-    token = None
-    if GENERATION_TOKEN_COORD in da.coords:
-        token = int(da.coords[GENERATION_TOKEN_COORD].value)
-    return da00.source_name, float(da.value), error, token
+    generation = None
+    if GENERATION_COORD in da.coords:
+        generation = int(da.coords[GENERATION_COORD].value)
+    return da00.source_name, float(da.value), error, generation
 
 
 def _render(devices: dict[str, Device]) -> str:
@@ -119,7 +123,7 @@ def _render(devices: dict[str, Device]) -> str:
             f"<td style='padding:4px 10px'><code>{d.name}</code></td>"
             f"<td style='padding:4px 10px;text-align:right'>{value}{error}</td>"
             f"<td style='padding:4px 10px;text-align:center'>"
-            f"{_format_token(d.token)}{badge}</td>"
+            f"{_format_generation(d.generation)}{badge}</td>"
             f"<td style='padding:4px 10px;text-align:right;color:#999'>{d.updates}</td>"
             f"</tr>"
         )
@@ -161,9 +165,9 @@ def main() -> None:
             msg = consumer.poll(1.0)
             if msg is None or msg.error():
                 continue
-            name, value, error, token = _extract(msg.value())
+            name, value, error, generation = _extract(msg.value())
             if (device := devices.get(name)) is not None:
-                device.update(value, error, token)
+                device.update(value, error, generation)
 
     threading.Thread(target=drain, daemon=True).start()
 

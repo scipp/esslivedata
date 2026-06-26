@@ -22,39 +22,39 @@ topic:
 - **Identity**: `WorkflowId (instrument + name + version) + source_name +
   output_name`. The random `job_number` is not part of the external identity.
   Including `version` makes drift fail-fast (see Contract).
-- **Wire schema**: `da00`. It carries the signal, its error bar, and a generation
-  token (below) as named variables. `f144` cannot carry the token (it is a lone
-  scalar) and is not used.
+- **Wire schema**: `da00`. It carries the signal, its error bar, and the
+  `start_time` coordinate (below) as named variables. `f144` cannot carry the
+  extra variable (it is a lone scalar) and is not used.
 - **Topic**: dedicated low-volume topic (a one-line addition to
   `stream_kind_to_topic`).
 
 The stable identity gives NICOS a static device list. It does **not** by itself
 signal when the accumulation was reset (job start/stop, config change, backend
 restart): a cumulative value dropping to zero is otherwise indistinguishable from
-a real low reading. The generation token carries that signal.
+a real low reading. The `start_time` coordinate carries that signal.
 
-## Generation token
+## Generation marker: start_time
 
-The projected `da00` carries an extra named variable -- a **generation token**
-that increases on every job transition (start/stop, reconfigure). It is per job
-(`(workflow, source)`), replicated into each output's projection. A change tells
-NICOS the prior accumulation was reset and the value begins a fresh series, not a
-continuation.
+A cumulative output already carries a 0-D `start_time` coordinate, stamped by the
+`JobManager` as the time of the first data accumulated in the current generation
+(`core/job.py`). It is constant for the lifetime of a generation and is re-armed
+on reset (job start/stop, reconfigure, run transition), so a change tells NICOS
+the prior accumulation was reset and the value begins a fresh series, not a
+continuation. The projector republishes it untouched -- no separate token.
 
-- **Derivation**: the job's start time (ns since epoch), captured at job creation.
-  `JobNumber` is a random UUID with no timestamp (`config/workflow_spec.py`), so
-  the token cannot come from the id. ns resolution avoids collisions between rapid
-  transitions.
-- **Restart-safe without persistence**: a later job always has a later start time,
-  so the token increases monotonically across backend restarts with no stored
-  counter.
-- **No schema change**: `da00` is a list of named variables; the token is one more
-  beside signal/errors. NICOS already surfaces non-signal variables (e.g.
+- **Derivation**: the start time of the first active data batch (ns since epoch).
+  A later generation has a later first-data time, so the marker advances across
+  resets and backend restarts with no stored counter.
+- **No schema change**: `da00` is a list of named variables; `start_time` is one
+  more beside signal/errors. NICOS already surfaces non-signal variables (e.g.
   `reference_time`).
+- **Single source of truth**: the same coordinate the dashboard uses to label a
+  plot's accumulation interval, so the reset signal cannot drift from the value's
+  provenance.
 
 Backend restart resets cumulative values to zero; NICOS does not re-accumulate.
-The token makes the reset **detectable** (it jumps), so NICOS does not mistake the
-reset value for a real reading. Recovering the lost accumulation is manual; we
+`start_time` makes the reset **detectable** (it jumps), so NICOS does not mistake
+the reset value for a real reading. Recovering the lost accumulation is manual; we
 bank on backend stability. If restarts prove frequent, the bounded escalation is
 **accumulator checkpointing** for simple additive devices only -- never generic
 raw-data replay, which is intractable for reduction workflows whose normalization
@@ -81,9 +81,9 @@ stream (heavy for detector banks) and a permanent parallel code path. Protection
 against accidental reset/stop/reconfigure is a **gate** in the dashboard, scoped to
 running workflows that bear a device per the yaml contract (UI plan).
 
-The gate and the token are complementary: the gate guards against *accidental*
+The gate and the marker are complementary: the gate guards against *accidental*
 disruption, while *intentional* transitions and restarts still reset the
-accumulation and NICOS detects those via the token regardless of gating.
+accumulation and NICOS detects those via `start_time` regardless of gating.
 
 ## Contract
 
@@ -108,8 +108,8 @@ workflow/version) is surfaced **loudly** (dashboard-visible), not dropped to a
 ## Implementation
 
 Producing the projection: derive the stable `source_name`, extract the scalar
-value, attach the generation token from the owning job's start timestamp, and
-publish to the dedicated topic. The natural home is the sink/serialization path
+value (with its `start_time` coordinate riding along as the generation marker),
+and publish to the dedicated topic. The natural home is the sink/serialization path
 that already turns results into `da00`. The exact seam (inline in
 `orchestrating_processor` vs. a dedicated projector) is settled at build time; it
 does not affect the wire contract above.
@@ -130,4 +130,4 @@ does not affect the wire contract above.
   accumulate.
 - **`ep01` as a reset/epoch signal**: its native meaning ("transient loss, value
   persists") is the opposite of a reset, forcing fragile sequence interpretation.
-  The generation token is an explicit field instead.
+  The `start_time` coordinate is an explicit field instead.

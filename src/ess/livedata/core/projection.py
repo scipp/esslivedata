@@ -11,9 +11,11 @@ NICOS sees a stable device identity across reconfigurations. Which outputs are
 eligible is decided once, when the contract is loaded; the projector trusts the
 contract and projects whatever it designates.
 
-Each projected message carries a 0-D ``generation_token`` coordinate (the job's
-creation time in nanoseconds since the epoch), letting consumers detect when the
-underlying job was replaced by a reconfigure.
+Devices are scalar *cumulative* outputs, which carry a 0-D ``start_time``
+coordinate (stamped by the JobManager at production time, ns since epoch). It is
+constant for the lifetime of a generation and changes on reset or reconfigure,
+so NICOS uses it as a change-detector to distinguish a post-reset zero from a
+genuine low reading.
 """
 
 from __future__ import annotations
@@ -24,9 +26,6 @@ from ..config.device_contract import DeviceContract
 from .job import JobResult
 from .message import Message, StreamId, StreamKind
 from .timestamp import Timestamp
-
-GENERATION_TOKEN_COORD = 'generation_token'  # noqa: S105
-"""Coordinate name carrying the per-job generation token (ns since epoch)."""
 
 
 class Projector:
@@ -46,11 +45,6 @@ class Projector:
     def project(self, results: list[JobResult]) -> list[Message[sc.DataArray]]:
         """Project the contracted outputs of the given results.
 
-        The generation token is read from each result's ``generation_token``
-        field (stamped by the JobManager at production time), so a finishing
-        job's final result is projected even though its registry entry has
-        already been removed. A result without a token is skipped.
-
         Parameters
         ----------
         results:
@@ -61,13 +55,13 @@ class Projector:
         :
             One message per projected output, keyed by device name on the
             :attr:`~ess.livedata.core.message.StreamKind.LIVEDATA_PROJECTION`
-            stream, with the generation token attached as a 0-D coordinate.
+            stream. The output's ``start_time`` coordinate rides along as the
+            generation change-detector.
         """
         messages: list[Message[sc.DataArray]] = []
         for result in results:
-            if result.data is None or result.generation_token is None:
+            if result.data is None:
                 continue
-            token = sc.scalar(result.generation_token.to_ns(), unit='ns')
             for output_name, da in result.data.items():
                 device_name = self._device_contract.device_name(
                     result.workflow_id, result.job_id.source_name, output_name
@@ -80,7 +74,7 @@ class Projector:
                         stream=StreamId(
                             kind=StreamKind.LIVEDATA_PROJECTION, name=device_name
                         ),
-                        value=da.assign_coords({GENERATION_TOKEN_COORD: token}),
+                        value=da,
                     )
                 )
         return messages

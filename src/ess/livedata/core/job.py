@@ -42,14 +42,6 @@ class JobResult:
     data: sc.DataGroup | None = None
     error_message: str | None = None
     warning_message: str | None = None
-    generation_token: Timestamp | None = None
-    """Generation token of the producing job, stamped by the JobManager.
-
-    The job's current-generation marker (creation or last-reset time, ns since
-    epoch). Stamped at result-production time, before job tracking is removed,
-    so a finishing job's final result still carries it. Used by the NICOS device
-    projection as a change-detector across job generations.
-    """
 
     @property
     def stream_name(self) -> str:
