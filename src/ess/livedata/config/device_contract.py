@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Per-instrument NICOS derived-device contract.
 
-A NICOS *derived device* is a scalar, cumulative workflow output (e.g.
+A NICOS *derived device* is typically a scalar, cumulative workflow output (e.g.
 ``counts_total_cumulative``) exposed to NICOS as a device. The mapping
 
     (WorkflowId, source_name, output_name) -> device_name
