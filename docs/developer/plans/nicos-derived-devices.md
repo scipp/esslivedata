@@ -87,23 +87,31 @@ accumulation and NICOS detects those via `start_time` regardless of gating.
 
 ## Contract
 
-The `(workflow, source, output) -> device` mapping is a **shared, versioned yaml**
-(NICOS dislikes runtime-published config). It is the single source of truth, read
-by the backend:
+The `(workflow, source, output) -> device` mapping is **derived from the workflow
+registry**: a `WorkflowSpec` declares `device_outputs` (output field -> device-name
+template), and the contract expands that over the spec's `source_names`. The
+registry is the single source of truth, read directly by the backend and the
+dashboard. A shared default on the monitor workflow registration makes every
+instrument's cumulative monitor total a device, with no per-instrument repetition.
 
-- The yaml is NICOS's static device list. `WorkflowId.version` is part of device
-  identity, so a breaking change retires the old device name (it goes silent, NICOS
-  notices) rather than silently changing semantics behind a stable name.
-  **Fail-fast.**
+- NICOS still wants a static, git-tracked device list (it dislikes runtime-published
+  config). Each instrument's `device_contract.yaml` is a **generated, committed
+  export** of the registry-derived contract -- nothing reads it back. Regenerate
+  with `python -m ess.livedata.config.device_contract`; a test fails if a committed
+  export drifts from the registry.
+- Because the contract is generated from the registry it **cannot drift** from it:
+  an output that does not exist, or a source the spec does not declare, simply
+  cannot appear. The validation that a hand-authored yaml needed against the
+  registry is gone. The one remaining failure mode -- a template rendering a
+  duplicate device name -- fails loud at construction.
+- `WorkflowId.version` is part of device identity, so a breaking change retires the
+  old device name (it goes silent on the wire, NICOS notices) rather than silently
+  changing semantics behind a stable name.
 - A device is **live whenever its owning `(workflow, source)` job is running**. The
-  backend projects every yaml-listed output of a running job; there is no runtime
-  activation toggle and no dashboard->backend control channel. Liveness is
+  backend projects every declared device output of a running job; there is no
+  runtime activation toggle and no dashboard->backend control channel. Liveness is
   predictable from "contract intersect running jobs", matching NICOS's static-list
   preference.
-
-An entry that cannot be resolved against the instrument's registry (wrong
-workflow/version) is surfaced **loudly** (dashboard-visible), not dropped to a
-`log.info` -- it is a misconfiguration of a scan-critical contract.
 
 ## Implementation
 

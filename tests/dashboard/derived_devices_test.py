@@ -102,9 +102,9 @@ def registry(workflow_id, spec):
 
 
 @pytest.fixture
-def contract(workflow_id, registry) -> DeviceContract:
+def contract(workflow_id) -> DeviceContract:
     """Contract exposing monitor1's cumulative total as a device."""
-    return DeviceContract.from_entries(
+    return DeviceContract(
         [
             DeviceContractEntry(
                 workflow_id=str(workflow_id),
@@ -118,8 +118,7 @@ def contract(workflow_id, registry) -> DeviceContract:
                 output_name='counts_total_cumulative',
                 device_name='mon2_total',
             ),
-        ],
-        registry,
+        ]
     )
 
 

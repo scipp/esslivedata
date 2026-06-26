@@ -337,6 +337,8 @@ def register_monitor_workflow_specs(
         aux_sources=aux_sources,
         params=params,
         outputs=MonitorHistogramOutputs,
+        # Every instrument's cumulative monitor total is a NICOS derived device.
+        device_outputs={'counts_total_cumulative': '{source_name}_counts_total'},
     )
 
 

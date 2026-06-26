@@ -3,9 +3,9 @@
 """Live derivation of currently-exposed NICOS derived devices.
 
 A NICOS derived device is "live" iff its owning ``(workflow, source)`` job is
-running: the backend projects the yaml-listed outputs of running jobs. The
-dashboard is read-only -- it derives device-bearing status each refresh by
-intersecting the orchestrator's running ``(workflow, source)`` jobs with the
+running: the backend projects the registry-declared device outputs of running
+jobs. The dashboard is read-only -- it derives device-bearing status each refresh
+by intersecting the orchestrator's running ``(workflow, source)`` jobs with the
 per-instrument :class:`DeviceContract`.
 
 This module is the single source of truth for that derivation, reused by the

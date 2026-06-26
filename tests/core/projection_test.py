@@ -38,14 +38,14 @@ def dummy_instrument() -> Instrument:
 
 
 @pytest.fixture
-def contract(dummy_instrument: Instrument) -> DeviceContract:
+def contract() -> DeviceContract:
     entry = DeviceContractEntry(
         workflow_id=MONITOR_WORKFLOW,
         source_name='monitor1',
         output_name='counts_total_cumulative',
         device_name=DEVICE_NAME,
     )
-    return DeviceContract.from_entries([entry], dummy_instrument.workflow_factory)
+    return DeviceContract([entry])
 
 
 @pytest.fixture
@@ -127,10 +127,8 @@ def test_result_without_data_is_skipped(
     assert projector.project([no_data]) == []
 
 
-def test_empty_contract_projects_nothing(
-    dummy_instrument: Instrument, result: JobResult
-) -> None:
-    empty = DeviceContract.from_entries([], dummy_instrument.workflow_factory)
+def test_empty_contract_projects_nothing(result: JobResult) -> None:
+    empty = DeviceContract([])
     projector = Projector(device_contract=empty)
 
     assert projector.project([result]) == []

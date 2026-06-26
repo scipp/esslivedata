@@ -1,31 +1,37 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Per-instrument NICOS derived-device contract.
+"""Per-instrument NICOS derived-device contract, derived from the registry.
 
-A NICOS *derived device* is typically a scalar, cumulative workflow output (e.g.
+A NICOS *derived device* is a scalar, cumulative workflow output (e.g.
 ``counts_total_cumulative``) exposed to NICOS as a device. The mapping
 
     (WorkflowId, source_name, output_name) -> device_name
 
-is a versioned, per-instrument YAML contract shared by the backend (which
-decides what to project onto a Kafka topic) and the dashboard (which decides
-which outputs are "devices"). This module owns the loader and the validated
-read API.
+is **derived from the workflow registry**: an output is a device iff its
+:class:`~ess.livedata.config.workflow_spec.WorkflowSpec` declares it in
+``device_outputs``, and the device name is rendered from the declared template
+for each of the spec's source names. The registry is the single source of truth,
+read directly by the backend (which decides what to project) and the dashboard
+(which decides which outputs are devices).
 
-The contract is validated against the live workflow registry at load time and
-fails loud on any inconsistency, so a malformed or stale contract cannot
-silently mis-route a device. Which outputs are sensible as devices is the
-contract author's responsibility; the loader only checks that each entry
-resolves to a real workflow output.
+Because the contract is generated from the registry it cannot drift from it: an
+output that does not exist, or a source the spec does not declare, simply cannot
+appear. The one remaining failure mode -- a template that renders the same
+device name twice -- is checked at construction and fails loud.
+
+The per-instrument ``device_contract.yaml`` is a *generated, committed export*
+for NICOS, which wants a static, git-tracked device list. Nothing reads it back;
+:func:`write_exports` regenerates it and a test guards that it stays in sync.
+Run ``python -m ess.livedata.config.device_contract`` to regenerate.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .workflow_spec import WorkflowId, WorkflowSpec
 
@@ -36,7 +42,7 @@ CONTRACT_FILENAME = 'device_contract.yaml'
 
 
 class DeviceContractError(ValueError):
-    """Raised when a device contract is inconsistent with the registry."""
+    """Raised when a device contract renders inconsistent device names."""
 
 
 def _render_device_name(template: str, source_name: str) -> str:
@@ -76,54 +82,33 @@ class DeviceContractEntry(BaseModel, frozen=True):
         return (self.workflow_id, self.source_name, self.output_name)
 
 
-class DeviceContractFileEntry(BaseModel):
-    """A grouped contract entry: one workflow output across several sources.
-
-    Expands to one :class:`DeviceContractEntry` per source. ``device_name`` is a
-    template formatted with ``source_name`` for each source; include the
-    ``{source_name}`` placeholder to derive a distinct device name per source
-    (required when more than one source is listed, otherwise the names collide).
-
-    Parameters
-    ----------
-    workflow_id:
-        String form of the :class:`WorkflowId`, ``"instrument/name/version"``.
-    output_name:
-        Pydantic field name of the workflow output (e.g.
-        ``counts_total_cumulative``), not the user-facing view name.
-    source_names:
-        Data sources the workflow runs on (e.g. monitor or detector names).
-    device_name:
-        NICOS device-name template. A literal (no ``{source_name}``) is allowed
-        only for a single source.
-    """
-
-    workflow_id: str
-    output_name: str
-    source_names: list[str] = Field(min_length=1)
-    device_name: str
-
-
-class DeviceContractFile(BaseModel):
-    """On-disk model of a device-contract YAML file."""
-
-    entries: list[DeviceContractFileEntry] = []
-
-
 class DeviceContract:
     """Validated, immutable per-instrument device contract.
 
-    Construct via :meth:`load` or :meth:`from_instrument`; both validate the
-    entries against the workflow registry and raise :class:`DeviceContractError`
-    on any inconsistency. The constructor is the low-level entry point used by
-    the loaders and assumes its arguments are already validated.
+    Construct via :meth:`from_instrument` or :meth:`from_registry`, which derive
+    the entries from the workflow registry. The constructor validates device-name
+    uniqueness and is the low-level entry point used by those classmethods and by
+    tests that build a contract from explicit entries.
     """
 
-    def __init__(self, entries: tuple[DeviceContractEntry, ...]) -> None:
-        self._entries = entries
-        self._by_key: dict[tuple[str, str, str], DeviceContractEntry] = {
-            entry.key: entry for entry in entries
-        }
+    def __init__(self, entries: Iterable[DeviceContractEntry]) -> None:
+        self._entries = tuple(entries)
+        self._by_key: dict[tuple[str, str, str], DeviceContractEntry] = {}
+        seen_devices: dict[str, DeviceContractEntry] = {}
+        for entry in self._entries:
+            if entry.key in self._by_key:
+                raise DeviceContractError(
+                    f"Duplicate device-contract key {entry.key} "
+                    f"(device names {self._by_key[entry.key].device_name!r} and "
+                    f"{entry.device_name!r})"
+                )
+            if entry.device_name in seen_devices:
+                raise DeviceContractError(
+                    f"Duplicate device_name {entry.device_name!r} for keys "
+                    f"{seen_devices[entry.device_name].key} and {entry.key}"
+                )
+            self._by_key[entry.key] = entry
+            seen_devices[entry.device_name] = entry
 
     @property
     def entries(self) -> tuple[DeviceContractEntry, ...]:
@@ -150,154 +135,111 @@ class DeviceContract:
         return entry.device_name if entry is not None else None
 
     @classmethod
-    def load(
-        cls,
-        instrument_name: str,
-        registry: Mapping[WorkflowId, WorkflowSpec],
+    def from_registry(
+        cls, registry: Mapping[WorkflowId, WorkflowSpec]
     ) -> DeviceContract:
-        """Load and validate the contract for an instrument.
+        """Derive the contract from a workflow registry.
 
-        Reads ``device_contract.yaml`` from the instrument package
-        (``ess.livedata.config.instruments.<instrument_name>``). A missing file
-        yields an empty contract; a present-but-invalid file raises.
+        For every spec that declares ``device_outputs``, emit one entry per
+        ``(output_name, source_name)`` with the device name rendered from the
+        declared template. The result is validated for device-name uniqueness.
 
         Parameters
         ----------
-        instrument_name:
-            Instrument name, used to locate the package and the YAML file.
         registry:
             Workflow registry mapping :class:`WorkflowId` to
-            :class:`WorkflowSpec`, used to validate every entry. The
-            instrument's ``workflow_factory`` satisfies this mapping.
+            :class:`WorkflowSpec`. The instrument's ``workflow_factory`` satisfies
+            this mapping.
 
         Returns
         -------
         :
             A validated, immutable contract.
         """
-        from importlib import resources
-
-        package = f'ess.livedata.config.instruments.{instrument_name}'
-        resource = resources.files(package).joinpath(CONTRACT_FILENAME)
-        if not resource.is_file():
-            return cls(())
-        contract_file = DeviceContractFile.model_validate(
-            yaml.safe_load(resource.read_text()) or {}
-        )
-        return cls.from_file_entries(contract_file.entries, registry)
-
-    @classmethod
-    def from_file_entries(
-        cls,
-        file_entries: list[DeviceContractFileEntry],
-        registry: Mapping[WorkflowId, WorkflowSpec],
-    ) -> DeviceContract:
-        """Expand grouped file entries to per-source entries and validate.
-
-        Each :class:`DeviceContractFileEntry` expands to one
-        :class:`DeviceContractEntry` per source, with ``device_name`` rendered
-        from its template; the result is validated by :meth:`from_entries`.
-        """
-        resolved = [
+        entries = [
             DeviceContractEntry(
-                workflow_id=file_entry.workflow_id,
+                workflow_id=str(workflow_id),
                 source_name=source_name,
-                output_name=file_entry.output_name,
-                device_name=_render_device_name(file_entry.device_name, source_name),
+                output_name=output_name,
+                device_name=_render_device_name(template, source_name),
             )
-            for file_entry in file_entries
-            for source_name in file_entry.source_names
+            for workflow_id, spec in registry.items()
+            for output_name, template in spec.device_outputs.items()
+            for source_name in spec.source_names
         ]
-        return cls.from_entries(resolved, registry)
+        return cls(entries)
 
     @classmethod
     def from_instrument(cls, instrument: Instrument) -> DeviceContract:
-        """Load and validate the contract for an :class:`Instrument`.
+        """Derive the contract for an :class:`Instrument` from its registry."""
+        return cls.from_registry(instrument.workflow_factory)
 
-        Convenience wrapper reading ``instrument.name`` and
-        ``instrument.workflow_factory`` so callers holding an instrument need
-        not unpack them.
+    def as_yaml(self, instrument_name: str) -> str:
+        """Render the NICOS device-list export for ``instrument_name``.
+
+        The export is a flat list of ``device_name -> identity`` entries -- the
+        static device list NICOS consumes. It is generated, not authored; see the
+        module docstring.
         """
-        return cls.load(instrument.name, instrument.workflow_factory)
+        header = (
+            "# SPDX-License-Identifier: BSD-3-Clause\n"
+            "# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)\n"
+            "#\n"
+            f"# GENERATED -- do not edit. NICOS derived-device list for "
+            f"{instrument_name}.\n"
+            "# Regenerate: python -m ess.livedata.config.device_contract\n"
+        )
+        body = yaml.safe_dump(
+            {
+                'devices': [
+                    {
+                        'device_name': entry.device_name,
+                        'workflow_id': entry.workflow_id,
+                        'source_name': entry.source_name,
+                        'output_name': entry.output_name,
+                    }
+                    for entry in self._entries
+                ]
+            },
+            sort_keys=False,
+        )
+        return header + body
 
-    @classmethod
-    def from_entries(
-        cls,
-        entries: list[DeviceContractEntry],
-        registry: Mapping[WorkflowId, WorkflowSpec],
-    ) -> DeviceContract:
-        """Validate explicit entries against a registry and build a contract.
 
-        Validation fails loud, naming the offending entry, on:
+def write_exports() -> list[str]:
+    """Regenerate the committed ``device_contract.yaml`` export for each instrument.
 
-        - a ``workflow_id`` that does not parse or is absent from ``registry``;
-        - a ``source_name`` not declared by the spec's ``source_names``;
-        - an ``output_name`` absent from the spec's outputs;
-        - a duplicate ``(workflow_id, source_name, output_name)`` key;
-        - a duplicate ``device_name``.
+    Writes one file per instrument that declares any device, into the instrument
+    package, and removes a stale file for an instrument that no longer declares
+    devices. Returns the instrument names that have a contract.
 
-        Parameters
-        ----------
-        entries:
-            Contract entries to validate.
-        registry:
-            Workflow registry mapping :class:`WorkflowId` to
-            :class:`WorkflowSpec`.
+    Returns
+    -------
+    :
+        Names of instruments with a non-empty contract, in registration order.
+    """
+    from importlib import resources
 
-        Returns
-        -------
-        :
-            A validated, immutable contract.
-        """
-        seen_keys: dict[tuple[str, str, str], DeviceContractEntry] = {}
-        seen_devices: dict[str, DeviceContractEntry] = {}
-        for entry in entries:
-            cls._validate_entry(entry, registry)
-            if entry.key in seen_keys:
-                raise DeviceContractError(
-                    f"Duplicate device-contract key {entry.key} "
-                    f"(device names {seen_keys[entry.key].device_name!r} and "
-                    f"{entry.device_name!r})"
-                )
-            if entry.device_name in seen_devices:
-                raise DeviceContractError(
-                    f"Duplicate device_name {entry.device_name!r} for keys "
-                    f"{seen_devices[entry.device_name].key} and {entry.key}"
-                )
-            seen_keys[entry.key] = entry
-            seen_devices[entry.device_name] = entry
-        return cls(tuple(entries))
+    from .instrument import instrument_registry
+    from .instruments import available_instruments, get_config
 
-    @staticmethod
-    def _validate_entry(
-        entry: DeviceContractEntry,
-        registry: Mapping[WorkflowId, WorkflowSpec],
-    ) -> None:
-        try:
-            workflow_id = WorkflowId.from_string(entry.workflow_id)
-        except ValueError as exc:
-            raise DeviceContractError(
-                f"Invalid workflow_id {entry.workflow_id!r} in device-contract "
-                f"entry for device {entry.device_name!r}: {exc}"
-            ) from exc
+    written: list[str] = []
+    for name in available_instruments():
+        get_config(name)
+        instrument = instrument_registry[name]
+        contract = DeviceContract.from_instrument(instrument)
+        path = resources.files(f'ess.livedata.config.instruments.{name}').joinpath(
+            CONTRACT_FILENAME
+        )
+        if len(contract) == 0:
+            if path.is_file():
+                path.unlink()  # type: ignore[attr-defined]
+            continue
+        path.write_text(contract.as_yaml(name))  # type: ignore[attr-defined]
+        written.append(name)
+    return written
 
-        spec = registry.get(workflow_id)
-        if spec is None:
-            raise DeviceContractError(
-                f"Unknown workflow_id {entry.workflow_id!r} in device-contract "
-                f"entry for device {entry.device_name!r}; not in the registry"
-            )
 
-        if spec.source_names and entry.source_name not in spec.source_names:
-            raise DeviceContractError(
-                f"Unknown source_name {entry.source_name!r} for workflow "
-                f"{entry.workflow_id!r} (device {entry.device_name!r}); "
-                f"declared sources: {spec.source_names}"
-            )
-
-        if entry.output_name not in spec.outputs.model_fields:
-            raise DeviceContractError(
-                f"Unknown output_name {entry.output_name!r} for workflow "
-                f"{entry.workflow_id!r} (device {entry.device_name!r}); "
-                f"declared outputs: {sorted(spec.outputs.model_fields)}"
-            )
+if __name__ == '__main__':
+    for instrument_name in write_exports():
+        print(f'Wrote {CONTRACT_FILENAME} for {instrument_name}')  # noqa: T201

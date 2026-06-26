@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ess.livedata.core.timestamp import Timestamp
 
@@ -316,6 +316,30 @@ class WorkflowSpec(BaseModel):
             "    )"
         ),
     )
+    device_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Outputs exposed to NICOS as derived devices, mapping output field "
+            "name to a device-name template. The template is formatted with "
+            "``{source_name}`` once per entry in ``source_names``; include the "
+            "placeholder whenever more than one source is declared, otherwise the "
+            "rendered names collide. The per-instrument NICOS device list is "
+            "generated from this declaration; see "
+            ":mod:`ess.livedata.config.device_contract`."
+        ),
+    )
+
+    @model_validator(mode='after')
+    def validate_device_outputs(self) -> WorkflowSpec:
+        """Validate that every declared device output is a real output field."""
+        unknown = set(self.device_outputs) - set(self.outputs.model_fields)
+        if unknown:
+            raise ValueError(
+                f"device_outputs references unknown output field(s) "
+                f"{sorted(unknown)}; declared outputs: "
+                f"{sorted(self.outputs.model_fields)}"
+            )
+        return self
 
     @field_validator('outputs', mode='after')
     @classmethod

@@ -8,8 +8,8 @@ A NICOS *derived device* is a workflow output designated in the per-instrument
 republishes them on a dedicated, low-volume Kafka topic keyed by a stable
 *device name* — free of the ``job_number`` carried by the main data path — so
 NICOS sees a stable device identity across reconfigurations. Which outputs are
-eligible is decided once, when the contract is loaded; the projector trusts the
-contract and projects whatever it designates.
+eligible is decided by the workflow registry (``WorkflowSpec.device_outputs``);
+the projector trusts the contract and projects whatever it designates.
 
 Devices are scalar *cumulative* outputs, which carry a 0-D ``start_time``
 coordinate (stamped by the JobManager at production time, ns since epoch). It is
