@@ -410,7 +410,7 @@ class PlotOrchestrator:
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
         # Per-grid compute buckets filled during a burst by ``_enqueue_compute``
         # and drained by ``flush_frames``. Touched only on the ingestion thread.
-        self._frame_buckets: dict[GridId | None, list[tuple[LayerId, Any]]] = {}
+        self._frame_buckets: dict[GridId, list[tuple[LayerId, Any]]] = {}
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -1013,8 +1013,8 @@ class PlotOrchestrator:
         title_resolver = self._layer_resolvers.get(layer_id)
         return state.stash_pending(data, title_resolver=title_resolver)
 
-    def _grid_of_layer(self, layer_id: LayerId) -> GridId | None:
-        return self._cell_to_grid.get(self._layer_to_cell[layer_id])
+    def _grid_of_layer(self, layer_id: LayerId) -> GridId:
+        return self._cell_to_grid[self._layer_to_cell[layer_id]]
 
     def _run_compute(
         self,
@@ -1030,9 +1030,7 @@ class PlotOrchestrator:
         task = self._stash_pending(layer_id, data)
         if task is not None:
             self._dispatch_compute_task(layer_id, task)
-            grid_id = self._grid_of_layer(layer_id)
-            if grid_id is not None:
-                self._frame_clock.commit(grid_id)
+            self._frame_clock.commit(self._grid_of_layer(layer_id))
 
     def _enqueue_compute(
         self,
@@ -1057,16 +1055,14 @@ class PlotOrchestrator:
         Called on the ingestion thread once a burst has drained. Running
         grid-by-grid and committing per grid means a session showing one tab
         sees its frame the moment that grid's layers finish, rather than after
-        every other visible tab's compute. A ``None`` grid (layer not mapped to
-        a grid) is computed but never committed; nothing reads its generation.
+        every other visible tab's compute.
         """
         buckets = self._frame_buckets
         self._frame_buckets = {}
         for grid_id, tasks in buckets.items():
             for layer_id, task in tasks:
                 self._dispatch_compute_task(layer_id, task)
-            if grid_id is not None:
-                self._frame_clock.commit(grid_id)
+            self._frame_clock.commit(grid_id)
 
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.
