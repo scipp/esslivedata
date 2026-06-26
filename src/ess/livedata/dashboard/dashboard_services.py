@@ -98,8 +98,9 @@ class DashboardServices:
         self._stop_event = threading.Event()
         self._update_interval = 0.05  # seconds
 
-        # Advanced once per completed data-burst frame by the ingestion loop;
-        # read by per-session poll loops to coalesce synchronized plot flushes.
+        # Committed per grid by the orchestrator's flush as each grid's burst
+        # frame finishes; read by per-session poll loops to coalesce
+        # synchronized plot flushes scoped to the tab each session shows.
         self.frame_clock = FrameClock()
 
         # Setup all services
@@ -159,10 +160,11 @@ class DashboardServices:
             except Exception:
                 logger.exception("orchestrator_update_error")
 
-            # A burst is fully drained and computed once update() returns, so
-            # publish the frame now. No-op unless a visible layer was recomputed,
-            # so empty/hidden-only passes do not trigger session flushes.
-            self.frame_clock.commit()
+            # The burst is drained once update() returns; now run the deferred
+            # per-grid compute buckets and commit each grid's frame as it
+            # finishes. No-op unless a visible layer was recomputed, so
+            # empty/hidden-only passes do not trigger session flushes.
+            self.plot_orchestrator.flush_frames()
 
             # Only sleep if update was quick (no work to do), to avoid busy-wait.
             # If there was real work, loop immediately to check for more data.

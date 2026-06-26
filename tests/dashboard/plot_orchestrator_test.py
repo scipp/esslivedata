@@ -1327,6 +1327,7 @@ class TestCellRetrieval:
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
         # PlotDataService should have data for the layer
         state = plot_data_service.get(layer_id)
@@ -1435,6 +1436,7 @@ class TestCellRetrieval:
                 output_name=f'output_{i}',
             )
             fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
         # Simulate late subscriber (new session, page reload, etc.)
         # Late subscriber retrieves grid config
@@ -1493,6 +1495,7 @@ class TestCellRetrieval:
                 output_name=config.view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
         # Verify layer has data in PlotDataService
         state1 = plot_data_service.get(layer_id)
@@ -1558,6 +1561,7 @@ class TestCellRetrieval:
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
         # Verify layer has data in PlotDataService
         state = plot_data_service.get(layer_id)
@@ -2090,6 +2094,7 @@ class TestTitleResolver:
                 output_name=output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
         assert len(fake_plotting_controller.created_plotters) == 2
         for plotter in fake_plotting_controller.created_plotters:
@@ -2537,7 +2542,7 @@ class TestFrameGeneration:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-    def test_visible_data_arrival_advances_generation_on_commit(
+    def test_visible_data_arrival_advances_generation_on_flush(
         self,
         workflow_id,
         workflow_spec,
@@ -2558,7 +2563,6 @@ class TestFrameGeneration:
             clock,
         )
         grid_id = orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        # add_cell_with_layer acquires a viewer token, so compute runs eagerly.
         add_cell_with_layer(orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
         job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
@@ -2566,11 +2570,49 @@ class TestFrameGeneration:
             fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
         )
 
-        # mark() fired during compute, but the generation only advances when the
-        # ingestion loop commits the drained burst.
+        # Data arrival buckets the build; the generation only advances when the
+        # ingestion loop flushes the drained burst.
         assert orchestrator.frame_generation(grid_id) == 0
-        clock.commit()
+        orchestrator.flush_frames()
         assert orchestrator.frame_generation(grid_id) == 1
+
+    def test_visible_grids_commit_independently_on_flush(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        plot_cell,
+    ):
+        """Each visible grid's generation advances from one flush of a burst."""
+        from ess.livedata.dashboard.frame_clock import FrameClock
+
+        clock = FrameClock()
+        orchestrator = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            clock,
+        )
+        grid_a = orchestrator.add_grid(title='Grid A', nrows=3, ncols=3)
+        grid_b = orchestrator.add_grid(title='Grid B', nrows=3, ncols=3)
+        # Both grids visible (token acquired) and subscribed to the same data.
+        add_cell_with_layer(orchestrator, grid_a, plot_cell[0], plot_cell[1])
+        add_cell_with_layer(orchestrator, grid_b, plot_cell[0], plot_cell[1])
+
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(
+            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
+        )
+
+        assert orchestrator.frame_generation(grid_a) == 0
+        assert orchestrator.frame_generation(grid_b) == 0
+        orchestrator.flush_frames()
+        assert orchestrator.frame_generation(grid_a) == 1
+        assert orchestrator.frame_generation(grid_b) == 1
 
     def test_hidden_layer_data_arrival_does_not_advance_generation(
         self,
@@ -2603,7 +2645,7 @@ class TestFrameGeneration:
             fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
         )
 
-        clock.commit()
+        orchestrator.flush_frames()
         assert orchestrator.frame_generation(grid_id) == 0
 
     def test_generation_is_scoped_per_grid(
@@ -2644,7 +2686,7 @@ class TestFrameGeneration:
         self._feed_data(
             fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
         )
-        clock.commit()
+        orchestrator.flush_frames()
 
         assert orchestrator.frame_generation(grid_a) == 1
         assert orchestrator.frame_generation(grid_b) == 0

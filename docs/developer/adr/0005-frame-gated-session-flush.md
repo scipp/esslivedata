@@ -49,11 +49,13 @@ Decouple the flush *trigger* from the clock while keeping the flush *itself* on
 the session thread, coordinated by a frame counter.
 
 A `FrameClock` (one per `DashboardServices`, shared with `PlotOrchestrator`)
-carries a `generation` counter keyed by grid (tab). The ingestion thread calls
-`mark(grid_id)` whenever a visible layer is recomputed
-(`PlotOrchestrator._run_compute`) and `commit()` once a drained burst is done
-(after each `Orchestrator.update()` in the loop); `commit()` advances the
-generation of every grid marked since the last commit.
+carries a `generation` counter keyed by grid (tab). As a burst drains, the
+ingestion thread buckets each visible layer's due recompute by grid
+(`PlotOrchestrator._enqueue_compute`) rather than computing inline. Once the
+burst is drained (after each `Orchestrator.update()` in the loop),
+`flush_frames` runs the buckets grid by grid and `commit(grid_id)`s each grid
+the moment its own layers finish -- so a session showing one tab sees its frame
+without waiting on any other tab's compute.
 
 The per-session poll period drops to 100 ms, but `_poll_for_plot_updates` gates
 the data flush (`update_pipe` → `pipe.send`, plus the per-layer time/lag row) on
@@ -84,20 +86,26 @@ of the frame just shown) and otherwise on a slow stall cadence
 ## Key design choices
 
 - **Generation gate, not push.** Synchronization needs a flush *per data burst*,
-  not a slow timer. The burst boundary is data-defined (`commit()` on drain), so
-  gating a fast pull on it gives both low latency and one-flush-per-burst
-  batching. A burst only *approximates* a backend frame -- see *Scope and limits
-  of synchronization*.
-- **Visibility falls out of the existing compute gate.** `compute` runs only for
-  layers holding a viewer interest token (the active tab), so `mark()` -- placed
-  in `_run_compute` -- inherently tracks only visible recomputes. Hidden tabs
-  stash without computing and never advance the generation.
+  not a slow timer. The burst boundary is data-defined (`commit(grid_id)` on
+  drain), so gating a fast pull on it gives both low latency and
+  one-flush-per-grid-per-burst batching. A burst only *approximates* a backend
+  frame -- see *Scope and limits of synchronization*.
+- **Visibility falls out of the existing compute gate.** A build is due only for
+  layers holding a viewer interest token (the active tab), so bucketing the due
+  builds inherently tracks only visible recomputes. Hidden tabs stash without
+  computing and never bucket, so their generation never advances.
 - **Generation keyed per grid, not global.** With multiple sessions each showing
   a different tab, a single global counter would wake every session on any tab's
   data: harmless for the data push (dirty-gated, so it shows nothing wrong) but
   it would re-tick each session's freshness pill on other tabs' frames, undoing
   the per-frame pill cadence. Keying the generation by grid means a session is
   woken only by bursts in the tab it is displaying.
+- **Commit per grid, not once per burst.** Bucketing the burst's computes by
+  grid and committing each grid as its layers finish means a session waits only
+  on its own tab's compute, never the union of every visible tab's compute
+  across all sessions. Deferring dispatch out of the inline `DataService._notify`
+  to the post-drain `flush_frames` also stamps `created_at` closer to display
+  time.
 - **`pipe.send` stays dirty-gated** by `has_pending_update`, so it fires at most
   at the data rate regardless of poll frequency. The faster poll therefore adds
   only cheap no-op scans, not extra Bokeh model work.
@@ -111,12 +119,12 @@ of the frame just shown) and otherwise on a slow stall cadence
 
 ## Scope and limits of synchronization
 
-The guarantee is *intra-burst*: one `commit()` collapses every layer computed
-from one drained batch into a single `hold`+`freeze` flush. Because
-`get_messages` drains the whole consumer queue, a burst coalesces however many
-Kafka batches accumulated since the last `update()`. What that burst aligns with
-on the backend rests on the following assumptions, which are reasoned, not
-measured:
+The guarantee is *intra-grid within a burst*: one `commit(grid_id)` collapses
+that grid's layers computed from one drained batch into a single `hold`+`freeze`
+flush on each session showing it. Because `get_messages` drains the whole
+consumer queue, a burst coalesces however many Kafka batches accumulated since
+the last `update()`. What that burst aligns with on the backend rests on the
+following assumptions, which are reasoned, not measured:
 
 - **No backend frame exists.** Compute is partitioned into independent workers
   (detector-view, monitor-histograms, data-reduction, device-metadata), each
@@ -148,24 +156,27 @@ above, and this section should be revisited if intra-tab stagger proves visible.
 
 - The *polling* component of display latency drops from up to one 1000 ms period
   to roughly one 100 ms tick. For a single visible layer that is the entire
-  wait, so single-plot latency improves ~10x. A multi-layer burst still runs
-  every visible layer's `compute()` serially on the ingestion thread before the
-  burst commits, so the first-computed layer's wait is that residual serial
-  compute *plus* the 100 ms tick -- unchanged except for the polling term this
-  change removes. Cutting the serial compute (per-tab ordering, parallel
-  compute) is a separate concern, out of scope here.
+  wait, so single-plot latency improves ~10x. Committing per grid also removes
+  *cross-tab* interference: a session no longer waits on other sessions' tabs'
+  computes before its own frame commits. The residual wait is the *within-tab*
+  serial compute -- a grid's layers still run sequentially on the ingestion
+  thread before that grid commits -- plus the 100 ms tick. Parallelizing that
+  per-grid compute is a separate concern, out of scope here.
 - The per-layer pill lag (`created_at − min_end`) and the headline age
   (`now_flush − min_end`) differ by exactly the display latency, so they
-  coincide only for the last-computed layer of a burst (and any single-plot
-  tab); the first-computed layer's age sits a full burst-compute above its lag.
-  The end-to-end age is identical for every layer in a burst, since one flush
+  coincide only for the last-computed layer of a grid (and any single-plot
+  tab); the first-computed layer's age sits a full grid-compute above its lag.
+  The end-to-end age is identical for every layer in a grid, since one flush
   shows them all.
-- Layers from one burst flush together (one `hold`+`freeze` flush per burst).
-  This is intra-burst only; cross-burst and cross-worker alignment are not
-  guaranteed -- see *Scope and limits of synchronization*.
-- `PlotOrchestrator` gains a `frame_generation(grid_id)` accessor;
-  `DashboardServices` owns the `FrameClock` and commits it; the ingestion idle
-  sleep dropped to 50 ms so burst detection is not the new floor.
+- A grid's layers from one burst flush together (one `hold`+`freeze` flush per
+  grid generation). This is intra-grid only; cross-grid, cross-burst, and
+  cross-worker alignment are not guaranteed -- see *Scope and limits of
+  synchronization*.
+- `PlotOrchestrator` gains a `frame_generation(grid_id)` accessor and a
+  `flush_frames` that runs the per-grid compute buckets and commits each grid;
+  `DashboardServices` owns the `FrameClock` and calls `flush_frames` after each
+  drain; the ingestion idle sleep dropped to 50 ms so burst detection is not the
+  new floor.
 - The pill's stall cadence is coupled to the backend publish cadence. This is
   accepted: at slower cadences ticking the age every 2 s is reasonable.
 - A logical frame can split across bursts when its arrival straddles an

@@ -408,6 +408,9 @@ class PlotOrchestrator:
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
         self._data_subscriptions: dict[LayerId, Any] = {}  # DataServiceSubscriber
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
+        # Per-grid compute buckets filled during a burst by ``_enqueue_compute``
+        # and drained by ``flush_frames``. Touched only on the ingestion thread.
+        self._frame_buckets: dict[GridId | None, list[tuple[LayerId, Any]]] = {}
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -990,35 +993,80 @@ class PlotOrchestrator:
                     layer.layer_id
                 )
 
+    def _stash_pending(
+        self,
+        layer_id: LayerId,
+        data: dict[str, dict[ResultKey, Any]],
+    ) -> Any:
+        """Submit input through the layer compute gate, returning a due task.
+
+        Stashes input on the layer state machine. A build is due (a task is
+        returned) only if at least one viewer holds an interest token;
+        otherwise the latest input is retained and rebuilt on the next 0→1
+        token transition (see ``activate_layer``).
+        """
+        if layer_id not in self._layer_to_cell:
+            return None
+        state = self._plot_data_service.get(layer_id)
+        if state is None:
+            return None
+        title_resolver = self._layer_resolvers.get(layer_id)
+        return state.stash_pending(data, title_resolver=title_resolver)
+
+    def _grid_of_layer(self, layer_id: LayerId) -> GridId | None:
+        return self._cell_to_grid.get(self._layer_to_cell[layer_id])
+
     def _run_compute(
         self,
         layer_id: LayerId,
         data: dict[str, dict[ResultKey, Any]],
     ) -> None:
-        """
-        Submit input through the layer compute gate.
+        """Stash input and run a due build synchronously, committing its grid.
 
-        Stashes input on the layer state machine. The build runs immediately
-        only if at least one viewer holds an interest token; otherwise the
-        latest input is retained and rebuilt on the next 0→1 token transition
-        (see ``activate_layer``).
+        The synchronous path for setup-time builds (e.g. static overlays added
+        on the UI thread): compute and commit the grid inline so the layer is
+        displayed without waiting for the next ingestion flush.
         """
-        if layer_id not in self._layer_to_cell:
-            return
-        state = self._plot_data_service.get(layer_id)
-        if state is None:
-            return
-        title_resolver = self._layer_resolvers.get(layer_id)
-        task = state.stash_pending(data, title_resolver=title_resolver)
+        task = self._stash_pending(layer_id, data)
         if task is not None:
             self._dispatch_compute_task(layer_id, task)
-            # A visible layer was recomputed on the ingestion thread; arm its
-            # grid's frame so the loop's commit() advances that grid's
-            # generation once the burst is drained, waking only the sessions
-            # showing that tab for one synchronized flush.
-            grid_id = self._cell_to_grid.get(self._layer_to_cell[layer_id])
+            grid_id = self._grid_of_layer(layer_id)
             if grid_id is not None:
-                self._frame_clock.mark(grid_id)
+                self._frame_clock.commit(grid_id)
+
+    def _enqueue_compute(
+        self,
+        layer_id: LayerId,
+        data: dict[str, dict[ResultKey, Any]],
+    ) -> None:
+        """Stash input and bucket a due build per grid for ``flush_frames``.
+
+        The ingestion-thread path for Kafka-delta builds. Deferring dispatch
+        out of the inline ``DataService._notify`` lets ``flush_frames`` run a
+        burst grid-by-grid and commit each grid the moment its layers finish,
+        so a session waits only on its own tab's compute.
+        """
+        task = self._stash_pending(layer_id, data)
+        if task is not None:
+            grid_id = self._grid_of_layer(layer_id)
+            self._frame_buckets.setdefault(grid_id, []).append((layer_id, task))
+
+    def flush_frames(self) -> None:
+        """Run each grid's bucketed builds, committing that grid as it finishes.
+
+        Called on the ingestion thread once a burst has drained. Running
+        grid-by-grid and committing per grid means a session showing one tab
+        sees its frame the moment that grid's layers finish, rather than after
+        every other visible tab's compute. A ``None`` grid (layer not mapped to
+        a grid) is computed but never committed; nothing reads its generation.
+        """
+        buckets = self._frame_buckets
+        self._frame_buckets = {}
+        for grid_id, tasks in buckets.items():
+            for layer_id, task in tasks:
+                self._dispatch_compute_task(layer_id, task)
+            if grid_id is not None:
+                self._frame_clock.commit(grid_id)
 
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.
@@ -1038,9 +1086,9 @@ class PlotOrchestrator:
         """Run a flush task and transition the layer to READY or ERROR.
 
         Thread-agnostic: runs on whatever thread the caller is on — the bg
-        ingestion thread when entered via ``_run_compute``, the polling thread
-        when entered via ``activate_layer``. See ``LayerStateMachine`` for the
-        gate's threading contract.
+        ingestion thread when entered via ``flush_frames``, the polling thread
+        when entered via ``activate_layer`` or the synchronous ``_run_compute``
+        setup path. See ``LayerStateMachine`` for the gate's threading contract.
         """
         try:
             task.run()
@@ -1157,13 +1205,13 @@ class PlotOrchestrator:
 
         self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
 
-        # Set up data pipeline - _run_compute will be called when data arrives
+        # Set up data pipeline - _enqueue_compute buckets builds as data arrives
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._run_compute(layer_id, data),
+                on_data=lambda data: self._enqueue_compute(layer_id, data),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:
