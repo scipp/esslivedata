@@ -85,8 +85,9 @@ of the frame just shown) and otherwise on a slow stall cadence
 
 - **Generation gate, not push.** Synchronization needs a flush *per data burst*,
   not a slow timer. The burst boundary is data-defined (`commit()` on drain), so
-  gating a fast pull on it gives both low latency and one-frame-per-burst
-  batching.
+  gating a fast pull on it gives both low latency and one-flush-per-burst
+  batching. A burst only *approximates* a backend frame -- see *Scope and limits
+  of synchronization*.
 - **Visibility falls out of the existing compute gate.** `compute` runs only for
   layers holding a viewer interest token (the active tab), so `mark()` -- placed
   in `_run_compute` -- inherently tracks only visible recomputes. Hidden tabs
@@ -108,6 +109,41 @@ of the frame just shown) and otherwise on a slow stall cadence
   stream updates the pill once per frame. Slower-than-2 s streams age the pill,
   which is informative rather than distracting.
 
+## Scope and limits of synchronization
+
+The guarantee is *intra-burst*: one `commit()` collapses every layer computed
+from one drained batch into a single `hold`+`freeze` flush. Because
+`get_messages` drains the whole consumer queue, a burst coalesces however many
+Kafka batches accumulated since the last `update()`. What that burst aligns with
+on the backend rests on the following assumptions, which are reasoned, not
+measured:
+
+- **No backend frame exists.** Compute is partitioned into independent workers
+  (detector-view, monitor-histograms, data-reduction, device-metadata), each
+  publishing ~1 Hz at its own phase, some slower (e.g. motor positions). They are
+  not mutually synchronized and carry no cross-worker frame marker -- the backend
+  never declares "these results are one moment." Per-frame sync is therefore an
+  approximation made at the dashboard, not a property of the data.
+- **Sync only matters within a tab**, since the gate is per grid and a session
+  views one tab. Tabs are *typically* fed by a single worker, whose outputs are
+  computed per tick and published together. The working assumption is that such a
+  worker's co-published outputs arrive close enough to drain into one burst, so
+  the cells sharing a moment flush together. We have *no hard proof* that a
+  worker's output set always lands in one consumer batch / one `update()`.
+- **Cross-worker data is not synchronized** (different phases, sub-Hz sources).
+  Accepted: those sources share no backend frame and mostly live on separate tabs
+  that the per-grid gate isolates. A custom tab mixing workers gets no
+  cross-worker alignment -- but neither did the old fixed period, which only
+  aligned sources by the luck of its 1 s bucket phase, never true coherence, and
+  at up to 1 s latency.
+
+These expectations are unverified. We also lack a current measurement of how real
+~1 Hz traffic (with ~200 ms compute per batch) partitions into bursts -- one
+burst per second plus empty ticks, or several. The design degrades gracefully if
+an assumption fails: a torn frame staggers by one ~100 ms tick and self-corrects.
+Partial sync is the accepted fallback; real-world use will confirm or refute the
+above, and this section should be revisited if intra-tab stagger proves visible.
+
 ## Consequences
 
 - The *polling* component of display latency drops from up to one 1000 ms period
@@ -124,11 +160,16 @@ of the frame just shown) and otherwise on a slow stall cadence
   tab); the first-computed layer's age sits a full burst-compute above its lag.
   The end-to-end age is identical for every layer in a burst, since one flush
   shows them all.
-- Multi-plot updates remain synchronized (one `hold`+`freeze` flush per burst).
+- Layers from one burst flush together (one `hold`+`freeze` flush per burst).
+  This is intra-burst only; cross-burst and cross-worker alignment are not
+  guaranteed -- see *Scope and limits of synchronization*.
 - `PlotOrchestrator` gains a `frame_generation(grid_id)` accessor;
   `DashboardServices` owns the `FrameClock` and commits it; the ingestion idle
   sleep dropped to 50 ms so burst detection is not the new floor.
 - The pill's stall cadence is coupled to the backend publish cadence. This is
   accepted: at slower cadences ticking the age every 2 s is reasonable.
-- A rare burst split across the ingestion idle gap yields two generations, hence
-  a slight stagger; acceptable and self-correcting.
+- A logical frame can split across bursts when its arrival straddles an
+  `update()` cycle boundary -- made marginally likelier by the ~200 ms serial
+  compute per batch (observed in practice) holding the loop. The result is a
+  one-tick (~100 ms) stagger: acceptable and self-correcting. How often this
+  happens in real traffic is unmeasured.
