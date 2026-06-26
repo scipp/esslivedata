@@ -11,8 +11,8 @@ essdiffraction>=26.5.0
 essreflectometry>=26.6.0
 esssans
 essspectroscopy>=26.6.0
-holoviews
-panel>=1.9
+holoviews>=1.23.0
+panel>=1.9.3
 param
 pytest
 pytest-benchmark
