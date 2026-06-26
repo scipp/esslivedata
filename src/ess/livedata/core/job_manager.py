@@ -401,6 +401,13 @@ class JobManager:
             raise KeyError(f"Job {job_id} not found.")
         job.reset()
 
+        # Drop retry state: a finalize error keeps a job in _jobs_with_primary_data
+        # so the next batch retries finalization. After a reset the accumulator is
+        # cleared and _start_time is None, so a forced finalize would emit a
+        # spurious zero-valued result. The cleared accumulator has nothing to
+        # finalize until new primary data arrives.
+        self._jobs_with_primary_data.discard(job_id)
+
         # Clear error/warning state when resetting
         self._job_error_messages.pop(job_id, None)
         self._job_warning_messages.pop(job_id, None)

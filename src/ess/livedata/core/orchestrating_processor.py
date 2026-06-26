@@ -452,8 +452,14 @@ def _job_result_to_message(result: JobResult) -> Message:
     JobId is unique on its own, but we include the workflow ID to make it easier to
     identify the job in the frontend.
     """
+    if result.start_time is None:
+        raise ValueError(
+            f"Result for job {result.job_id} has no start time. A successful "
+            "result must carry the start time of its accumulation window; a "
+            "missing start time signals finalization of a cleared accumulator."
+        )
     return Message(
-        timestamp=result.start_time or Timestamp.from_ns(0),
+        timestamp=result.start_time,
         stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=result.stream_name),
         value=result.data,
     )
