@@ -389,6 +389,7 @@ class PlotParams1d(PlotDisplayParams1d):
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description=_WINDOW_DESCRIPTION,
+        title="Time Window",
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -402,6 +403,7 @@ class PlotParams2d(PlotDisplayParams2d):
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description=_WINDOW_DESCRIPTION,
+        title="Time Window",
     )
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
@@ -415,6 +417,7 @@ class PlotParams3d(PlotParamsBase):
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description=_WINDOW_DESCRIPTION,
+        title="Time Window",
     )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
@@ -446,6 +449,7 @@ class PlotParamsBars(PlotParamsBase):
     window: WindowParams = pydantic.Field(
         default_factory=WindowParams,
         description=_WINDOW_DESCRIPTION,
+        title="Time Window",
     )
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,

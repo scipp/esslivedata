@@ -43,6 +43,7 @@ from ess.livedata.handlers.monitor_workflow_types import (
     MonitorHistogram,
 )
 from ess.livedata.parameter_models import (
+    ESS_PULSE_PERIOD_MS,
     TimeUnit,
     TOAEdges,
     TOARange,
@@ -62,7 +63,7 @@ class TestMonitorDataParams:
         # Default coordinate mode is TOA
         assert params.coordinate_mode.mode == 'toa'
         assert params.toa_edges.start == 0.0
-        assert params.toa_edges.stop == 1000.0 / 14
+        assert params.toa_edges.stop == ESS_PULSE_PERIOD_MS
         assert params.toa_edges.num_bins == 100
         assert params.toa_edges.unit == TimeUnit.MS
         # Ratemeter defaults

@@ -521,17 +521,27 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._workflow_description.visible = False
 
     def _update_output_description(self) -> None:
-        """Update the output description pane for the selected output."""
-        desc = None
+        """Update the output description pane for the selected output.
+
+        Combines the output's own description with a back-reference to the
+        workflow parameters that shape it, so the user learns which knobs
+        (set via the workflow's configuration) control the chosen output.
+        """
+        parts: list[str] = []
         if self._selected_workflow_id is not None and self._selected_view is not None:
             spec = self._workflow_registry.get(self._selected_workflow_id)
-            view = (
-                spec.get_output_view(self._selected_view) if spec is not None else None
-            )
-            if view is not None:
-                desc = view.description
-        if desc:
-            self._output_description.object = desc
+            if spec is not None:
+                view = spec.get_output_view(self._selected_view)
+                if view is not None and view.description:
+                    parts.append(view.description)
+                titles = spec.get_output_param_titles(self._selected_view)
+                if titles:
+                    parts.append(
+                        "<span style='font-style: italic;'>Controlled by workflow "
+                        f"parameters: {', '.join(titles)}.</span>"
+                    )
+        if parts:
+            self._output_description.object = '<br><br>'.join(parts)
             self._output_description.visible = True
         else:
             self._output_description.object = ''

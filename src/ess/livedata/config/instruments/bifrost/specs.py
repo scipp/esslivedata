@@ -95,6 +95,10 @@ class DetectorRatemeterParams(pydantic.BaseModel):
 
     region: DetectorRatemeterRegionParams = pydantic.Field(
         title='Ratemeter region parameters',
+        description=(
+            'Detector region to count events in: an arc (selected by its energy '
+            'transfer) and a pixel range along that arc.'
+        ),
         default_factory=DetectorRatemeterRegionParams,
     )
 
@@ -106,7 +110,10 @@ QBIN_DEFAULT = 100
 class BifrostQMapParams(pydantic.BaseModel):
     q_edges: QEdges = pydantic.Field(
         default=QEdges(start=0.5, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
-        description="Q bin edges.",
+        description=(
+            "Bin edges for the magnitude of momentum transfer Q (in 1/Å), the "
+            "scattering vector length probed by the measurement."
+        ),
     )
     energy_edges: EnergyEdges = pydantic.Field(
         default=EnergyEdges(start=-1.0, stop=1.0, num_bins=QBIN_DEFAULT),
@@ -121,7 +128,12 @@ class QAxisOption(StrEnum):
 
 
 class QAxisSelection(pydantic.BaseModel):
-    axis: QAxisOption = pydantic.Field(description="Cut axis.")
+    axis: QAxisOption = pydantic.Field(
+        description=(
+            "Momentum-transfer component (Qx, Qy, or Qz) that this axis of the "
+            "Q-space map spans."
+        )
+    )
 
 
 class QAxisParams(QEdges, QAxisSelection):
@@ -136,7 +148,10 @@ class BifrostElasticQMapParams(pydantic.BaseModel):
             stop=QMAX_DEFAULT,
             num_bins=QBIN_DEFAULT,
         ),
-        description="First cut axis.",
+        description=(
+            "Horizontal axis of the 2D Q-space map: which momentum-transfer "
+            "component (Qx, Qy, or Qz) it spans, and its bin edges."
+        ),
     )
     axis2: QAxisParams = pydantic.Field(
         default=QAxisParams(
@@ -145,7 +160,10 @@ class BifrostElasticQMapParams(pydantic.BaseModel):
             stop=QMAX_DEFAULT,
             num_bins=QBIN_DEFAULT,
         ),
-        description="Second cut axis.",
+        description=(
+            "Vertical axis of the 2D Q-space map: which momentum-transfer "
+            "component (Qx, Qy, or Qz) it spans, and its bin edges."
+        ),
     )
 
 

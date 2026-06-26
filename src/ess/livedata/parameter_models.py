@@ -16,6 +16,12 @@ from pathlib import Path
 import scipp as sc
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# One pulse period of the 14 Hz ESS source, in milliseconds (1000 / 14 ≈ 71.43).
+# Used as the default upper edge for time-of-arrival histograms: a single pulse
+# period is the natural span for events measured relative to the source pulse.
+# Rounded for a clean default; the exact period differs by < 0.01 ms.
+ESS_PULSE_PERIOD_MS = round(1000.0 / 14, 2)
+
 
 def parse_number_list(value: str) -> list[float]:
     """Parse a comma-separated string of numbers into floats.

@@ -42,6 +42,12 @@ class CoordinateModeSettings(pydantic.BaseModel):
         default='toa',
         description="Coordinate system for event data: 'toa' (time-of-arrival) "
         "or 'wavelength'.",
+        json_schema_extra={
+            'labels': {
+                'toa': 'Time of arrival (TOA)',
+                'wavelength': 'Wavelength',
+            }
+        },
     )
 
 
@@ -67,10 +73,16 @@ class DetectorViewParams(pydantic.BaseModel):
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming in TOA mode.",
+        description=(
+            "Time of arrival (TOA) is the time elapsed since the most recent "
+            "source pulse. These edges define the histogram bins in TOA mode. "
+            "The default range spans one pulse period of the 14 Hz ESS source "
+            f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside "
+            "the range are excluded from the histogram."
+        ),
         default=parameter_models.TOAEdges(
             start=0.0,
-            stop=1000.0 / 14,
+            stop=parameter_models.ESS_PULSE_PERIOD_MS,
             num_bins=100,
             unit=parameter_models.TimeUnit.MS,
         ),
@@ -204,6 +216,12 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
             'Detector image. With "since run start" shows accumulated counts; '
             'with "latest update" or a window, shows recent counts.'
         ),
+        params=(
+            'coordinate_mode',
+            'pixel_weighting',
+            'toa_edges',
+            'wavelength_edges',
+        ),
     ),
     OutputView(
         name='total_counts',
@@ -222,6 +240,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
             'per_update': 'counts_in_toa_range',
         },
         description=('Number of detector events within the configured range filter.'),
+        params=('coordinate_mode', 'toa_range', 'wavelength_range'),
     ),
 )
 
@@ -293,6 +312,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
                 'per_update': 'roi_spectra_current',
             },
             description='Histogram for each active ROI region.',
+            params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
             name='roi_rectangle',
@@ -434,6 +454,12 @@ def make_detector_view_outputs(
                     title=title,
                     streams={'since_start': 'spectrum_view'},
                     description=description,
+                    params=(
+                        'coordinate_mode',
+                        'spectrum_params',
+                        'toa_edges',
+                        'wavelength_edges',
+                    ),
                 ),
             )
 
