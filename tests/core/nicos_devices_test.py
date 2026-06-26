@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for the NICOS device projection.
+"""Tests for NICOS device extraction.
 
 Uses the real ``dummy`` instrument registry and real workflow specs, so the
-projector needs no live registry. Devices are cumulative outputs carrying a
-``start_time`` coordinate (stamped by the JobManager); the projector republishes
+extractor needs no live registry. Devices are cumulative outputs carrying a
+``start_time`` coordinate (stamped by the JobManager); the extractor republishes
 them under their stable device name with that coordinate riding along.
 """
 
@@ -22,7 +22,7 @@ from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobResult
 from ess.livedata.core.message import StreamKind
-from ess.livedata.core.projection import Projector
+from ess.livedata.core.nicos_devices import DeviceExtractor
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 
@@ -49,8 +49,8 @@ def contract() -> DeviceContract:
 
 
 @pytest.fixture
-def projector(contract: DeviceContract) -> Projector:
-    return Projector(device_contract=contract)
+def extractor(contract: DeviceContract) -> DeviceExtractor:
+    return DeviceExtractor(device_contract=contract)
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ def job_id() -> JobId:
 def result(job_id: JobId) -> JobResult:
     data = sc.DataGroup(
         {
-            # (a) in the contract -> projected. Carries the start_time coord the
+            # (a) in the contract -> extracted. Carries the start_time coord the
             # JobManager stamps on cumulative outputs.
             'counts_total_cumulative': sc.DataArray(
                 sc.scalar(42, unit='counts'),
@@ -85,32 +85,32 @@ def result(job_id: JobId) -> JobResult:
     )
 
 
-def test_projects_only_contracted_output(
-    projector: Projector, result: JobResult
+def test_extracts_only_contracted_output(
+    extractor: DeviceExtractor, result: JobResult
 ) -> None:
-    messages = projector.project([result])
+    messages = extractor.extract([result])
 
     assert len(messages) == 1
     (message,) = messages
-    assert message.stream.kind == StreamKind.LIVEDATA_PROJECTION
+    assert message.stream.kind == StreamKind.LIVEDATA_NICOS_DATA
     assert message.stream.name == DEVICE_NAME
     assert message.value.value == 42
 
 
-def test_projection_uses_result_timestamp(
-    projector: Projector, result: JobResult
+def test_extraction_uses_result_timestamp(
+    extractor: DeviceExtractor, result: JobResult
 ) -> None:
-    (message,) = projector.project([result])
+    (message,) = extractor.extract([result])
 
     assert message.timestamp == result.start_time
 
 
-def test_projection_carries_start_time_coord(
-    projector: Projector, result: JobResult
+def test_extraction_carries_start_time_coord(
+    extractor: DeviceExtractor, result: JobResult
 ) -> None:
-    # NICOS uses start_time as the generation change-detector; the projector
+    # NICOS uses start_time as the generation change-detector; the extractor
     # must pass it through untouched.
-    (message,) = projector.project([result])
+    (message,) = extractor.extract([result])
 
     coord = message.value.coords['start_time']
     assert coord.value == START_TIME.to_ns()
@@ -118,33 +118,33 @@ def test_projection_carries_start_time_coord(
 
 
 def test_result_without_data_is_skipped(
-    projector: Projector, result: JobResult
+    extractor: DeviceExtractor, result: JobResult
 ) -> None:
     import dataclasses
 
     no_data = dataclasses.replace(result, data=None)
 
-    assert projector.project([no_data]) == []
+    assert extractor.extract([no_data]) == []
 
 
-def test_empty_contract_projects_nothing(result: JobResult) -> None:
+def test_empty_contract_extracts_nothing(result: JobResult) -> None:
     empty = DeviceContract([])
-    projector = Projector(device_contract=empty)
+    extractor = DeviceExtractor(device_contract=empty)
 
-    assert projector.project([result]) == []
+    assert extractor.extract([result]) == []
 
 
 def test_serialized_da00_carries_device_source_name_and_start_time(
-    projector: Projector, result: JobResult
+    extractor: DeviceExtractor, result: JobResult
 ) -> None:
-    """End-to-end: the projected message serializes to da00 with the device name
+    """End-to-end: the extracted message serializes to da00 with the device name
     as source_name and the start_time as a da00 variable."""
-    (message,) = projector.project([result])
+    (message,) = extractor.extract([result])
     serializer = make_default_sink_serializer(instrument='dummy')
 
     serialized = serializer.serialize(message)
 
-    assert serialized.topic == 'dummy_livedata_projection'
+    assert serialized.topic == 'dummy_livedata_nicos_data'
     decoded = dataarray_da00.deserialise_da00(serialized.value)
     assert decoded.source_name == DEVICE_NAME
     var_names = {var.name for var in decoded.data}

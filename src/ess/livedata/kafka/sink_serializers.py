@@ -231,7 +231,7 @@ def make_default_sink_serializer(
             StreamKind.LIVEDATA_RESPONSES: ResponseSerializer(instrument=instrument),
             StreamKind.LIVEDATA_STATUS: status_serializer,
             StreamKind.LIVEDATA_DATA: data_serializer,
-            StreamKind.LIVEDATA_PROJECTION: data_serializer,
+            StreamKind.LIVEDATA_NICOS_DATA: data_serializer,
             StreamKind.LIVEDATA_ROI: data_serializer,
             StreamKind.MONITOR_COUNTS: data_serializer,
             StreamKind.MONITOR_EVENTS: data_serializer,

@@ -27,7 +27,7 @@ def _job_id(source: str) -> JobId:
 
 
 def _data_messages(sink) -> list:
-    """Workflow result messages, excluding the NICOS device projection."""
+    """Workflow result messages, excluding the NICOS device stream."""
     return [m for m in sink.messages if m.stream.kind == StreamKind.LIVEDATA_DATA]
 
 

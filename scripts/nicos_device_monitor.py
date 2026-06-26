@@ -6,12 +6,12 @@
 A development stand-in for NICOS while it has no counterpart: a live web view
 with one row per contract device showing the current value (+/- error), the
 generation marker, and a flash when it jumps (accumulation reset). It exercises
-the three things the projection promises NICOS -- the value is *receivable* on a
+the three things the device contract promises NICOS -- the value is *receivable* on a
 dedicated topic, *identifiable* by a stable device name (free of the random
 ``job_number``), and carries a ``start_time`` coordinate that lets a reset be
 told apart from a genuine low reading.
 
-A single background thread drains the ``{instrument}_livedata_projection`` Kafka
+A single background thread drains the ``{instrument}_livedata_nicos_data`` Kafka
 topic into the ``Device`` objects; each browser session just renders their
 state on a periodic tick. Read-only -- a fresh random consumer group from the
 latest offset, disturbing nothing.
@@ -148,7 +148,7 @@ def main() -> None:
     args = parser.parse_args()
 
     devices = _load_devices(args.instrument)
-    topic = stream_kind_to_topic(args.instrument, StreamKind.LIVEDATA_PROJECTION)
+    topic = stream_kind_to_topic(args.instrument, StreamKind.LIVEDATA_NICOS_DATA)
 
     consumer = kafka.Consumer(
         {

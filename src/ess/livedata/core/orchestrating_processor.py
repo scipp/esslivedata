@@ -46,7 +46,7 @@ from .message_batcher import (
     MessageBatch,
     MessageBatcher,
 )
-from .projection import Projector
+from .nicos_devices import DeviceExtractor
 from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -168,7 +168,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             job_threads=job_threads,
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
-        self._projector = Projector(
+        self._device_extractor = DeviceExtractor(
             device_contract=DeviceContract.from_instrument(instrument),
         )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
@@ -321,7 +321,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         result_messages.extend(
             [_job_result_to_message(result) for result in valid_results]
         )
-        result_messages.extend(self._projector.project(valid_results))
+        result_messages.extend(self._device_extractor.extract(valid_results))
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:

@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Projection of designated workflow outputs onto the NICOS device topic.
+"""Extraction of designated workflow outputs onto the NICOS device topic.
 
 A NICOS *derived device* is a workflow output designated in the per-instrument
 :class:`~ess.livedata.config.device_contract.DeviceContract`. The
-:class:`Projector` selects the contracted outputs from each job result and
+:class:`DeviceExtractor` selects the contracted outputs from each job result and
 republishes them on a dedicated, low-volume Kafka topic keyed by a stable
 *device name* — free of the ``job_number`` carried by the main data path — so
 NICOS sees a stable device identity across reconfigurations. Which outputs are
 eligible is decided by the workflow registry (``WorkflowSpec.device_outputs``);
-the projector trusts the contract and projects whatever it designates.
+the extractor trusts the contract and emits whatever it designates.
 
 Devices are scalar *cumulative* outputs, which carry a 0-D ``start_time``
 coordinate (stamped by the JobManager at production time, ns since epoch). It is
@@ -28,8 +28,8 @@ from .message import Message, StreamId, StreamKind
 from .timestamp import Timestamp
 
 
-class Projector:
-    """Builds NICOS device-projection messages from job results.
+class DeviceExtractor:
+    """Builds NICOS device messages from job results.
 
     Parameters
     ----------
@@ -42,8 +42,8 @@ class Projector:
     def __init__(self, *, device_contract: DeviceContract) -> None:
         self._device_contract = device_contract
 
-    def project(self, results: list[JobResult]) -> list[Message[sc.DataArray]]:
-        """Project the contracted outputs of the given results.
+    def extract(self, results: list[JobResult]) -> list[Message[sc.DataArray]]:
+        """Extract the contracted device outputs of the given results.
 
         Parameters
         ----------
@@ -53,8 +53,8 @@ class Projector:
         Returns
         -------
         :
-            One message per projected output, keyed by device name on the
-            :attr:`~ess.livedata.core.message.StreamKind.LIVEDATA_PROJECTION`
+            One message per device output, keyed by device name on the
+            :attr:`~ess.livedata.core.message.StreamKind.LIVEDATA_NICOS_DATA`
             stream. The output's ``start_time`` coordinate rides along as the
             generation change-detector.
         """
@@ -72,7 +72,7 @@ class Projector:
                     Message(
                         timestamp=result.start_time or Timestamp.from_ns(0),
                         stream=StreamId(
-                            kind=StreamKind.LIVEDATA_PROJECTION, name=device_name
+                            kind=StreamKind.LIVEDATA_NICOS_DATA, name=device_name
                         ),
                         value=da,
                     )
