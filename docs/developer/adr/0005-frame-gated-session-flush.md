@@ -156,12 +156,11 @@ above, and this section should be revisited if intra-tab stagger proves visible.
 
 - The *polling* component of display latency drops from up to one 1000 ms period
   to roughly one 100 ms tick. For a single visible layer that is the entire
-  wait, so single-plot latency improves ~10x. Committing per grid also removes
-  *cross-tab* interference: a session no longer waits on other sessions' tabs'
-  computes before its own frame commits. The residual wait is the *within-tab*
-  serial compute -- a grid's layers still run sequentially on the ingestion
-  thread before that grid commits -- plus the 100 ms tick. Parallelizing that
-  per-grid compute is a separate concern, out of scope here.
+  wait. Committing per grid also removes *cross-tab* interference: a session no
+  longer waits on other sessions' tabs' computes before its own frame commits.
+  The residual wait is the *within-tab* serial compute -- a grid's layers still
+  run sequentially on the ingestion thread before that grid commits -- plus the
+  100 ms tick. Parallelizing that per-grid compute is a separate concern, out of scope here.
 - The per-layer pill lag (`created_at − min_end`) and the headline age
   (`now_flush − min_end`) differ by exactly the display latency, so they
   coincide only for the last-computed layer of a grid (and any single-plot
