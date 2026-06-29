@@ -43,18 +43,12 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
-    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+    from ess.livedata.handlers.monitor_workflow_specs import (
+        create_monitor_workflow_factory,
+    )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
-    @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode='toa',
-        )
+    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)
 
     @specs.reflectometry_reduction_handle.attach_factory()
     def _reflectometry_reduction_workflow_factory(

@@ -87,18 +87,11 @@ def setup_factories(instrument: Instrument) -> None:
     specs.unified_detector_view_handle.skip_instrument_contexts()
 
     # Monitor workflow factory (TOA-only)
-    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
-    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+    from ess.livedata.handlers.monitor_workflow_specs import (
+        create_monitor_workflow_factory,
+    )
 
-    @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
-        """Factory for Bifrost monitor workflow (TOA-only)."""
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode='toa',
-        )
+    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)
 
     # Create base reduction workflow
     (
