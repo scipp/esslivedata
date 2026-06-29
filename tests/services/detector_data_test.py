@@ -66,7 +66,7 @@ def test_can_configure_and_stop_detector_workflow(
     # Trigger workflow start
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack when message_id not set
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     if instrument == 'loki':
@@ -231,7 +231,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_config_message(good_workflow_config)
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered; get data only (no ack without message_id)
+    # Service recovered; data only -- the ack is on response_messages
     # First finalize sends 10 data messages (8 + 2 initial ROI readbacks)
     assert len(sink.messages) == 10
 
@@ -252,7 +252,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     )
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack without message_id
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     # Add events and verify workflow is running

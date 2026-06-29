@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -65,11 +66,13 @@ class JobAction(StrEnum):
 
 class JobCommand(pydantic.BaseModel):
     kind: Literal['job_command'] = 'job_command'
-    message_id: str | None = pydantic.Field(
-        default=None,
+    message_id: str = pydantic.Field(
+        default_factory=lambda: str(uuid.uuid4()),
         description=(
-            "Unique identifier for command correlation. Frontend generates this UUID "
-            "and backend echoes it in CommandAcknowledgement responses."
+            "Unique identifier for command correlation. An initiator that tracks the "
+            "reply sets this; one that does not may omit it, in which case an id is "
+            "generated for the ack it ignores. The owning backend echoes it in the "
+            "CommandAcknowledgement."
         ),
     )
     job_id: JobId | None = pydantic.Field(

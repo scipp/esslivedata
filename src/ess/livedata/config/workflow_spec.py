@@ -461,12 +461,13 @@ class WorkflowConfig(BaseModel):
     identifier: WorkflowId = Field(
         description="Hash of the workflow, used to identify the workflow."
     )
-    message_id: str | None = Field(
-        default=None,
+    message_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
         description=(
-            "Transient identifier for command/response correlation. Frontend generates "
-            "this UUID and backend echoes it in CommandAcknowledgement responses. "
-            "Distinct from job_id which identifies the job itself."
+            "Transient identifier for command/response correlation. An initiator that "
+            "tracks the reply sets this; one that does not may omit it, in which case "
+            "an id is generated for the ack it ignores. Distinct from job_id which "
+            "identifies the job itself."
         ),
     )
     job_id: JobId = Field(
@@ -496,9 +497,9 @@ class WorkflowConfig(BaseModel):
         cls,
         workflow_id: WorkflowId,
         job_id: JobId,
+        message_id: str | None = None,
         params: dict | None = None,
         aux_source_names: dict | None = None,
-        message_id: str | None = None,
     ) -> WorkflowConfig:
         """
         Create a WorkflowConfig from parameters.
@@ -509,25 +510,28 @@ class WorkflowConfig(BaseModel):
             Identifier for the workflow
         job_id:
             Identity of the job this config starts.
+        message_id:
+            Message ID for command acknowledgement correlation. Omit to let an id
+            be generated for an ack the initiator does not consume.
         params:
             Workflow parameters as dict, or None if no params
         aux_source_names:
             Auxiliary source selections as dict, or None if no aux sources
-        message_id:
-            Optional message ID for command acknowledgement tracking
 
         Returns
         -------
         :
             WorkflowConfig instance ready to be sent to backend
         """
-        return cls(
-            identifier=workflow_id,
-            message_id=message_id,
-            job_id=job_id,
-            aux_source_names=aux_source_names or {},
-            params=params or {},
-        )
+        fields: dict[str, Any] = {
+            "identifier": workflow_id,
+            "job_id": job_id,
+            "aux_source_names": aux_source_names or {},
+            "params": params or {},
+        }
+        if message_id is not None:
+            fields["message_id"] = message_id
+        return cls(**fields)
 
 
 def _is_timeseries_output(da: sc.DataArray) -> bool:

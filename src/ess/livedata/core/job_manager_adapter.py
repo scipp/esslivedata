@@ -38,25 +38,23 @@ class JobManagerAdapter:
             return None
         except Exception as e:
             logger.exception("job_command_failed", action=command.action)
-            if command.message_id is not None:
-                return CommandAcknowledgement(
-                    message_id=command.message_id,
-                    device=str(command.job_id) if command.job_id else "all",
-                    response=AcknowledgementResponse.ERR,
-                    message=str(e),
-                )
-            return None
+            return CommandAcknowledgement(
+                message_id=command.message_id,
+                device=str(command.job_id) if command.job_id else "all",
+                response=AcknowledgementResponse.ERR,
+                message=str(e),
+            )
         else:
             # A selector-keyed command (workflow_id / broadcast) matches no jobs on
             # workers that do not own it; those stay silent, just as the job_id path
             # does via KeyError. Only acknowledge when this worker actually acted.
-            if command.message_id is not None and affected:
-                return CommandAcknowledgement(
-                    message_id=command.message_id,
-                    device=str(command.job_id) if command.job_id else "all",
-                    response=AcknowledgementResponse.ACK,
-                )
-            return None
+            if not affected:
+                return None
+            return CommandAcknowledgement(
+                message_id=command.message_id,
+                device=str(command.job_id) if command.job_id else "all",
+                response=AcknowledgementResponse.ACK,
+            )
 
     def set_workflow_with_config(
         self, config: WorkflowConfig
@@ -81,19 +79,15 @@ class JobManagerAdapter:
             logger.exception(
                 "workflow_start_failed", workflow_id=str(config.identifier)
             )
-            if config.message_id is not None:
-                return CommandAcknowledgement(
-                    message_id=config.message_id,
-                    device=config.job_id.source_name,
-                    response=AcknowledgementResponse.ERR,
-                    message=str(e),
-                )
-            return None
+            return CommandAcknowledgement(
+                message_id=config.message_id,
+                device=config.job_id.source_name,
+                response=AcknowledgementResponse.ERR,
+                message=str(e),
+            )
         else:
-            if config.message_id is not None:
-                return CommandAcknowledgement(
-                    message_id=config.message_id,
-                    device=config.job_id.source_name,
-                    response=AcknowledgementResponse.ACK,
-                )
-            return None
+            return CommandAcknowledgement(
+                message_id=config.message_id,
+                device=config.job_id.source_name,
+                response=AcknowledgementResponse.ACK,
+            )

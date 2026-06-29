@@ -67,7 +67,7 @@ def test_updates_are_published_immediately(
     # Trigger workflow start
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack when message_id not set
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     app.publish_log_message(source_name=source_name, time=1, value=1.5)

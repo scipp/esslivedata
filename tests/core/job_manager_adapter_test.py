@@ -53,14 +53,6 @@ class TestJobManagerAdapter:
         assert result.response == AcknowledgementResponse.ACK
         assert fake_job_manager.job_command_calls == [command]
 
-    def test_job_command_success_without_message_id(self, adapter, fake_job_manager):
-        """Test successful job command returns None when no message_id."""
-        command = JobCommand(action=JobAction.reset)
-        result = adapter.job_command(command)
-
-        assert result is None
-        assert fake_job_manager.job_command_calls == [command]
-
     def test_job_command_workflow_id_no_match_does_not_ack(
         self, adapter, fake_job_manager
     ):
@@ -129,15 +121,3 @@ class TestJobManagerAdapter:
         assert result.message_id == "test-msg-id"
         assert result.response == AcknowledgementResponse.ERR
         assert "Test exception" in result.message
-
-    def test_job_command_other_exception_without_message_id_returns_none(
-        self, adapter, fake_job_manager
-    ):
-        """Test that exceptions without message_id return None."""
-        fake_job_manager.should_raise_exception = True
-
-        command = JobCommand(action=JobAction.stop)
-        result = adapter.job_command(command)
-
-        # No message_id means no response even on error
-        assert result is None
