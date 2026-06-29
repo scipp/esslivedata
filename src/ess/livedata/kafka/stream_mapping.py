@@ -148,6 +148,16 @@ class StreamMapping:
             names |= set(self._logs.values())
         return names
 
+    @property
+    def input_keys(self) -> set[InputStreamKey]:
+        """Returns the ``(topic, source_name)`` keys across all data LUTs."""
+        keys = set(self._detectors.keys())
+        keys |= set(self._monitors.keys())
+        keys |= set(self._area_detectors.keys())
+        if self._logs is not None:
+            keys |= set(self._logs.keys())
+        return keys
+
     def filtered(self, needed: set[str]) -> StreamMapping:
         """Return copy with only entries whose internal names are in ``needed``."""
         return StreamMapping._from_luts(

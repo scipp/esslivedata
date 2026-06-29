@@ -9,6 +9,7 @@ from ess.livedata.core.job import (
     StreamStatsProvider,
 )
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.kafka.stream_mapping import InputStreamKey
 
 
 class TestStreamCounter:
@@ -103,6 +104,33 @@ class TestStreamCounter:
         counter.record("other_topic", "PV.RBV", "resolved")
         stats = counter.drain(window_seconds=30.0)
         assert len(stats.streams) == 1
+
+    def test_drops_out_of_scope_streams(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="other_pv.RBV")]
+        )
+        counter.record("logs", "other_pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == ()
+
+    def test_genuinely_unmapped_still_recorded_with_out_of_scope_set(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="other_pv.RBV")]
+        )
+        counter.record("logs", "unexpected_pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "unexpected_pv.RBV"
+        assert stats.streams[0].stream is None
+
+    def test_out_of_scope_match_is_topic_specific(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="pv.RBV")]
+        )
+        counter.record("other_topic", "pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].topic == "other_topic"
 
 
 class TestStreamCounterLag:

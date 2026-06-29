@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ess.livedata.core.job import (
@@ -15,6 +16,7 @@ from ess.livedata.core.job import (
     StreamStat,
     StreamStats,
 )
+from ess.livedata.kafka.stream_mapping import InputStreamKey
 
 # EPICS PV field suffixes that are noise for reporting.
 # Only .RBV (Read Back Value) carries the actual readback; .VAL (setpoint)
@@ -47,12 +49,14 @@ class StreamCounter:
     def __init__(
         self,
         *,
+        out_of_scope: Iterable[InputStreamKey] = (),
         lag_warn_threshold_s: float = LAG_WARN_THRESHOLD_S,
         lag_future_tolerance_s: float = LAG_FUTURE_TOLERANCE_S,
     ) -> None:
         self._counts: dict[tuple[str, str], _Entry] = defaultdict(
             lambda: _Entry(stream=None, count=0)
         )
+        self._out_of_scope = {(k.topic, k.source_name) for k in out_of_scope}
         self._lag: dict[tuple[str, str, str], _LagEntry] = {}
         self._lag_warn_threshold_s = lag_warn_threshold_s
         self._lag_future_tolerance_s = lag_future_tolerance_s
@@ -61,11 +65,16 @@ class StreamCounter:
         """Increment count for a (topic, source_name) combination.
 
         Sources whose names end with known EPICS noise suffixes (.DMOV, .VAL)
-        are silently dropped to reduce clutter in status displays.
+        are silently dropped to reduce clutter in status displays. Streams known
+        to the instrument but routed to another service (``out_of_scope``) are
+        also dropped: they only arrive because Kafka subscription is per-topic,
+        and counting them as unmapped pollutes the status display.
         """
         if source_name.endswith(_IGNORED_SOURCE_SUFFIXES):
             return
         key = (topic, source_name)
+        if key in self._out_of_scope:
+            return
         entry = self._counts[key]
         entry.count += 1
         entry.stream = stream
