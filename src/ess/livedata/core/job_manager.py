@@ -196,6 +196,77 @@ class JobFactory:
         )
 
 
+class JobPhase(StrEnum):
+    """Lifecycle position of a job within the :class:`JobManager`.
+
+    Orthogonal to processing health (carried by the error/warning messages of
+    :class:`_JobRecord`) and to the transient ``finishing`` flag. The phase
+    advances one way: ``scheduled`` -> ``pending_context`` -> ``active``
+    (the context step is skipped for ungated jobs).
+
+    A ``pending_context`` job has reached its start time but is gated on context
+    streams with no value yet (ADR 0002). It is never processed while pending and
+    graduates to ``active`` via :meth:`JobManager._open_context_gates` once every
+    gating stream has been seen.
+
+    See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+    """
+
+    scheduled = "scheduled"
+    pending_context = "pending_context"
+    active = "active"
+
+
+@dataclass(slots=True)
+class _JobRecord:
+    """All per-job state, so the manager keeps a single ``dict[JobId, _JobRecord]``.
+
+    The wire-facing :class:`JobState` is *derived* from these fields (see
+    :attr:`state`) rather than stored separately, so phase, health, and reported
+    status cannot drift apart.
+    """
+
+    job: Job
+    schedule: JobSchedule
+    phase: JobPhase
+    # Marked when the job reaches its end time; it gets one final compute (if
+    # active) and is then removed. An overlay rather than a phase: a finishing
+    # job retains its active/pending_context phase, which determines whether it
+    # is still processed before removal.
+    finishing: bool = False
+    error_message: str | None = None
+    warning_message: str | None = None
+    # Received primary data since the last successful compute_results.
+    has_primary_data: bool = False
+
+    @property
+    def state(self) -> JobState:
+        """Wire-facing state derived from phase, health, and the finishing flag."""
+        if self.finishing:
+            return JobState.finishing
+        if self.phase is JobPhase.scheduled:
+            return JobState.scheduled
+        if self.phase is JobPhase.pending_context:
+            return JobState.pending_context
+        if self.error_message is not None:
+            return JobState.error
+        if self.warning_message is not None:
+            return JobState.warning
+        return JobState.active
+
+    def to_status(self) -> JobStatus:
+        """Render the wire-facing status for this job."""
+        return JobStatus(
+            job_id=self.job.job_id,
+            workflow_id=self.job.workflow_id,
+            state=self.state,
+            error_message=self.error_message,
+            warning_message=self.warning_message,
+            start_time=self.job.start_time,
+            end_time=self.job.end_time,
+        )
+
+
 class JobManager:
     def __init__(
         self,
@@ -223,20 +294,8 @@ class JobManager:
         self._last_update: int = 0
         self._job_factory = job_factory
         self._context_reader = context_reader
-        self._active_jobs: dict[JobId, Job] = {}
-        self._scheduled_jobs: dict[JobId, Job] = {}
-        # Jobs that have reached their start time but are gated on context streams
-        # with no value yet (ADR 0002). They graduate to ``_active_jobs`` once every
-        # gating stream has been seen, and are never processed while here.
-        self._pending_context_jobs: dict[JobId, Job] = {}
-        self._finishing_jobs: list[JobId] = []
-        self._job_schedules: dict[JobId, JobSchedule] = {}
-        # Track job states and messages in the manager
-        self._job_states: dict[JobId, JobState] = {}
-        self._job_error_messages: dict[JobId, str] = {}
-        self._job_warning_messages: dict[JobId, str] = {}
-        # Track which jobs received primary data since last compute_results
-        self._jobs_with_primary_data: set[JobId] = set()
+        # Single source of truth for every job and all its per-job state.
+        self._jobs: dict[JobId, _JobRecord] = {}
         # Pending reset times, kept sorted via bisect.insort
         self._pending_reset_times: list[Timestamp] = []
         self._executor: ThreadPoolExecutor | None = (
@@ -245,54 +304,52 @@ class JobManager:
 
     @property
     def all_jobs(self) -> list[Job]:
-        """Get a list of all jobs: active, pending-context, and scheduled."""
-        return [
-            *self._active_jobs.values(),
-            *self._pending_context_jobs.values(),
-            *self._scheduled_jobs.values(),
-        ]
+        """Get a list of all jobs, regardless of phase."""
+        return [record.job for record in self._jobs.values()]
 
     @property
     def active_jobs(self) -> list[Job]:
-        """Get the list of active jobs."""
-        return list(self._active_jobs.values())
+        """Get the list of active jobs.
+
+        Includes jobs marked ``finishing`` while still in the active phase: they
+        receive one final batch and compute before removal.
+        """
+        return [
+            record.job
+            for record in self._jobs.values()
+            if record.phase is JobPhase.active
+        ]
 
     def _start_job(self, job_id: JobId) -> None:
         """Move a scheduled job to active, or to pending-context if it is gated.
 
-        A job whose ``gating_streams`` are not all available yet enters
-        ``_pending_context_jobs`` and graduates to active via
+        A job whose ``gating_streams`` are not all available yet enters the
+        ``pending_context`` phase and graduates to active via
         :meth:`_open_context_gates` once they are (ADR 0002).
         """
-        job = self._scheduled_jobs.pop(job_id, None)
-        if job is None:
-            raise KeyError(f"Job {job_id} not found in scheduled jobs.")
+        record = self._jobs[job_id]
+        job = record.job
         if job.gating_streams:
-            self._pending_context_jobs[job_id] = job
-            self._job_states[job_id] = JobState.pending_context
-            self._job_warning_messages[job_id] = pending_context_warning(
-                job.gating_streams
-            )
+            record.phase = JobPhase.pending_context
+            record.warning_message = pending_context_warning(job.gating_streams)
             logger.info(
                 "job_pending_context",
                 job_id=str(job_id),
                 workflow_id=str(job.workflow_id),
             )
         else:
-            self._active_jobs[job_id] = job
-            self._job_states[job_id] = JobState.active
+            record.phase = JobPhase.active
             logger.info(
                 "job_activated", job_id=str(job_id), workflow_id=str(job.workflow_id)
             )
 
     def _activate_pending_job(self, job_id: JobId) -> None:
         """Graduate a pending-context job to active once its context is complete."""
-        job = self._pending_context_jobs.pop(job_id)
-        self._active_jobs[job_id] = job
-        self._job_states[job_id] = JobState.active
-        self._job_warning_messages.pop(job_id, None)
+        record = self._jobs[job_id]
+        record.phase = JobPhase.active
+        record.warning_message = None
         logger.info(
-            "job_activated", job_id=str(job_id), workflow_id=str(job.workflow_id)
+            "job_activated", job_id=str(job_id), workflow_id=str(record.job.workflow_id)
         )
 
     def _advance_to_time(self, start_time: Timestamp, end_time: Timestamp) -> None:
@@ -300,25 +357,22 @@ class JobManager:
         self._fire_pending_resets(end_time)
         to_activate = [
             job_id
-            for job_id in self._scheduled_jobs.keys()
-            if self._job_schedules[job_id].should_start(start_time)
+            for job_id, record in self._jobs.items()
+            if record.phase is JobPhase.scheduled
+            and record.schedule.should_start(start_time)
         ]
 
         # Activate jobs first
         for job_id in to_activate:
             self._start_job(job_id)
 
-        # Now check for jobs to finish (including newly activated ones). A job
-        # still gated on context can also reach its end time and must finish.
-        to_finish = [
-            job_id
-            for job_id in (*self._active_jobs, *self._pending_context_jobs)
-            if (schedule := self._job_schedules[job_id]).end_time is not None
-            and schedule.end_time <= end_time
-        ]
-
-        # Do not remove from active jobs yet, we need to compute results.
-        self._finishing_jobs.extend(to_finish)
+        # Now mark jobs to finish (including newly activated ones). A job still
+        # gated on context can also reach its end time and must finish.
+        for record in self._jobs.values():
+            if record.phase in (JobPhase.active, JobPhase.pending_context):
+                end = record.schedule.end_time
+                if end is not None and end <= end_time:
+                    record.finishing = True
 
     def schedule_job(self, config: WorkflowConfig) -> JobId:
         """
@@ -326,9 +380,9 @@ class JobManager:
         """
         job_id = config.job_id
         job = self._job_factory.create(job_id=job_id, config=config)
-        self._job_schedules[job_id] = config.schedule
-        self._job_states[job_id] = JobState.scheduled
-        self._scheduled_jobs[job_id] = job
+        self._jobs[job_id] = _JobRecord(
+            job=job, schedule=config.schedule, phase=JobPhase.scheduled
+        )
         logger.info(
             "job_scheduled",
             job_id=str(job_id),
@@ -339,16 +393,8 @@ class JobManager:
 
     def stop_job(self, job_id: JobId) -> None:
         """Stop a job and remove it from the system."""
-        was_active = self._active_jobs.pop(job_id, None)
-        was_pending = self._pending_context_jobs.pop(job_id, None)
-        was_scheduled = self._scheduled_jobs.pop(job_id, None)
-
-        if was_active is None and was_pending is None and was_scheduled is None:
+        if self._jobs.pop(job_id, None) is None:
             raise KeyError(f"Job {job_id} not found.")
-
-        self._remove_job_tracking(job_id)
-        if job_id in self._finishing_jobs:
-            self._finishing_jobs.remove(job_id)
         logger.info("job_stopped", job_id=str(job_id))
 
     def job_command(self, command: JobCommand) -> None:
@@ -391,30 +437,21 @@ class JobManager:
         Reset a job with the given ID.
         This will clear the processor and reset the start and end times.
         """
-        job = (
-            self._active_jobs.get(job_id)
-            or self._pending_context_jobs.get(job_id)
-            or self._scheduled_jobs.get(job_id)
-        )
-        if job is None:
+        record = self._jobs.get(job_id)
+        if record is None:
             raise KeyError(f"Job {job_id} not found.")
-        job.reset()
+        record.job.reset()
 
-        # Clear error/warning state when resetting
-        self._job_error_messages.pop(job_id, None)
-        self._job_warning_messages.pop(job_id, None)
-        # Reset state to match the job's current bucket. A gated job stays gated:
-        # context is sticky and independent of run boundaries, so its warning is
-        # re-armed from the streams still missing in the context cache.
-        if job_id in self._active_jobs:
-            self._job_states[job_id] = JobState.active
-        elif job_id in self._pending_context_jobs:
-            self._job_states[job_id] = JobState.pending_context
-            cached = {s.name for s in self._context_reader(job.gating_streams)}
-            if missing := job.missing_context(cached):
-                self._job_warning_messages[job_id] = pending_context_warning(missing)
-        else:
-            self._job_states[job_id] = JobState.scheduled
+        # Clear error/warning state when resetting. The phase is unchanged, so a
+        # gated job stays gated: context is sticky and independent of run
+        # boundaries, so its warning is re-armed from the streams still missing
+        # in the context cache.
+        record.error_message = None
+        record.warning_message = None
+        if record.phase is JobPhase.pending_context:
+            cached = {s.name for s in self._context_reader(record.job.gating_streams)}
+            if missing := record.job.missing_context(cached):
+                record.warning_message = pending_context_warning(missing)
 
     def on_run_start(self, info: RunStart) -> None:
         """Handle a run-start event by scheduling deferred resets."""
@@ -458,10 +495,12 @@ class JobManager:
         refills their gating streams itself (:meth:`_open_context_gates`).
         """
         names: set[str] = set()
-        for job_id, job in self._scheduled_jobs.items():
-            if self._job_schedules[job_id].should_start(start_time):
-                names.update(job.source_names)
-                names.update(job.input_stream_names)
+        for record in self._jobs.values():
+            if record.phase is JobPhase.scheduled and record.schedule.should_start(
+                start_time
+            ):
+                names.update(record.job.source_names)
+                names.update(record.job.input_stream_names)
         return names
 
     def push_data(self, data: WorkflowData) -> list[JobReply]:
@@ -490,13 +529,13 @@ class JobManager:
         Compute results from jobs that received primary data since last successful call.
         """
         results = []
-        for job in self._active_jobs.values():
-            if job.job_id not in self._jobs_with_primary_data:
+        for record in self._jobs.values():
+            if record.phase is not JobPhase.active or not record.has_primary_data:
                 continue
-            result = job.get()
+            result = record.job.get()
             result = self._job_factory.enrich_result(result)
             results.append(result)
-            self._record_compute_result(job, result)
+            self._record_compute_result(record.job, result)
         self._finish_jobs()
         return results
 
@@ -516,7 +555,7 @@ class JobManager:
         for job in self.active_jobs:
             job_data = _filter_data_for_job(job, data)
             has_data = not job_data.is_empty()
-            has_pending = job.job_id in self._jobs_with_primary_data
+            has_pending = self._jobs[job.job_id].has_primary_data
             if has_data or has_pending:
                 work_items.append((job, job_data, has_pending))
 
@@ -561,72 +600,68 @@ class JobManager:
 
         See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
         """
-        if not self._pending_context_jobs:
+        pending = [
+            record
+            for record in self._jobs.values()
+            if record.phase is JobPhase.pending_context
+        ]
+        if not pending:
             return
         needed: set[str] = set()
-        for job in self._pending_context_jobs.values():
-            needed |= job.gating_streams
+        for record in pending:
+            needed |= record.job.gating_streams
         if missing := needed - {s.name for s in data.data}:
             data.data.update(self._context_reader(missing))
         available = {s.name for s in data.data}
-        for job_id, job in list(self._pending_context_jobs.items()):
-            if missing := job.missing_context(available):
-                self._job_warning_messages[job_id] = pending_context_warning(missing)
+        for record in pending:
+            if missing := record.job.missing_context(available):
+                record.warning_message = pending_context_warning(missing)
             else:
-                self._activate_pending_job(job_id)
+                self._activate_pending_job(record.job.job_id)
 
     def _record_push_result(self, job: Job, job_data: JobData, reply: JobReply) -> None:
+        record = self._jobs[job.job_id]
         # Track primary data updates only after successful add, so that a
         # failed push does not trigger a finalize attempt on empty accumulators.
         if not reply.has_error and job_data.is_active():
-            self._jobs_with_primary_data.add(job.job_id)
+            record.has_primary_data = True
 
         # Track warnings from job operations, or clear them on success
         if reply.has_error and reply.error_message is not None:
             # Pushing new data puts the job into "warning" state: Processing the latest
             # data failed, but the job may still be able to finalize previous data.
-            self._job_warning_messages[job.job_id] = reply.error_message
-            self._job_states[job.job_id] = JobState.warning
+            record.warning_message = reply.error_message
             logger.warning(
                 "job_warning",
                 job_id=str(job.job_id),
                 error_message=reply.error_message,
             )
         else:
-            # Clear warning state on successful data processing
-            self._job_warning_messages.pop(job.job_id, None)
-            # Only update state if it was warning (preserve error state)
-            if self._job_states.get(job.job_id) == JobState.warning:
-                self._job_states[job.job_id] = JobState.active
+            # Clear warning state on successful data processing.
+            record.warning_message = None
 
     def _record_compute_result(self, job: Job, result: JobResult) -> None:
+        record = self._jobs[job.job_id]
         # Track errors from job finalization, or clear them on success
         if result.error_message is not None:
             # Finalizing failed, put job into error state, cannot compute results.
-            self._job_error_messages[job.job_id] = result.error_message
-            self._job_states[job.job_id] = JobState.error
+            # Keep has_primary_data set to retry next time, which can be important
+            # if a job has not yet initialized itself with the first auxiliary data.
+            record.error_message = result.error_message
             logger.error(
                 "job_error",
                 job_id=str(job.job_id),
                 error_message=result.error_message,
             )
         else:
-            # Clear error state on successful finalization
-            self._job_error_messages.pop(job.job_id, None)
-            # Track warnings from job finalization (e.g., None values in result)
+            # Clear error state on successful finalization.
+            record.error_message = None
+            # Track warnings from job finalization (e.g., None values in result);
+            # otherwise preserve any existing warning from data processing.
             if result.warning_message is not None:
-                self._job_warning_messages[job.job_id] = result.warning_message
-                self._job_states[job.job_id] = JobState.warning
-            elif job.job_id in self._job_warning_messages:
-                # Preserve existing warnings from data processing
-                self._job_states[job.job_id] = JobState.warning
-            else:
-                self._job_states[job.job_id] = JobState.active
-            # Remove from the tracking set only if we successfully computed results.
-            # If there was an error we keep it in the set to retry next time, which
-            # can be important if a job has not yet initialized itself with the
-            # first auxiliary data.
-            self._jobs_with_primary_data.remove(job.job_id)
+                record.warning_message = result.warning_message
+            # Clear the primary-data flag only on a successful compute.
+            record.has_primary_data = False
 
     def shutdown(self) -> None:
         """Shut down the thread pool executor, if one was created."""
@@ -639,64 +674,21 @@ class JobManager:
             return list(self._executor.map(fn, items))
         return [fn(item) for item in items]
 
-    def _remove_job_tracking(self, job_id: JobId) -> None:
-        """Remove all tracking state for a job."""
-        self._job_schedules.pop(job_id, None)
-        self._job_states.pop(job_id, None)
-        self._job_error_messages.pop(job_id, None)
-        self._job_warning_messages.pop(job_id, None)
-        self._jobs_with_primary_data.discard(job_id)
-
     def _finish_jobs(self):
-        for job_id in self._finishing_jobs:
-            self._active_jobs.pop(job_id, None)
-            self._pending_context_jobs.pop(job_id, None)
-            self._remove_job_tracking(job_id)
-        self._finishing_jobs.clear()
+        finishing = [
+            job_id for job_id, record in self._jobs.items() if record.finishing
+        ]
+        for job_id in finishing:
+            del self._jobs[job_id]
 
     def get_job_status(self, job_id: JobId) -> JobStatus | None:
         """Get the status of a specific job by its ID."""
-        job = (
-            self._active_jobs.get(job_id)
-            or self._pending_context_jobs.get(job_id)
-            or self._scheduled_jobs.get(job_id)
-        )
-        if job is None:
-            return None
-
-        # Determine current state based on job's location in manager
-        if job_id in self._finishing_jobs:
-            current_state = JobState.finishing
-        elif job_id in self._scheduled_jobs:
-            current_state = self._job_states.get(job_id, JobState.scheduled)
-        else:
-            # Active or pending-context: use tracked state (may be
-            # warning/error/pending_context from operations or the gate).
-            current_state = self._job_states.get(job_id, JobState.active)
-
-        return JobStatus(
-            job_id=job_id,
-            workflow_id=job.workflow_id,
-            state=current_state,
-            error_message=self._job_error_messages.get(job_id),
-            warning_message=self._job_warning_messages.get(job_id),
-            start_time=job.start_time,
-            end_time=job.end_time,
-        )
+        record = self._jobs.get(job_id)
+        return record.to_status() if record is not None else None
 
     def get_all_job_statuses(self) -> list[JobStatus]:
         """Get the status of all jobs in the manager."""
-        all_job_ids = [
-            *self._active_jobs,
-            *self._pending_context_jobs,
-            *self._scheduled_jobs,
-        ]
-        statuses = []
-        for job_id in all_job_ids:
-            status = self.get_job_status(job_id)
-            if status is not None:
-                statuses.append(status)
-        return statuses
+        return [record.to_status() for record in self._jobs.values()]
 
     def get_jobs_by_workflow(self, workflow_id: WorkflowId) -> list[JobStatus]:
         """Get all jobs for a specific workflow ID."""
@@ -714,16 +706,12 @@ class JobManager:
 
     def format_job_error(self, status: JobReply) -> str:
         """Format a job error message with meaningful job information."""
-        job = (
-            self._active_jobs.get(status.job_id)
-            or self._pending_context_jobs.get(status.job_id)
-            or self._scheduled_jobs.get(status.job_id)
-        )
-        if job is None:
+        record = self._jobs.get(status.job_id)
+        if record is None:
             return f"Job {status.job_id} error: {status.error_message}"
 
         return (
-            f"Job {job._workflow_id}/{status.job_id.source_name} "
+            f"Job {record.job.workflow_id}/{status.job_id.source_name} "
             f"error: {status.error_message}"
         )
 
