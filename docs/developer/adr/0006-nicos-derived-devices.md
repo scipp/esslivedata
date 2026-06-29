@@ -123,10 +123,12 @@ holds from the contract export:
   single device, or several counted in sync (e.g. a difference of two monitors) —
   and there is no per-source selector. Reset acts on the job, so it zeros all of
   that job's outputs together.
-- **No acknowledgement.** `message_id` is omitted, so no service acks (a
-  workflow_id-keyed command with a `message_id` would be echoed by every backend
-  service). The `start_time` generation jump on the device topic is the
-  confirmation.
+- **Fire-and-forget.** NICOS omits `message_id`, so the backend produces no
+  response. None is needed: NICOS confirms the reset from the `start_time`
+  generation jump on the device topic — the same signal it already consumes. The
+  acknowledgement plane exists for an *initiator* to correlate and error-check its
+  own commands (the dashboard uses it for the commands it sends); a fire-and-forget
+  reset opts out of it.
 - `WorkflowId` accepts its `instrument/name/version` string form on the wire, so
   NICOS sends the contract string verbatim; the dashboard keeps sending the nested
   object form.
@@ -171,13 +173,17 @@ those via `start_time` regardless of gating. The dashboard cannot know whether
 NICOS is actively scanning a device (one-way publish, separate system), so the
 gate states the change is disruptive *iff* NICOS happens to be using the device.
 
-### Reset is whole-workflow and unacknowledged
+### Reset is whole-workflow and fire-and-forget
 
 A job produces all its outputs together, so lifecycle operations exist only at job
 granularity; "reset device X" means "reset the job feeding X". Keying by
 `WorkflowId` and omitting `message_id` keeps NICOS decoupled from `job_number` and
 from our acknowledgement plane, with the device topic itself carrying the
-confirmation.
+confirmation. Surfacing a reset to dashboard users — for resets from any source,
+not just NICOS — would need an explicit reset *event* from the backend (the
+`JobManager` knows when `reset_job` fires); inferring it from the data is unsafe
+because a non-cumulative output's `start_time` advances every finalize, so only the
+job-level generation marker is a reliable signal. That notification is deferred.
 
 ## Consequences
 
