@@ -25,7 +25,7 @@ class JobManagerAdapter:
 
     def job_command(self, command: JobCommand) -> CommandAcknowledgement | None:
         try:
-            self._job_manager.job_command(command)
+            affected = self._job_manager.job_command(command)
         except KeyError:
             # Job not found. Similar to DifferentInstrument for workflows: multiple
             # backend services receive the same commands, but only the one owning the
@@ -47,7 +47,10 @@ class JobManagerAdapter:
                 )
             return None
         else:
-            if command.message_id is not None:
+            # A selector-keyed command (workflow_id / broadcast) matches no jobs on
+            # workers that do not own it; those stay silent, just as the job_id path
+            # does via KeyError. Only acknowledge when this worker actually acted.
+            if command.message_id is not None and affected:
                 return CommandAcknowledgement(
                     message_id=command.message_id,
                     device=str(command.job_id) if command.job_id else "all",

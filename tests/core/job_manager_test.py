@@ -2617,3 +2617,28 @@ class TestContextStreamGate:
         manager.job_command(JobCommand(action=JobAction.stop))
 
         assert manager.get_job_status(job_id) is None
+
+    def test_job_command_returns_matched_job_count(self, fake_job_factory):
+        """`job_command` reports how many jobs it acted on.
+
+        A worker that owns none of the targeted jobs returns zero, letting the
+        adapter stay silent instead of spuriously acknowledging a selector-keyed
+        command handled by another worker.
+        """
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        target = WorkflowId(instrument="test", name="wf_a", version=1)
+        manager.schedule_job(_make_config("source1", name="wf_a"))
+        manager.schedule_job(_make_config("source2", name="wf_a"))
+        manager.schedule_job(_make_config("source3", name="wf_b"))
+
+        assert (
+            manager.job_command(JobCommand(workflow_id=target, action=JobAction.reset))
+            == 2
+        )
+        absent = WorkflowId(instrument="test", name="absent", version=1)
+        assert (
+            manager.job_command(JobCommand(workflow_id=absent, action=JobAction.reset))
+            == 0
+        )
