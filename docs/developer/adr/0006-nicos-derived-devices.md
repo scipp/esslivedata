@@ -30,10 +30,6 @@ the `job_number` simply drop out of the external identity, and then *no consumer
 ever needs to detect a job transition from the data stream* — the signal the
 naming schemes were straining to encode.
 
-A separate prototype (a dedicated `NicosOrchestrator`, a curated
-`config/nicos_workflows.py` list, fixed `job_number`s, a parallel control plane)
-predates this decision and is superseded by it.
-
 ## Decision
 
 ### Stable-keyed device extraction onto a dedicated topic
@@ -146,7 +142,7 @@ holds from the contract export:
 | Delta stream, NICOS accumulates | Elegant for additive quantities, but non-additive peak devices cannot be deltas, and NICOS prefers not to accumulate. Rejected. |
 | `ep01` as a reset/epoch signal | Its native meaning ("transient loss, value persists") is the opposite of a reset, forcing fragile sequence interpretation. The explicit `start_time` field replaces it. Rejected. |
 | Separate generation token variable | Redundant with `start_time`, which already exists and already drives plot labelling. Rejected. |
-| Dedicated NICOS jobs / `NicosOrchestrator` (prototype) | Physical isolation guarantees nothing a UI gate doesn't, while duplicating heavy detector-stream processing and maintaining a permanent parallel code path. Superseded. |
+| Dedicated NICOS jobs | Physical isolation guarantees nothing a UI gate doesn't, while duplicating heavy detector-stream processing and maintaining a permanent parallel code path. Rejected. |
 | Runtime per-output activation toggle | Adds a control channel and persisted state the design avoids, and fights the static-list premise — liveness would depend on operator UI state. The low-volume extraction is harmless when unscanned. Rejected. |
 | Per-`source_name` reset selector | Not needed given whole-workflow usage, and avoids perturbing dashboard bookkeeping that has no per-source reset state. Rejected. |
 | Dedicated inbound NICOS command topic keyed by device name | Cleaner decoupling, but a new topic plus a contract-resolution translation point. Reusing `livedata_commands` needs no new wiring and NICOS already holds the `WorkflowId`. Rejected for v1. |
