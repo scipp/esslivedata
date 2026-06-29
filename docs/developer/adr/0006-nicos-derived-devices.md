@@ -12,7 +12,7 @@ quantities — total counts in a monitor or detector bank, a fitted peak statist
 — that ESSlivedata computes. NICOS consumes the results but does the stream
 processing nowhere itself.
 
-NICOS wants each such quantity to look like an ordinary device, the way the EPICS
+NICOS prefers each such quantity to look like an ordinary device, the way the EPICS
 PVs it connects to directly already do: a **static, git-tracked device list**,
 each device addressed by a **stable identifier**, delivered on a **low-volume
 dedicated topic**, and protected from accidental reset / stop / reconfigure.
@@ -114,9 +114,12 @@ the `{instrument}_livedata_commands` topic, keyed by the `WorkflowId` it already
 holds from the contract export:
 
 ```json
-{"kind": "job_command", "action": "reset",
- "workflow_id": "bifrost/monitor_histogram/1",
- "message_id": "<uuid4>"}
+{
+  "kind": "job_command",
+  "action": "reset",
+  "workflow_id": "bifrost/monitor_histogram/1",
+  "message_id": "<uuid4>"
+}
 ```
 
 - **Granularity is whole-workflow.** Omitting `job_id` selects every running job
