@@ -23,7 +23,7 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
-monitor_handle = register_monitor_workflow_specs(
+register_monitor_workflow_specs(
     instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
 )
 

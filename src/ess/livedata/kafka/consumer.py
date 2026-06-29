@@ -28,40 +28,52 @@ def validate_topics_exist(consumer: kafka.Consumer, topics: list[str]) -> None:
         raise ValueError(f"Failed to fetch topic metadata: {e}") from e
 
 
-def assign_partitions(consumer: kafka.Consumer, topic: str) -> None:
-    """Assign all partitions of a topic to a consumer."""
-    try:
-        partitions = consumer.list_topics(topic).topics[topic].partitions
+def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
+    """Manually assign every partition of every topic to a consumer.
+
+    ``Consumer.assign`` replaces the entire assignment, so all partitions of all
+    topics must be passed in a single call; assigning per topic in a loop would
+    leave only the last topic assigned.
+    """
+    assignment: list[kafka.TopicPartition] = []
+    for topic in topics:
+        try:
+            partitions = consumer.list_topics(topic).topics[topic].partitions
+        except KafkaException as e:
+            logger.exception("partition_assignment_failed", topic=topic)
+            raise ValueError(
+                f"Failed to assign partitions for topic '{topic}': {e}"
+            ) from e
         if not partitions:
             logger.error("topic_has_no_partitions", topic=topic)
             raise ValueError(f"Topic '{topic}' exists but has no partitions")
         partition_ids = list(partitions.keys())
-        consumer.assign([kafka.TopicPartition(topic, p) for p in partition_ids])
+        assignment.extend(kafka.TopicPartition(topic, p) for p in partition_ids)
         logger.info(
-            "partitions_assigned",
+            "partitions_resolved",
             topic=topic,
             partition_count=len(partition_ids),
             partitions=partition_ids,
         )
-    except KafkaException as e:
-        logger.exception("partition_assignment_failed", topic=topic)
-        raise ValueError(f"Failed to assign partitions for topic '{topic}': {e}") from e
+    consumer.assign(assignment)
 
 
 @contextmanager
 def make_bare_consumer(
     topics: list[str], config: dict[str, Any]
 ) -> Generator[kafka.Consumer, None, None]:
-    """Create a bare confluent_kafka.Consumer that can be used by KafkaMessageSource."""
+    """Create a bare confluent_kafka.Consumer that can be used by KafkaMessageSource.
+
+    Partitions are assigned manually rather than via ``subscribe``; the two APIs
+    are mutually exclusive in librdkafka, and manual assignment guarantees every
+    partition is consumed immediately without waiting for a group rebalance.
+    """
     consumer = kafka.Consumer(config)
     try:
         validate_topics_exist(consumer, topics)
-        consumer.subscribe(topics)
-        for topic in topics:
-            assign_partitions(consumer, topic)
+        assign_all_partitions(consumer, topics)
         yield consumer
     finally:
-        consumer.unsubscribe()
         consumer.close()
 
 

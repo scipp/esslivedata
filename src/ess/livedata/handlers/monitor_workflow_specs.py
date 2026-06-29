@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from typing import ClassVar
 
 import pydantic
@@ -45,7 +46,29 @@ class TOAOnlyCoordinateModeSettings(pydantic.BaseModel):
         return v
 
 
-class TOAOnlyMonitorDataParams(pydantic.BaseModel):
+class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
+    """Common interface for monitor histogram parameter models.
+
+    Subclasses expose the active coordinate mode together with the edges and
+    range filter for that mode. This lets a single workflow factory
+    (:func:`create_monitor_workflow_factory`) serve every monitor spec
+    regardless of which coordinate modes the instrument offers.
+    """
+
+    @abc.abstractmethod
+    def get_active_edges(self) -> sc.Variable:
+        """Return the edges for the active coordinate mode."""
+
+    @abc.abstractmethod
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the range filter for the active coordinate mode, if enabled."""
+
+    @abc.abstractmethod
+    def get_coordinate_mode(self) -> CoordinateMode:
+        """Return the active coordinate mode."""
+
+
+class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
     """
     Monitor data parameters restricted to TOA mode only.
 
@@ -82,8 +105,12 @@ class TOAOnlyMonitorDataParams(pydantic.BaseModel):
         """Return the TOA range if enabled."""
         return self.toa_range.range if self.toa_range.enabled else None
 
+    def get_coordinate_mode(self) -> CoordinateMode:
+        """Return the active coordinate mode (always 'toa')."""
+        return self.coordinate_mode.mode
 
-class MonitorDataParams(pydantic.BaseModel):
+
+class MonitorDataParams(MonitorDataParamsBase):
     """Parameters for monitor histogram workflow."""
 
     coordinate_mode: CoordinateModeSettings = pydantic.Field(
@@ -143,6 +170,10 @@ class MonitorDataParams(pydantic.BaseModel):
                     if self.wavelength_range.enabled
                     else None
                 )
+
+    def get_coordinate_mode(self) -> CoordinateMode:
+        """Return the currently selected coordinate mode."""
+        return self.coordinate_mode.mode
 
 
 class MonitorHistogramOutputs(WorkflowOutputsBase):
@@ -254,7 +285,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
 def register_monitor_workflow_specs(
     instrument: Instrument,
     source_names: list[str],
-    params: type[MonitorDataParams] = MonitorDataParams,
+    params: type[MonitorDataParamsBase] = MonitorDataParams,
     aux_sources: AuxSources | None = None,
     extra_description: str | None = None,
 ) -> SpecHandle | None:
@@ -269,9 +300,10 @@ def register_monitor_workflow_specs(
         List of monitor names (source names) for which to register the workflow.
         If empty, returns None without registering.
     params
-        Parameter model class for the workflow. Defaults to MonitorDataParams.
-        Instruments can provide a subclass with additional fields (e.g., for
-        instrument-specific configuration like chopper mode selection).
+        Parameter model class for the workflow, a MonitorDataParamsBase
+        subclass. Defaults to MonitorDataParams. Instruments can provide the
+        restricted TOAOnlyMonitorDataParams or a subclass with additional fields
+        (e.g., for instrument-specific configuration like chopper mode selection).
     aux_sources
         Optional auxiliary source specification for position or other dynamic data
         streams. Instruments with movable monitors can provide an AuxSources spec
@@ -308,21 +340,23 @@ def register_monitor_workflow_specs(
     )
 
 
-def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams):
+def create_monitor_workflow_factory(source_name: str, params: MonitorDataParamsBase):
     """
-    Factory function for monitor workflow from MonitorDataParams.
+    Factory function for monitor workflow from monitor data parameters.
 
-    This is a wrapper around create_monitor_workflow that unpacks the params.
+    Wraps :func:`create_monitor_workflow`, unpacking the params. It serves any
+    spec whose params subclass :class:`MonitorDataParamsBase`, including the
+    TOA-only restricted variant. Instruments needing TOF lookup tables for
+    wavelength mode (DREAM, LOKI) provide their own factory instead.
+
     Defined here so the params type hint can be properly resolved by the
     workflow factory registration system.
     """
     from .monitor_workflow import create_monitor_workflow
 
-    mode = params.coordinate_mode.mode
-
     return create_monitor_workflow(
         source_name=source_name,
         edges=params.get_active_edges(),
         range_filter=params.get_active_range(),
-        coordinate_mode=mode,
+        coordinate_mode=params.get_coordinate_mode(),
     )
