@@ -12,9 +12,9 @@ quantities — total counts in a monitor or detector bank, a fitted peak statist
 — that ESSlivedata computes. NICOS consumes the results but does the stream
 processing nowhere itself.
 
-NICOS wants each such quantity to look like an ordinary device, akin to an EPICS
-PV it already receives as `f144`: a **static, git-tracked device list**, each
-device addressed by a **stable identifier**, delivered on a **low-volume
+NICOS wants each such quantity to look like an ordinary device, the way the EPICS
+PVs it connects to directly already do: a **static, git-tracked device list**,
+each device addressed by a **stable identifier**, delivered on a **low-volume
 dedicated topic**, and protected from accidental reset / stop / reconfigure.
 NICOS dislikes runtime-published configuration and does not re-accumulate values
 — it reads the current cumulative reading.
