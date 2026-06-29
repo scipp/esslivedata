@@ -115,7 +115,8 @@ holds from the contract export:
 
 ```json
 {"kind": "job_command", "action": "reset",
- "workflow_id": "bifrost/monitor_histogram/1"}
+ "workflow_id": "bifrost/monitor_histogram/1",
+ "message_id": "<uuid4>"}
 ```
 
 - **Granularity is whole-workflow.** Omitting `job_id` selects every running job
@@ -123,12 +124,11 @@ holds from the contract export:
   single device, or several counted in sync (e.g. a difference of two monitors) —
   and there is no per-source selector. Reset acts on the job, so it zeros all of
   that job's outputs together.
-- **Fire-and-forget.** NICOS omits `message_id`, so the backend produces no
-  response. None is needed: NICOS confirms the reset from the `start_time`
-  generation jump on the device topic — the same signal it already consumes. The
-  acknowledgement plane exists for an *initiator* to correlate and error-check its
-  own commands (the dashboard uses it for the commands it sends); a fire-and-forget
-  reset opts out of it.
+- **Carries a `message_id`.** NICOS generates a uuid like any command producer. The
+  owning worker acks it with `device: "all"` — the command omits `job_id`, so the
+  random `job_number` never appears in the ack. NICOS may correlate that ack or rely
+  on the `start_time` generation jump on the device topic, which also reports a reset
+  from any source, not only NICOS's own command.
 - `WorkflowId` accepts its `instrument/name/version` string form on the wire, so
   NICOS sends the contract string verbatim; the dashboard keeps sending the nested
   object form.
@@ -173,13 +173,12 @@ those via `start_time` regardless of gating. The dashboard cannot know whether
 NICOS is actively scanning a device (one-way publish, separate system), so the
 gate states the change is disruptive *iff* NICOS happens to be using the device.
 
-### Reset is whole-workflow and fire-and-forget
+### Reset is whole-workflow, confirmed via the data topic
 
 A job produces all its outputs together, so lifecycle operations exist only at job
 granularity; "reset device X" means "reset the job feeding X". Keying by
-`WorkflowId` and omitting `message_id` keeps NICOS decoupled from `job_number` and
-from our acknowledgement plane, with the device topic itself carrying the
-confirmation. Surfacing a reset to dashboard users — for resets from any source,
+`WorkflowId` decouples NICOS from `job_number`; the device topic's `start_time`
+jump carries the reset confirmation. Surfacing a reset to dashboard users — for resets from any source,
 not just NICOS — would need an explicit reset *event* from the backend (the
 `JobManager` knows when `reset_job` fires); inferring it from the data is unsafe
 because a non-cumulative output's `start_time` advances every finalize, so only the
