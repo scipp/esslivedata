@@ -455,8 +455,7 @@ def _job_result_to_message(result: JobResult) -> Message:
     if result.start_time is None:
         raise ValueError(
             f"Result for job {result.job_id} has no start time. A successful "
-            "result must carry the start time of its accumulation window; a "
-            "missing start time signals finalization of a cleared accumulator."
+            "result must carry the start time of its accumulation window."
         )
     return Message(
         timestamp=result.start_time,
