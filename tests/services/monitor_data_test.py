@@ -69,7 +69,7 @@ def test_can_configure_and_stop_monitor_workflow(
     # Trigger workflow start
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack when message_id not set
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     # Each workflow call returns six results: the cumulative/current histograms

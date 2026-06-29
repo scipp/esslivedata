@@ -70,7 +70,7 @@ def test_can_configure_and_stop_workflow_with_detector(
     # Trigger workflow start
     app.publish_config_message(workflow_config)
     service.step()
-    # No acknowledgement sent when message_id is not set (backward compatibility)
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     app.publish_events(size=2000, time=2)
@@ -384,7 +384,7 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     app.publish_events(size=2000, time=1)
     app.publish_events(size=3000, time=2)
     service.step()
-    # Only data reduction result (no ack when message_id not set)
+    # Only the data reduction result; the ack is on response_messages
     assert len(sink.messages) == 1
     assert sink.messages[-1].value.values.sum() == 5000
 
@@ -443,7 +443,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_config_message(valid_workflow_config)
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered; get data only (no ack without message_id)
+    # Service recovered; data only -- the ack is on response_messages
     assert len(sink.messages) == 1
 
 
@@ -479,7 +479,7 @@ def test_service_can_recover_after_bad_workflow_param_was_set(
     app.publish_config_message(valid_config)
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered; get data only (no ack without message_id)
+    # Service recovered; data only -- the ack is on response_messages
     assert len(sink.messages) == 1
 
 
@@ -499,7 +499,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     )
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack without message_id
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     # Add events and verify workflow is running

@@ -206,11 +206,7 @@ class FakeBackend:
             self._jobs.pop(command.job_id, None)
             self._ack(command.message_id, command.job_id.source_name)
 
-    def _ack(
-        self, message_id: str | None, device: str, error: str | None = None
-    ) -> None:
-        if message_id is None:
-            return
+    def _ack(self, message_id: str, device: str, error: str | None = None) -> None:
         response = AcknowledgementResponse.ERR if error else AcknowledgementResponse.ACK
         ack = CommandAcknowledgement(
             message_id=message_id, device=device, response=response, message=error

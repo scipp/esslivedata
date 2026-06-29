@@ -20,7 +20,7 @@ def _workflow_config(source: str = "source1", message_id: str | None = None):
     return WorkflowConfig(
         identifier=WorkflowId(instrument="dummy", name="wf", version=1),
         job_id=_job_id(source),
-        message_id=message_id,
+        message_id=message_id or str(uuid.uuid4()),
     )
 
 
@@ -38,8 +38,6 @@ class FakeJobManagerAdapter:
         self.job_command_calls.append(command)
         if self.should_raise:
             raise ValueError("Test exception")
-        if command.message_id is None:
-            return None
         return CommandAcknowledgement(
             message_id=command.message_id,
             device=str(command.job_id) if command.job_id else "all",
@@ -53,7 +51,7 @@ class FakeJobManagerAdapter:
         if self.should_raise:
             raise ValueError("Test exception")
         return CommandAcknowledgement(
-            message_id=config.message_id or "mock-msg-id",
+            message_id=config.message_id,
             device=config.job_id.source_name,
             response=AcknowledgementResponse.ACK,
         )
@@ -85,16 +83,6 @@ class TestConfigProcessor:
         assert adapter.job_command_calls == [command]
         assert len(result_messages) == 1
         assert result_messages[0].value.message_id == "msg-1"
-
-    def test_process_job_command_without_message_id_no_ack(self):
-        adapter = FakeJobManagerAdapter()
-        processor = ConfigProcessor(job_manager_adapter=adapter)
-        command = JobCommand(action=JobAction.reset)
-
-        result_messages = processor.process_messages([_msg(command)])
-
-        assert adapter.job_command_calls == [command]
-        assert result_messages == []
 
     def test_processes_multiple_commands_in_order(self):
         adapter = FakeJobManagerAdapter()
