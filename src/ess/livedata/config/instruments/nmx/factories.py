@@ -42,10 +42,3 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_workflow)
-
-    # Monitor workflow factory (TOA-only)
-    from ess.livedata.handlers.monitor_workflow_specs import (
-        create_monitor_workflow_factory,
-    )
-
-    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)

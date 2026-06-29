@@ -215,9 +215,7 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
-monitor_handle = register_monitor_workflow_specs(
-    instrument, monitors, params=TOAOnlyMonitorDataParams
-)
+register_monitor_workflow_specs(instrument, monitors, params=TOAOnlyMonitorDataParams)
 
 
 def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataArray:

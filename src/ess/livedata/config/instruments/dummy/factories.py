@@ -53,13 +53,6 @@ def setup_factories(instrument: Instrument) -> None:
     # Area detector view for area_panel (ad00 images)
     specs.area_panel_view_handle.attach_factory()(AreaDetectorView.view_factory())
 
-    # Monitor workflow factory (TOA-only)
-    from ess.livedata.handlers.monitor_workflow_specs import (
-        create_monitor_workflow_factory,
-    )
-
-    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)
-
     # Total counts workflow
     _total_counts_workflow = sciline.Pipeline((_total_counts,))
 

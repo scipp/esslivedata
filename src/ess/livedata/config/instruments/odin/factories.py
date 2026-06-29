@@ -6,8 +6,6 @@ ODIN instrument factory implementations.
 
 from ess.livedata.config import Instrument
 
-from . import specs
-
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
@@ -15,10 +13,3 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.configure_detector(
         'timepix3', detector_group_name='event_mode_detectors'
     )
-
-    # Monitor workflow factory (TOA-only)
-    from ess.livedata.handlers.monitor_workflow_specs import (
-        create_monitor_workflow_factory,
-    )
-
-    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)

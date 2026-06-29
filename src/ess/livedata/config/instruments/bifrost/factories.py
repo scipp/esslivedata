@@ -86,13 +86,6 @@ def setup_factories(instrument: Instrument) -> None:
     specs.detector_ratemeter_handle.skip_instrument_contexts()
     specs.unified_detector_view_handle.skip_instrument_contexts()
 
-    # Monitor workflow factory (TOA-only)
-    from ess.livedata.handlers.monitor_workflow_specs import (
-        create_monitor_workflow_factory,
-    )
-
-    specs.monitor_handle.attach_factory()(create_monitor_workflow_factory)
-
     # Create base reduction workflow
     (
         reduction_workflow,
