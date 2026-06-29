@@ -191,6 +191,16 @@ class TestGate:
         assert orchestrator.get_active_job_number(workflow_id) is None
         assert len(widget._modal_container) == 0
 
+    def test_not_gated_when_global_gate_disabled(
+        self, widget, orchestrator, workflow_id
+    ):
+        # Device-bearing, but the global gate is off -> stop runs immediately.
+        _run(orchestrator, workflow_id, 'monitor1')
+        orchestrator.set_gate_enabled(False)
+        widget._on_stop_click()
+        assert orchestrator.get_active_job_number(workflow_id) is None
+        assert len(widget._modal_container) == 0
+
     def test_staging_never_gated(self, widget, orchestrator, workflow_id):
         # Device-bearing, but opening the gear (staging) must not gate.
         _run(orchestrator, workflow_id, 'monitor1')

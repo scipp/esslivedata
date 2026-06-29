@@ -1097,9 +1097,10 @@ class WorkflowStatusWidget:
         """Run ``action``, gating it behind a confirmation when device-bearing.
 
         Re-reads live device-bearing state at click time (not stale widget
-        state). When the workflow currently exposes a NICOS device, opens a
-        confirmation modal naming the affected devices; the action runs only on
-        confirm. Otherwise the action runs immediately.
+        state). When the workflow currently exposes a NICOS device and the
+        global gate is enabled, opens a confirmation modal naming the affected
+        devices; the action runs only on confirm. Otherwise the action runs
+        immediately.
 
         Parameters
         ----------
@@ -1109,7 +1110,7 @@ class WorkflowStatusWidget:
             The orchestrator call to perform on confirm / immediately.
         """
         device_names = self._affected_device_names()
-        if not device_names:
+        if not device_names or not self._orchestrator.gate_enabled:
             action()
             return
 

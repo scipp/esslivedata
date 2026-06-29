@@ -159,3 +159,26 @@ def test_refresh_reflects_state_change(orchestrator, contract, workflow_id):
 
     overview._refresh()
     assert 'running' in _body_html(overview)
+
+
+def test_gate_checkbox_toggles_shared_flag(orchestrator, contract):
+    overview = DerivedDevicesOverview(
+        orchestrator=orchestrator, device_contract=contract
+    )
+    assert orchestrator.gate_enabled is True
+    assert overview._gate_checkbox.value is True
+
+    overview._gate_checkbox.value = False
+    assert orchestrator.gate_enabled is False
+
+
+def test_gate_checkbox_resyncs_from_other_session(orchestrator, contract):
+    # A second session's overview reflects a toggle made elsewhere on refresh.
+    overview = DerivedDevicesOverview(
+        orchestrator=orchestrator, device_contract=contract
+    )
+    orchestrator.set_gate_enabled(False)
+    assert overview._gate_checkbox.value is True  # not yet refreshed
+
+    overview._refresh()
+    assert overview._gate_checkbox.value is False
