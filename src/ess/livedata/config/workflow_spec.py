@@ -120,20 +120,31 @@ class WorkflowId(BaseModel, frozen=True):
     name: str
     version: int
 
+    @model_validator(mode='before')
+    @classmethod
+    def _accept_string(cls, value: Any) -> Any:
+        """Accept the ``instrument/name/version`` string form on input.
+
+        This is the form exported in ``device_contract.yaml``; accepting it lets
+        NICOS address a reset command by the workflow_id string it already holds,
+        without reconstructing the nested object. The nested ``{instrument, name,
+        version}`` form (used by the dashboard) passes through unchanged.
+        """
+        if isinstance(value, str):
+            parts = value.split('/')
+            if len(parts) != 3:
+                raise ValueError(f"Invalid WorkflowId string format: {value}")
+            instrument, name, version = parts
+            return {'instrument': instrument, 'name': name, 'version': version}
+        return value
+
     def __str__(self) -> str:
         return f"{self.instrument}/{self.name}/{self.version}"
 
     @staticmethod
     def from_string(workflow_id_str: str) -> WorkflowId:
         """Parse WorkflowId from string representation."""
-        parts = workflow_id_str.split('/')
-        if len(parts) != 3:
-            raise ValueError(f"Invalid WorkflowId string format: {workflow_id_str}")
-        return WorkflowId(
-            instrument=parts[0],
-            name=parts[1],
-            version=int(parts[2]),
-        )
+        return WorkflowId.model_validate(workflow_id_str)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -93,9 +93,17 @@ class LivedataApp:
         self.service.step()
 
     def publish_config_message(self, command: Command) -> None:
+        self.publish_command_json(command.model_dump_json())
+
+    def publish_command_json(self, raw: str) -> None:
+        """Publish a raw command JSON payload, as an external producer would.
+
+        Bypasses model serialization so tests can exercise the on-wire schema
+        directly (e.g. a NICOS reset keyed by the workflow_id string form).
+        """
         message = FakeKafkaMessage(
             key=None,
-            value=command.model_dump_json().encode('utf-8'),
+            value=raw.encode('utf-8'),
             topic=stream_kind_to_topic(
                 instrument=self.instrument, kind=StreamKind.LIVEDATA_COMMANDS
             ),

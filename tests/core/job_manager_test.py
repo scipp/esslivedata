@@ -370,6 +370,42 @@ class TestJobManager:
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
 
+    def test_job_command_reset_by_workflow_id_resets_all_its_sources_only(
+        self, fake_job_factory
+    ):
+        """A workflow_id-keyed reset (no job_id) resets every job of that
+        workflow across sources, leaving other workflows untouched.
+
+        This is the path NICOS uses: it addresses a reset by WorkflowId alone,
+        without knowing job_number/JobId.
+        """
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+
+        target = WorkflowId(instrument="test", name="wf_a", version=1)
+        job_a1 = manager.schedule_job(_make_config("source1", name="wf_a"))
+        job_a2 = manager.schedule_job(_make_config("source2", name="wf_a"))
+        job_b = manager.schedule_job(_make_config("source3", name="wf_b"))
+
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={
+                    StreamId(name="source1"): sc.scalar(1.0),
+                    StreamId(name="source2"): sc.scalar(2.0),
+                    StreamId(name="source3"): sc.scalar(3.0),
+                },
+            )
+        )
+
+        manager.job_command(JobCommand(workflow_id=target, action=JobAction.reset))
+
+        assert fake_job_factory.processors[job_a1].clear_calls == 1
+        assert fake_job_factory.processors[job_a2].clear_calls == 1
+        assert fake_job_factory.processors[job_b].clear_calls == 0
+
     def test_compute_results_returns_job_results(self, fake_job_factory):
         """Test that compute_results returns results from all active jobs."""
         manager = JobManager(fake_job_factory, context_reader=no_cached_context)

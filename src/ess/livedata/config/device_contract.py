@@ -23,6 +23,22 @@ The per-instrument ``device_contract.yaml`` is a *generated, committed export*
 for NICOS, which wants a static, git-tracked device list. Nothing reads it back;
 :func:`write_exports` regenerates it and a test guards that it stays in sync.
 Run ``python -m ess.livedata.config.device_contract`` to regenerate.
+
+Resetting a device
+------------------
+NICOS resets the accumulation behind a device by producing a reset *command* on
+the ``{instrument}_livedata_commands`` topic, keyed by the device's
+``workflow_id`` (which the export lists). The payload is the JSON form of a
+``JobCommand`` (see :mod:`ess.livedata.core.job_manager`)::
+
+    {"kind": "job_command", "action": "reset",
+     "workflow_id": "bifrost/monitor_histogram/1"}
+
+``workflow_id`` is the ``instrument/name/version`` string exactly as exported
+here. Omitting ``job_id`` selects every running job of that workflow, so all of
+its sources reset together (e.g. two monitors counted in sync); there is no
+per-source selector. ``message_id`` is omitted: the reset is confirmed by the
+``start_time`` generation jump on the device topic, not by an acknowledgement.
 """
 
 from __future__ import annotations

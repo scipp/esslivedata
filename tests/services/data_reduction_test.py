@@ -408,6 +408,40 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     assert sink.messages[-1].value.values.sum() == 200
 
 
+def test_can_reset_workflow_via_workflow_id_string_command() -> None:
+    """A reset keyed by the workflow_id string (the NICOS path) clears the job.
+
+    Exercises the full on-wire schema: a raw command JSON with workflow_id as the
+    ``instrument/name/version`` string exported in device_contract.yaml, with no
+    job_id and no message_id.
+    """
+    app = make_reduction_app(instrument='dummy')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('dummy', 'total_counts')
+
+    app.publish_config_message(
+        workflow_spec.WorkflowConfig(identifier=workflow_id, job_id=_job_id('panel_0'))
+    )
+    app.publish_events(size=2000, time=1)
+    app.publish_events(size=3000, time=2)
+    service.step()
+    assert sink.messages[-1].value.values.sum() == 5000
+
+    app.publish_command_json(
+        json.dumps(
+            {
+                'kind': 'job_command',
+                'action': 'reset',
+                'workflow_id': str(workflow_id),
+            }
+        )
+    )
+    app.publish_events(size=1000, time=4)
+    service.step()
+    assert sink.messages[-1].value.values.sum() == 1000
+
+
 def test_service_can_recover_after_bad_workflow_id_was_set(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
