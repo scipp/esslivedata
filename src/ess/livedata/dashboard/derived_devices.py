@@ -9,7 +9,7 @@ by intersecting the orchestrator's running ``(workflow, source)`` jobs with the
 per-instrument :class:`DeviceContract`.
 
 This module is the single source of truth for that derivation, reused by the
-device badge, per-output marker, confirmation gate, and overview modal. It is
+per-output marker, confirmation gate, and overview modal. It is
 pure: callers pass the running-sources snapshot (from
 :meth:`JobOrchestrator.get_running_workflow_sources`) plus the contract and the
 workflow registry; nothing here reads mutable state.
@@ -100,21 +100,6 @@ def exposed_devices(
         device
         for device in all_devices(contract)
         if device.is_running_in(running_sources)
-    ]
-
-
-def declared_device_names(
-    workflow_id: WorkflowId, contract: DeviceContract
-) -> list[str]:
-    """All device names the contract declares for ``workflow_id`` (any source).
-
-    Static: independent of run state. Used by the header badge, which marks that
-    a workflow feeds NICOS regardless of whether its job is currently running.
-    """
-    return [
-        device.device_name
-        for device in all_devices(contract)
-        if device.workflow_id == workflow_id
     ]
 
 

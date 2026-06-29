@@ -211,32 +211,6 @@ class TestGate:
         assert orchestrator.get_active_job_number(workflow_id) is not None
 
 
-class TestBadge:
-    def test_badge_present_when_contract_declares_device(self, widget):
-        # Static: present regardless of run state, naming the declared device.
-        html = widget._make_device_badge_html()
-        assert 'NICOS' in html
-        assert 'mon1_total' in html
-
-    def test_badge_present_while_running(self, widget, orchestrator, workflow_id):
-        _run(orchestrator, workflow_id, 'monitor1')
-        html = widget._make_device_badge_html()
-        assert 'NICOS' in html
-        assert 'mon1_total' in html
-
-    def test_badge_empty_without_contract(
-        self, workflow_id, spec, orchestrator, job_service
-    ):
-        plain = WorkflowStatusWidget(
-            workflow_id=workflow_id,
-            workflow_spec=spec,
-            orchestrator=orchestrator,
-            job_service=job_service,
-            device_contract=DeviceContract(()),
-        )
-        assert plain._make_device_badge_html() == ''
-
-
 class TestMarker:
     def test_marker_on_device_output(self, widget):
         widget.set_expanded(True)

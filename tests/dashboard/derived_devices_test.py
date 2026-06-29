@@ -28,7 +28,6 @@ from ess.livedata.dashboard.derived_devices import (
     ContractDevice,
     affected_device_names,
     all_devices,
-    declared_device_names,
     exposed_devices,
     view_device_names,
 )
@@ -170,18 +169,6 @@ class TestAllDevices:
 
     def test_empty_contract(self):
         assert all_devices(DeviceContract(())) == []
-
-
-class TestDeclaredDeviceNames:
-    def test_lists_workflow_devices_regardless_of_running(self, workflow_id, contract):
-        assert declared_device_names(workflow_id, contract) == [
-            'mon1_total',
-            'mon2_total',
-        ]
-
-    def test_empty_for_other_workflow(self, contract):
-        other = WorkflowId(instrument='dummy', name='other', version=1)
-        assert declared_device_names(other, contract) == []
 
 
 class TestAffectedDeviceNames:

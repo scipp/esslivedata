@@ -27,7 +27,6 @@ from ess.livedata.core.job import JobState
 
 from ..derived_devices import (
     affected_device_names,
-    declared_device_names,
     view_device_names,
 )
 from ..format_utils import extract_error_summary
@@ -286,7 +285,6 @@ class WorkflowStatusWidget:
 
         # References to updatable elements (avoid full rebuild on status/expand update)
         self._status_badge: pn.pane.HTML | None = None
-        self._device_badge: pn.pane.HTML | None = None
         self._status_dots: pn.pane.HTML | None = None
         self._timing_html: pn.pane.HTML | None = None
         self._expand_btn: pn.widgets.Button | None = None
@@ -378,16 +376,7 @@ class WorkflowStatusWidget:
         self._status_badge = pn.pane.HTML(
             self._make_status_badge_html(status, status_color),
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
-            margin=(0, 0),
             styles={'display': 'flex', 'align-items': 'center'},
-        )
-
-        self._device_badge = pn.pane.HTML(
-            self._make_device_badge_html(),
-            height=WorkflowWidgetStyles.HEADER_HEIGHT,
-            margin=(0, 0),
-            styles={'display': 'flex', 'align-items': 'center'},
-            css_classes=['lt-wf-device-badge'],
         )
 
         self._status_dots = pn.pane.HTML(
@@ -410,8 +399,6 @@ class WorkflowStatusWidget:
             title_html,
             pn.Spacer(width=12),
             self._status_badge,
-            pn.Spacer(width=6),
-            self._device_badge,
             pn.Spacer(width=8),
             self._status_dots,
             pn.Spacer(width=12),
@@ -807,24 +794,6 @@ class WorkflowStatusWidget:
             f'{status}</span>'
         )
 
-    def _make_device_badge_html(self) -> str:
-        """Generate HTML for the NICOS device badge.
-
-        Static: shown whenever the contract declares a device for this workflow,
-        regardless of run state, marking that the workflow feeds NICOS. The
-        badge names the declared devices in its tooltip. Liveness is conveyed
-        separately by the status badge and per-source dots.
-        """
-        names = declared_device_names(self._workflow_id, self._device_contract)
-        if not names:
-            return ''
-        tooltip = 'NICOS device(s): ' + ', '.join(names)
-        return (
-            f'<span title="{tooltip}" style="padding: 2px 8px; border-radius: 3px; '
-            f'font-size: 11px; font-weight: bold; color: white; '
-            f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">NICOS</span>'
-        )
-
     @staticmethod
     def _make_timing_html(timing_text: str) -> str:
         """Generate HTML for the timing display."""
@@ -1180,11 +1149,6 @@ class WorkflowStatusWidget:
             new_badge = self._make_status_badge_html(status, status_color)
             if self._status_badge.object != new_badge:
                 self._status_badge.object = new_badge
-
-        if self._device_badge is not None:
-            new_device_badge = self._make_device_badge_html()
-            if self._device_badge.object != new_device_badge:
-                self._device_badge.object = new_device_badge
 
         if self._status_dots is not None:
             new_dots = self._make_status_dots_html(per_source)

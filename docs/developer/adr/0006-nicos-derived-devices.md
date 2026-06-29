@@ -98,12 +98,11 @@ The dashboard's role is configuration of the workflow backing the devices plus
 protection (`dashboard/derived_devices.py` is the single source of truth for the
 derivation, reused by every surface):
 
-- a **device-bearing badge** on a running workflow's card when it bears a device;
-- a **per-output device marker** on output chips;
+- a **per-output NICOS marker** on output chips;
 - a **confirmation gate** intercepting reset / stop / reconfigure on device-bearing
   workflows, naming the affected devices; *staging* the next config is allowed,
   *commit* is gated;
-- a read-only **derived-devices overview** (contract ∩ running jobs).
+- a read-only **NICOS devices** overview (contract ∩ running jobs).
 
 The gate re-reads live job state inside the orchestrator method, not only in the
 widget, so an action that races a job restart cannot act on stale state.
