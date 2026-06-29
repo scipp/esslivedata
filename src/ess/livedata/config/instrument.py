@@ -713,6 +713,8 @@ class Instrument:
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
 
+        self._attach_default_monitor_factories()
+
         self.validate()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
@@ -724,6 +726,33 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+
+    def _attach_default_monitor_factories(self) -> None:
+        """Attach the shared monitor workflow factory where none was provided.
+
+        Monitor specs are parameterized by a :class:`MonitorDataParamsBase`
+        model and otherwise share a single factory. Instruments needing TOF
+        lookup tables for wavelength mode (DREAM, LOKI) attach their own in
+        ``setup_factories``; this fills in the default for the rest. Done in
+        this backend-only factory phase rather than at spec registration so the
+        dashboard, which imports specs but never calls ``load_factories``, holds
+        no factory references.
+        """
+        from ess.livedata.handlers.monitor_workflow_specs import (
+            MonitorDataParamsBase,
+            create_monitor_workflow_factory,
+        )
+
+        for reg in list(self.workflow_factory.registrations()):
+            params = reg.spec.params
+            if (
+                reg.factory is None
+                and params is not None
+                and issubclass(params, MonitorDataParamsBase)
+            ):
+                self.workflow_factory.attach_factory(reg.spec.get_id())(
+                    create_monitor_workflow_factory
+                )
 
     def validate(self) -> None:
         """Check registration-time invariants across all bindings and specs.
