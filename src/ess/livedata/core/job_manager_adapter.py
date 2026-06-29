@@ -15,12 +15,9 @@ class JobManagerAdapter:
     """
     Adapter to convert calls to JobManager into ConfigHandler actions.
 
-    This has two purposes:
-
-    1. We can keep using ConfigHandler until we have fully refactored everything.
-    2. We keep the legacy one-source-one-job behavior, replacing old jobs if a new one
-       is started. The long-term goal is to change this to a more flexible mechanism,
-       but this, too, would require frontend changes.
+    Lets us keep using ConfigHandler until we have fully refactored everything.
+    A WorkflowConfig is translated into a new scheduled job and a JobCommand into
+    a job action, each wrapped in a CommandAcknowledgement for the frontend.
     """
 
     def __init__(self, *, job_manager: JobManager) -> None:

@@ -369,8 +369,7 @@ class JobManager:
             self._perform_action(action=command.action, sel=lambda job: True)
 
     def _perform_action(self, action: JobAction, sel: Callable[[Job], bool]) -> None:
-        controllable = (*self.active_jobs, *self._pending_context_jobs.values())
-        jobs_to_control = [job.job_id for job in controllable if sel(job)]
+        jobs_to_control = [job.job_id for job in self.all_jobs if sel(job)]
         for job_id in jobs_to_control:
             self._perform_job_action(job_id=job_id, action=action)
 
