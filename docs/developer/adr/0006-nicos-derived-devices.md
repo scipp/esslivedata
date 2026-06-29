@@ -94,8 +94,9 @@ toggle, no persisted activation state, and no dashboard→backend control channe
 exposure is declared once, in the registry/yaml, and the dashboard only reflects
 and protects it.
 
-The dashboard's role is read-only plus protection (`dashboard/derived_devices.py`
-is the single source of truth for the derivation, reused by every surface):
+The dashboard's role is configuration of the workflow backing the devices plus
+protection (`dashboard/derived_devices.py` is the single source of truth for the
+derivation, reused by every surface):
 
 - a **device-bearing badge** on a running workflow's card when it bears a device;
 - a **per-output device marker** on output chips;
