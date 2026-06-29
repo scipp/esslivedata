@@ -451,6 +451,13 @@ class JobManager:
             raise KeyError(f"Job {job_id} not found.")
         record.job.reset()
 
+        # Drop retry state: a finalize error keeps has_primary_data set so the
+        # next batch retries finalization. After a reset the accumulator is
+        # cleared and _start_time is None, so a forced finalize would emit a
+        # spurious zero-valued result. The cleared accumulator has nothing to
+        # finalize until new primary data arrives.
+        record.has_primary_data = False
+
         # Clear error/warning state when resetting. The phase is unchanged, so a
         # gated job stays gated: context is sticky and independent of run
         # boundaries, so its warning is re-armed from the streams still missing

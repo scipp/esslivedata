@@ -17,7 +17,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job import Job, JobReply, JobResult, JobState
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
-from ess.livedata.core.message import StreamId
+from ess.livedata.core.message import RunStart, StreamId
 from ess.livedata.core.timestamp import Timestamp
 
 from .job_test import FakeProcessor
@@ -1081,6 +1081,55 @@ class TestJobManager:
         results = manager.compute_results()
         assert len(results) == 1
         assert results[0].error_message is None
+
+    def test_reset_after_finalize_error_does_not_force_finalize_cleared_accumulator(
+        self, fake_job_factory
+    ):
+        """Regression test for #1016.
+
+        A finalize error keeps a job pending for retry. If a run-transition reset
+        then clears the accumulator, the retry must not force-finalize the empty
+        accumulator into a spurious zero-valued result with start_time=None.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(_make_config("test_source"))
+
+        # Activate + push active primary data, then induce a finalize error so the
+        # job stays pending for retry.
+        manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="test_source"): sc.scalar(42.0)},
+            )
+        )
+        processor = fake_job_factory.processors[job_id]
+        processor.should_fail_finalize = True
+        manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(201),
+                end_time=Timestamp.from_ns(250),
+                data={StreamId(name="test_source"): sc.scalar(24.0)},
+            )
+        )
+
+        # Schedule a run-transition reset, then deliver a batch with no active
+        # primary data whose end time fires the reset.
+        manager.on_run_start(
+            RunStart(run_name="run2", start_time=Timestamp.from_ns(300))
+        )
+        processor.should_fail_finalize = False
+        _, results = manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(350),
+                end_time=Timestamp.from_ns(400),
+                data={},
+            )
+        )
+
+        # No result is emitted from the cleared accumulator.
+        assert results == []
+        assert manager.get_job_status(job_id).state == JobState.active
 
     def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
         """Test that warnings from None values in results are tracked in job status."""
