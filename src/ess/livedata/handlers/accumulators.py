@@ -236,20 +236,29 @@ class _CumulativeAccumulationMixin:
         self._cumulative: sc.DataArray | None = None
 
     def _add_cumulative(self, data: sc.DataArray) -> None:
-        """Add data to the cumulative accumulation."""
-        if self._cumulative is None or data.sizes != self._cumulative.sizes:
+        """Add data to the cumulative accumulation.
+
+        Restarts the accumulation from a copy whenever incoming data is
+        structurally incompatible with it: a changed shape, a changed set of
+        coordinates, or changed coordinate values (e.g. rebinning or an upstream
+        reconfiguration). Otherwise the data is summed onto the accumulation.
+
+        ``+=`` already validates compatibility in fused C++, so it is the sole
+        check: any structural mismatch raises (``RuntimeError`` covers
+        dimension/coordinate/unit/variances errors, ``TypeError`` covers dtype),
+        and we restart rather than letting the accumulator get stuck rejecting
+        every subsequent batch. A coordinate *present only in the accumulation*
+        does not raise (``+=`` keeps it); coordinate presence is assumed stable
+        per stream, which holds for the histogram and image sources that use
+        this accumulator.
+        """
+        if self._cumulative is None:
             self._cumulative = data.copy()
-        elif data.ndim == 1 and data.dim in data.coords:
-            # Check if coordinate changed (e.g., rebinning)
-            if not sc.identical(
-                data.coords[data.dim], self._cumulative.coords[data.dim]
-            ):
-                self._cumulative = data.copy()
-            else:
-                self._cumulative += data
-        else:
-            # For multi-dimensional data or data without coordinates, just accumulate
+            return
+        try:
             self._cumulative += data
+        except (RuntimeError, TypeError):
+            self._cumulative = data.copy()
 
     def _get_cumulative(self) -> sc.DataArray:
         """Get the current cumulative data."""
