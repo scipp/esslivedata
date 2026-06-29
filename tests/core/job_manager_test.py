@@ -32,9 +32,12 @@ class SimpleTestOutputs(WorkflowOutputsBase):
 class FakeJobFactory(JobFactory):
     """Fake implementation of JobFactory for testing."""
 
-    def __init__(self):
+    def __init__(self, reset_on_run_transition: dict[WorkflowId, bool] | None = None):
         self.created_jobs = []
         self.processors: dict[JobId, FakeProcessor] = {}
+        # Faithful analog of the real factory reading reset_on_run_transition from
+        # the workflow spec: tests configure it per workflow, defaulting to True.
+        self._reset_on_run_transition = reset_on_run_transition or {}
 
     def get_workflow_spec(self, workflow_id):
         """Return None for tests - no enrichment needed in test scenarios."""
@@ -61,6 +64,9 @@ class FakeJobFactory(JobFactory):
             source_names=[job_id.source_name],
             input_streams=set(aux.values()),
             gating_streams=set(aux.values()),
+            reset_on_run_transition=self._reset_on_run_transition.get(
+                config.identifier, True
+            ),
         )
 
         self.created_jobs.append((job_id, config))
