@@ -397,7 +397,14 @@ class JobManager:
             raise KeyError(f"Job {job_id} not found.")
         logger.info("job_stopped", job_id=str(job_id))
 
-    def job_command(self, command: JobCommand) -> None:
+    def job_command(self, command: JobCommand) -> int:
+        """Apply a command and return the number of jobs it acted on.
+
+        The count is zero when no job on this worker matches the command's
+        selector. Backend services share the commands topic but each owns a
+        disjoint set of workflows, so a worker that matches nothing must stay
+        silent rather than acknowledge (see :class:`JobManagerAdapter`).
+        """
         logger.info(
             "job_command_received",
             action=command.action.value,
@@ -406,18 +413,20 @@ class JobManager:
         )
         if command.job_id is not None:
             self._perform_job_action(job_id=command.job_id, action=command.action)
+            return 1
         elif command.workflow_id is not None:
-            self._perform_action(
+            return self._perform_action(
                 action=command.action,
                 sel=lambda job: job.workflow_id == command.workflow_id,
             )
         else:
-            self._perform_action(action=command.action, sel=lambda job: True)
+            return self._perform_action(action=command.action, sel=lambda job: True)
 
-    def _perform_action(self, action: JobAction, sel: Callable[[Job], bool]) -> None:
+    def _perform_action(self, action: JobAction, sel: Callable[[Job], bool]) -> int:
         jobs_to_control = [job.job_id for job in self.all_jobs if sel(job)]
         for job_id in jobs_to_control:
             self._perform_job_action(job_id=job_id, action=action)
+        return len(jobs_to_control)
 
     def _perform_job_action(self, job_id: JobId, action: JobAction) -> None:
         match action:
