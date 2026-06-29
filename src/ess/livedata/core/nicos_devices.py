@@ -62,17 +62,17 @@ class DeviceExtractor:
         for result in results:
             if result.data is None:
                 continue
-            for output_name, da in result.data.items():
-                device_name = self._device_contract.device_name(
-                    result.workflow_id, result.job_id.source_name, output_name
-                )
-                if device_name is None:
+            for entry in self._device_contract.devices_for(
+                result.workflow_id, result.job_id.source_name
+            ):
+                da = result.data.get(entry.output_name)
+                if da is None:
                     continue
                 messages.append(
                     Message(
                         timestamp=result.start_time or Timestamp.from_ns(0),
                         stream=StreamId(
-                            kind=StreamKind.LIVEDATA_NICOS_DATA, name=device_name
+                            kind=StreamKind.LIVEDATA_NICOS_DATA, name=entry.device_name
                         ),
                         value=da,
                     )

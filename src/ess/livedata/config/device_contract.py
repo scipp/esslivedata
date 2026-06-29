@@ -110,6 +110,7 @@ class DeviceContract:
     def __init__(self, entries: Iterable[DeviceContractEntry]) -> None:
         self._entries = tuple(entries)
         self._by_key: dict[tuple[str, str, str], DeviceContractEntry] = {}
+        by_source: dict[tuple[str, str], list[DeviceContractEntry]] = {}
         seen_devices: dict[str, DeviceContractEntry] = {}
         for entry in self._entries:
             if entry.key in self._by_key:
@@ -124,7 +125,13 @@ class DeviceContract:
                     f"{seen_devices[entry.device_name].key} and {entry.key}"
                 )
             self._by_key[entry.key] = entry
+            by_source.setdefault((entry.workflow_id, entry.source_name), []).append(
+                entry
+            )
             seen_devices[entry.device_name] = entry
+        self._by_source: dict[tuple[str, str], tuple[DeviceContractEntry, ...]] = {
+            key: tuple(group) for key, group in by_source.items()
+        }
 
     @property
     def entries(self) -> tuple[DeviceContractEntry, ...]:
@@ -149,6 +156,12 @@ class DeviceContract:
         """NICOS device name for the given output, or None if not a device."""
         entry = self._by_key.get((str(workflow_id), source_name, output_name))
         return entry.device_name if entry is not None else None
+
+    def devices_for(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> tuple[DeviceContractEntry, ...]:
+        """Contract entries exposing outputs of this workflow/source as devices."""
+        return self._by_source.get((str(workflow_id), source_name), ())
 
     @classmethod
     def from_registry(
