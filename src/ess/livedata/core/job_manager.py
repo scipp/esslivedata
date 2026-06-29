@@ -704,17 +704,6 @@ class JobManager:
             status for status in self.get_all_job_statuses() if status.state == state
         ]
 
-    def format_job_error(self, status: JobReply) -> str:
-        """Format a job error message with meaningful job information."""
-        record = self._jobs.get(status.job_id)
-        if record is None:
-            return f"Job {status.job_id} error: {status.error_message}"
-
-        return (
-            f"Job {record.job.workflow_id}/{status.job_id.source_name} "
-            f"error: {status.error_message}"
-        )
-
 
 def _filter_data_for_job(job: Job, data: WorkflowData) -> JobData:
     """Filter workflow data for a specific job."""
