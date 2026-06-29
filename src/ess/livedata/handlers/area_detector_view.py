@@ -57,15 +57,25 @@ class AreaDetectorView(Workflow):
         if len(data) != 1:
             raise ValueError("AreaDetectorView expects exactly one detector data item.")
 
-        if self._current_start_time is None:
-            self._current_start_time = start_time
-
         image = next(iter(data.values()))
         transformed = self._logical_view(image)
         if self._cumulative is None:
             self._cumulative = transformed.copy()
         else:
-            self._cumulative += transformed
+            try:
+                self._cumulative += transformed
+            except (RuntimeError, TypeError):
+                # Incompatible image structure (e.g. shape or coordinate change
+                # from an upstream reconfiguration). ``+=`` validates this in
+                # fused C++ and raises rather than accumulate onto stale data.
+                # Restart the accumulation and the delta baseline so the view
+                # recovers instead of erroring on every subsequent batch.
+                self._cumulative = transformed.copy()
+                self._previous = None
+                self._current_start_time = None
+
+        if self._current_start_time is None:
+            self._current_start_time = start_time
 
     def finalize(self) -> dict[str, sc.DataArray]:
         """

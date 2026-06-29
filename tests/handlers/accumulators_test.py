@@ -569,3 +569,63 @@ class TestCumulative:
         cumulative.add(Timestamp.from_ns(2), da2)  # Different shape, should reset
         result = cumulative.get()
         assert sc.identical(result.data, da2.data)
+
+    def test_2d_data_resets_when_coords_change_at_same_shape(self) -> None:
+        """Same-shape image with shifted coords (e.g. upstream rebinning)."""
+        cumulative = Cumulative(config={})
+
+        def image(x_offset: float) -> sc.DataArray:
+            return sc.DataArray(
+                sc.ones(dims=['y', 'x'], shape=[2, 2], unit='counts'),
+                coords={
+                    'x': sc.array(
+                        dims=['x'], values=[x_offset, x_offset + 1.0], unit='m'
+                    ),
+                    'y': sc.array(dims=['y'], values=[0.0, 1.0], unit='m'),
+                },
+            )
+
+        cumulative.add(Timestamp.from_ns(0), image(0.0))
+        cumulative.add(Timestamp.from_ns(1), image(0.0))
+        cumulative.add(Timestamp.from_ns(2), image(5.0))  # changed coord, should reset
+        cumulative.add(Timestamp.from_ns(3), image(5.0))
+        result = cumulative.get()
+        assert sc.identical(result.coords['x'], image(5.0).coords['x'])
+        assert sc.identical(
+            result.data,
+            sc.full(dims=['y', 'x'], shape=[2, 2], value=2.0, unit='counts'),
+        )
+
+    def test_resets_when_coordinate_appears(self) -> None:
+        """First chunk lacks the dim coord, a later same-shape chunk has it."""
+        cumulative = Cumulative(config={})
+        without = sc.DataArray(sc.array(dims=['x'], values=[1.0, 1.0], unit='counts'))
+        with_coord = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 1.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 1.0], unit='s')},
+        )
+        cumulative.add(Timestamp.from_ns(0), without)
+        cumulative.add(Timestamp.from_ns(1), with_coord)  # coord appears, should reset
+        cumulative.add(Timestamp.from_ns(2), with_coord)
+        result = cumulative.get()
+        assert sc.identical(result.coords['x'], with_coord.coords['x'])
+        assert sc.identical(
+            result.data, sc.array(dims=['x'], values=[2.0, 2.0], unit='counts')
+        )
+
+    def test_resets_on_dtype_change_at_same_shape(self) -> None:
+        """An int accumulation cannot absorb float data in place."""
+        cumulative = Cumulative(config={})
+        ints = sc.DataArray(
+            sc.array(dims=['x'], values=[1, 1], unit='counts', dtype='int64'),
+        )
+        floats = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 2.0], unit='counts'),
+        )
+        cumulative.add(Timestamp.from_ns(0), ints)
+        cumulative.add(Timestamp.from_ns(1), floats)  # dtype change, should reset
+        cumulative.add(Timestamp.from_ns(2), floats)
+        result = cumulative.get()
+        assert sc.identical(
+            result.data, sc.array(dims=['x'], values=[4.0, 4.0], unit='counts')
+        )

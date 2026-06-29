@@ -49,7 +49,12 @@ class ServiceBase(ABC):
         self._logger.info("Received signal %d, initiating shutdown...", signum)
         self.stop()
         self._finalize_processor()
-        sys.exit(0)
+        sys.exit(self._exit_code)
+
+    @property
+    def _exit_code(self) -> int:
+        """Process exit code on shutdown; nonzero signals a fault to the supervisor."""
+        return 0
 
     def _finalize_processor(self) -> None:  # noqa: B027
         """Finalize processor after the worker thread has stopped.
@@ -167,6 +172,12 @@ class Service(ServiceBase):
                 os.kill(os.getpid(), signal.SIGINT)
         finally:
             self._logger.info("Service loop stopped")
+
+    @property
+    def _exit_code(self) -> int:
+        """Nonzero when the worker loop died on an error, so that
+        ``restart: on-failure`` supervisors actually restart the service."""
+        return 1 if self._worker_error is not None else 0
 
     def _finalize_processor(self) -> None:
         """Finalize processor after the worker thread has joined."""
