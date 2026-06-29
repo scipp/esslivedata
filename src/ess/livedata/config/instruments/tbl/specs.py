@@ -49,7 +49,7 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-monitor_handle = register_monitor_workflow_specs(
+register_monitor_workflow_specs(
     instrument, monitor_names, params=TOAOnlyMonitorDataParams
 )
 

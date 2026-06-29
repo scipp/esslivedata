@@ -435,6 +435,37 @@ class TestTemporalBuffer:
         assert result.sizes['time'] == 1
         assert result.coords['time'].values[0] == 1.0
 
+    def test_non_time_dim_size_change_resets_without_error(self):
+        """A changed non-time shape (e.g. ROI count) resets instead of raising.
+
+        ROI-spectra outputs change their ``roi`` dimension size while the job
+        runs as the user adds or removes regions. The buffer cannot extend a
+        series across such a change and must reset rather than raise.
+        """
+        buffer = TemporalBuffer()
+        first = sc.DataArray(
+            sc.array(dims=['time', 'roi'], values=[[1.0, 2.0]], unit='counts'),
+            coords={
+                'time': sc.array(dims=['time'], values=[0.0], unit='s'),
+                'roi': sc.arange('roi', 2),
+            },
+        )
+        second = sc.DataArray(
+            sc.array(dims=['time', 'roi'], values=[[3.0, 4.0, 5.0]], unit='counts'),
+            coords={
+                'time': sc.array(dims=['time'], values=[1.0], unit='s'),
+                'roi': sc.arange('roi', 3),
+            },
+        )
+
+        buffer.add(first)
+        buffer.add(second)
+
+        result = buffer.get()
+        assert result.sizes['time'] == 1
+        assert result.sizes['roi'] == 3
+        assert result.coords['time'].values[0] == 1.0
+
 
 class TestVariableBuffer:
     """Tests for VariableBuffer."""

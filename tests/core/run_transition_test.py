@@ -8,16 +8,13 @@ import pytest
 
 from ess.livedata.config.workflow_spec import (
     JobId,
-    JobSchedule,
     WorkflowConfig,
     WorkflowId,
 )
-from ess.livedata.core.job import Job, JobState
 from ess.livedata.core.job_manager import JobManager, WorkflowData
 from ess.livedata.core.message import RunStart, RunStop
 
 from .job_manager_test import FakeJobFactory, no_cached_context
-from .job_test import FakeProcessor
 
 
 def _workflow_id(name: str = 'test') -> WorkflowId:
@@ -142,21 +139,12 @@ class TestDeferredRunTransitionReset:
 
     def test_skips_jobs_with_flag_disabled(self):
         """Jobs with reset_on_run_transition=False are not reset."""
-        processor = FakeProcessor()
-        job = Job(
-            job_id=JobId(source_name='log1', job_number=uuid.uuid4()),
-            workflow_id=_workflow_id('timeseries'),
-            processor=processor,
-            source_names=['log1'],
-            input_streams=set(),
-            gating_streams=set(),
-            reset_on_run_transition=False,
-        )
-        factory = FakeJobFactory()
+        workflow_id = _workflow_id('timeseries')
+        factory = FakeJobFactory(reset_on_run_transition={workflow_id: False})
         manager = JobManager(job_factory=factory, context_reader=no_cached_context)
-        manager._active_jobs[job.job_id] = job
-        manager._job_states[job.job_id] = JobState.active
-        manager._job_schedules[job.job_id] = JobSchedule()
+        job_id = manager.schedule_job(_make_config('timeseries', 'log1'))
+        _activate_jobs(manager)
+        processor = factory.processors[job_id]
 
         manager.on_run_start(RunStart(run_name='run_1', start_time=100))
         _push_data_to(manager, end_time=200)
@@ -164,37 +152,15 @@ class TestDeferredRunTransitionReset:
 
     def test_mixed_jobs_selective_reset(self):
         """Mixed jobs: only those with reset_on_run_transition=True are reset."""
-        factory = FakeJobFactory()
+        keep_id = _workflow_id('timeseries')
+        factory = FakeJobFactory(reset_on_run_transition={keep_id: False})
         manager = JobManager(job_factory=factory, context_reader=no_cached_context)
 
-        proc_reset = FakeProcessor()
-        proc_keep = FakeProcessor()
-
-        job_reset = Job(
-            job_id=JobId(source_name='det1', job_number=uuid.uuid4()),
-            workflow_id=_workflow_id('reduction'),
-            processor=proc_reset,
-            source_names=['det1'],
-            input_streams=set(),
-            gating_streams=set(),
-            reset_on_run_transition=True,
-        )
-        job_keep = Job(
-            job_id=JobId(source_name='log1', job_number=uuid.uuid4()),
-            workflow_id=_workflow_id('timeseries'),
-            processor=proc_keep,
-            source_names=['log1'],
-            input_streams=set(),
-            gating_streams=set(),
-            reset_on_run_transition=False,
-        )
-
-        manager._active_jobs[job_reset.job_id] = job_reset
-        manager._job_states[job_reset.job_id] = JobState.active
-        manager._job_schedules[job_reset.job_id] = JobSchedule()
-        manager._active_jobs[job_keep.job_id] = job_keep
-        manager._job_states[job_keep.job_id] = JobState.active
-        manager._job_schedules[job_keep.job_id] = JobSchedule()
+        job_reset = manager.schedule_job(_make_config('reduction', 'det1'))
+        job_keep = manager.schedule_job(_make_config('timeseries', 'log1'))
+        _activate_jobs(manager)
+        proc_reset = factory.processors[job_reset]
+        proc_keep = factory.processors[job_keep]
 
         manager.on_run_start(RunStart(run_name='run_2', start_time=300))
         _push_data_to(manager, end_time=300)

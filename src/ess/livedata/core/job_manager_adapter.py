@@ -15,12 +15,9 @@ class JobManagerAdapter:
     """
     Adapter to convert calls to JobManager into ConfigHandler actions.
 
-    This has two purposes:
-
-    1. We can keep using ConfigHandler until we have fully refactored everything.
-    2. We keep the legacy one-source-one-job behavior, replacing old jobs if a new one
-       is started. The long-term goal is to change this to a more flexible mechanism,
-       but this, too, would require frontend changes.
+    Lets us keep using ConfigHandler until we have fully refactored everything.
+    A WorkflowConfig is translated into a new scheduled job and a JobCommand into
+    a job action, each wrapped in a CommandAcknowledgement for the frontend.
     """
 
     def __init__(self, *, job_manager: JobManager) -> None:
@@ -28,7 +25,7 @@ class JobManagerAdapter:
 
     def job_command(self, command: JobCommand) -> CommandAcknowledgement | None:
         try:
-            self._job_manager.job_command(command)
+            affected = self._job_manager.job_command(command)
         except KeyError:
             # Job not found. Similar to DifferentInstrument for workflows: multiple
             # backend services receive the same commands, but only the one owning the
@@ -50,7 +47,10 @@ class JobManagerAdapter:
                 )
             return None
         else:
-            if command.message_id is not None:
+            # A selector-keyed command (workflow_id / broadcast) matches no jobs on
+            # workers that do not own it; those stay silent, just as the job_id path
+            # does via KeyError. Only acknowledge when this worker actually acted.
+            if command.message_id is not None and affected:
                 return CommandAcknowledgement(
                     message_id=command.message_id,
                     device=str(command.job_id) if command.job_id else "all",

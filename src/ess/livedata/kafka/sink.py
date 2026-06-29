@@ -108,6 +108,15 @@ class KafkaSink(MessageSink[T]):
                     callback=delivery_callback,
                 )
                 self._producer.poll(0)
+            except BufferError:
+                # Local producer queue is full (backpressure, e.g. during a broker
+                # outage). Dropping live-data messages keeps the service alive;
+                # serving delivery callbacks frees queue space for the next batch.
+                self._publish_errors += 1
+                logger.error(
+                    "Producer queue full, dropping message to %s", serialized.topic
+                )
+                self._producer.poll(0)
             except kafka.KafkaException as e:
                 err = e.args[0] if e.args else None
                 if isinstance(err, kafka.KafkaError) and is_fatal(err):

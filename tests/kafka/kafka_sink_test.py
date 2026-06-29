@@ -284,6 +284,16 @@ class TestErrorHandling:
             # Must not raise.
             sink.publish_messages([_data_message()])
 
+    def test_buffer_error_from_produce_does_not_propagate(
+        self, sink_factory, producer: _FakeProducer
+    ) -> None:
+        # A full local producer queue (backpressure) raises BufferError, not a
+        # KafkaException. Dropping the message must not crash the service.
+        producer.raise_on_produce = BufferError('Local: Queue full')
+        with sink_factory(Da00Serializer(instrument=INSTRUMENT)) as sink:
+            sink.publish_messages([_data_message()])
+        assert producer.produced == []
+
 
 class TestFailFast:
     """
