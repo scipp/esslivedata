@@ -61,13 +61,6 @@ class DerivedDevicesOverview:
         self._device_contract = device_contract
         self._last_signature: tuple[int, ...] | None = None
 
-        self._gate_checkbox = pn.widgets.Checkbox(
-            label='Confirm before disrupting a device NICOS may be using',
-            value=orchestrator.gate_enabled,
-            css_classes=['lt-gate-toggle'],
-        )
-        self._gate_checkbox.param.watch(self._on_gate_toggle, 'value')
-
         self._body = pn.Column(sizing_mode='stretch_width')
         self.modal = pn.Modal(
             pn.Column(
@@ -75,14 +68,6 @@ class DerivedDevicesOverview:
                 pn.pane.HTML(
                     f'<div style="font-size: 12px; color: {Colors.TEXT_MUTED}; '
                     f'line-height: 1.5; margin-bottom: 10px;">{_DESCRIPTION}</div>',
-                    sizing_mode='stretch_width',
-                ),
-                self._gate_checkbox,
-                pn.pane.HTML(
-                    f'<div style="font-size: 11px; color: {Colors.TEXT_MUTED}; '
-                    f'line-height: 1.4; margin: 2px 0 12px 0;">Applies to all '
-                    'sessions. Uncheck to skip confirmations while no NICOS scan '
-                    'is running.</div>',
                     sizing_mode='stretch_width',
                 ),
                 self._body,
@@ -101,23 +86,7 @@ class DerivedDevicesOverview:
     def open(self) -> None:
         """Rebuild the list and open the modal."""
         self._rebuild_body()
-        self._sync_gate_checkbox()
         self.modal.open = True
-
-    def _on_gate_toggle(self, event) -> None:
-        """Apply a checkbox toggle to the shared, cross-session gate flag."""
-        self._orchestrator.set_gate_enabled(event.new)
-
-    def _sync_gate_checkbox(self) -> None:
-        """Reflect the shared gate flag, picking up toggles from other sessions.
-
-        Assigning an unchanged value re-enters :meth:`_on_gate_toggle`, but
-        :meth:`JobOrchestrator.set_gate_enabled` is a no-op for equal values, so
-        there is no feedback loop.
-        """
-        enabled = self._orchestrator.gate_enabled
-        if self._gate_checkbox.value != enabled:
-            self._gate_checkbox.value = enabled
 
     def _signature(self) -> tuple[int, ...]:
         """Cheap change signature: per-workflow state versions.
@@ -135,7 +104,6 @@ class DerivedDevicesOverview:
         signature = self._signature()
         if signature != self._last_signature:
             self._rebuild_body()
-        self._sync_gate_checkbox()
 
     def _rebuild_body(self) -> None:
         self._last_signature = self._signature()

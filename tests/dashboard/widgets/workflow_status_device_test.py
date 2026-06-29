@@ -31,7 +31,11 @@ from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.widgets.workflow_status_widget import WorkflowStatusWidget
+from ess.livedata.dashboard.widgets.styles import WarningBox
+from ess.livedata.dashboard.widgets.workflow_status_widget import (
+    WorkflowStatusListWidget,
+    WorkflowStatusWidget,
+)
 from ess.livedata.fakes import FakeMessageSink
 
 
@@ -231,6 +235,54 @@ class TestMarker:
         )
         section = plain._create_outputs_section()
         assert 'NICOS' not in _collect_html(section)
+
+
+@pytest.fixture
+def list_widget(orchestrator, job_service, contract):
+    return WorkflowStatusListWidget(
+        orchestrator=orchestrator,
+        job_service=job_service,
+        device_contract=contract,
+    )
+
+
+class TestGateCheckbox:
+    """The gate toggle lives in the list header, next to the NICOS-devices button."""
+
+    def test_absent_without_devices(self, orchestrator, job_service):
+        plain = WorkflowStatusListWidget(
+            orchestrator=orchestrator,
+            job_service=job_service,
+            device_contract=DeviceContract(()),
+        )
+        assert plain._gate_checkbox is None
+
+    def test_toggles_shared_flag(self, list_widget, orchestrator):
+        assert orchestrator.gate_enabled is True
+        assert list_widget._gate_checkbox.value is True
+
+        list_widget._gate_checkbox.value = False
+        assert orchestrator.gate_enabled is False
+
+    def test_resyncs_from_other_session(self, list_widget, orchestrator):
+        # A second session's checkbox reflects a toggle made elsewhere on refresh.
+        orchestrator.set_gate_enabled(False)
+        assert list_widget._gate_checkbox.value is True  # not yet refreshed
+
+        list_widget._sync_gate_checkbox()
+        assert list_widget._gate_checkbox.value is False
+
+    def test_banner_shown_only_while_gate_off(self, list_widget):
+        # Armed gate hides the banner; disarming it reveals the full-width warning.
+        assert list_widget._gate_banner.visible is False
+        assert WarningBox.BG in list_widget._gate_banner.object
+
+        list_widget._gate_checkbox.value = False
+        assert list_widget._gate_banner.visible is True
+
+    def test_banner_names_device_bearing_workflows(self, list_widget):
+        # The contract's workflow (title 'Monitor') is named in the warning.
+        assert '<strong>Monitor</strong>' in list_widget._gate_banner.object
 
 
 def _click(widget, css_class: str) -> None:

@@ -27,6 +27,7 @@ from ess.livedata.core.job import JobState
 
 from ..derived_devices import (
     affected_device_names,
+    all_devices,
     view_device_names,
 )
 from ..format_utils import extract_error_summary
@@ -1201,6 +1202,8 @@ class WorkflowStatusListWidget:
         self._device_contract = device_contract or DeviceContract(())
         self._is_visible: Callable[[], bool] | None = None
         self._populated: bool = False
+        self._gate_checkbox: pn.widgets.Checkbox | None = None
+        self._gate_banner: pn.pane.HTML | None = None
 
         self._derived_devices = DerivedDevicesOverview(
             orchestrator=orchestrator,
@@ -1225,8 +1228,11 @@ class WorkflowStatusListWidget:
         # Workflows tab re-registers its callbacks on tab activation; lazy
         # mounting on user action (as the per-workflow modals do) avoids that.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
+        header_row = self._create_header_row()
+        gate_banner = [self._gate_banner] if self._gate_banner is not None else []
         self._panel = pn.Column(
-            self._create_header_row(),
+            header_row,
+            *gate_banner,
             self._modal_container,
             sizing_mode='stretch_width',
             margin=(10, 10),
@@ -1280,7 +1286,31 @@ class WorkflowStatusListWidget:
                 css_classes=['lt-derived-devices-open'],
             )
             devices_btn.on_click(lambda e: self._show_derived_devices())
-            left.append(devices_btn)
+
+            self._gate_checkbox = pn.widgets.Checkbox(
+                label='Confirm before disrupting a device NICOS may be using',
+                value=self._orchestrator.gate_enabled,
+                margin=(6, 0, 0, 8),
+                css_classes=['lt-gate-toggle'],
+            )
+            self._gate_checkbox.param.watch(self._on_gate_toggle, 'value')
+            gate_help = pn.widgets.TooltipIcon(
+                value=(
+                    'Applies to all sessions. Uncheck to skip confirmations '
+                    'while no NICOS scan is running.'
+                ),
+                margin=(4, 0, 0, 0),
+            )
+            # Full-width banner above the list, shown only while the gate is off:
+            # the warning is about the device-bearing workflows below and their
+            # stop/reset/gear actions, not about the header itself.
+            self._gate_banner = pn.pane.HTML(
+                self._gate_banner_html(),
+                sizing_mode='stretch_width',
+                margin=(0, 0, 8, 0),
+            )
+            self._apply_gate_style()
+            left.extend([devices_btn, self._gate_checkbox, gate_help])
 
         return pn.Row(
             *left,
@@ -1289,6 +1319,61 @@ class WorkflowStatusListWidget:
             collapse_all_btn,
             sizing_mode='stretch_width',
             margin=(0, 0, 8, 0),
+        )
+
+    def _on_gate_toggle(self, event) -> None:
+        """Apply a checkbox toggle to the shared, cross-session gate flag."""
+        self._orchestrator.set_gate_enabled(event.new)
+        self._apply_gate_style()
+
+    def _sync_gate_checkbox(self) -> None:
+        """Reflect the shared gate flag, picking up toggles from other sessions.
+
+        Assigning an unchanged value re-enters :meth:`_on_gate_toggle`, but
+        :meth:`JobOrchestrator.set_gate_enabled` is a no-op for equal values, so
+        there is no feedback loop.
+        """
+        if self._gate_checkbox is None:
+            return
+        enabled = self._orchestrator.gate_enabled
+        if self._gate_checkbox.value != enabled:
+            self._gate_checkbox.value = enabled
+        self._apply_gate_style()
+
+    def _apply_gate_style(self) -> None:
+        """Show the danger banner above the list while the gate is off."""
+        if self._gate_banner is None or self._gate_checkbox is None:
+            return
+        self._gate_banner.visible = not self._gate_checkbox.value
+
+    def _gate_banner_html(self) -> str:
+        """Warning banner naming the device-bearing workflows the gate guards.
+
+        The named set is static (the contract's workflows), so the banner needs
+        no run-state refresh; whether each is currently online is visible in the
+        list below.
+        """
+        registry = self._orchestrator.get_workflow_registry()
+        titles: list[str] = []
+        for device in all_devices(self._device_contract):
+            spec = registry.get(device.workflow_id)
+            title = spec.title if spec is not None else str(device.workflow_id)
+            if title not in titles:
+                titles.append(title)
+        named = ', '.join(f'<strong>{title}</strong>' for title in titles)
+        device_clause = (
+            'takes its NICOS device offline'
+            if len(titles) == 1
+            else 'takes their NICOS devices offline'
+        )
+        return (
+            f'<div style="background: {WarningBox.BG}; '
+            f'border-left: 4px solid {WarningBox.BORDER}; '
+            f'color: {WarningBox.TEXT}; padding: 8px 12px; '
+            'border-radius: 4px; font-size: 13px; line-height: 1.45;">'
+            'Confirmations are <strong>off</strong>: stopping, resetting, or '
+            f'reconfiguring {named} {device_clause} immediately, '
+            'with no prompt.</div>'
         )
 
     def _show_derived_devices(self) -> None:
@@ -1363,6 +1448,7 @@ class WorkflowStatusListWidget:
         if not self._populated:
             # Fallback: onload didn't fire (non-server context).
             self._populate_pending()
+        self._sync_gate_checkbox()
         for widget in self._widgets.values():
             widget.refresh()
 
