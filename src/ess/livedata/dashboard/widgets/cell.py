@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import holoviews as hv
 import panel as pn
+import pydantic
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
@@ -32,7 +33,6 @@ from ..plot_orchestrator import (
     CellId,
     LayerId,
     PlotCell,
-    PlotConfig,
     PlotOrchestrator,
 )
 from ..plot_params import PlotAspectType, StretchMode
@@ -52,20 +52,23 @@ from .styles import Colors, FreshnessPill, StatusColors
 logger = structlog.get_logger(__name__)
 
 
-def _get_sizing_mode(config: PlotConfig) -> str:
-    """Extract Panel sizing_mode from plot configuration.
+def _get_sizing_mode(params: pydantic.BaseModel) -> str:
+    """Panel sizing_mode the plotter's aspect implies for the cell's pane.
+
+    Must match the responsive mode the plotter switches its figures to (the
+    frame-aspect hook in ``Plotter._sizing_opts``): a one-axis pane around a
+    ``stretch_both`` figure leaves the free axis unconstrained and collapses.
 
     Parameters
     ----------
-    config:
-        Plot configuration containing plotter params.
+    params:
+        Plotter params, optionally carrying ``plot_aspect``.
 
     Returns
     -------
     :
         Panel sizing_mode string ('stretch_both', 'stretch_width', or 'stretch_height').
     """
-    params = config.params
     if hasattr(params, 'plot_aspect'):
         aspect = params.plot_aspect
         if aspect.aspect_type == PlotAspectType.free:
@@ -548,7 +551,7 @@ class CellWidget:
         """
         # Use sizing mode from first layer (they should be consistent for overlay)
         if self._cell.layers:
-            sizing_mode = _get_sizing_mode(self._cell.layers[0].config)
+            sizing_mode = _get_sizing_mode(self._cell.layers[0].config.params)
         else:
             sizing_mode = 'stretch_both'
 
