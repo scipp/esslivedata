@@ -303,22 +303,16 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
     )
 
 
-def _moderator_source_position(filename: str) -> sc.Variable | None:
-    """Neutron-source position when the file models the moderator as ``NXmoderator``.
+def _component_position(filename: str, nx_class: type) -> sc.Variable | None:
+    """Position of the file's unique component of ``nx_class``, or ``None``.
 
-    essreduce takes the chopper-cascade reference from the file's unique
-    ``NXsource``. BIFROST instead labels the moderator ``NXmoderator`` and
-    reserves ``NXsource`` for accelerator metadata sitting at the origin, so
-    essreduce would measure flight distance from the accelerator and reject the
-    upstream choppers as lying behind the source. When an ``NXmoderator`` is
-    present, return its position to override the reference; otherwise return
-    ``None``, leaving essreduce's ``NXsource`` lookup in place (e.g. LOKI).
+    Returns ``None`` when the file has no such component.
     """
     with snx.File(filename, definitions=snx.base_definitions()) as f:
-        moderators = f['entry/instrument'][snx.NXmoderator]
-        if not moderators:
+        groups = f['entry/instrument'][nx_class]
+        if not groups:
             return None
-        (group,) = moderators.values()
+        (group,) = groups.values()
         positions = snx.compute_positions(group[...], store_position='position')
     return positions['position']
 
@@ -340,13 +334,33 @@ def create_wavelength_lut_workflow(
     """
     pipeline = _build_pipeline(params)
     pipeline[Filename[AnyRun]] = nexus_filename
-    # Override the source position essreduce would load from NXsource when the
-    # real source is an NXmoderator; see _moderator_source_position.
-    source_position = _moderator_source_position(nexus_filename)
-    if source_position is not None:
-        pipeline[Position[snx.NXsource, AnyRun]] = source_position
+    _set_source_position(pipeline, nexus_filename, params.source.get())
     pipeline.insert(build_disk_choppers_provider(setpoint_keys))
     return _make_workflow(pipeline)
+
+
+def _set_source_position(
+    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
+) -> None:
+    """Set the chopper-cascade source reference, shifted by ``offset``.
+
+    essreduce would take the reference from the file's unique ``NXsource``.
+    BIFROST instead labels the moderator ``NXmoderator`` and reserves
+    ``NXsource`` for accelerator metadata sitting at the origin, so essreduce
+    would measure flight distance from the accelerator and reject the upstream
+    choppers as lying behind the source. The reference is therefore the
+    ``NXmoderator`` position when present, else the ``NXsource`` (e.g. LOKI).
+
+    ``offset`` is a beam-aligned displacement added to that reference; it is
+    zero by default, in which case this reproduces the position essreduce would
+    have loaded.
+    """
+    reference = _component_position(nexus_filename, snx.NXmoderator)
+    if reference is None:
+        reference = _component_position(nexus_filename, snx.NXsource)
+    pipeline[Position[snx.NXsource, AnyRun]] = reference + offset.to(
+        unit=reference.unit
+    )
 
 
 def attach_wavelength_lut_factory(
