@@ -28,6 +28,17 @@ from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 from .streams_parsed import PARSED_STREAMS
 
+#: Disk choppers feeding the wavelength-LUT cascade, in beam order
+#: (source -> sample): pulse-shaping, frame-overlap, bandwidth.
+BIFROST_CHOPPERS = [
+    'pulse_shaping_chopper_1',
+    'pulse_shaping_chopper_2',
+    'frame_overlap_chopper_1',
+    'frame_overlap_chopper_2',
+    'bandwidth_chopper_1',
+    'bandwidth_chopper_2',
+]
+
 
 # Arc energies in meV
 class ArcEnergy(StrEnum):
@@ -208,6 +219,7 @@ instrument = Instrument(
     name='bifrost',
     detector_names=['unified_detector'],
     monitors=monitors,
+    choppers=BIFROST_CHOPPERS,
     streams=streams,
 )
 

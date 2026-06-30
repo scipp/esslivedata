@@ -291,6 +291,11 @@ def _create_base_reduction_workflow():
 
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
+    # Detector group names in the pinned (pre-2026-06-08) geometry artifact
+    # carry a numeric prefix, e.g. ``123_channel_1_1_triplet``. Newer files
+    # drop the prefix (``channel_1_1_triplet``; ``detector_number`` content is
+    # identical). Switch to the unprefixed form once detector geometry is
+    # unpinned (see https://github.com/scipp/esslivedata/issues/962).
     _detector_names = [
         f'{123 + 4 * (arc - 1) + (5 * 4 + 1) * (channel - 1)}'
         f'_channel_{channel}_{arc}_triplet'
@@ -323,7 +328,15 @@ def _create_base_reduction_workflow():
         return DetectorRegionCounts(counts)
 
     reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
-    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
+    # Pin detector geometry to the pre-2026-06-08 survey. The 2026-06-08 file
+    # (added for the corrected chopper geometry, and the default the chopper
+    # factory uses) has a broken ``detector_tank_angle`` depends_on chain:
+    # missing ``_t0`` offset, stale ``117_`` prefix. Drop this pin once a file
+    # valid for both detectors and choppers is available
+    # (https://github.com/scipp/esslivedata/issues/962).
+    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename(
+        'bifrost', date=sc.datetime('2025-06-01T00:00:00')
+    )
     reduction_workflow[EmptyDetector[SampleRun]] = (
         reduction_workflow[EmptyDetector[SampleRun]]
         .map({NeXusName[NXdetector]: _detector_names})

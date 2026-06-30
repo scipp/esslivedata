@@ -37,39 +37,49 @@ def _trigger() -> dict[str, sc.DataArray]:
     return {CHOPPER_CASCADE_SOURCE: sc.DataArray(sc.scalar(1))}
 
 
-def _write_chopper_nexus(path: Path, names: list[str], *, source_z: float = -25.0):
-    """Build a minimal NeXus file with NXdisk_chopper groups + NXsource.
+def _write_translation(group, z: float) -> None:
+    """Place ``group`` at ``z`` along the beam via a single translation chain."""
+    group.create_field('depends_on', sc.scalar('transformations/t1'))
+    transformations = group.create_class('transformations', snx.NXtransformations)
+    t1 = transformations.create_field('t1', sc.scalar(z, unit='m'))
+    t1.attrs['depends_on'] = '.'
+    t1.attrs['transformation_type'] = 'translation'
+    t1.attrs['vector'] = sc.vector([0.0, 0.0, 1.0]).value
+
+
+def _write_chopper_nexus(
+    path: Path,
+    names: list[str],
+    *,
+    source_z: float = -25.0,
+    moderator_z: float | None = None,
+):
+    """Build a minimal NeXus file with NXdisk_chopper groups + a neutron source.
 
     Static fields (slit_edges, radius, axle position) are populated; streamed
     quantities are length-0 NXlog placeholders, matching what
     ``make_geometry_nexus.py`` writes for real instruments. An empty ``names``
     yields a source-only file: the no-chopper geometry an instrument without
     choppers supplies.
+
+    By default the neutron source is a single ``NXsource`` at ``source_z``. When
+    ``moderator_z`` is given the file follows BIFROST's convention instead: the
+    ``NXsource`` is parked at the origin (accelerator metadata, position
+    irrelevant) and the real source is an ``NXmoderator`` at ``moderator_z``.
     """
     with snx.File(path, 'w') as root:
         entry = root.create_class('entry', snx.NXentry)
         instrument = entry.create_class('instrument', snx.NXinstrument)
 
         source = instrument.create_class('source', snx.NXsource)
-        source.create_field('depends_on', sc.scalar('transformations/t1'))
-        src_tr = source.create_class('transformations', snx.NXtransformations)
-        src_t1 = src_tr.create_field('t1', sc.scalar(source_z, unit='m'))
-        src_t1.attrs['depends_on'] = '.'
-        src_t1.attrs['transformation_type'] = 'translation'
-        src_t1.attrs['vector'] = sc.vector([0.0, 0.0, 1.0]).value
+        _write_translation(source, 0.0 if moderator_z is not None else source_z)
+        if moderator_z is not None:
+            moderator = instrument.create_class('moderator', snx.NXmoderator)
+            _write_translation(moderator, moderator_z)
 
         for i, name in enumerate(names):
             chop = instrument.create_class(name, snx.NXdisk_chopper)
-            chop.create_field('depends_on', sc.scalar('transformations/t1'))
-            transformations = chop.create_class(
-                'transformations', snx.NXtransformations
-            )
-            t1 = transformations.create_field(
-                't1', sc.scalar(-15.0 + 2.0 * i, unit='m')
-            )
-            t1.attrs['depends_on'] = '.'
-            t1.attrs['transformation_type'] = 'translation'
-            t1.attrs['vector'] = sc.vector([0.0, 0.0, 1.0]).value
+            _write_translation(chop, -15.0 + 2.0 * i)
             chop.create_field(
                 'slit_edges', sc.array(dims=['dim_0'], values=[0.0, 90.0], unit='deg')
             )
@@ -282,6 +292,25 @@ class TestMultiChopperWorkflow:
             params=params,
         )
         assert int(table.coords['pulse_stride'].value) == 1
+
+    def test_distance_measured_from_moderator_not_accelerator_source(
+        self, tmp_path: Path
+    ) -> None:
+        # BIFROST models the moderator as NXmoderator and reserves NXsource for
+        # accelerator metadata at the origin. essreduce keys the cascade
+        # reference off the unique NXsource, so measuring from it would place
+        # the upstream choppers behind the source (negative distance) and the
+        # cascade would reject them. The workflow resolves the source from the
+        # NXmoderator instead, so the table computes.
+        path = tmp_path / 'moderator_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1', 'chopper2'], moderator_z=-25.0)
+        table = _run_chopper_lut(
+            path,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
+        )
+        assert table.dims == ('distance', 'event_time_offset')
+        assert np.isfinite(table.values).any()
 
     def test_missing_chopper_in_artifact_raises(self, tmp_path: Path) -> None:
         # A configured chopper absent from the geometry artifact is not validated

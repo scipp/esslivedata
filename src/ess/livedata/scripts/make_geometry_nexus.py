@@ -15,6 +15,16 @@ def _copy_attributes(src: h5py.Group, dst: h5py.Group) -> None:
         dst.attrs[key] = value
 
 
+def _copy_depends_on(src: h5py.Group, dst: h5py.Group) -> None:
+    """Copy the ``depends_on`` dataset if present.
+
+    Components without placement in the instrument — such as event-only
+    backup monitors — carry no ``depends_on``.
+    """
+    if 'depends_on' in src:
+        src.copy('depends_on', dst)
+
+
 def _copy_detector_fields(
     src_group: h5py.Group, dst_group: h5py.Group, use_pixel_shape: bool
 ) -> None:
@@ -36,13 +46,13 @@ def _copy_detector_fields(
                 shuffle=True,
             )
             _copy_attributes(src_group[field], dst_group[field])
-    src_group.copy('depends_on', dst_group)
+    _copy_depends_on(src_group, dst_group)
     if use_pixel_shape and 'pixel_shape' in src_group:
         src_group.copy('pixel_shape', dst_group)
 
 
 def _copy_monitor_fields(src_group: h5py.Group, dst_group: h5py.Group) -> None:
-    src_group.copy('depends_on', dst_group)
+    _copy_depends_on(src_group, dst_group)
 
 
 def _nx_class(obj: h5py.Group | h5py.Dataset) -> str:
@@ -173,10 +183,14 @@ def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
             _copy_child(fin[parent_path or '/'], leaf, fout[parent_path or '/'])
 
 
+# NXmoderator alongside NXsource: BIFROST models the neutron source as an
+# NXmoderator (with NXsource reserved for accelerator metadata at the origin),
+# so its placement chain must be carried over like any other source's.
 _HANDLED_NX_CLASSES = (
     'NXdetector',
     'NXmonitor',
     'NXsource',
+    'NXmoderator',
     'NXsample',
     'NXtransformations',
     'NXdisk_chopper',
@@ -200,8 +214,8 @@ def write_minimal_geometry(
                 _copy_detector_fields(obj, dst, use_pixel_shape=use_pixel_shape)
             elif nx_class == 'NXmonitor':
                 _copy_monitor_fields(obj, dst)
-            elif nx_class in ('NXsource', 'NXsample'):
-                obj.copy('depends_on', dst)
+            elif nx_class in ('NXsource', 'NXmoderator', 'NXsample'):
+                _copy_depends_on(obj, dst)
             else:  # NXtransformations or NXdisk_chopper
                 for key in obj:
                     _copy_child(obj, key, dst)
