@@ -284,6 +284,8 @@ class SlicerPlotter(Plotter):
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
+        if scale_opts.manual_color_limits:
+            self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
@@ -317,7 +319,14 @@ class SlicerPlotter(Plotter):
         data = data.get(PRIMARY, {})
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
-        clim = self._compute_global_clim(data)
+        # With manual color limits the fixed clim is declared once in base_opts;
+        # skip the data-derived clim so it neither overrides the manual value per
+        # slice nor produces a 'c' autoscale target.
+        clim = (
+            None
+            if self._scale_opts.manual_color_limits
+            else self._compute_global_clim(data)
+        )
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         self._range_targets = {}
         if clim is not None:

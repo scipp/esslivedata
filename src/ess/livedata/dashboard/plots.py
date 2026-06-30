@@ -437,7 +437,22 @@ class Plotter:
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
-    """Per-axis autoscale support. Override per subclass."""
+    """Per-axis autoscale capability. Override per subclass."""
+
+    _autoscale_axes_override: frozenset[Axis] | None = None
+
+    @property
+    def autoscale_axes(self) -> frozenset[Axis]:
+        """Axes for which this instance exposes autoscale controls.
+
+        Defaults to :attr:`AUTOSCALE_AXES`. An instance narrows it when a
+        static config fixes an axis (e.g. manual color limits remove ``'c'``),
+        so the cell's autoscale controller skips both the toolbar toggle and
+        the per-render range write for that axis.
+        """
+        if self._autoscale_axes_override is not None:
+            return self._autoscale_axes_override
+        return self.AUTOSCALE_AXES
 
     @property
     def is_overlayable(self) -> bool:
@@ -531,6 +546,8 @@ class Plotter:
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
         }
+        if scale_opts.manual_color_limits:
+            opts['clim'] = (scale_opts.color_min, scale_opts.color_max)
         if tick_params is not None:
             if tick_params.custom_xticks:
                 opts['xticks'] = tick_params.xticks
@@ -1130,6 +1147,8 @@ class ImagePlotter(Plotter):
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
+        if scale_opts.manual_color_limits:
+            self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
     def from_params(cls, params: PlotParams2d):

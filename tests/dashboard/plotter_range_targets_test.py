@@ -526,3 +526,63 @@ class TestCorrelationHistogramRangeTargets:
 def test_autoscale_axes_table(plotter_cls, axes):
     """Per plan section 1.4, each plotter declares its autoscalable axes."""
     assert plotter_cls.AUTOSCALE_AXES == axes
+
+
+class TestManualColorLimitsDropAutoscaleC:
+    """Manual color limits remove ``'c'`` from the effective autoscale axes.
+
+    The cell controller reads ``autoscale_axes`` (not the ``AUTOSCALE_AXES``
+    capability), so a fixed colorbar drops both the toggle and the per-render
+    color write while x/y autoscale is untouched.
+    """
+
+    def test_image_default_keeps_c(self):
+        params = PlotParams2d()
+        plotter = ImagePlotter.from_params(params)
+        assert plotter.autoscale_axes == frozenset({'x', 'y', 'c'})
+
+    def test_image_manual_drops_c(self):
+        params = PlotParams2d()
+        params.plot_scale.manual_color_limits = True
+        plotter = ImagePlotter.from_params(params)
+        assert plotter.autoscale_axes == frozenset({'x', 'y'})
+
+    def test_slicer_default_keeps_c(self):
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = SlicerPlotter.from_params(params)
+        assert plotter.autoscale_axes == frozenset({'c'})
+
+    def test_slicer_manual_drops_c(self):
+        params = PlotParams3d(plot_scale=PlotScaleParams2d(manual_color_limits=True))
+        plotter = SlicerPlotter.from_params(params)
+        assert plotter.autoscale_axes == frozenset()
+
+    def test_correlation_2d_delegates_to_renderer(self):
+        params = CorrelationHistogram2dParams(bins=Bin2dParams(x_bins=4, y_bins=4))
+        params.plot_scale.manual_color_limits = True
+        plotter = CorrelationHistogram2dPlotter(params=params)
+        assert plotter.autoscale_axes == frozenset({'x', 'y'})
+
+    def test_slicer_manual_skips_data_clim(self):
+        """Manual limits leave ``SlicerState.clim`` unset and emit no 'c' target."""
+        params = PlotParams3d(
+            plot_scale=PlotScaleParams2d(
+                color_scale=PlotScale.linear, manual_color_limits=True
+            )
+        )
+        plotter = SlicerPlotter.from_params(params)
+        key = _key()
+        data = sc.DataArray(
+            sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
+                dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
+            ),
+            coords={
+                'z': sc.linspace('z', 0.0, 5.0, num=5, unit='s'),
+                'y': sc.linspace('y', 0.0, 8.0, num=8, unit='m'),
+                'x': sc.linspace('x', 0.0, 10.0, num=10, unit='m'),
+            },
+        )
+        data.data.unit = 'counts'
+        plotter.compute({PRIMARY: {key: data}})
+        assert plotter.get_cached_state().clim is None
+        assert plotter.get_range_targets(key) is None

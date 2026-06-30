@@ -101,7 +101,7 @@ class CellAutoscaleController:
     def __init__(self, layer_plotters: list[Plotter]) -> None:
         self._plotters: list[Plotter] = list(layer_plotters)
         self._axes: frozenset[Axis] = frozenset().union(
-            *(plotter.AUTOSCALE_AXES for plotter in self._plotters)
+            *(plotter.autoscale_axes for plotter in self._plotters)
         )
         # Lazy-created on first render so each session's tools live in the
         # session's own Bokeh document (see dashboard-widgets rules).
@@ -129,7 +129,7 @@ class CellAutoscaleController:
         """
         result: tuple[float, float] | None = None
         for plotter in self._plotters:
-            if axis not in plotter.AUTOSCALE_AXES:
+            if axis not in plotter.autoscale_axes:
                 continue
             for _key, targets in plotter.iter_range_targets():
                 target = targets.get(axis)

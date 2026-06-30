@@ -176,6 +176,35 @@ class PlotScaleParams2d(PlotScaleParams):
         description="Scale for color axis",
         title="Color Axis Scale",
     )
+    manual_color_limits: bool = pydantic.Field(
+        default=False,
+        description=(
+            "Use fixed color limits below instead of autoscaling to the data. "
+            "When enabled, the color autoscale toolbar button is removed for this "
+            "plot."
+        ),
+        title="Manual Color Limits",
+    )
+    color_min: float = pydantic.Field(
+        default=0.0,
+        description="Lower color limit (used only when manual color limits are on).",
+        title="Color Min",
+    )
+    color_max: float = pydantic.Field(
+        default=1.0,
+        description="Upper color limit (used only when manual color limits are on).",
+        title="Color Max",
+    )
+
+    @pydantic.model_validator(mode='after')
+    def _check_manual_limits(self) -> PlotScaleParams2d:
+        if not self.manual_color_limits:
+            return self
+        if self.color_max <= self.color_min:
+            raise ValueError("Color Max must be greater than Color Min.")
+        if self.color_scale == PlotScale.log and self.color_min <= 0.0:
+            raise ValueError("Color Min must be positive for a log color scale.")
+        return self
 
 
 class LayoutParams(pydantic.BaseModel):
