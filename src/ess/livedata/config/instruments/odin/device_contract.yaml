@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+#
+# GENERATED -- do not edit. NICOS derived-device list for odin.
+# Regenerate: python -m ess.livedata.config.device_contract
+devices:
+- device_name: monitor1_counts_total
+  workflow_id: odin/monitor_histogram/1
+  source_name: monitor1
+  output_name: counts_total_cumulative
+- device_name: monitor2_counts_total
+  workflow_id: odin/monitor_histogram/1
+  source_name: monitor2
+  output_name: counts_total_cumulative

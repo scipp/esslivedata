@@ -587,6 +587,7 @@ class Instrument:
         params: type[Any] | None = None,
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
+        device_outputs: dict[str, str] | None = None,
         reset_on_run_transition: bool = True,
     ) -> SpecHandle:
         """
@@ -645,6 +646,7 @@ class Instrument:
             params=params,
             aux_sources=aux_sources,
             outputs=outputs,
+            device_outputs=device_outputs or {},
             reset_on_run_transition=reset_on_run_transition,
         )
         return self.workflow_factory.register_spec(spec, service=service)

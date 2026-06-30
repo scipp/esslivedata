@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ess.livedata.core.timestamp import Timestamp
 
@@ -144,20 +144,31 @@ class WorkflowId(BaseModel, frozen=True):
     name: str
     version: int
 
+    @model_validator(mode='before')
+    @classmethod
+    def _accept_string(cls, value: Any) -> Any:
+        """Accept the ``instrument/name/version`` string form on input.
+
+        This is the form exported in ``device_contract.yaml``; accepting it lets
+        NICOS address a reset command by the workflow_id string it already holds,
+        without reconstructing the nested object. The nested ``{instrument, name,
+        version}`` form (used by the dashboard) passes through unchanged.
+        """
+        if isinstance(value, str):
+            parts = value.split('/')
+            if len(parts) != 3:
+                raise ValueError(f"Invalid WorkflowId string format: {value}")
+            instrument, name, version = parts
+            return {'instrument': instrument, 'name': name, 'version': version}
+        return value
+
     def __str__(self) -> str:
         return f"{self.instrument}/{self.name}/{self.version}"
 
     @staticmethod
     def from_string(workflow_id_str: str) -> WorkflowId:
         """Parse WorkflowId from string representation."""
-        parts = workflow_id_str.split('/')
-        if len(parts) != 3:
-            raise ValueError(f"Invalid WorkflowId string format: {workflow_id_str}")
-        return WorkflowId(
-            instrument=parts[0],
-            name=parts[1],
-            version=int(parts[2]),
-        )
+        return WorkflowId.model_validate(workflow_id_str)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -340,6 +351,30 @@ class WorkflowSpec(BaseModel):
             "    )"
         ),
     )
+    device_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Outputs exposed to NICOS as derived devices, mapping output field "
+            "name to a device-name template. The template is formatted with "
+            "``{source_name}`` once per entry in ``source_names``; include the "
+            "placeholder whenever more than one source is declared, otherwise the "
+            "rendered names collide. The per-instrument NICOS device list is "
+            "generated from this declaration; see "
+            ":mod:`ess.livedata.config.device_contract`."
+        ),
+    )
+
+    @model_validator(mode='after')
+    def validate_device_outputs(self) -> WorkflowSpec:
+        """Validate that every declared device output is a real output field."""
+        unknown = set(self.device_outputs) - set(self.outputs.model_fields)
+        if unknown:
+            raise ValueError(
+                f"device_outputs references unknown output field(s) "
+                f"{sorted(unknown)}; declared outputs: "
+                f"{sorted(self.outputs.model_fields)}"
+            )
+        return self
 
     @field_validator('outputs', mode='after')
     @classmethod

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+#
+# GENERATED -- do not edit. NICOS derived-device list for bifrost.
+# Regenerate: python -m ess.livedata.config.device_contract
+devices:
+- device_name: psc_monitor_counts_total
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: psc_monitor
+  output_name: counts_total_cumulative
+- device_name: overlap_monitor_counts_total
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: overlap_monitor
+  output_name: counts_total_cumulative
+- device_name: bandwidth_monitor_counts_total
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: bandwidth_monitor
+  output_name: counts_total_cumulative
+- device_name: normalization_monitor_counts_total
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: normalization_monitor
+  output_name: counts_total_cumulative
+- device_name: elastic_monitor_counts_total
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: elastic_monitor
+  output_name: counts_total_cumulative

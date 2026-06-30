@@ -45,6 +45,46 @@ def sample_workflow_config(sample_workflow_id: WorkflowId) -> WorkflowConfig:
     )
 
 
+class TestWorkflowId:
+    def test_validates_from_nested_object(self) -> None:
+        wid = WorkflowId.model_validate(
+            {"instrument": "bifrost", "name": "monitor_histogram", "version": 1}
+        )
+        assert wid == WorkflowId(
+            instrument="bifrost", name="monitor_histogram", version=1
+        )
+
+    def test_validates_from_contract_string(self) -> None:
+        """The instrument/name/version string exported in device_contract.yaml
+        validates directly, so NICOS can send it verbatim in a reset command."""
+        wid = WorkflowId.model_validate("bifrost/monitor_histogram/1")
+        assert wid == WorkflowId(
+            instrument="bifrost", name="monitor_histogram", version=1
+        )
+        assert isinstance(wid.version, int)
+
+    def test_string_and_nested_forms_are_equal(self) -> None:
+        assert WorkflowId.model_validate("bifrost/monitor_histogram/1") == (
+            WorkflowId.model_validate(
+                {"instrument": "bifrost", "name": "monitor_histogram", "version": 1}
+            )
+        )
+
+    def test_str_round_trips_through_validation(self) -> None:
+        wid = WorkflowId(instrument="bifrost", name="monitor_histogram", version=1)
+        assert WorkflowId.model_validate(str(wid)) == wid
+
+    def test_from_string_delegates_to_validation(self) -> None:
+        assert WorkflowId.from_string("dummy/x/2") == WorkflowId(
+            instrument="dummy", name="x", version=2
+        )
+
+    @pytest.mark.parametrize("bad", ["a/b", "a/b/c/d", "a/b/c/", "no-slashes"])
+    def test_malformed_string_rejected(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="Invalid WorkflowId string format"):
+            WorkflowId.model_validate(bad)
+
+
 class TestWorkflowSpecAuxSources:
     """Tests for WorkflowSpec.aux_sources field."""
 

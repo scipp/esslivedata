@@ -22,14 +22,22 @@ from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 
+from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
+from ..derived_devices import (
+    affected_device_names,
+    all_devices,
+    view_device_names,
+)
 from ..format_utils import extract_error_summary
 from ..job_orchestrator import StoppedReason
 from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
+from .confirmation_modal import ConfirmationModal
+from .derived_devices_overview import DerivedDevicesOverview
 from .icons import get_icon
 from .styles import Colors, ErrorBox, HoverColors, StatusColors, WarningBox
 
@@ -67,6 +75,9 @@ class WorkflowWidgetStyles:
     OUTPUT_CHIP_BG = '#e7f1ff'
     OUTPUT_CHIP_BORDER = '#b6d4fe'
     OUTPUT_CHIP_TEXT = '#0d6efd'
+
+    # Device (NICOS derived-device) badge/marker color.
+    DEVICE_COLOR = StatusColors.PRIMARY
 
     # Dimensions
     HEADER_HEIGHT = 40
@@ -241,6 +252,7 @@ class WorkflowStatusWidget:
         workflow_spec: WorkflowSpec,
         orchestrator: JobOrchestrator,
         job_service: JobService,
+        device_contract: DeviceContract | None = None,
     ) -> None:
         """
         Initialize workflow status widget.
@@ -255,11 +267,16 @@ class WorkflowStatusWidget:
             Job orchestrator for config staging and commit.
         job_service
             Service providing job status updates.
+        device_contract
+            Per-instrument NICOS derived-device contract, used to derive
+            device-bearing status and to gate disruptive actions. Defaults to
+            an empty contract (no devices).
         """
         self._workflow_id = workflow_id
         self._workflow_spec = workflow_spec
         self._orchestrator = orchestrator
         self._job_service = job_service
+        self._device_contract = device_contract or DeviceContract(())
 
         self._expanded = False
         self._panel: pn.Column | None = None
@@ -292,6 +309,11 @@ class WorkflowStatusWidget:
     def _tool_css_class(self) -> str:
         """CSS class scoping this workflow's tool buttons for automation/tests."""
         return f'lt-wf-{self._workflow_id.name}'
+
+    def _affected_device_names(self) -> list[str]:
+        """Device names a disruptive action on this workflow would affect now."""
+        running = self._orchestrator.get_running_workflow_sources()
+        return affected_device_names(self._workflow_id, running, self._device_contract)
 
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget.
@@ -681,12 +703,31 @@ class WorkflowStatusWidget:
         if self._workflow_spec.outputs is None:
             return pn.Column(margin=0)
 
+        # All declared sources are candidates for the per-output device marker;
+        # the contract decides which (workflow, source, field) is a device.
+        candidate_sources = set(self._workflow_spec.source_names)
+
         chips_html = ''
         for view in self._workflow_spec.get_output_views():
             title = view.title
             chip_bg = WorkflowWidgetStyles.OUTPUT_CHIP_BG
             chip_border = WorkflowWidgetStyles.OUTPUT_CHIP_BORDER
             chip_text = WorkflowWidgetStyles.OUTPUT_CHIP_TEXT
+            device_names = view_device_names(
+                self._workflow_id,
+                candidate_sources,
+                view,
+                self._device_contract,
+            )
+            marker = ''
+            if device_names:
+                device_tooltip = 'NICOS device(s): ' + ', '.join(device_names)
+                marker = (
+                    f'<span title="{device_tooltip}" style="margin-left: 6px; '
+                    f'padding: 0 5px; border-radius: 8px; font-size: 10px; '
+                    f'font-weight: bold; color: white; '
+                    f'background: {WorkflowWidgetStyles.DEVICE_COLOR};">NICOS</span>'
+                )
             tooltip = self._output_chip_tooltip(view)
             title_attr = f' title="{html.escape(tooltip)}"' if tooltip else ''
             chips_html += (
@@ -695,7 +736,7 @@ class WorkflowStatusWidget:
                 f'border: 1px solid {chip_border}; '
                 f'border-radius: 16px; font-size: 12px; '
                 f'color: {chip_text}; '
-                f'margin-right: 6px; margin-bottom: 6px;">{title}</span>'
+                f'margin-right: 6px; margin-bottom: 6px;">{title}{marker}</span>'
             )
 
         label = pn.pane.HTML(
@@ -1038,22 +1079,72 @@ class WorkflowStatusWidget:
                         aux_source_names=config.aux_source_names,
                     )
 
+    def _gate_disruptive_action(
+        self, action_label: str, action: Callable[[], None]
+    ) -> None:
+        """Run ``action``, gating it behind a confirmation when device-bearing.
+
+        Re-reads live device-bearing state at click time (not stale widget
+        state). When the workflow currently exposes a NICOS device and the
+        global gate is enabled, opens a confirmation modal naming the affected
+        devices; the action runs only on confirm. Otherwise the action runs
+        immediately.
+
+        Parameters
+        ----------
+        action_label
+            Lower-case verb phrase for the dialog (e.g. ``"stop"``).
+        action
+            The orchestrator call to perform on confirm / immediately.
+        """
+        device_names = self._affected_device_names()
+        if not device_names or not self._orchestrator.gate_enabled:
+            action()
+            return
+
+        names = ''.join(f'<li>{name}</li>' for name in device_names)
+        message = (
+            f'This workflow currently exposes the following device(s) to NICOS:'
+            f'<ul style="margin: 4px 0 8px 0; padding-left: 20px; '
+            f'font-weight: 600;">{names}</ul>'
+            f'Choosing to {action_label} is disruptive <i>if</i> NICOS is using '
+            f'the device — we cannot tell whether a scan is active. Proceed?'
+        )
+        modal = ConfirmationModal(
+            title=f'Confirm {action_label}',
+            message=message,
+            on_confirm=action,
+            confirm_label=action_label.capitalize(),
+            confirm_css_classes=[self._tool_css_class, 'lt-confirm-proceed'],
+            on_close=self._cleanup_modal,
+        )
+        self._modal_container.clear()
+        self._modal_container.append(modal.modal)
+        modal.show()
+
     def _on_reset_click(self) -> None:
         """Handle reset button click - resets accumulated data for the workflow.
 
         The reset command clears accumulated data in the backend but keeps
         the workflow running. No widget rebuild is needed - the data streams
-        will reflect the reset automatically.
+        will reflect the reset automatically. Gated when device-bearing.
         """
-        self._orchestrator.reset_workflow(self._workflow_id)
+        self._gate_disruptive_action(
+            'reset', lambda: self._orchestrator.reset_workflow(self._workflow_id)
+        )
 
     def _on_stop_click(self) -> None:
-        """Handle stop button click - stops the workflow."""
-        self._orchestrator.stop_workflow(self._workflow_id)
+        """Handle stop button click - stops the workflow. Gated when device-bearing."""
+        self._gate_disruptive_action(
+            'stop', lambda: self._orchestrator.stop_workflow(self._workflow_id)
+        )
 
     def _on_commit_click(self) -> None:
-        """Handle commit button click."""
-        self._orchestrator.commit_workflow(self._workflow_id)
+        """Handle commit button click. Gated when device-bearing."""
+        self._gate_disruptive_action(
+            'restart with modified config',
+            lambda: self._orchestrator.commit_workflow(self._workflow_id),
+        )
 
     def refresh(self) -> None:
         """Refresh widget from current state.
@@ -1107,6 +1198,7 @@ class WorkflowStatusListWidget:
         *,
         orchestrator: JobOrchestrator,
         job_service: JobService,
+        device_contract: DeviceContract | None = None,
     ) -> None:
         """
         Initialize workflow status list widget.
@@ -1118,11 +1210,23 @@ class WorkflowStatusListWidget:
             Provides the workflow registry.
         job_service
             Service providing job status updates.
+        device_contract
+            Per-instrument NICOS derived-device contract, threaded to each
+            per-workflow widget for device-bearing derivation and gating.
+            Defaults to an empty contract (no devices).
         """
         self._orchestrator = orchestrator
         self._job_service = job_service
+        self._device_contract = device_contract or DeviceContract(())
         self._is_visible: Callable[[], bool] | None = None
         self._populated: bool = False
+        self._gate_checkbox: pn.widgets.Checkbox | None = None
+        self._gate_banner: pn.pane.HTML | None = None
+
+        self._derived_devices = DerivedDevicesOverview(
+            orchestrator=orchestrator,
+            device_contract=self._device_contract,
+        )
 
         workflow_registry = orchestrator.get_workflow_registry()
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {
@@ -1131,13 +1235,23 @@ class WorkflowStatusListWidget:
                 workflow_spec=spec,
                 orchestrator=orchestrator,
                 job_service=job_service,
+                device_contract=device_contract,
             )
             for workflow_id, spec in sorted(
                 workflow_registry.items(), key=lambda x: x[1].title
             )
         }
+        # Zero-height container the derived-devices modal is mounted into on
+        # first open. Mounting a pn.Modal at render time inside the dynamic
+        # Workflows tab re-registers its callbacks on tab activation; lazy
+        # mounting on user action (as the per-workflow modals do) avoids that.
+        self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
+        header_row = self._create_header_row()
+        gate_banner = [self._gate_banner] if self._gate_banner is not None else []
         self._panel = pn.Column(
-            self._create_header_row(),
+            header_row,
+            *gate_banner,
+            self._modal_container,
             sizing_mode='stretch_width',
             margin=(10, 10),
         )
@@ -1178,13 +1292,113 @@ class WorkflowStatusListWidget:
         )
         collapse_all_btn.on_click(lambda e: self._collapse_all())
 
+        left: list[pn.viewable.Viewable] = []
+        if len(self._device_contract) > 0:
+            devices_btn = pn.widgets.Button(
+                label='NICOS devices',
+                color='light',
+                width=120,
+                height=28,
+                margin=(0, 4, 0, 0),
+                stylesheets=compact_btn_css,
+                css_classes=['lt-derived-devices-open'],
+            )
+            devices_btn.on_click(lambda e: self._show_derived_devices())
+
+            self._gate_checkbox = pn.widgets.Checkbox(
+                label='Confirm before disrupting a device NICOS may be using',
+                value=self._orchestrator.gate_enabled,
+                margin=(6, 0, 0, 8),
+                css_classes=['lt-gate-toggle'],
+            )
+            self._gate_checkbox.param.watch(self._on_gate_toggle, 'value')
+            gate_help = pn.widgets.TooltipIcon(
+                value=(
+                    'Applies to all sessions. Uncheck to skip confirmations '
+                    'while no NICOS scan is running.'
+                ),
+                margin=(4, 0, 0, 0),
+            )
+            # Full-width banner above the list, shown only while the gate is off:
+            # the warning is about the device-bearing workflows below and their
+            # stop/reset/gear actions, not about the header itself.
+            self._gate_banner = pn.pane.HTML(
+                self._gate_banner_html(),
+                sizing_mode='stretch_width',
+                margin=(0, 0, 8, 0),
+            )
+            self._apply_gate_style()
+            left.extend([devices_btn, self._gate_checkbox, gate_help])
+
         return pn.Row(
+            *left,
             pn.Spacer(sizing_mode='stretch_width'),
             expand_all_btn,
             collapse_all_btn,
             sizing_mode='stretch_width',
             margin=(0, 0, 8, 0),
         )
+
+    def _on_gate_toggle(self, event) -> None:
+        """Apply a checkbox toggle to the shared, cross-session gate flag."""
+        self._orchestrator.set_gate_enabled(event.new)
+        self._apply_gate_style()
+
+    def _sync_gate_checkbox(self) -> None:
+        """Reflect the shared gate flag, picking up toggles from other sessions.
+
+        Assigning an unchanged value re-enters :meth:`_on_gate_toggle`, but
+        :meth:`JobOrchestrator.set_gate_enabled` is a no-op for equal values, so
+        there is no feedback loop.
+        """
+        if self._gate_checkbox is None:
+            return
+        enabled = self._orchestrator.gate_enabled
+        if self._gate_checkbox.value != enabled:
+            self._gate_checkbox.value = enabled
+        self._apply_gate_style()
+
+    def _apply_gate_style(self) -> None:
+        """Show the danger banner above the list while the gate is off."""
+        if self._gate_banner is None or self._gate_checkbox is None:
+            return
+        self._gate_banner.visible = not self._gate_checkbox.value
+
+    def _gate_banner_html(self) -> str:
+        """Warning banner naming the device-bearing workflows the gate guards.
+
+        The named set is static (the contract's workflows), so the banner needs
+        no run-state refresh; whether each is currently online is visible in the
+        list below.
+        """
+        registry = self._orchestrator.get_workflow_registry()
+        titles: list[str] = []
+        for device in all_devices(self._device_contract):
+            spec = registry.get(device.workflow_id)
+            title = spec.title if spec is not None else str(device.workflow_id)
+            if title not in titles:
+                titles.append(title)
+        named = ', '.join(f'<strong>{title}</strong>' for title in titles)
+        device_clause = (
+            'takes its NICOS device offline'
+            if len(titles) == 1
+            else 'takes their NICOS devices offline'
+        )
+        return (
+            f'<div style="background: {WarningBox.BG}; '
+            f'border-left: 4px solid {WarningBox.BORDER}; '
+            f'color: {WarningBox.TEXT}; padding: 8px 12px; '
+            'border-radius: 4px; font-size: 13px; line-height: 1.45;">'
+            'Confirmations are <strong>off</strong>: stopping, resetting, or '
+            f'reconfiguring {named} {device_clause} immediately, '
+            'with no prompt.</div>'
+        )
+
+    def _show_derived_devices(self) -> None:
+        """Mount (once) and open the derived-devices overview modal."""
+        if self._derived_devices.modal not in self._modal_container:
+            self._modal_container.append(self._derived_devices.modal)
+        self._derived_devices.open()
 
     def _expand_all(self) -> None:
         """Expand all workflow widgets."""
@@ -1222,6 +1436,7 @@ class WorkflowStatusListWidget:
         """
         self._is_visible = is_visible
         session_updater.register_custom_handler(self._refresh_all)
+        self._derived_devices.register_periodic_refresh(session_updater)
         # Populate as soon as the session is connected. onload callbacks run
         # with pn.state.curdoc set (unlike session-factory code), so
         # pn.io.hold() is effective and all workflow panels are inserted
@@ -1251,6 +1466,7 @@ class WorkflowStatusListWidget:
         if not self._populated:
             # Fallback: onload didn't fire (non-server context).
             self._populate_pending()
+        self._sync_gate_checkbox()
         for widget in self._widgets.values():
             widget.refresh()
 

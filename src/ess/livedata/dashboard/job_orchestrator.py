@@ -169,6 +169,12 @@ class JobOrchestrator:
         self._transaction_workflow: WorkflowId | None = None
         self._transaction_depth: int = 0
 
+        # Global, in-memory toggle for the disruptive-action confirmation gate.
+        # Shared across all sessions; versioned so each session's checkbox
+        # resyncs when another session flips it.
+        self._gate_enabled: bool = True
+        self._gate_version: int = 0
+
         # Load persisted configs
         self._load_configs_from_store()
 
@@ -583,6 +589,26 @@ class JobOrchestrator:
         if state is None or state.current is None:
             return None
         return state.current.job_number
+
+    def get_running_workflow_sources(self) -> dict[WorkflowId, set[SourceName]]:
+        """Return the source names of every currently-running job, by workflow.
+
+        A workflow's job is "running" when it has a committed (current) JobSet.
+        The returned mapping omits workflows with no active job. It is the
+        live projection the dashboard intersects with the device contract to
+        decide which outputs are currently exposed as NICOS devices.
+
+        Returns
+        -------
+        :
+            Mapping from workflow ID to the set of source names with a running
+            job. Workflows without an active job are absent from the mapping.
+        """
+        return {
+            workflow_id: set(state.current.jobs)
+            for workflow_id, state in self._workflows.items()
+            if state.current is not None
+        }
 
     def get_stopped_reason(self, workflow_id: WorkflowId) -> StoppedReason | None:
         """Get the reason why a workflow was stopped, if any."""
@@ -1067,6 +1093,26 @@ class JobOrchestrator:
         if state is None:
             return 0
         return state.version
+
+    @property
+    def gate_enabled(self) -> bool:
+        """Whether the disruptive-action confirmation gate is active.
+
+        When ``False``, device-bearing stop/reset/reconfigure actions run
+        immediately without a confirmation modal. Shared across all sessions.
+        """
+        return self._gate_enabled
+
+    def set_gate_enabled(self, enabled: bool) -> None:
+        """Enable or disable the disruptive-action confirmation gate globally."""
+        if enabled == self._gate_enabled:
+            return
+        self._gate_enabled = enabled
+        self._gate_version += 1
+
+    def get_gate_version(self) -> int:
+        """Version counter bumped whenever the global gate toggle changes."""
+        return self._gate_version
 
     def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
         """Increment workflow state version when staging area changes.

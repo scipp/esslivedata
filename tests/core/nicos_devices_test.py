@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Tests for NICOS device extraction.
+
+Uses the real ``dummy`` instrument registry and real workflow specs, so the
+extractor needs no live registry. Devices are cumulative outputs carrying a
+``start_time`` coordinate (stamped by the JobManager); the extractor republishes
+them under their stable device name with that coordinate riding along.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+import scipp as sc
+from streaming_data_types import dataarray_da00
+
+from ess.livedata.config.device_contract import DeviceContract, DeviceContractEntry
+from ess.livedata.config.instrument import Instrument, instrument_registry
+from ess.livedata.config.instruments import get_config
+from ess.livedata.config.workflow_spec import JobId, WorkflowId
+from ess.livedata.core.job import JobResult
+from ess.livedata.core.message import StreamKind
+from ess.livedata.core.nicos_devices import DeviceExtractor
+from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
+
+MONITOR_WORKFLOW = 'dummy/monitor_histogram/1'
+DEVICE_NAME = 'monitor1_counts_total'
+START_TIME = Timestamp.from_ns(1000)
+
+
+@pytest.fixture(scope='module')
+def dummy_instrument() -> Instrument:
+    get_config('dummy')  # Imports spec module, registering workflow specs.
+    return instrument_registry['dummy']
+
+
+@pytest.fixture
+def contract() -> DeviceContract:
+    entry = DeviceContractEntry(
+        workflow_id=MONITOR_WORKFLOW,
+        source_name='monitor1',
+        output_name='counts_total_cumulative',
+        device_name=DEVICE_NAME,
+    )
+    return DeviceContract([entry])
+
+
+@pytest.fixture
+def extractor(contract: DeviceContract) -> DeviceExtractor:
+    return DeviceExtractor(device_contract=contract)
+
+
+@pytest.fixture
+def job_id() -> JobId:
+    return JobId(source_name='monitor1', job_number=uuid.uuid4())
+
+
+@pytest.fixture
+def result(job_id: JobId) -> JobResult:
+    data = sc.DataGroup(
+        {
+            # (a) in the contract -> extracted. Carries the start_time coord the
+            # JobManager stamps on cumulative outputs.
+            'counts_total_cumulative': sc.DataArray(
+                sc.scalar(42, unit='counts'),
+                coords={'start_time': START_TIME.to_scipp()},
+            ),
+            # (b), (c) not in the contract -> skipped, regardless of shape.
+            'cumulative': sc.DataArray(
+                sc.scalar(7, unit='counts'),
+                coords={'time': sc.scalar(0, unit='ns')},
+            ),
+            'current': sc.DataArray(sc.scalar(3, unit='counts')),
+        }
+    )
+    return JobResult(
+        job_id=job_id,
+        workflow_id=WorkflowId.from_string(MONITOR_WORKFLOW),
+        start_time=START_TIME,
+        end_time=Timestamp.from_ns(2000),
+        data=data,
+    )
+
+
+def test_extracts_only_contracted_output(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    messages = extractor.extract([result])
+
+    assert len(messages) == 1
+    (message,) = messages
+    assert message.stream.kind == StreamKind.LIVEDATA_NICOS_DATA
+    assert message.stream.name == DEVICE_NAME
+    assert message.value.value == 42
+
+
+def test_extraction_uses_result_timestamp(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    (message,) = extractor.extract([result])
+
+    assert message.timestamp == result.start_time
+
+
+def test_extraction_carries_start_time_coord(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    # NICOS uses start_time as the generation change-detector; the extractor
+    # must pass it through untouched.
+    (message,) = extractor.extract([result])
+
+    coord = message.value.coords['start_time']
+    assert coord.value == START_TIME.to_ns()
+    assert coord.unit == 'ns'
+
+
+def test_result_without_data_is_skipped(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    import dataclasses
+
+    no_data = dataclasses.replace(result, data=None)
+
+    assert extractor.extract([no_data]) == []
+
+
+def test_empty_contract_extracts_nothing(result: JobResult) -> None:
+    empty = DeviceContract([])
+    extractor = DeviceExtractor(device_contract=empty)
+
+    assert extractor.extract([result]) == []
+
+
+def test_serialized_da00_carries_device_source_name_and_start_time(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    """End-to-end: the extracted message serializes to da00 with the device name
+    as source_name and the start_time as a da00 variable."""
+    (message,) = extractor.extract([result])
+    serializer = make_default_sink_serializer(instrument='dummy')
+
+    serialized = serializer.serialize(message)
+
+    assert serialized.topic == 'dummy_livedata_nicos_data'
+    decoded = dataarray_da00.deserialise_da00(serialized.value)
+    assert decoded.source_name == DEVICE_NAME
+    var_names = {var.name for var in decoded.data}
+    assert 'start_time' in var_names
+    start_var = next(v for v in decoded.data if v.name == 'start_time')
+    assert int(start_var.data) == START_TIME.to_ns()

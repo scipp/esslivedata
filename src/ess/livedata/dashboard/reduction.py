@@ -14,6 +14,7 @@ from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
 from ess.livedata import Service
+from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
@@ -96,6 +97,11 @@ class ReductionApp(DashboardBase):
             basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
         self._fetch_announcements = fetch_announcements
+        # Load (and validate) the NICOS derived-device contract once. Fails loud
+        # on an invalid contract, before any session is served.
+        self._device_contract = DeviceContract.from_instrument(
+            self._services.instrument_config
+        )
         self._logger.info("Reduction dashboard initialized")
 
     def _create_announcements_pane(self) -> pn.pane.Markdown:
@@ -153,6 +159,7 @@ class ReductionApp(DashboardBase):
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
+            device_contract=self._device_contract,
         )
 
         system_status_widget = SystemStatusWidget(

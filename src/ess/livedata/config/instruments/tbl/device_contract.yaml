@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+#
+# GENERATED -- do not edit. NICOS derived-device list for tbl.
+# Regenerate: python -m ess.livedata.config.device_contract
+devices:
+- device_name: monitor_1_counts_total
+  workflow_id: tbl/monitor_histogram/1
+  source_name: monitor_1
+  output_name: counts_total_cumulative
