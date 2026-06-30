@@ -579,7 +579,23 @@ def get_plot_cell_display_info(
         workflow_registry, config.workflow_id, config.view_name
     )
 
-    # Build title: "Workflow → Output (source, window)"
+    # Look up the plotter's display title so layers differing only by plotter
+    # (ROI readback vs request, or a correlation plot over a timeseries) are
+    # distinguishable instead of rendering identical workflow/output text.
+    from ..plotter_registry import plotter_registry
+
+    try:
+        plotter_spec = plotter_registry.get_spec(config.plot_name)
+    except KeyError:
+        plotter_spec = None
+    plotter_title = plotter_spec.title if plotter_spec is not None else None
+    # Drop the plotter segment when it merely echoes the output (e.g. an "Image"
+    # output rendered by the "Image" plotter); it only adds information when it
+    # differs (ROI readback/request, correlation over a timeseries).
+    if plotter_title == output_title:
+        plotter_title = None
+
+    # Build title: "Workflow → Output → Plotter (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane
     window_info = _format_window_info(config.params)
 
@@ -600,15 +616,20 @@ def get_plot_cell_display_info(
         detail_parts.append(window_info)
     details = ', '.join(detail_parts)
 
-    title = f'{workflow_title} &rarr; {output_title} ({details})'
+    view_chain = f'{workflow_title} &rarr; {output_title}'
+    if plotter_title:
+        view_chain += f' &rarr; {plotter_title}'
+    title = f'{view_chain} ({details})'
 
     # Build description for tooltip using display titles
     sources_str = ', '.join(_title(s) for s in config.source_names)
     description_parts = [
         f'Workflow: {workflow_title}',
         f'Output: {output_title}',
-        f'Sources: {sources_str}',
     ]
+    if plotter_title:
+        description_parts.append(f'Plotter: {plotter_title}')
+    description_parts.append(f'Sources: {sources_str}')
     if window_info:
         description_parts.append(f'Window: {window_info}')
 
@@ -623,14 +644,8 @@ def get_plot_cell_display_info(
         description_parts.append(f'\n{view.description}')
 
     # Append plotter-specific description (e.g., usage instructions)
-    from ..plotter_registry import plotter_registry
-
-    try:
-        plotter_desc = plotter_registry.get_spec(config.plot_name).description
-        if plotter_desc:
-            description_parts.append(f'\n{plotter_desc}')
-    except KeyError:
-        pass
+    if plotter_spec is not None and plotter_spec.description:
+        description_parts.append(f'\n{plotter_spec.description}')
 
     description = '\n'.join(description_parts)
 
