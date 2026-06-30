@@ -77,12 +77,35 @@ expands that over the spec's `source_names`. The registry is the single source o
 truth, read directly by the backend (what to extract) and the dashboard (which
 outputs are devices).
 
+For example, the monitor-histogram spec declares one device output,
+
+```python
+device_outputs={'counts_total_cumulative': '{source_name}_counts_total'}
+```
+
+which `DeviceContract` expands over the spec's `source_names` into the committed
+export NICOS reads:
+
+```yaml
+devices:
+- device_name: monitor1_counts_total
+  workflow_id: dummy/monitor_histogram/1
+  source_name: monitor1
+  output_name: counts_total_cumulative
+- device_name: monitor2_counts_total
+  workflow_id: dummy/monitor_histogram/1
+  source_name: monitor2
+  output_name: counts_total_cumulative
+```
+
 Each instrument's `device_contract.yaml` is a **generated, committed export** for
 NICOS's static-list preference; nothing reads it back. Regenerate with
 `python -m ess.livedata.config.device_contract`; a test fails if a committed
-export drifts from the registry. `WorkflowId.version` is part of device identity,
-so a breaking change retires the old device name — it goes silent on the wire and
-NICOS notices — rather than silently changing semantics under a stable name.
+export drifts from the registry. `WorkflowId.version` is part of device identity, so
+an incompatible workflow change — e.g. redefining what an output means — is published
+under a bumped version: the old device name retires (goes silent on the wire, so a
+NICOS script pinned to it notices, assuming NICOS checks the version) rather than
+silently changing semantics under a stable name.
 
 ### A single unified job per `(workflow, source)`, gated in the dashboard
 
@@ -109,9 +132,13 @@ widget, so an action that races a job restart cannot act on stale state.
 
 ### NICOS-initiated reset
 
-NICOS resets the accumulation behind a device by producing a `JobCommand` JSON on
-the `{instrument}_livedata_commands` topic, keyed by the `WorkflowId` it already
-holds from the contract export:
+NICOS drives the accumulation lifecycle of a measurement: a `count` zeros the
+cumulative reading and waits for it to reach a target, and a `scan` repeats that per
+point (move motor, reset, count, move, ...). A device's reading therefore restarts
+many times within a run, on NICOS's schedule rather than ESSlivedata's. NICOS
+triggers each reset by producing a `JobCommand` JSON on the
+`{instrument}_livedata_commands` topic, keyed by the `WorkflowId` it already holds
+from the contract export:
 
 ```json
 {
@@ -127,11 +154,13 @@ holds from the contract export:
   single device, or several counted in sync (e.g. a difference of two monitors) —
   and there is no per-source selector. Reset acts on the job, so it zeros all of
   that job's outputs together.
-- **Carries a `message_id`.** NICOS generates a uuid like any command producer. The
-  owning worker acks it with `device: "all"` — the command omits `job_id`, so the
-  random `job_number` never appears in the ack. NICOS may correlate that ack or rely
-  on the `start_time` generation jump on the device topic, which also reports a reset
-  from any source, not only NICOS's own command.
+- **Carries a `message_id`.** NICOS generates a uuid like any command producer, and
+  the owning worker publishes a command ack referencing it. Because the command omits
+  `job_id`, the ack reports `device: "all"` rather than naming a job, so the random
+  `job_number` never leaks into it. To confirm a reset took effect NICOS can either
+  match that ack by `message_id`, or watch the `start_time` jump on the device topic.
+  The latter reports a reset from *any* source (backend restart, dashboard action),
+  not only NICOS's own command, so it is the more robust signal.
 - `WorkflowId` accepts its `instrument/name/version` string form on the wire, so
   NICOS sends the contract string verbatim; the dashboard keeps sending the nested
   object form.
@@ -153,6 +182,10 @@ holds from the contract export:
 | Dedicated inbound NICOS command topic keyed by device name | Cleaner decoupling, but a new topic plus a contract-resolution translation point. Reusing `livedata_commands` needs no new wiring and NICOS already holds the `WorkflowId`. Rejected for v1. |
 
 ## Key design choices
+
+The Decision section says *what* was decided and how it is wired. The points below
+restate the load-bearing invariants as standalone guarantees — the properties the
+whole design hinges on and that a later change could quietly erode.
 
 ### `start_time` is the single source of truth for the reset signal
 
