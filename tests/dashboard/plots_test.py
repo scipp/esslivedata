@@ -1216,6 +1216,44 @@ class TestPlotterOverlayMode:
         assert len(result) == 1
         assert isinstance(next(iter(result)), hv.Curve)
 
+    def test_layout_mode_applies_aspect_hook_to_every_subfigure(
+        self, simple_data_1, simple_data_2, data_key_1, data_key_2
+    ):
+        """A non-free aspect must reach every sub-figure of a layout-mode plot.
+
+        The frame-aspect hook is declared per element type by the plotter, so it
+        lands on each figure of the rendered Layout, switching it to the
+        one-axis responsive mode. Regression: detector images (square + layout)
+        collapsed to zero height when the hook only ran on a single shared
+        figure and was skipped for Layouts.
+        """
+        from bokeh.models import Plot
+
+        from ess.livedata.dashboard.plot_params import (
+            LayoutParams,
+            PlotAspect,
+            PlotAspectType,
+        )
+
+        params = PlotParams1d(
+            layout=LayoutParams(combine_mode='layout'),
+            plot_aspect=PlotAspect(aspect_type=PlotAspectType.square),
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        plotter.compute(
+            {'primary': {data_key_1: simple_data_1, data_key_2: simple_data_2}}
+        )
+        result = plotter.get_cached_state()
+        assert isinstance(result, hv.Layout)
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=result)
+        state = render_to_bokeh(presenter.present(pipe)).state
+
+        figures = [m for m in state.references() if isinstance(m, Plot)]
+        assert len(figures) == 2
+        assert all(fig.sizing_mode == 'stretch_width' for fig in figures)
+
     def test_empty_data_returns_no_data_text(self):
         """Test that empty data returns 'No data' text element in overlay mode."""
         from ess.livedata.dashboard.plot_params import LayoutParams
@@ -1889,9 +1927,12 @@ class TestOverlay1DPlotter:
         for elem in result:
             assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
 
-    def test_renders_responsive(self, data_2d_with_roi_coord, data_key):
-        """Aspect enforcement is handled by a JS hook (frame_aspect.py), so the
-        overlay renders responsive (stretch_both) regardless of aspect type."""
+    def test_non_free_aspect_switches_figure_to_one_axis_responsive(
+        self, data_2d_with_roi_coord, data_key
+    ):
+        """A non-free aspect makes the plotter declare the frame-aspect hook on
+        its elements, which switches the figure to a one-axis responsive mode
+        (fill-width -> stretch_width) so aspect can be enforced via JS."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
         params = PlotParams1d()
@@ -1899,7 +1940,7 @@ class TestOverlay1DPlotter:
         plotter = plots.Overlay1DPlotter.from_params(params)
 
         fig = present_figure(plotter, {data_key: data_2d_with_roi_coord})
-        assert fig.sizing_mode == 'stretch_both'
+        assert fig.sizing_mode == 'stretch_width'
         assert fig.aspect_ratio is None
 
     def test_free_aspect_renders_responsive_without_aspect(
