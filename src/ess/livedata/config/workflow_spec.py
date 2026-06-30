@@ -2,6 +2,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """
 Models for data reduction workflow widget creation and configuration.
+
+Two distinct parameter surfaces shape what a user sees, and conflating them is a
+common source of confusion:
+
+* **Workflow params** (this module, via :class:`WorkflowSpec.params`) change *what
+  is computed* — TOA edges, coordinate mode, ranges, ROIs. Configured from the
+  workflow card's gear in the Workflows tab.
+* **Plot-display params** (``dashboard/plot_params.py``) change *how an
+  already-computed output is displayed* — window, rate, scale, layout. Configured
+  in the "Add layer" plot-creation wizard.
+
+A given knob lives on exactly one surface, but nothing about a parameter's name
+makes its surface obvious. The coupling that *is* declared lives on
+:class:`OutputView.params`, which names the workflow params shaping each output and
+drives the UI's param↔output cross-references in both surfaces.
 """
 
 from __future__ import annotations
