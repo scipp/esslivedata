@@ -18,7 +18,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import TimeWindowMode, TimeWindowParams
+from .plot_params import TimeWindowMixin, TimeWindowMode, TimeWindowParams
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -213,7 +213,7 @@ class PlottingController:
             params = spec.params(**params) if spec.params else pydantic.BaseModel()
 
         spec = plotter_registry.get_spec(plot_name)
-        window = getattr(params, 'time_window', None)
+        window = params.time_window if isinstance(params, TimeWindowMixin) else None
 
         # Flatten keys for extractor creation
         all_keys = [key for keys in keys_by_role.values() for key in keys]

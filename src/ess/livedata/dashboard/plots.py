@@ -31,6 +31,7 @@ from .plot_params import (
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
+    RateMixin,
     TickParams,
     TimeseriesDownsamplingParams,
 )
@@ -1096,7 +1097,7 @@ class ImagePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
-        rate = getattr(params, 'rate', None)
+        rate = params.rate if isinstance(params, RateMixin) else None
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,

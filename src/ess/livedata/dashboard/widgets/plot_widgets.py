@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..plot_params import TimeWindowMode
+from ..plot_params import TimeWindowMixin, TimeWindowMode
 from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
 from .icons import get_icon
 from .styles import Colors, HoverColors, StatusColors
@@ -512,7 +512,7 @@ def _format_window_info(params) -> str:
     a target, not a truth, so showing it in the static title would lie when
     backend cadence exceeds the requested lookback.
     """
-    window = getattr(params, 'time_window', None)
+    window = params.time_window if isinstance(params, TimeWindowMixin) else None
     if window is None:
         return ''
     if window.mode == TimeWindowMode.since_start:

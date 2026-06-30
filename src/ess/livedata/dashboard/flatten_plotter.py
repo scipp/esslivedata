@@ -260,13 +260,12 @@ class FlattenPlotter(ImagePlotter):
     @classmethod
     def from_params(cls, params: FlattenParams) -> FlattenPlotter:
         cfg = params.flatten
-        rate = getattr(params, 'rate', None)
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
+            normalize_to_rate=params.rate.normalize_to_rate,
             axis_x_dims=frozenset(int(p) for p in cfg.axis_x_dims),
             transpose_x_flatten=cfg.transpose_x_flatten,
             transpose_y_flatten=cfg.transpose_y_flatten,

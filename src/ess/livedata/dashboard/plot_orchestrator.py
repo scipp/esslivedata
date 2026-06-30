@@ -39,7 +39,7 @@ from .frame_clock import FrameClock
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plot_data_service import LayerId, PlotDataService
-from .plot_params import TimeWindowMode
+from .plot_params import TimeWindowMixin, TimeWindowMode
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -298,7 +298,7 @@ def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
     """
     if slot != PRIMARY:
         return 'per_update'
-    window = getattr(params, 'time_window', None)
+    window = params.time_window if isinstance(params, TimeWindowMixin) else None
     return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
 
 

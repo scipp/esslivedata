@@ -1284,10 +1284,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         Returns ``True`` if the configuration may proceed. Otherwise shows an
         error and returns ``False`` so the modal stays open.
         """
-        from ess.livedata.dashboard.plot_params import TimeWindowMode
+        from ess.livedata.dashboard.plot_params import TimeWindowMixin, TimeWindowMode
         from ess.livedata.dashboard.plotting_controller import since_start_available
 
-        window = getattr(params, 'time_window', None)
+        window = params.time_window if isinstance(params, TimeWindowMixin) else None
         if window is None or window.mode is not TimeWindowMode.since_start:
             return True
         if self._plotter_selection is None:

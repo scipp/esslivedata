@@ -289,28 +289,25 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
-_WINDOW_DESCRIPTION = (
-    "The live reduction emits a new result roughly once per second "
-    "(longer for heavy workflows or under heavy load). The window "
-    "duration sets how much recent history the dashboard aggregates "
-    "for display; it does not affect what or how often the reduction "
-    "emits."
-    "<br><br>"
-    "The window duration is a target, not a guarantee: the aggregation "
-    "time range always covers at least one cadence interval, and will "
-    "differ from the requested duration when it does not align with "
-    "the reduction's current cadence. To compare values across "
-    "different cadences or window durations, enable 'Counts Per Second' "
-    "in the 'Rate' tab."
-)
-
-
 class TimeWindowMixin(pydantic.BaseModel):
     """Mixin adding a time-windowing/aggregation section to plot parameters."""
 
     time_window: TimeWindowParams = pydantic.Field(
         default_factory=TimeWindowParams,
-        description=_WINDOW_DESCRIPTION,
+        description=(
+            "The live reduction emits a new result roughly once per second "
+            "(longer for heavy workflows or under heavy load). The window "
+            "duration sets how much recent history the dashboard aggregates "
+            "for display; it does not affect what or how often the reduction "
+            "emits."
+            "<br><br>"
+            "The window duration is a target, not a guarantee: the aggregation "
+            "time range always covers at least one cadence interval, and will "
+            "differ from the requested duration when it does not align with "
+            "the reduction's current cadence. To compare values across "
+            "different cadences or window durations, enable 'Counts Per Second' "
+            "in the 'Rate' tab."
+        ),
         title="Time Window",
     )
 
@@ -322,25 +319,6 @@ class RateMixin(pydantic.BaseModel):
         default_factory=RateNormalizationParams,
         description="Rate normalization options.",
     )
-
-
-_TIMESERIES_DOWNSAMPLING_DESCRIPTION = (
-    "Controls how much detail this plot shows over the lifetime of the run. "
-    "Performance depends on the total number of points displayed: too many "
-    "and the plot - and the rest of the dashboard - becomes sluggish."
-    "<br><br>"
-    "The plot keeps a trailing <em>Recent</em> window at <em>Fine Period</em> "
-    "resolution, plus a coarser band at <em>Coarse Period</em> that extends "
-    "the rest of the run's history (set <em>Coarse Period</em> to 0 to drop "
-    "older data instead)."
-    "<br><br>"
-    "Aim to keep the total under a few thousand points for smooth plots. "
-    "Some examples for a 1 Hz source: the defaults (1 s / 1 h / 5 min) stay "
-    "near 4 000 points regardless of run length; raising <em>Recent "
-    "Window</em> to 12 h at 1 s <em>Fine Period</em> adds about 43 000 points "
-    "- likely too many; for week-long runs, a <em>Coarse Period</em> of 1 h "
-    "keeps the count below 4 000."
-)
 
 
 class TimeseriesDownsamplingParams(pydantic.BaseModel):
@@ -398,7 +376,24 @@ class PlotParamsTimeseries(PlotDisplayParams1d):
     )
     downsampling: TimeseriesDownsamplingParams = pydantic.Field(
         default_factory=TimeseriesDownsamplingParams,
-        description=_TIMESERIES_DOWNSAMPLING_DESCRIPTION,
+        description=(
+            "Controls how much detail this plot shows over the lifetime of the "
+            "run. Performance depends on the total number of points displayed: "
+            "too many and the plot - and the rest of the dashboard - becomes "
+            "sluggish."
+            "<br><br>"
+            "The plot keeps a trailing <em>Recent</em> window at <em>Fine "
+            "Period</em> resolution, plus a coarser band at <em>Coarse "
+            "Period</em> that extends the rest of the run's history (set "
+            "<em>Coarse Period</em> to 0 to drop older data instead)."
+            "<br><br>"
+            "Aim to keep the total under a few thousand points for smooth plots. "
+            "Some examples for a 1 Hz source: the defaults (1 s / 1 h / 5 min) "
+            "stay near 4 000 points regardless of run length; raising <em>Recent "
+            "Window</em> to 12 h at 1 s <em>Fine Period</em> adds about 43 000 "
+            "points - likely too many; for week-long runs, a <em>Coarse "
+            "Period</em> of 1 h keeps the count below 4 000."
+        ),
     )
 
 

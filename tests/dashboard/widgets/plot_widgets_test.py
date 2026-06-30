@@ -18,7 +18,11 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotCell,
     PlotConfig,
 )
-from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
+from ess.livedata.dashboard.plot_params import (
+    TimeWindowMixin,
+    TimeWindowMode,
+    TimeWindowParams,
+)
 from ess.livedata.dashboard.widgets.plot_widgets import (
     _create_configure_button_or_menu,
     _create_toolbar_visibility_button,
@@ -52,8 +56,8 @@ class TestPerPanelToolHooks:
         assert 'lt-tool-settings' in menu.css_classes
 
 
-class _FakeParams(pydantic.BaseModel):
-    time_window: TimeWindowParams = pydantic.Field(default_factory=TimeWindowParams)
+class _FakeParams(TimeWindowMixin):
+    pass
 
 
 class TestFormatWindowInfo:
