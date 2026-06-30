@@ -256,8 +256,14 @@ class PlottingController:
         """Whether a layer with this config can share a cell with other layers.
 
         Tables and layout-mode plotters produce elements that cannot be fused
-        via ``hv.Overlay``. A config that fails to build is treated as
-        overlayable; the failure surfaces later during plotter creation.
+        via ``hv.Overlay``. Overlayability is not a static flag: for the general
+        plot it derives from the params (``combine_mode``), so we build the
+        plotter to ask it.
+
+        This method only gates the overlay UI (disabling "Add layer", hiding
+        overlay buttons). A config that fails to build is therefore treated as
+        overlayable rather than blocked here; a genuinely broken config raises
+        again at actual plotter creation, which is the authoritative path.
         """
         try:
             plotter = self.create_plotter(plot_name, params=params)

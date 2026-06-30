@@ -229,18 +229,16 @@ class CellPropertiesModal:
                 get_source_title=self._orchestrator.get_source_title,
             )
             controls: list = []
-            overlays = (
-                overlay_suggestions_for_layer(
+            overlays: list = []
+            if self._plotting_controller.is_overlayable(
+                layer.config.plot_name, layer.config.params
+            ):
+                overlays = overlay_suggestions_for_layer(
                     layer.config,
                     existing,
                     self._workflow_registry,
                     self._plotting_controller,
                 )
-                if self._plotting_controller.is_overlayable(
-                    layer.config.plot_name, layer.config.params
-                )
-                else []
-            )
             if overlays:
                 controls.append(
                     create_overlay_add_button(

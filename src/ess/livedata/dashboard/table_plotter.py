@@ -168,6 +168,8 @@ class TablePlotter(Plotter):
                 power_limit_high=0,
                 text_align='right',
             )
+        # auto: ScientificFormatter's default power limits show decimal within
+        # 1e-3..1e5 and switch to scientific for magnitudes outside that window.
         return ScientificFormatter(precision=decimals, text_align='right')
 
     def style_opts(self) -> list[hv.Options]:
