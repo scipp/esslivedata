@@ -878,6 +878,12 @@ _LINE1D_LEAF_ELEMENTS: tuple[type, ...] = (
     hv.ErrorBars,
     hv.Spread,
 )
+# Element types that get a hover tool. Error elements (ErrorBars, Spread) are
+# deliberately excluded: Bokeh cannot attach a HoverTool to the Whisker glyph
+# (it raises during rendering), and the whisker/band values merely duplicate the
+# line they annotate.
+_HOVER_ELEMENTS_1D: tuple[type, ...] = (hv.Curve, hv.Scatter, hv.Histogram)
+_HOVER_ELEMENTS_2D: tuple[type, ...] = (hv.Image, hv.QuadMesh)
 
 
 def _color_error_element(el: hv.Element, color: Any) -> hv.Element:
@@ -1126,6 +1132,7 @@ class LinePlotter(Plotter):
     def style_opts(self) -> list[hv.Options]:
         return [
             *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
+            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
             *super().style_opts(),
         ]
 
@@ -1236,7 +1243,10 @@ class ImagePlotter(Plotter):
     def style_opts(self) -> list[hv.Options]:
         return [
             *_typed_opts(
-                (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
+                _HOVER_ELEMENTS_2D,
+                **self._base_opts,
+                **self._sizing_opts,
+                tools=['hover'],
             ),
             *super().style_opts(),
         ]
@@ -1268,6 +1278,11 @@ class BarsPlotter(Plotter):
         self._bars_opts: dict[str, Any] = {
             'invert_axes': horizontal,
             'show_legend': False,
+            # Pan/zoom/reset are meaningless for a categorical bar chart and the
+            # hidden toolbar makes reset unreachable; drop them and keep only an
+            # always-active hover so values can be read off each bar.
+            'default_tools': [],
+            'tools': ['hover'],
             'toolbar': None,
             'yrotation' if horizontal else 'xrotation': 45 if horizontal else 25,
         }
@@ -1501,5 +1516,6 @@ class Overlay1DPlotter(Plotter):
         # Per-slice ``color`` stays on the elements in plot(); the rest is static.
         return [
             *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
+            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
             *super().style_opts(),
         ]

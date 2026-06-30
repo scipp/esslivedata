@@ -16,6 +16,7 @@ from ess.livedata.config.workflow_spec import ResultKey
 from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
 from .plots import (
+    _HOVER_ELEMENTS_2D,
     Plotter,
     PresenterBase,
     _hv_axis_padding,
@@ -100,7 +101,10 @@ class SlicerPresenter(PresenterBase):
         """Static styling declared once on the DynamicMap (see
         :meth:`Plotter.style_opts`); the data-dependent clim stays per slice."""
         return _typed_opts(
-            (hv.Image, hv.QuadMesh), **self._base_opts, **self._sizing_opts
+            _HOVER_ELEMENTS_2D,
+            **self._base_opts,
+            **self._sizing_opts,
+            tools=['hover'],
         )
 
     def _initialize_kdims(self, state: SlicerState) -> None:
