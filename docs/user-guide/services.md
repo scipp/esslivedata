@@ -16,9 +16,6 @@ python -m ess.livedata.services.timeseries --instrument dummy
 For testing, each of these should be run with the `--dev` argument.
 This will run the services with a simplified topic structure and make them compatible with the fake data services [below](#fake-data-services).
 
-Note also the `--sink png` argument, which will save the outputs as PNG files instead of publishing them to Kafka.
-This allows for testing the service outputs without running the dashboard.
-
 ### Dashboard
 
 The dashboard can be run using:

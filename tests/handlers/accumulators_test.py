@@ -413,6 +413,55 @@ class TestNoCopyAccumulatorPair:
         assert not eternal_acc.is_empty
 
 
+class TestResettingCumulativeAccumulator:
+    """make_no_copy_accumulator_pair(reset_coord=...) resets on coord change."""
+
+    @staticmethod
+    def _hist(values, position):
+        """A histogram tagged with a scalar geometry coord."""
+        return sc.DataArray(
+            sc.array(dims=['x'], values=values, unit='counts'),
+            coords={'position': sc.scalar(position, unit='m')},
+        )
+
+    def test_accumulates_while_reset_coord_unchanged(self) -> None:
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(self._hist([1.0, 2.0], 0.0))
+        cumulative.push(self._hist([3.0, 4.0], 0.0))
+        assert sc.identical(
+            cumulative.value.data,
+            sc.array(dims=['x'], values=[4.0, 6.0], unit='counts'),
+        )
+
+    def test_resets_when_reset_coord_changes(self) -> None:
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(self._hist([1.0, 2.0], 0.0))
+        moved = self._hist([3.0, 4.0], 1.0)
+        cumulative.push(moved)
+        # The pre-move histogram is discarded; only the new configuration remains.
+        assert sc.identical(cumulative.value, moved)
+
+    def test_absent_reset_coord_is_a_noop(self) -> None:
+        """Data without the coord accumulates as usual (e.g. TOA-mode histograms)."""
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative.push(sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'))
+        cumulative.push(sc.array(dims=['x'], values=[3.0, 4.0], unit='counts'))
+        assert sc.identical(
+            cumulative.value, sc.array(dims=['x'], values=[4.0, 6.0], unit='counts')
+        )
+
+    def test_window_also_resets_on_change(self) -> None:
+        """Safety net: a window straddling a move discards the partial pre-move
+        data rather than summing across it. The driving loop pushes once per
+        finalize so this does not fire in practice, but guards against a future
+        change to that relation (and the coord-mismatch crash it would cause)."""
+        _, window = make_no_copy_accumulator_pair(reset_coord='position')
+        window.push(self._hist([1.0, 2.0], 0.0))
+        moved = self._hist([3.0, 4.0], 1.0)
+        window.push(moved)
+        assert sc.identical(window.value, moved)
+
+
 class TestCumulative:
     def test_get_before_add_raises_error(self) -> None:
         accumulator = Cumulative()
@@ -520,3 +569,63 @@ class TestCumulative:
         cumulative.add(Timestamp.from_ns(2), da2)  # Different shape, should reset
         result = cumulative.get()
         assert sc.identical(result.data, da2.data)
+
+    def test_2d_data_resets_when_coords_change_at_same_shape(self) -> None:
+        """Same-shape image with shifted coords (e.g. upstream rebinning)."""
+        cumulative = Cumulative(config={})
+
+        def image(x_offset: float) -> sc.DataArray:
+            return sc.DataArray(
+                sc.ones(dims=['y', 'x'], shape=[2, 2], unit='counts'),
+                coords={
+                    'x': sc.array(
+                        dims=['x'], values=[x_offset, x_offset + 1.0], unit='m'
+                    ),
+                    'y': sc.array(dims=['y'], values=[0.0, 1.0], unit='m'),
+                },
+            )
+
+        cumulative.add(Timestamp.from_ns(0), image(0.0))
+        cumulative.add(Timestamp.from_ns(1), image(0.0))
+        cumulative.add(Timestamp.from_ns(2), image(5.0))  # changed coord, should reset
+        cumulative.add(Timestamp.from_ns(3), image(5.0))
+        result = cumulative.get()
+        assert sc.identical(result.coords['x'], image(5.0).coords['x'])
+        assert sc.identical(
+            result.data,
+            sc.full(dims=['y', 'x'], shape=[2, 2], value=2.0, unit='counts'),
+        )
+
+    def test_resets_when_coordinate_appears(self) -> None:
+        """First chunk lacks the dim coord, a later same-shape chunk has it."""
+        cumulative = Cumulative(config={})
+        without = sc.DataArray(sc.array(dims=['x'], values=[1.0, 1.0], unit='counts'))
+        with_coord = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 1.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 1.0], unit='s')},
+        )
+        cumulative.add(Timestamp.from_ns(0), without)
+        cumulative.add(Timestamp.from_ns(1), with_coord)  # coord appears, should reset
+        cumulative.add(Timestamp.from_ns(2), with_coord)
+        result = cumulative.get()
+        assert sc.identical(result.coords['x'], with_coord.coords['x'])
+        assert sc.identical(
+            result.data, sc.array(dims=['x'], values=[2.0, 2.0], unit='counts')
+        )
+
+    def test_resets_on_dtype_change_at_same_shape(self) -> None:
+        """An int accumulation cannot absorb float data in place."""
+        cumulative = Cumulative(config={})
+        ints = sc.DataArray(
+            sc.array(dims=['x'], values=[1, 1], unit='counts', dtype='int64'),
+        )
+        floats = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 2.0], unit='counts'),
+        )
+        cumulative.add(Timestamp.from_ns(0), ints)
+        cumulative.add(Timestamp.from_ns(1), floats)  # dtype change, should reset
+        cumulative.add(Timestamp.from_ns(2), floats)
+        result = cumulative.get()
+        assert sc.identical(
+            result.data, sc.array(dims=['x'], values=[4.0, 4.0], unit='counts')
+        )

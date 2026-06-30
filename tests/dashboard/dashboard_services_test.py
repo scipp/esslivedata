@@ -14,6 +14,14 @@ class _FakeRegistry:
         pass
 
 
+class _FakePlotOrchestrator:
+    def __init__(self) -> None:
+        self.flush_calls = 0
+
+    def flush_frames(self) -> None:
+        self.flush_calls += 1
+
+
 class _FakeOrchestrator:
     def __init__(self, exception: BaseException | None = None) -> None:
         self._exception = exception
@@ -32,6 +40,7 @@ def _make_loop_target(orchestrator: _FakeOrchestrator) -> DashboardServices:
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
+    target.plot_orchestrator = _FakePlotOrchestrator()
     target.transport_failure_calls = 0
 
     def _on_transport_failure() -> None:
@@ -73,6 +82,7 @@ def test_update_loop_continues_on_generic_exception() -> None:
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
+    target.plot_orchestrator = _FakePlotOrchestrator()
     target.transport_failure_calls = 0
 
     def _on_transport_failure() -> None:

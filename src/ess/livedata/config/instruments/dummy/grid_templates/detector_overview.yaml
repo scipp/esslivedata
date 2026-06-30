@@ -29,7 +29,7 @@ cells:
         width: 400
         fix_height: false
         height: 400
-      window:
+      time_window:
         mode: window
       plot_scale:
         x_scale: linear
@@ -59,7 +59,7 @@ cells:
         width: 400
         fix_height: false
         height: 400
-      window:
+      time_window:
         mode: window
       plot_scale:
         x_scale: linear

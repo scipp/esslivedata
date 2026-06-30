@@ -32,6 +32,7 @@ from .plot_params import (
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
+    RateMixin,
     TickParams,
     TimeseriesDownsamplingParams,
 )
@@ -140,6 +141,13 @@ def _finite_min_max(
     finite = values[mask]
     if finite.size == 0:
         return None
+    if np.issubdtype(finite.dtype, np.datetime64):
+        # Range targets are bare floats. For a datetime axis the agreed unit is
+        # epoch nanoseconds -- the unit ``range_hook`` reconstructs a datetime64
+        # against. Normalize here so that contract holds regardless of the
+        # source coord's datetime unit (and so ``float()`` does not choke on a
+        # non-ns datetime64 scalar, which converts to ``datetime.datetime``).
+        finite = finite.astype('datetime64[ns]').astype('int64')
     return float(finite.min()), float(finite.max())
 
 
@@ -957,11 +965,21 @@ class LinePlotter(Plotter):
     def from_timeseries_params(cls, params: PlotParamsTimeseries):
         """Create LinePlotter for the timeseries plotter, with downsampling on.
 
+        The x-axis is always datetime, so only the y-axis scale is configurable
+        (see ``TimeseriesScaleParams``); x is fixed to linear.
+
         Downsampling and update throttling live at the plotter rather than at
         the extractor: the subscription still pulls the full-history, and
         per-plot config can change without re-subscribing.
         """
-        instance = cls.from_display_params(params)
+        instance = cls(
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+            scale_opts=PlotScaleParams(y_scale=params.plot_scale.y_scale),
+            tick_params=params.ticks,
+            mode=params.line.mode,
+            errors=params.line.errors,
+        )
         instance._downsampling = params.downsampling
         return instance
 
@@ -1116,7 +1134,7 @@ class ImagePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
-        rate = getattr(params, 'rate', None)
+        rate = params.rate if isinstance(params, RateMixin) else None
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,

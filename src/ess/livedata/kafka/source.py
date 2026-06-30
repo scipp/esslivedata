@@ -141,12 +141,6 @@ class BackgroundMessageSource(KafkaMessageSource):
         self._messages_consumed_since_last_metrics = 0
         self._batches_dropped_since_last_metrics = 0
 
-        # Lag monitoring (computed in a separate thread to avoid blocking consumption)
-        self._lag_query_timeout = 0.1
-        self._lag_lock = threading.Lock()
-        self._cached_lag: dict[str, Any] | None = None
-        self._lag_thread: threading.Thread | None = None
-
     def __enter__(self):
         """Enter context manager and start background consumption."""
         self.start()
@@ -165,8 +159,6 @@ class BackgroundMessageSource(KafkaMessageSource):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._thread.start()
-        self._lag_thread = threading.Thread(target=self._lag_monitor_loop, daemon=True)
-        self._lag_thread.start()
         logger.info("background_consumer_started")
 
     def stop(self) -> None:
@@ -175,8 +167,6 @@ class BackgroundMessageSource(KafkaMessageSource):
             return
 
         self._stop_event.set()
-        if self._lag_thread and self._lag_thread.is_alive():
-            self._lag_thread.join(timeout=2.0)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -255,17 +245,6 @@ class BackgroundMessageSource(KafkaMessageSource):
         except Exception as e:
             self._failure_reason = f"Fatal error in consume loop: {e}"
             logger.exception("background_consumer_fatal_error")
-
-    def _lag_monitor_loop(self) -> None:
-        """Periodically compute consumer lag without blocking the consume loop."""
-        while not self._stop_event.is_set():
-            try:
-                lag = self._compute_consumer_lag()
-                with self._lag_lock:
-                    self._cached_lag = lag
-            except Exception:
-                logger.exception("lag_monitor_error")
-            self._stop_event.wait(timeout=self._metrics_interval)
 
     def _maybe_log_metrics(self) -> None:
         """Log metrics if the interval has elapsed."""
@@ -363,19 +342,15 @@ class BackgroundMessageSource(KafkaMessageSource):
         )
 
     def get_consumer_lag(self) -> dict[str, Any] | None:
-        """Get the most recently computed consumer lag.
+        """Compute consumer lag per partition, or None if unsupported.
 
-        Returns cached lag information computed by the lag monitor thread,
-        or None if no lag data is available yet.
-        """
-        with self._lag_lock:
-            return self._cached_lag
-
-    def _compute_consumer_lag(self) -> dict[str, Any] | None:
-        """Compute consumer lag per partition.
-
-        Called by the lag monitor thread. Uses a short timeout to avoid
-        blocking for too long if the broker is slow to respond.
+        Uses cached watermark offsets to avoid issuing ListOffsetsRequests to
+        the broker: the high watermark is piggybacked on every FetchResponse
+        for partitions we actively consume, so no network round-trip is needed.
+        Querying the broker directly (cached=False) competes with long-poll
+        FetchRequests on the same broker connection and times out, producing
+        REQTMOUT log spam. Being broker-free, this is cheap enough to call
+        directly from the consume loop.
         """
         # The KafkaConsumer protocol only requires `consume`. `assignment` and
         # `get_watermark_offsets` are provided by `confluent_kafka.Consumer`
@@ -392,9 +367,7 @@ class BackgroundMessageSource(KafkaMessageSource):
 
             for tp in assignment:
                 try:
-                    _low, high = self._consumer.get_watermark_offsets(
-                        tp, timeout=self._lag_query_timeout
-                    )
+                    _low, high = self._consumer.get_watermark_offsets(tp, cached=True)
                     position = self._consumer.position([tp])[0].offset
                     if position >= 0 and high >= 0:
                         partition_lag = high - position

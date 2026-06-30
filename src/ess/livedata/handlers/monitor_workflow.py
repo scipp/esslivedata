@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NewType
 
 import sciline
 import scipp as sc
@@ -13,6 +13,7 @@ from ess.reduce.nexus.types import (
     Filename,
     NeXusData,
     NeXusName,
+    NeXusTransformation,
     RawMonitor,
     SampleRun,
 )
@@ -20,20 +21,50 @@ from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
 from scippnexus import NXmonitor
 
+from .accumulation_mode import AccumulationMode, Cumulative, Current
+from .geometry_signal import geometry_signal
 from .monitor_workflow_types import (
-    CumulativeMonitorHistogram,
+    AccumulatedMonitorHistogram,
     HistogramEdges,
     HistogramRangeHigh,
     HistogramRangeLow,
     MonitorCountsInRange,
     MonitorCountsTotal,
     MonitorHistogram,
-    WindowMonitorHistogram,
 )
+
+MONITOR_TRANSFORM = 'monitor_transform'
+"""Coord name carrying :data:`MonitorGeometry` on the accumulated histogram."""
+
+MonitorGeometry = NewType('MonitorGeometry', sc.Variable | None)
+"""Scalar geometry signal stamped onto the histogram as the ``MONITOR_TRANSFORM``
+coord, used by the cumulative accumulator to reset on a monitor move.
+
+Holds the monitor's resolved ``NeXusTransformation``. Mirrors the detector view's
+``DetectorGeometry``: a 0-dim transform is the only signal that survives the
+histogram's collapse over the pixel dimension, so it works for both single-point
+and pixellated monitors, where a per-pixel ``position`` coord would be dropped.
+``None`` when no geometry is loaded (TOA mode without a NeXus file): a move is then
+undetectable and no coord is stamped."""
+
+
+def monitor_geometry(
+    transform: NeXusTransformation[NXmonitor, SampleRun],
+) -> MonitorGeometry:
+    """Expose the monitor's resolved placement as the geometry-change signal.
+
+    Inserted only when a geometry file is loaded; otherwise :data:`MonitorGeometry`
+    is set to ``None``. See
+    :func:`~ess.livedata.handlers.geometry_signal.geometry_signal`.
+    """
+    return MonitorGeometry(geometry_signal(transform))
 
 
 def _histogram_monitor(
-    data: sc.DataArray, edges: sc.Variable, event_coord: str
+    data: sc.DataArray,
+    edges: sc.Variable,
+    event_coord: str,
+    geometry: sc.Variable | None,
 ) -> sc.DataArray:
     """
     Common histogram logic for monitor data.
@@ -46,6 +77,11 @@ def _histogram_monitor(
         Bin edges for histogramming.
     event_coord:
         Name of the event coordinate to histogram by (e.g., 'event_time_offset', 'tof').
+    geometry:
+        Scalar geometry signal stamped as the ``MONITOR_TRANSFORM`` coord so the
+        cumulative accumulator can reset on a monitor move. ``None`` stamps nothing.
+        Survives the collapse over the pixel dimension, unlike a per-pixel
+        ``position`` coord.
     """
     target_dim = edges.dim
 
@@ -69,48 +105,64 @@ def _histogram_monitor(
         coord = data.coords.get(target_dim).to(unit=edges.unit, dtype=edges.dtype)
         hist = data.assign_coords({target_dim: coord}).rebin({target_dim: edges})
 
+    if geometry is not None:
+        hist.coords[MONITOR_TRANSFORM] = geometry
     return hist
 
 
 def histogram_raw_monitor(
-    data: RawMonitor[SampleRun, NXmonitor], edges: HistogramEdges
+    data: RawMonitor[SampleRun, NXmonitor],
+    edges: HistogramEdges,
+    geometry: MonitorGeometry,
 ) -> MonitorHistogram:
     """Histogram or rebin monitor data by time-of-arrival (TOA mode)."""
-    return MonitorHistogram(_histogram_monitor(data, edges, 'event_time_offset'))
+    return MonitorHistogram(
+        _histogram_monitor(data, edges, 'event_time_offset', geometry)
+    )
 
 
 def histogram_wavelength_monitor(
-    data: WavelengthMonitor[SampleRun, NXmonitor], edges: HistogramEdges
+    data: WavelengthMonitor[SampleRun, NXmonitor],
+    edges: HistogramEdges,
+    geometry: MonitorGeometry,
 ) -> MonitorHistogram:
     """Histogram or rebin monitor data by wavelength (wavelength mode)."""
-    return MonitorHistogram(_histogram_monitor(data, edges, 'wavelength'))
+    return MonitorHistogram(_histogram_monitor(data, edges, 'wavelength', geometry))
 
 
-def cumulative_view(hist: MonitorHistogram) -> CumulativeMonitorHistogram:
-    """Identity transform for routing to cumulative accumulator."""
-    return CumulativeMonitorHistogram(hist)
+def accumulated_monitor_histogram(
+    hist: MonitorHistogram,
+) -> AccumulatedMonitorHistogram[AccumulationMode]:
+    """Route the histogram to the accumulation-mode-specific accumulator.
+
+    The histogram is computed once and accumulated differently based on the
+    accumulation mode type parameter (cumulative vs window). Sciline
+    instantiates this provider for each concrete mode.
+    """
+    return AccumulatedMonitorHistogram[AccumulationMode](hist)
 
 
-def window_view(hist: MonitorHistogram) -> WindowMonitorHistogram:
-    """Identity transform for routing to window accumulator."""
-    return WindowMonitorHistogram(hist)
-
-
-def counts_total(hist: WindowMonitorHistogram) -> MonitorCountsTotal:
-    """Total counts in window."""
-    return MonitorCountsTotal(hist.sum())
+def counts_total(
+    hist: AccumulatedMonitorHistogram[AccumulationMode],
+) -> MonitorCountsTotal[AccumulationMode]:
+    """Total counts, for the given accumulation mode."""
+    return MonitorCountsTotal[AccumulationMode](hist.sum())
 
 
 def counts_in_range(
-    hist: WindowMonitorHistogram, low: HistogramRangeLow, high: HistogramRangeHigh
-) -> MonitorCountsInRange:
-    """Counts within range filter in window."""
+    hist: AccumulatedMonitorHistogram[AccumulationMode],
+    low: HistogramRangeLow,
+    high: HistogramRangeHigh,
+) -> MonitorCountsInRange[AccumulationMode]:
+    """Counts within range filter, for the given accumulation mode."""
     dim = hist.dim
     # Convert range to histogram coordinate unit
     coord_unit = hist.coords[dim].unit
     low_converted = low.to(unit=coord_unit)
     high_converted = high.to(unit=coord_unit)
-    return MonitorCountsInRange(hist[dim, low_converted:high_converted].sum())
+    return MonitorCountsInRange[AccumulationMode](
+        hist[dim, low_converted:high_converted].sum()
+    )
 
 
 def build_monitor_workflow(
@@ -144,10 +196,13 @@ def build_monitor_workflow(
         raise ValueError(f"Unsupported coordinate mode: {coordinate_mode}")
 
     # Add downstream providers
-    workflow.insert(cumulative_view)
-    workflow.insert(window_view)
+    workflow.insert(accumulated_monitor_histogram)
     workflow.insert(counts_total)
     workflow.insert(counts_in_range)
+
+    # No geometry by default; create_monitor_workflow inserts monitor_geometry
+    # when a NeXus file is loaded, overriding this.
+    workflow[MonitorGeometry] = MonitorGeometry(None)
 
     return workflow
 
@@ -173,6 +228,7 @@ def create_monitor_workflow(
     coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
     lookup_table_filename: str | None = None,
+    reset_coord: str | None = MONITOR_TRANSFORM,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -193,6 +249,18 @@ def create_monitor_workflow(
         (needed for Ltotal computation). Optional for 'toa' mode.
     lookup_table_filename:
         Path to lookup table file. Required for 'wavelength' mode.
+    reset_coord:
+        The cumulative histogram resets when this scalar coord changes, so a
+        moving monitor restarts accumulation rather than summing across
+        configurations. Defaults to :data:`MONITOR_TRANSFORM`, the monitor's
+        resolved placement, stamped whenever a geometry file is loaded (both TOA
+        and wavelength modes). This mirrors the detector view's reset-on-move and,
+        being a 0-dim transform, survives the histogram's collapse over the pixel
+        dimension -- a per-pixel ``position`` coord would be dropped, so a
+        pixellated monitor's move would go undetected. When no geometry is loaded
+        (TOA mode without a NeXus file) the coord is absent and the reset is a
+        no-op, matching the fact that a move is then undetectable. Pass ``None`` to
+        disable (e.g. reduction-style accumulation across positions).
     """
     from .accumulators import make_no_copy_accumulator_pair
     from .stream_processor_workflow import StreamProcessorWorkflow
@@ -222,8 +290,12 @@ def create_monitor_workflow(
         # Load geometry from NeXus file (required for TOF mode)
         workflow[Filename[SampleRun]] = geometry_filename
         workflow[NeXusName[NXmonitor]] = source_name
+        # Geometry available: expose the placement so a move resets accumulation.
+        workflow.insert(monitor_geometry)
     else:
-        # TOA mode without geometry file: provide minimal EmptyMonitor directly
+        # TOA mode without geometry file: provide minimal EmptyMonitor directly.
+        # MonitorGeometry stays None (set by build_monitor_workflow): a move is
+        # undetectable without geometry, so there is nothing to reset on.
         workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
 
     # Configure lookup table and error threshold for wavelength mode
@@ -231,10 +303,9 @@ def create_monitor_workflow(
         workflow[LookupTableFilename] = lookup_table_filename
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
-    # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
-    # MonitorCountsTotal and MonitorCountsInRange are computed from
-    # WindowMonitorHistogram during finalize, not accumulated separately.
-    cumulative, window = make_no_copy_accumulator_pair()
+    # Only the histogram is accumulated; the scalar totals are derived from the
+    # accumulated histogram per mode during finalize, not accumulated separately.
+    cumulative, window = make_no_copy_accumulator_pair(reset_coord=reset_coord)
     return StreamProcessorWorkflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
@@ -243,14 +314,16 @@ def create_monitor_workflow(
         # WavelengthMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
         target_keys={
-            'cumulative': CumulativeMonitorHistogram,
-            'current': WindowMonitorHistogram,
-            'counts_total': MonitorCountsTotal,
-            'counts_in_toa_range': MonitorCountsInRange,
+            'cumulative': AccumulatedMonitorHistogram[Cumulative],
+            'current': AccumulatedMonitorHistogram[Current],
+            'counts_total': MonitorCountsTotal[Current],
+            'counts_in_toa_range': MonitorCountsInRange[Current],
+            'counts_total_cumulative': MonitorCountsTotal[Cumulative],
+            'counts_in_toa_range_cumulative': MonitorCountsInRange[Cumulative],
         },
         accumulators={
-            CumulativeMonitorHistogram: cumulative,
-            WindowMonitorHistogram: window,
+            AccumulatedMonitorHistogram[Cumulative]: cumulative,
+            AccumulatedMonitorHistogram[Current]: window,
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

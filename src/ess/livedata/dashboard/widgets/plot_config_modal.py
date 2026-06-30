@@ -147,7 +147,7 @@ def _resolve_output_display_hints(
     )
 
     supports_windowing = output_view_supports_windowing(workflow_spec, view_name)
-    hidden = frozenset({'window'}) if not supports_windowing else frozenset()
+    hidden = frozenset({'time_window'}) if not supports_windowing else frozenset()
 
     template = (
         workflow_spec.get_output_template(view_name)
@@ -521,17 +521,27 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._workflow_description.visible = False
 
     def _update_output_description(self) -> None:
-        """Update the output description pane for the selected output."""
-        desc = None
+        """Update the output description pane for the selected output.
+
+        Combines the output's own description with a back-reference to the
+        workflow parameters that shape it, so the user learns which knobs
+        (set via the workflow's configuration) control the chosen output.
+        """
+        parts: list[str] = []
         if self._selected_workflow_id is not None and self._selected_view is not None:
             spec = self._workflow_registry.get(self._selected_workflow_id)
-            view = (
-                spec.get_output_view(self._selected_view) if spec is not None else None
-            )
-            if view is not None:
-                desc = view.description
-        if desc:
-            self._output_description.object = desc
+            if spec is not None:
+                view = spec.get_output_view(self._selected_view)
+                if view is not None and view.description:
+                    parts.append(view.description)
+                titles = spec.get_output_param_titles(self._selected_view)
+                if titles:
+                    parts.append(
+                        "<span style='font-style: italic;'>Controlled by workflow "
+                        f"parameters: {', '.join(titles)}.</span>"
+                    )
+        if parts:
+            self._output_description.object = '<br><br>'.join(parts)
             self._output_description.visible = True
         else:
             self._output_description.object = ''
@@ -1188,7 +1198,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             workflow_spec=workflow_spec if not is_static else None,
             view_name=self._plotter_selection.view_name,
         )
-        self._supports_windowing = 'window' not in hints.hidden_fields
+        self._supports_windowing = 'time_window' not in hints.hidden_fields
 
         # For new plots, use display hints to decide source pre-selection.
         # 2D+ outputs (images) default to empty so the user picks one source.
@@ -1229,6 +1239,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         if self._plotter_selection is None:
             return
 
+        if not self._validate_window_mode(params):
+            return
+
         # Create primary data source
         primary_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
@@ -1262,6 +1275,33 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             params=params,
             supports_windowing=self._supports_windowing,
         )
+
+    def _validate_window_mode(
+        self, params: pydantic.BaseModel | dict[str, Any]
+    ) -> bool:
+        """Reject ``since_start`` mode on views without a cumulative stream.
+
+        Returns ``True`` if the configuration may proceed. Otherwise shows an
+        error and returns ``False`` so the modal stays open.
+        """
+        from ess.livedata.dashboard.plot_params import TimeWindowMixin, TimeWindowMode
+        from ess.livedata.dashboard.plotting_controller import since_start_available
+
+        window = params.time_window if isinstance(params, TimeWindowMixin) else None
+        if window is None or window.mode is not TimeWindowMode.since_start:
+            return True
+        if self._plotter_selection is None:
+            return True
+        spec = self._workflow_registry.get(self._plotter_selection.workflow_id)
+        if spec is None or since_start_available(
+            spec, self._plotter_selection.view_name
+        ):
+            return True
+        show_error(
+            "'Since run start' is not available for this output: it has no "
+            "cumulative stream. Choose 'Latest update'."
+        )
+        return False
 
 
 class PlotConfigModal:

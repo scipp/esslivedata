@@ -115,6 +115,39 @@ class TestFiniteMinMax:
     def test_log_returns_none_for_all_zero(self):
         assert _finite_min_max(np.array([0.0, 0.0, 0.0]), log=True) is None
 
+    def test_datetime_ns_returns_epoch_ns_floats(self):
+        t = np.array(
+            ['2026-06-23T00:00:00', '2026-06-23T00:00:02'], dtype='datetime64[ns]'
+        )
+        expected = (
+            float(t[0].astype('int64')),
+            float(t[1].astype('int64')),
+        )
+        assert _finite_min_max(t) == expected
+
+    def test_datetime_non_ns_normalized_to_epoch_ns(self):
+        # A non-ns coord must still yield epoch-ns floats (range_hook's contract)
+        # rather than crashing on ``float()`` of a datetime.datetime scalar.
+        t_us = np.array(
+            ['2026-06-23T00:00:00', '2026-06-23T00:00:02'], dtype='datetime64[us]'
+        )
+        t_ns = t_us.astype('datetime64[ns]')
+        expected = (
+            float(t_ns[0].astype('int64')),
+            float(t_ns[1].astype('int64')),
+        )
+        assert _finite_min_max(t_us) == expected
+
+    def test_datetime_drops_nat(self):
+        t = np.array(
+            ['2026-06-23T00:00:00', 'NaT', '2026-06-23T00:00:02'],
+            dtype='datetime64[ns]',
+        )
+        assert _finite_min_max(t) == (
+            float(t[0].astype('int64')),
+            float(t[2].astype('int64')),
+        )
+
     def test_log_ignores_nan(self):
         assert _finite_min_max(np.array([np.nan, -1.0, 2.0]), log=True) == (2.0, 2.0)
 

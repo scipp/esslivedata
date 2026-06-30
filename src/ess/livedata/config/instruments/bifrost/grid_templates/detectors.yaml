@@ -20,7 +20,7 @@ cells:
     params:
       plot_aspect:
         aspect_type: Free
-      window:
+      time_window:
         mode: window
   - data_sources:
       primary:

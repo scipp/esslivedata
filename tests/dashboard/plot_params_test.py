@@ -12,9 +12,9 @@ from ess.livedata.dashboard.extractors import (
     WindowAggregatingExtractor,
 )
 from ess.livedata.dashboard.plot_params import (
+    TimeWindowMode,
+    TimeWindowParams,
     WindowAggregation,
-    WindowMode,
-    WindowParams,
 )
 from ess.livedata.dashboard.plotting_controller import create_extractors_from_params
 
@@ -35,7 +35,9 @@ class TestCreateExtractorsFromParams:
     def test_create_latest_value_extractors_when_window_duration_zero(self):
         """Window mode with duration=0 reduces to LatestValueExtractor."""
         keys = ['key1']
-        window = WindowParams(mode=WindowMode.window, window_duration_seconds=0.0)
+        window = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=0.0
+        )
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -45,7 +47,7 @@ class TestCreateExtractorsFromParams:
     def test_create_latest_value_extractors_with_since_start_mode(self):
         """since_start mode uses LatestValueExtractor on the cumulative stream."""
         keys = ['key1']
-        window = WindowParams(mode=WindowMode.since_start)
+        window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -55,8 +57,8 @@ class TestCreateExtractorsFromParams:
     def test_create_window_aggregating_extractors_with_window_mode_window(self):
         """Test creation of WindowAggregatingExtractor when window mode is 'window'."""
         keys = ['key1', 'key2']
-        window = WindowParams(
-            mode=WindowMode.window,
+        window = TimeWindowParams(
+            mode=TimeWindowMode.window,
             window_duration_seconds=5.0,
             aggregation=WindowAggregation.nansum,
         )
@@ -75,7 +77,7 @@ class TestCreateExtractorsFromParams:
     def test_spec_required_extractor_overrides_window_params(self):
         """Test that plotter spec's required extractor overrides window params."""
         keys = ['key1', 'key2']
-        window = WindowParams(mode=WindowMode.since_start)
+        window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
         # Create mock spec with required extractor
         spec = Mock()
@@ -90,7 +92,9 @@ class TestCreateExtractorsFromParams:
     def test_spec_with_no_required_extractor_uses_window_params(self):
         """Test that window params are used when spec has no required extractor."""
         keys = ['key1']
-        window = WindowParams(mode=WindowMode.window, window_duration_seconds=3.0)
+        window = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=3.0
+        )
 
         # Create mock spec without required extractor
         spec = Mock()
@@ -104,7 +108,7 @@ class TestCreateExtractorsFromParams:
     def test_creates_extractors_for_all_keys(self):
         """Test that extractors are created for all provided keys."""
         keys = ['result1', 'result2', 'result3']
-        window = WindowParams(mode=WindowMode.since_start)
+        window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -115,7 +119,7 @@ class TestCreateExtractorsFromParams:
     def test_empty_keys_returns_empty_dict(self):
         """Test that empty keys list returns empty extractors dict."""
         keys = []
-        window = WindowParams(mode=WindowMode.since_start)
+        window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
         extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
 
@@ -124,8 +128,8 @@ class TestCreateExtractorsFromParams:
     def test_window_aggregation_parameters_passed_correctly(self):
         """Test that window aggregation parameters result in correct behavior."""
         keys = ['key1']
-        window = WindowParams(
-            mode=WindowMode.window,
+        window = TimeWindowParams(
+            mode=TimeWindowMode.window,
             window_duration_seconds=10.5,
             aggregation=WindowAggregation.mean,
         )

@@ -7,7 +7,6 @@ from .message import (
     MessageSource,
     StreamId,
     StreamKind,
-    compact_messages,
 )
 from .processor import IdentityProcessor, Processor
 from .service import Service, ServiceBase
@@ -25,5 +24,4 @@ __all__ = [
     'ServiceBase',
     'StreamId',
     'StreamKind',
-    'compact_messages',
 ]

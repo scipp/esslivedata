@@ -8,6 +8,7 @@ are similar to those in `tests/services/data_reduction_test.py`. Many tests are 
 duplicated here.
 """
 
+import json
 import logging
 import uuid
 
@@ -68,35 +69,49 @@ def test_can_configure_and_stop_monitor_workflow(
     # Trigger workflow start
     app.publish_config_message(workflow_config)
     service.step()
-    # No ack when message_id not set
+    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
+
+    # Each workflow call returns six results: the cumulative/current histograms
+    # plus per-update and cumulative scalar totals (counts_total[_cumulative],
+    # counts_in_toa_range[_cumulative]).
+    n_target = 6
+
+    def latest_outputs() -> dict[str, object]:
+        outputs: dict[str, object] = {}
+        for msg in sink.messages[-n_target:]:
+            result_key = json.loads(msg.stream.name)
+            outputs[result_key['output_name']] = msg.value
+        return outputs
 
     app.publish_monitor_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 4 results: cumulative, current, counts_total,
-    # counts_in_toa_range
-    assert len(sink.messages) == 4
-    assert sink.messages[-4].value.values.sum() == 2000  # cumulative
-    assert sink.messages[-3].value.values.sum() == 2000  # current
-    assert sink.messages[-2].value.value == 2000  # counts_total
+    assert len(sink.messages) == n_target
+    outputs = latest_outputs()
+    assert outputs['cumulative'].values.sum() == 2000
+    assert outputs['current'].values.sum() == 2000
+    assert outputs['counts_total'].value == 2000
+    assert outputs['counts_total_cumulative'].value == 2000
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 4
+    assert len(sink.messages) == n_target
 
     app.publish_monitor_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 8
-    assert sink.messages[-4].value.values.sum() == 5000  # cumulative
-    assert sink.messages[-3].value.values.sum() == 3000  # current
-    assert sink.messages[-2].value.value == 3000  # counts_total
+    assert len(sink.messages) == 2 * n_target
+    outputs = latest_outputs()
+    assert outputs['cumulative'].values.sum() == 5000
+    assert outputs['current'].values.sum() == 3000
+    assert outputs['counts_total'].value == 3000  # per-update resets
+    assert outputs['counts_total_cumulative'].value == 5000  # keeps accumulating
 
     # More events but the same time
     app.publish_monitor_events(size=1000, time=4)
     # Later time
     app.publish_monitor_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 12
-    assert sink.messages[-4].value.values.sum() == 7000  # cumulative
+    assert len(sink.messages) == 3 * n_target
+    assert latest_outputs()['cumulative'].values.sum() == 7000
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -105,4 +120,4 @@ def test_can_configure_and_stop_monitor_workflow(
     service.step()
     app.publish_monitor_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 12
+    assert len(sink.messages) == 3 * n_target

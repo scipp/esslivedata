@@ -18,6 +18,7 @@ from .message_adapter import (
     KafkaToF144Adapter,
     KafkaToMonitorEventsAdapter,
     MessageAdapter,
+    NullAdapter,
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
@@ -100,13 +101,24 @@ class RoutingAdapterBuilder:
         return self
 
     def with_logdata_route(self) -> Self:
-        """Adds the logdata route."""
-        adapter = ChainedAdapter(
-            first=KafkaToF144Adapter(
-                stream_lut=self._stream_mapping.logs,
-                stream_counter=self._stream_counter,
-            ),
-            second=F144ToLogDataAdapter(),
+        """Adds the logdata route.
+
+        Forwarder log topics carry f144 numeric data interleaved with al00
+        (alarm) and ep01 (connection-status) messages for the same PVs. We
+        consume only f144 and silently drop the status schemas.
+        """
+        adapter = RouteBySchemaAdapter(
+            routes={
+                'f144': ChainedAdapter(
+                    first=KafkaToF144Adapter(
+                        stream_lut=self._stream_mapping.logs,
+                        stream_counter=self._stream_counter,
+                    ),
+                    second=F144ToLogDataAdapter(),
+                ),
+                'al00': NullAdapter(),
+                'ep01': NullAdapter(),
+            }
         )
         for topic in self._stream_mapping.log_topics:
             self._routes[topic] = adapter

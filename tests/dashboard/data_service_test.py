@@ -144,6 +144,52 @@ def test_unregister_nonexistent_subscriber_returns_false(
     assert result is False
 
 
+def test_unregister_during_notification_does_not_skip_other_subscribers(
+    data_service: DataService[str, int],
+):
+    """A subscriber removed mid-notification must not cause a sibling to be skipped.
+
+    Reproduces the list-index skip: notifying iterates the subscriber list, and a
+    trigger (or, in production, a concurrent UI-thread teardown) removes a
+    subscriber positioned before one not yet visited. A raw list-index iterator
+    would then skip the following subscriber.
+    """
+    triggered: list[str] = []
+
+    class RemovingSubscriber(DataServiceSubscriber[str]):
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.target: DataServiceSubscriber[str] | None = None
+            self._extractors = {"key1": LatestValueExtractor()}
+            super().__init__()
+
+        @property
+        def extractors(self):
+            return self._extractors
+
+        def trigger(self, store: dict[str, Any]) -> None:
+            if "key1" not in store:
+                return
+            triggered.append(self.name)
+            if self.target is not None:
+                data_service.unregister_subscriber(self.target)
+                self.target = None
+
+    first = RemovingSubscriber("first")
+    middle = RemovingSubscriber("middle")
+    last = RemovingSubscriber("last")
+    # Registration order fixes iteration order: middle removes the earlier
+    # 'first', shifting indices so a naive iterator would skip 'last'.
+    middle.target = first
+    for sub in (first, middle, last):
+        data_service.register_subscriber(sub)
+
+    triggered.clear()
+    data_service["key1"] = make_test_data(42)
+
+    assert triggered == ["first", "middle", "last"]
+
+
 def test_setitem_notifies_matching_subscriber(data_service: DataService[str, int]):
     subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)

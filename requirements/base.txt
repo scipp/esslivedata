@@ -7,7 +7,7 @@
 #
 annotated-types==0.7.0
     # via pydantic
-certifi==2026.5.20
+certifi==2026.6.17
     # via requests
 charset-normalizer==3.4.7
     # via requests

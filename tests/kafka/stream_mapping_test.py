@@ -87,3 +87,39 @@ class TestStreamMappingFiltered:
         assert set(f.monitors.values()) == {"mon_2"}
         assert f.area_detectors == {}
         assert set(f.logs.values()) == {"motor_y"}
+
+
+class TestStreamMappingInputKeys:
+    def test_collects_keys_across_all_luts(self, full_mapping: StreamMapping) -> None:
+        assert full_mapping.input_keys == {
+            InputStreamKey(topic="det_topic_a", source_name="src"),
+            InputStreamKey(topic="det_topic_b", source_name="src"),
+            InputStreamKey(topic="det_topic_c", source_name="src"),
+            InputStreamKey(topic="mon_topic", source_name="mon1"),
+            InputStreamKey(topic="mon_topic", source_name="mon2"),
+            InputStreamKey(topic="area_topic", source_name="cam"),
+            InputStreamKey(topic="motion", source_name="m1"),
+            InputStreamKey(topic="motion", source_name="m2"),
+        }
+
+    def test_logs_none(self, infra_kwargs: dict) -> None:
+        m = StreamMapping(
+            instrument="test", detectors={}, monitors={}, logs=None, **infra_kwargs
+        )
+        assert m.input_keys == set()
+
+    def test_difference_yields_out_of_scope_keys(
+        self, full_mapping: StreamMapping
+    ) -> None:
+        # Mirrors what services compute: full minus scoped == out-of-scope keys
+        # that arrive on a shared topic but are routed to another service.
+        scoped = full_mapping.filtered({"motor_x"})
+        assert full_mapping.input_keys - scoped.input_keys == {
+            InputStreamKey(topic="det_topic_a", source_name="src"),
+            InputStreamKey(topic="det_topic_b", source_name="src"),
+            InputStreamKey(topic="det_topic_c", source_name="src"),
+            InputStreamKey(topic="mon_topic", source_name="mon1"),
+            InputStreamKey(topic="mon_topic", source_name="mon2"),
+            InputStreamKey(topic="area_topic", source_name="cam"),
+            InputStreamKey(topic="motion", source_name="m2"),
+        }

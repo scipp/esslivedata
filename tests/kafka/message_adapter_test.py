@@ -31,6 +31,7 @@ from ess.livedata.kafka.message_adapter import (
     Ev44ToMonitorEventsAdapter,
     F144ToLogDataAdapter,
     FakeKafkaMessage,
+    IgnoredMessageError,
     InputStreamKey,
     KafkaMessage,
     KafkaToAd00Adapter,
@@ -38,6 +39,7 @@ from ess.livedata.kafka.message_adapter import (
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
     KafkaToMonitorEventsAdapter,
+    NullAdapter,
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
@@ -566,6 +568,21 @@ class TestRouteBySchemaAdapter:
         assert adapter.adapt(message_with_schema('da00')).value == "adapter2"
 
 
+class TestNullAdapter:
+    def test_adapt_raises_IgnoredMessageError(self) -> None:
+        with pytest.raises(IgnoredMessageError):
+            NullAdapter().adapt(message_with_schema('al00'))
+
+    def test_routed_schemas_are_dropped(self) -> None:
+        adapter = RouteBySchemaAdapter(
+            routes={'al00': NullAdapter(), 'ep01': NullAdapter()}
+        )
+        with pytest.raises(IgnoredMessageError):
+            adapter.adapt(message_with_schema('al00'))
+        with pytest.raises(IgnoredMessageError):
+            adapter.adapt(message_with_schema('ep01'))
+
+
 class TestRouteByTopicAdapter:
     def test_route_by_topic(self) -> None:
         class TestAdapter:
@@ -1022,3 +1039,108 @@ class TestErrorHandling:
         exception_logs = [log for log in captured if log['log_level'] == 'error']
         assert len(exception_logs) >= 1
         assert "Simulated adapter failure" in str(exception_logs[-1])
+
+    def test_ignored_message_is_dropped_silently(self):
+        """IgnoredMessageError drops the message without warning or error record."""
+        from structlog.testing import capture_logs
+
+        class IgnoringSource(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return [FakeKafkaMessage(value=b"xxxxal00", topic="logs")]
+
+        source = AdaptingMessageSource(
+            source=IgnoringSource(),
+            adapter=RouteBySchemaAdapter(routes={'al00': NullAdapter()}),
+        )
+
+        with capture_logs() as captured:
+            messages = source.get_messages()
+
+        assert messages == []
+        assert captured == []
+
+    def test_unknown_schema_warning_includes_topic_and_schema(self):
+        """The unknown-schema warning names the topic and the offending schema."""
+        from structlog.testing import capture_logs
+
+        class UnknownSchemaSource(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return [FakeKafkaMessage(value=b"xxxxzzzz", topic="logs")]
+
+        source = AdaptingMessageSource(
+            source=UnknownSchemaSource(),
+            adapter=RouteBySchemaAdapter(routes={'f144': NullAdapter()}),
+        )
+
+        with capture_logs() as captured:
+            source.get_messages()
+
+        warnings = [log for log in captured if log['log_level'] == 'warning']
+        assert len(warnings) == 1
+        rendered = str(warnings[0])
+        assert "logs" in rendered
+        assert "zzzz" in rendered
+
+
+class TestAdapterLagRecording:
+    def _ev44(self, *, reference_time_ns: int) -> bytes:
+        return eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[reference_time_ns],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+
+    def test_records_producer_lag_keyed_by_topic_source_schema(self) -> None:
+        counter = StreamCounter()
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        # Payload at 2.0 s, broker CreateTime at 10.0 s -> 8.0 s producer lag.
+        message = FakeKafkaMessage(
+            value=self._ev44(reference_time_ns=2_000_000_000),
+            topic="monitors",
+            timestamp=10_000,
+            timestamp_type=1,
+        )
+        adapter.adapt(message)
+
+        report = counter.drain_lag()
+        assert report is not None
+        (lag,) = report.streams
+        assert (lag.topic, lag.source, lag.schema) == ("monitors", "monitor1", "ev44")
+        assert lag.max_s == pytest.approx(8.0)
+        assert lag.count == 1
+
+    def test_skips_when_broker_timestamp_unavailable(self) -> None:
+        counter = StreamCounter()
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        # Default timestamp_type=0 (NOT_AVAILABLE) -> lag cannot be computed.
+        message = FakeKafkaMessage(
+            value=self._ev44(reference_time_ns=2_000_000_000),
+            topic="monitors",
+            timestamp=10_000,
+        )
+        adapter.adapt(message)
+
+        assert counter.drain_lag() is None
+
+    def test_f144_records_no_lag(self) -> None:
+        # The forwarder resends each value periodically with the original EPICS
+        # source timestamp, so producer lag is meaningless for f144 and is not
+        # recorded even when a broker CreateTime is available.
+        counter = StreamCounter()
+        adapter = KafkaToF144Adapter(stream_counter=counter)
+        message = FakeKafkaMessage(
+            value=make_serialized_f144(),
+            topic="sensors",
+            timestamp=10_000,
+            timestamp_type=1,
+        )
+        adapter.adapt(message)
+
+        assert counter.drain_lag() is None

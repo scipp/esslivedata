@@ -48,7 +48,7 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
-monitor_handle = register_monitor_workflow_specs(
+register_monitor_workflow_specs(
     instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
 )
 
@@ -60,7 +60,11 @@ panel_0_view_handle = instrument.register_spec(
     name='panel_0_xy',
     version=1,
     title='Panel 0',
-    description='',
+    description=(
+        'Detector image for the dummy "panel_0" logical detector, projected '
+        'onto its pixel grid. Counts can be binned by time-of-arrival and '
+        'restricted to regions of interest.'
+    ),
     source_names=['panel_0'],
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,

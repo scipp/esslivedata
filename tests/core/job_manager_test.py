@@ -17,7 +17,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job import Job, JobReply, JobResult, JobState
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
-from ess.livedata.core.message import StreamId
+from ess.livedata.core.message import RunStart, StreamId
 from ess.livedata.core.timestamp import Timestamp
 
 from .job_test import FakeProcessor
@@ -32,9 +32,12 @@ class SimpleTestOutputs(WorkflowOutputsBase):
 class FakeJobFactory(JobFactory):
     """Fake implementation of JobFactory for testing."""
 
-    def __init__(self):
+    def __init__(self, reset_on_run_transition: dict[WorkflowId, bool] | None = None):
         self.created_jobs = []
         self.processors: dict[JobId, FakeProcessor] = {}
+        # Faithful analog of the real factory reading reset_on_run_transition from
+        # the workflow spec: tests configure it per workflow, defaulting to True.
+        self._reset_on_run_transition = reset_on_run_transition or {}
 
     def get_workflow_spec(self, workflow_id):
         """Return None for tests - no enrichment needed in test scenarios."""
@@ -61,6 +64,9 @@ class FakeJobFactory(JobFactory):
             source_names=[job_id.source_name],
             input_streams=set(aux.values()),
             gating_streams=set(aux.values()),
+            reset_on_run_transition=self._reset_on_run_transition.get(
+                config.identifier, True
+            ),
         )
 
         self.created_jobs.append((job_id, config))
@@ -1075,6 +1081,55 @@ class TestJobManager:
         results = manager.compute_results()
         assert len(results) == 1
         assert results[0].error_message is None
+
+    def test_reset_after_finalize_error_does_not_force_finalize_cleared_accumulator(
+        self, fake_job_factory
+    ):
+        """Regression test for #1016.
+
+        A finalize error keeps a job pending for retry. If a run-transition reset
+        then clears the accumulator, the retry must not force-finalize the empty
+        accumulator into a spurious zero-valued result with start_time=None.
+        """
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(_make_config("test_source"))
+
+        # Activate + push active primary data, then induce a finalize error so the
+        # job stays pending for retry.
+        manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="test_source"): sc.scalar(42.0)},
+            )
+        )
+        processor = fake_job_factory.processors[job_id]
+        processor.should_fail_finalize = True
+        manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(201),
+                end_time=Timestamp.from_ns(250),
+                data={StreamId(name="test_source"): sc.scalar(24.0)},
+            )
+        )
+
+        # Schedule a run-transition reset, then deliver a batch with no active
+        # primary data whose end time fires the reset.
+        manager.on_run_start(
+            RunStart(run_name="run2", start_time=Timestamp.from_ns(300))
+        )
+        processor.should_fail_finalize = False
+        _, results = manager.process_jobs(
+            WorkflowData(
+                start_time=Timestamp.from_ns(350),
+                end_time=Timestamp.from_ns(400),
+                data={},
+            )
+        )
+
+        # No result is emitted from the cleared accumulator.
+        assert results == []
+        assert manager.get_job_status(job_id).state == JobState.active
 
     def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
         """Test that warnings from None values in results are tracked in job status."""
@@ -2571,3 +2626,74 @@ class TestContextStreamGate:
         manager.job_command(JobCommand(action=JobAction.stop))
 
         assert manager.get_job_status(job_id) is None
+
+    def test_job_command_stop_by_workflow_reaches_scheduled_job(self, fake_job_factory):
+        """A `job_command` targeting a workflow_id stops not-yet-active jobs.
+
+        Without this, a scheduled job survives the stop and later activates as a
+        zombie the user believes was stopped.
+        """
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        config = _make_config(
+            "test_source",
+            schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
+        )
+        job_id = manager.schedule_job(config)
+
+        manager.job_command(
+            JobCommand(workflow_id=config.identifier, action=JobAction.stop)
+        )
+
+        assert manager.get_job_status(job_id) is None
+        # Reaching the start time must not resurrect the job.
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(250),
+                end_time=Timestamp.from_ns(300),
+                data={StreamId(name="test_source"): sc.scalar(42.0)},
+            )
+        )
+        assert len(manager.active_jobs) == 0
+
+    def test_job_command_broadcast_stop_reaches_scheduled_job(self, fake_job_factory):
+        """Broadcast `job_command` without job_id/workflow_id stops scheduled jobs."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(
+            _make_config(
+                "test_source",
+                schedule=JobSchedule(start_time=Timestamp.from_ns(200)),
+            )
+        )
+
+        manager.job_command(JobCommand(action=JobAction.stop))
+
+        assert manager.get_job_status(job_id) is None
+
+    def test_job_command_returns_matched_job_count(self, fake_job_factory):
+        """`job_command` reports how many jobs it acted on.
+
+        A worker that owns none of the targeted jobs returns zero, letting the
+        adapter stay silent instead of spuriously acknowledging a selector-keyed
+        command handled by another worker.
+        """
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
+        target = WorkflowId(instrument="test", name="wf_a", version=1)
+        manager.schedule_job(_make_config("source1", name="wf_a"))
+        manager.schedule_job(_make_config("source2", name="wf_a"))
+        manager.schedule_job(_make_config("source3", name="wf_b"))
+
+        assert (
+            manager.job_command(JobCommand(workflow_id=target, action=JobAction.reset))
+            == 2
+        )
+        absent = WorkflowId(instrument="test", name="absent", version=1)
+        assert (
+            manager.job_command(JobCommand(workflow_id=absent, action=JobAction.reset))
+            == 0
+        )

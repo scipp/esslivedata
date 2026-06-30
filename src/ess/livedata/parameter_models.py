@@ -9,12 +9,21 @@ frontend.
 """
 
 import json
+import math
 from abc import ABC
 from enum import StrEnum
 from pathlib import Path
 
 import scipp as sc
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# One pulse period of the 14 Hz ESS source, in milliseconds (1000 / 14 ≈ 71.43).
+# Used as the default upper edge for time-of-arrival histograms: a single pulse
+# period is the natural span for events measured relative to the source pulse.
+# Rounded *up* to 2 decimals for a clean default: as the histogram's upper edge
+# it must not fall below the true period, or events in the final sliver would be
+# silently dropped.
+ESS_PULSE_PERIOD_MS = math.ceil(1000.0 / 14 * 100) / 100
 
 
 def parse_number_list(value: str) -> list[float]:
@@ -89,13 +98,11 @@ class EdgesModel(BaseModel, ABC):
             raise ValueError('stop must be greater than start')
         return v
 
-    @field_validator('start')
-    @classmethod
-    def start_must_be_positive_if_log(cls, v, info):
-        log = info.data.get('log')
-        if log and v <= 0:
-            raise ValueError('start must be positive if log is True')
-        return v
+    @model_validator(mode='after')
+    def start_must_be_positive_if_log(self):
+        if self.scale == Scale.LOG and self.start <= 0:
+            raise ValueError("start must be positive when scale is 'log'")
+        return self
 
 
 class TimeUnit(StrEnum):

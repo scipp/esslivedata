@@ -10,7 +10,7 @@ from enum import StrEnum
 import pydantic
 
 
-class WindowMode(enum.StrEnum):
+class TimeWindowMode(enum.StrEnum):
     """Enumeration of extraction modes.
 
     - ``since_start``: latest cumulative value (subscribes to the
@@ -195,11 +195,11 @@ class LayoutParams(pydantic.BaseModel):
     )
 
 
-class WindowParams(pydantic.BaseModel):
-    """Parameters for windowing and aggregation."""
+class TimeWindowParams(pydantic.BaseModel):
+    """Parameters for time-windowing and aggregation."""
 
-    mode: WindowMode = pydantic.Field(
-        default=WindowMode.window,
+    mode: TimeWindowMode = pydantic.Field(
+        default=TimeWindowMode.window,
         description=(
             "Extraction mode: 'since_start' for the cumulative value since the "
             "run started, 'window' for the most recent update plus optional "
@@ -289,39 +289,36 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
-_WINDOW_DESCRIPTION = (
-    "The live reduction emits a new result roughly once per second "
-    "(longer for heavy workflows or under heavy load). The window "
-    "duration sets how much recent history the dashboard aggregates "
-    "for display; it does not affect what or how often the reduction "
-    "emits."
-    "<br><br>"
-    "The window duration is a target, not a guarantee: the aggregation "
-    "time range always covers at least one cadence interval, and will "
-    "differ from the requested duration when it does not align with "
-    "the reduction's current cadence. To compare values across "
-    "different cadences or window durations, enable 'Counts Per Second' "
-    "in the 'Rate' tab."
-)
+class TimeWindowMixin(pydantic.BaseModel):
+    """Mixin adding a time-windowing/aggregation section to plot parameters."""
+
+    time_window: TimeWindowParams = pydantic.Field(
+        default_factory=TimeWindowParams,
+        description=(
+            "The live reduction emits a new result roughly once per second "
+            "(longer for heavy workflows or under heavy load). The window "
+            "duration sets how much recent history the dashboard aggregates "
+            "for display; it does not affect what or how often the reduction "
+            "emits."
+            "<br><br>"
+            "The window duration is a target, not a guarantee: the aggregation "
+            "time range always covers at least one cadence interval, and will "
+            "differ from the requested duration when it does not align with "
+            "the reduction's current cadence. To compare values across "
+            "different cadences or window durations, enable 'Counts Per Second' "
+            "in the 'Rate' tab."
+        ),
+        title="Time Window",
+    )
 
 
-_TIMESERIES_DOWNSAMPLING_DESCRIPTION = (
-    "Controls how much detail this plot shows over the lifetime of the run. "
-    "Performance depends on the total number of points displayed: too many "
-    "and the plot - and the rest of the dashboard - becomes sluggish."
-    "<br><br>"
-    "The plot keeps a trailing <em>Recent</em> window at <em>Fine Period</em> "
-    "resolution, plus a coarser band at <em>Coarse Period</em> that extends "
-    "the rest of the run's history (set <em>Coarse Period</em> to 0 to drop "
-    "older data instead)."
-    "<br><br>"
-    "Aim to keep the total under a few thousand points for smooth plots. "
-    "Some examples for a 1 Hz source: the defaults (1 s / 1 h / 5 min) stay "
-    "near 4 000 points regardless of run length; raising <em>Recent "
-    "Window</em> to 12 h at 1 s <em>Fine Period</em> adds about 43 000 points "
-    "- likely too many; for week-long runs, a <em>Coarse Period</em> of 1 h "
-    "keeps the count below 4 000."
-)
+class RateMixin(pydantic.BaseModel):
+    """Mixin adding a rate-normalization section to plot parameters."""
+
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
+    )
 
 
 class TimeseriesDownsamplingParams(pydantic.BaseModel):
@@ -357,60 +354,59 @@ class TimeseriesDownsamplingParams(pydantic.BaseModel):
     )
 
 
+class TimeseriesScaleParams(pydantic.BaseModel):
+    """Axis scaling for the timeseries plotter.
+
+    The x-axis is always an absolute datetime axis, on which log scale is
+    meaningless (it would depend on the arbitrary epoch zero), so only the
+    y-axis scale is offered.
+    """
+
+    y_scale: PlotScale = pydantic.Field(
+        default=PlotScale.linear, description="Scale for y-axis", title="Y Axis Scale"
+    )
+
+
 class PlotParamsTimeseries(PlotDisplayParams1d):
     """Parameters for the timeseries plotter (downsampling + display)."""
 
+    plot_scale: TimeseriesScaleParams = pydantic.Field(
+        default_factory=TimeseriesScaleParams,
+        description="Scaling options for the plot axes.",
+    )
     downsampling: TimeseriesDownsamplingParams = pydantic.Field(
         default_factory=TimeseriesDownsamplingParams,
-        description=_TIMESERIES_DOWNSAMPLING_DESCRIPTION,
+        description=(
+            "Controls how much detail this plot shows over the lifetime of the "
+            "run. Performance depends on the total number of points displayed: "
+            "too many and the plot - and the rest of the dashboard - becomes "
+            "sluggish."
+            "<br><br>"
+            "The plot keeps a trailing <em>Recent</em> window at <em>Fine "
+            "Period</em> resolution, plus a coarser band at <em>Coarse "
+            "Period</em> that extends the rest of the run's history (set "
+            "<em>Coarse Period</em> to 0 to drop older data instead)."
+            "<br><br>"
+            "Aim to keep the total under a few thousand points for smooth plots. "
+            "Some examples for a 1 Hz source: the defaults (1 s / 1 h / 5 min) "
+            "stay near 4 000 points regardless of run length; raising <em>Recent "
+            "Window</em> to 12 h at 1 s <em>Fine Period</em> adds about 43 000 "
+            "points - likely too many; for week-long runs, a <em>Coarse "
+            "Period</em> of 1 h keeps the count below 4 000."
+        ),
     )
 
 
-class PlotParams1d(PlotDisplayParams1d):
+class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
 
-
-class PlotParams2d(PlotDisplayParams2d):
+class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
 
-
-class PlotParams3d(PlotParamsBase):
-    """Parameters for 3D slicer plots."""
-
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-    )
-    plot_scale: PlotScaleParams2d = pydantic.Field(
-        default_factory=PlotScaleParams2d,
-        description="Scaling options for the plot axes and color.",
-    )
-    ticks: TickParams = pydantic.Field(
-        default_factory=TickParams,
-        description="Tick configuration for plot axes.",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
+class PlotParams3d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
+    """Parameters for 3D slicer plots (renders a 2D slice)."""
 
 
 class BarOrientation(pydantic.BaseModel):
@@ -423,20 +419,12 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(PlotParamsBase):
+class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-    )
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
     )
 
 
@@ -477,18 +465,10 @@ class TableFormatParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsTable(PlotParamsBase):
+class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for tabular display of 0D scalar data."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-    )
     format: TableFormatParams = pydantic.Field(
         default_factory=TableFormatParams,
         description="Number formatting for table value columns.",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
     )

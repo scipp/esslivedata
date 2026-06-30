@@ -6,9 +6,9 @@
             "max": 90.0,
             "step": 0.1,
             "initial": 0.0,
-            "value_stream": "detector_tank_angle_r0_value",
-            "target_stream": "detector_tank_angle_r0_target_value",
-            "idle_stream": "detector_tank_angle_r0_idle_flag",
+            "value_stream": "detector_tank_angle_r0/value",
+            "target_stream": "detector_tank_angle_r0/target_value",
+            "idle_stream": "detector_tank_angle_r0/idle_flag",
             "ramp_seconds": 2.0
         },
         {
@@ -17,10 +17,118 @@
             "max": 360.0,
             "step": 5.0,
             "initial": 0.0,
-            "value_stream": "rotation_stage_value",
-            "target_stream": "rotation_stage_target_value",
-            "idle_stream": "rotation_stage_idle_flag",
+            "value_stream": "rotation_stage/value",
+            "target_stream": "rotation_stage/target_value",
+            "idle_stream": "rotation_stage/idle_flag",
             "ramp_seconds": 2.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper_1/rotation_speed_setpoint",
+            "label": "PSC 1 speed setpoint (Hz)",
+            "min": 14.0,
+            "max": 210.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper_2/rotation_speed_setpoint",
+            "label": "PSC 2 speed setpoint (Hz)",
+            "min": 14.0,
+            "max": 210.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "frame_overlap_chopper_1/rotation_speed_setpoint",
+            "label": "FOC 1 speed setpoint (Hz, fixed)",
+            "min": 14.0,
+            "max": 14.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "frame_overlap_chopper_2/rotation_speed_setpoint",
+            "label": "FOC 2 speed setpoint (Hz, fixed)",
+            "min": 14.0,
+            "max": 14.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "bandwidth_chopper_1/rotation_speed_setpoint",
+            "label": "BWC 1 speed setpoint (Hz, fixed)",
+            "min": 14.0,
+            "max": 14.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "bandwidth_chopper_2/rotation_speed_setpoint",
+            "label": "BWC 2 speed setpoint (Hz, fixed)",
+            "min": 14.0,
+            "max": 14.0,
+            "step": 14.0,
+            "initial": 14.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper_1/delay",
+            "label": "PSC 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 8000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "pulse_shaping_chopper_2/delay",
+            "label": "PSC 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 10000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "frame_overlap_chopper_1/delay",
+            "label": "FOC 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 12000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "frame_overlap_chopper_2/delay",
+            "label": "FOC 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 14000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "bandwidth_chopper_1/delay",
+            "label": "BWC 1 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 16000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
+        },
+        {
+            "stream_name": "bandwidth_chopper_2/delay",
+            "label": "BWC 2 delay readback (ns)",
+            "min": 0.0,
+            "max": 71428000.0,
+            "step": 100000.0,
+            "initial": 18000000.0,
+            "noise_stddev": 100.0,
+            "publish_rate_hz": 5.0
         }
     ]
 }

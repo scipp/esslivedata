@@ -17,6 +17,7 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plotting_controller import (
     PlottingController,
     output_view_supports_windowing,
+    since_start_available,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -491,7 +492,7 @@ class TestOverlayPatterns:
 
 
 class TestOutputViewSupportsWindowing:
-    def test_true_when_view_has_per_update_stream(self) -> None:
+    def test_true_when_view_has_both_streams(self) -> None:
         from typing import ClassVar
 
         from ess.livedata.config.workflow_spec import OutputView
@@ -559,6 +560,37 @@ class TestOutputViewSupportsWindowing:
         )
         assert output_view_supports_windowing(spec, 'i_of_q') is False
 
+    def test_true_for_per_update_only_view(self) -> None:
+        # A per_update-only view still supports the duration/aggregation controls;
+        # the since_start mode is rejected at config time, not by hiding controls.
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='total',
+                    title='Total',
+                    streams={'per_update': 'counts_total'},
+                ),
+            )
+            counts_total: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=Outputs,
+            params=None,
+            group=REDUCTION,
+        )
+        assert output_view_supports_windowing(spec, 'total') is True
+
     def test_true_when_view_unknown(self) -> None:
         class Outputs(WorkflowOutputsBase):
             result: sc.DataArray = pydantic.Field(title='Result')
@@ -577,6 +609,63 @@ class TestOutputViewSupportsWindowing:
         assert output_view_supports_windowing(spec, 'result') is False
         # Unknown view name → True (be permissive).
         assert output_view_supports_windowing(spec, 'nonexistent') is True
+
+
+class TestSinceStartAvailable:
+    def _spec(self, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:
+        return WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            outputs=outputs,
+            params=None,
+            group=REDUCTION,
+        )
+
+    def test_true_when_view_has_since_start_stream(self) -> None:
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='total',
+                    title='Total',
+                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                ),
+            )
+            cumulative: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+            current: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+
+        spec = self._spec(Outputs)
+        assert since_start_available(spec, 'total') is True
+
+    def test_false_for_per_update_only_view(self) -> None:
+        from typing import ClassVar
+
+        from ess.livedata.config.workflow_spec import OutputView
+
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(
+                    name='total', title='Total', streams={'per_update': 'counts_total'}
+                ),
+            )
+            counts_total: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+
+        spec = self._spec(Outputs)
+        assert since_start_available(spec, 'total') is False
+        # Unknown view name → permissive.
+        assert since_start_available(spec, 'nonexistent') is True
 
 
 class TestCreateExtractorsFromParams:
@@ -598,37 +687,41 @@ class TestCreateExtractorsFromParams:
         import uuid as _uuid  # noqa: F401  (avoid masking)
 
         from ess.livedata.dashboard.extractors import LatestValueExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.since_start)
+        params = TimeWindowParams(mode=TimeWindowMode.since_start)
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_with_zero_duration_uses_latest_value_extractor(self) -> None:
         from ess.livedata.dashboard.extractors import LatestValueExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.window, window_duration_seconds=0.0)
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=0.0
+        )
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_uses_window_aggregating_extractor(self) -> None:
         from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.window, window_duration_seconds=5.0)
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=5.0
+        )
         extractors = create_extractors_from_params(keys, params)
         assert all(
             isinstance(e, WindowAggregatingExtractor) for e in extractors.values()

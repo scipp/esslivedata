@@ -3,7 +3,7 @@
 from typing import Generic, TypeVar
 
 from .core import Message
-from .core.message import STATUS_STREAM_ID
+from .core.message import RESPONSES_STREAM_ID, STATUS_STREAM_ID
 
 T = TypeVar('T')
 
@@ -29,16 +29,18 @@ class FakeMessageSink(Generic[T]):
     """
     A fake message sink that stores messages in memory for testing purposes.
 
-    Provides two views of published messages:
+    Provides several views of published messages:
     - published_messages: Each publish_messages() call stored as a separate batch
-    - messages: Flattened list of all non-status messages
+    - messages: Flattened list of all data messages
     - status_messages: Flattened list of all status messages
+    - response_messages: Flattened list of all command-acknowledgement messages
     """
 
     def __init__(self) -> None:
         self.published_messages: list[list[Message[T]]] = []
         self.messages: list[Message[T]] = []
         self.status_messages: list[Message[T]] = []
+        self.response_messages: list[Message[T]] = []
 
     def publish_messages(self, messages: list[Message[T]]) -> None:
         # Store batch as-is
@@ -47,5 +49,7 @@ class FakeMessageSink(Generic[T]):
         for msg in messages:
             if msg.stream == STATUS_STREAM_ID:
                 self.status_messages.append(msg)
+            elif msg.stream == RESPONSES_STREAM_ID:
+                self.response_messages.append(msg)
             else:
                 self.messages.append(msg)

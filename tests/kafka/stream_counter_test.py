@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from ess.livedata.core.job import StreamStat, StreamStatsProvider
+import logging
+
+from ess.livedata.core.job import (
+    LAG_FUTURE_TOLERANCE_S,
+    LAG_WARN_THRESHOLD_S,
+    StreamStat,
+    StreamStatsProvider,
+)
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.kafka.stream_mapping import InputStreamKey
 
 
 class TestStreamCounter:
@@ -96,3 +104,115 @@ class TestStreamCounter:
         counter.record("other_topic", "PV.RBV", "resolved")
         stats = counter.drain(window_seconds=30.0)
         assert len(stats.streams) == 1
+
+    def test_drops_out_of_scope_streams(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="other_pv.RBV")]
+        )
+        counter.record("logs", "other_pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == ()
+
+    def test_genuinely_unmapped_still_recorded_with_out_of_scope_set(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="other_pv.RBV")]
+        )
+        counter.record("logs", "unexpected_pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].source_name == "unexpected_pv.RBV"
+        assert stats.streams[0].stream is None
+
+    def test_out_of_scope_match_is_topic_specific(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="pv.RBV")]
+        )
+        counter.record("other_topic", "pv.RBV", None)
+        stats = counter.drain(window_seconds=30.0)
+        assert len(stats.streams) == 1
+        assert stats.streams[0].topic == "other_topic"
+
+
+class TestStreamCounterLag:
+    def test_drain_lag_empty_returns_none(self) -> None:
+        assert StreamCounter().drain_lag() is None
+
+    def test_aggregates_min_max_count_per_key(self) -> None:
+        counter = StreamCounter()
+        for lag in (1.0, 3.0, 2.0):
+            counter.record_lag("topic_a", "source_1", "ev44", lag)
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert (entry.topic, entry.source, entry.schema) == (
+            "topic_a",
+            "source_1",
+            "ev44",
+        )
+        assert (entry.min_s, entry.max_s, entry.count) == (1.0, 3.0, 3)
+
+    def test_distinct_keys_by_topic_source_schema(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", 1.0)
+        counter.record_lag("t", "s", "da00", 1.0)
+        counter.record_lag("t", "other", "ev44", 1.0)
+        report = counter.drain_lag()
+        assert report is not None
+        assert len(report.streams) == 3
+
+    def test_drain_lag_resets(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", 1.0)
+        counter.drain_lag()
+        assert counter.drain_lag() is None
+
+    def test_streams_ordered_by_key(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t_b", "s", "ev44", 1.0)
+        counter.record_lag("t_a", "s", "f144", 1.0)
+        counter.record_lag("t_a", "s", "ev44", 1.0)
+        report = counter.drain_lag()
+        assert report is not None
+        keys = [(s.topic, s.source, s.schema) for s in report.streams]
+        assert keys == [
+            ("t_a", "s", "ev44"),
+            ("t_a", "s", "f144"),
+            ("t_b", "s", "ev44"),
+        ]
+
+    def test_ignores_epics_noise_suffixes(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("motion", "PV.DMOV", "f144", 1.0)
+        counter.record_lag("motion", "PV.VAL", "f144", 1.0)
+        counter.record_lag("motion", "PV.RBV", "f144", 1.0)
+        report = counter.drain_lag()
+        assert report is not None
+        assert [s.source for s in report.streams] == ["PV.RBV"]
+
+    def _level(self, lag_s: float) -> int:
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", lag_s)
+        report = counter.drain_lag()
+        assert report is not None
+        return report.level(report.streams[0])
+
+    def test_level_info_for_small_positive_lag(self) -> None:
+        assert self._level(0.5) == logging.INFO
+
+    def test_level_warning_above_threshold(self) -> None:
+        assert self._level(LAG_WARN_THRESHOLD_S + 0.1) == logging.WARNING
+
+    def test_level_error_for_future_payload(self) -> None:
+        assert self._level(-(LAG_FUTURE_TOLERANCE_S + 0.1)) == logging.ERROR
+
+    def test_small_negative_within_tolerance_stays_info(self) -> None:
+        assert self._level(-LAG_FUTURE_TOLERANCE_S / 2) == logging.INFO
+
+    def test_level_is_per_stream(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t", "stale", "ev44", LAG_WARN_THRESHOLD_S + 5)
+        counter.record_lag("t", "future", "ev44", -(LAG_FUTURE_TOLERANCE_S + 1))
+        report = counter.drain_lag()
+        assert report is not None
+        by_source = {lag.source: report.level(lag) for lag in report.streams}
+        assert by_source == {"stale": logging.WARNING, "future": logging.ERROR}

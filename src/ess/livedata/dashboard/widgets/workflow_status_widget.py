@@ -14,6 +14,7 @@ Provides a collapsible card for each workflow showing:
 
 from __future__ import annotations
 
+import html
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -660,6 +661,21 @@ class WorkflowStatusWidget:
             margin=(0, 0, 4, 0),
         )
 
+    def _output_chip_tooltip(self, view) -> str:
+        """Build the hover tooltip for an output chip.
+
+        Combines the output description with the workflow parameters that
+        shape it, so the user can see at a glance what each output is and
+        which knobs control it.
+        """
+        parts: list[str] = []
+        if view.description:
+            parts.append(view.description)
+        titles = self._workflow_spec.get_output_param_titles(view.name)
+        if titles:
+            parts.append(f"Controlled by: {', '.join(titles)}")
+        return '\n\n'.join(parts)
+
     def _create_outputs_section(self) -> pn.Column:
         """Create the outputs section with chips."""
         if self._workflow_spec.outputs is None:
@@ -671,8 +687,10 @@ class WorkflowStatusWidget:
             chip_bg = WorkflowWidgetStyles.OUTPUT_CHIP_BG
             chip_border = WorkflowWidgetStyles.OUTPUT_CHIP_BORDER
             chip_text = WorkflowWidgetStyles.OUTPUT_CHIP_TEXT
+            tooltip = self._output_chip_tooltip(view)
+            title_attr = f' title="{html.escape(tooltip)}"' if tooltip else ''
             chips_html += (
-                f'<span style="display: inline-flex; align-items: center; '
+                f'<span{title_attr} style="display: inline-flex; align-items: center; '
                 f'padding: 4px 10px; background: {chip_bg}; '
                 f'border: 1px solid {chip_border}; '
                 f'border-radius: 16px; font-size: 12px; '

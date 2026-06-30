@@ -9,6 +9,7 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 
@@ -42,6 +43,15 @@ from .plot_grid_manager import PlotGridManager
 from .styles import Colors
 
 logger = structlog.get_logger(__name__)
+
+# Cadence for advancing the freshness pill while no new data arrives. Between
+# data frames the pill only ages a stalled stream, which carries no new
+# information, so we refresh it at most this often rather than every poll tick.
+# Kept comfortably above the backend's ~1 s publish cadence so that for a
+# healthy stream each data flush resets the timer before it fires: the stall
+# path then never triggers and the pill updates once per frame, avoiding a
+# beat between the flush and the timer that would double-update the age.
+_FRESHNESS_STALL_INTERVAL_S = 2.0
 
 
 class _BatchedTabs(pn.Tabs):
@@ -122,6 +132,15 @@ class PlotGridTabs:
         # updated in place by the poll loop (freshness pill, layer time labels).
         # Rebuilt on cell/layer changes; disposed when the cell goes away.
         self._cells: dict[CellId, CellWidget] = {}
+
+        # Gate state for coalescing plot-data flushes (see _poll_for_plot_updates).
+        # The data push runs only when a new data-burst frame is ready or the
+        # visible tab changed; -1 forces a flush on the first poll.
+        self._last_flushed_generation: int = -1
+        self._last_active_grid_id: GridId | None = None
+        # Wall-clock (monotonic) of the last freshness-pill refresh, throttling
+        # the stall-aging path between data frames.
+        self._last_freshness_update: float = 0.0
 
         # Shared dependencies handed to every CellWidget. Built once; the
         # callbacks route modal interactions back here (modal container lives
@@ -615,6 +634,20 @@ class PlotGridTabs:
         active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         active_grid_id = self._get_active_grid_id()
 
+        # Flush plot data only when a new data-burst frame is ready for the
+        # visible tab (so all its layers from one burst repaint in a single
+        # frame, never staggered across poll ticks) or when the visible tab
+        # changed (newly shown cells must render their latest data without
+        # waiting for the next frame). Scoping the generation per grid means
+        # data arriving for another session's tab does not wake this session.
+        # The cheap per-tick work below -- version/lifecycle scan, layer
+        # activation, freshness-pill aging -- always runs so it stays responsive.
+        generation = self._orchestrator.frame_generation(active_grid_id)
+        flush_due = (
+            generation != self._last_flushed_generation
+            or active_grid_id != self._last_active_grid_id
+        )
+
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.peek_grid(grid_id)
             if grid_config is None or not grid_config.enabled:
@@ -655,9 +688,6 @@ class PlotGridTabs:
                         # New layer → rebuild cell
                         cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
-                        if is_active:
-                            session_layer.update_pipe()
-
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
                             cells_to_rebuild[cell_id] = (cell, plot_grid)
@@ -669,6 +699,13 @@ class PlotGridTabs:
                     self._orchestrator.activate_layer(
                         layer_id, session_layer, is_active
                     )
+
+                    # Push pending data to the browser. Runs after activate_layer
+                    # so a tab-switch 0→1 build is sent on this same tick. Gated
+                    # on flush_due to coalesce a burst's layers into one frame;
+                    # no-op anyway unless the presenter has a pending update.
+                    if is_active and flush_due:
+                        session_layer.update_pipe()
 
         # Clean up orphaned session layers (removed from orchestrator). Per-cell
         # widget state (freshness/time panes, autoscale) is swept on cell rebuild
@@ -700,15 +737,33 @@ class PlotGridTabs:
 
         # Refresh the freshness/lag indicator for active-grid cells. Runs after
         # rebuilds so cells recreated this poll update their fresh pane handle.
-        # Lag is recomputed against the current wall clock every poll, so a
-        # stalled stream visibly grows stale rather than freezing.
+        # The pill refreshes in step with the data flush (so it reads the actual
+        # lag of the frame just shown) and otherwise only on the slow stall
+        # cadence -- ticking it every poll just animates aging with no new info.
+        # The per-layer time/lag row only changes on a new frame, so it tracks
+        # the data flush too.
+        now_mono = time.monotonic()
+        stalled = now_mono - self._last_freshness_update
+        freshness_due = flush_due or stalled >= _FRESHNESS_STALL_INTERVAL_S
+        if freshness_due:
+            self._last_freshness_update = now_mono
         for cell_id, per_layer in active_cell_bounds.items():
             cell_widget = self._cells.get(cell_id)
             if cell_widget is None:
                 continue
-            cell_widget.update_freshness(list(per_layer.values()))
-            for layer_id, bounds in per_layer.items():
-                cell_widget.update_layer_time(layer_id, bounds)
+            if freshness_due:
+                cell_widget.update_freshness(list(per_layer.values()))
+            if flush_due:
+                for layer_id, bounds in per_layer.items():
+                    cell_widget.update_layer_time(layer_id, bounds)
+
+        # Record gate state for the next poll. Only advance the flushed
+        # generation when we actually flushed (flush_due), so a tab change that
+        # piggybacks on an unchanged generation does not suppress the flush for
+        # the next genuine frame.
+        if flush_due:
+            self._last_flushed_generation = generation
+        self._last_active_grid_id = active_grid_id
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and clean up session state."""

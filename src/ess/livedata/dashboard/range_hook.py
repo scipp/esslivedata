@@ -20,44 +20,74 @@ Axis = Literal['x', 'y', 'c']
 RangeTargets = dict[Axis, tuple[float, float]]
 
 
-def _coerce_to(value: float, reference: Any) -> Any:
-    """Coerce a float target to ``reference``'s type for assignment.
+def _to_ns_float(value: Any) -> float:
+    """Normalize a datetime range value to an epoch-nanosecond float.
 
-    Bokeh stores datetime axis ranges as ``np.datetime64`` (matching the unit
-    of the source coord). Range targets are computed in float space (epoch
-    counts for datetime coords; see ``plots._finite_min_max``), so on a
-    datetime axis a raw float would mix incompatible numpy dtypes -- both the
-    ordering comparison below and Bokeh's range patch raise a ``UFuncTypeError``
-    ('less_equal' loop missing for datetime64/float). Cast back to a datetime64
-    of the same unit so the value round-trips and stays comparable.
+    A datetime axis bound is ``np.datetime64`` on a fresh render but a plain
+    float after an interactive zoom: Bokeh holds datetime axes in epoch
+    *milliseconds* on the JS side, so a range that round-trips through the
+    browser comes back as an epoch-ms float. Normalize both forms to epoch-ns
+    floats so ordering comparisons never mix datetime64 with float (which
+    raises ``UFuncTypeError``).
     """
-    if isinstance(reference, np.datetime64):
-        return np.datetime64(round(value), np.datetime_data(reference)[0])
-    return value
+    if isinstance(value, np.datetime64):
+        return float(value.astype('datetime64[ns]').astype('int64'))
+    return value * 1e6  # epoch-ms -> epoch-ns
 
 
 def _ordered_write(
-    model: Any, lo: float, hi: float, lo_attr: str, hi_attr: str
+    model: Any, lo: float, hi: float, lo_attr: str, hi_attr: str, *, datetime: bool
 ) -> None:
     """Set ``(lo_attr, hi_attr)`` on ``model`` without ever inverting them.
 
-    Bokeh's ``Document.hold`` is imperative (paired with ``unhold``), not a
-    context manager, so we cannot batch the two writes into one PATCH-DOC
-    dispatch without owning the document state. Instead, order the writes so
-    ``lo <= hi`` holds after each individual property set: when the new high
-    is above the current high, write the high first; otherwise write the low
-    first.
+    The two writes are ordered so ``lo <= hi`` holds after each individual
+    property set: when the new high is above the current high, write the high
+    first; otherwise write the low first. This guards renders that run outside
+    a document hold, where each set dispatches its own PATCH-DOC and a stale
+    intermediate could momentarily invert the range. Per-tick autoscale writes
+    do run under ``session_updater._batched_update`` (``pn.io.hold`` +
+    ``doc.models.freeze``), which collapses both sets into one frame, so the
+    ordering is belt-and-suspenders there rather than load-bearing.
+
+    On a datetime axis the float targets are epoch *nanoseconds* by contract
+    (see ``plots._finite_min_max``); they are cast back to ``np.datetime64[ns]``
+    so Bokeh's range patch does not mix incompatible numpy dtypes. The unit is
+    fixed at ns rather than copied from the current bound: the target is an
+    ns count, so interpreting it in any other unit would corrupt the value.
+    ``datetime`` is decided from the figure's axis type, not the current bound's
+    dtype: after a zoom the bound is an epoch-ms float, yet the axis is still
+    datetime.
     """
     current_hi = getattr(model, hi_attr, None)
-    lo = _coerce_to(lo, current_hi)
-    hi = _coerce_to(hi, current_hi)
-    write_hi_first = current_hi is None or hi >= current_hi
-    if write_hi_first:
-        setattr(model, hi_attr, hi)
-        setattr(model, lo_attr, lo)
+    if datetime:
+        lo_value: Any = np.datetime64(round(lo), 'ns')
+        hi_value: Any = np.datetime64(round(hi), 'ns')
+        write_hi_first = current_hi is None or _to_ns_float(hi_value) >= _to_ns_float(
+            current_hi
+        )
     else:
-        setattr(model, lo_attr, lo)
-        setattr(model, hi_attr, hi)
+        lo_value, hi_value = lo, hi
+        write_hi_first = current_hi is None or hi >= current_hi
+    if write_hi_first:
+        setattr(model, hi_attr, hi_value)
+        setattr(model, lo_attr, lo_value)
+    else:
+        setattr(model, lo_attr, lo_value)
+        setattr(model, hi_attr, hi_value)
+
+
+def _axis_is_datetime(plot: Any, axis: Axis) -> bool:
+    """Whether ``plot``'s ``x``/``y`` axis renders datetime values.
+
+    Detected from the Bokeh figure's axis type rather than the current range
+    bound's dtype: the bound is ``np.datetime64`` only until the first
+    interactive zoom, after which Bokeh replaces it with an epoch-ms float.
+    """
+    from bokeh.models import DatetimeAxis
+
+    state = getattr(plot, 'state', None)
+    axes = getattr(state, 'xaxis' if axis == 'x' else 'yaxis', None)
+    return any(isinstance(a, DatetimeAxis) for a in axes or ())
 
 
 class RangeHandles:
@@ -115,10 +145,16 @@ class RangeHandles:
             mapper = cls.color_mapper(plot)
             if mapper is None:
                 return False
-            _ordered_write(mapper, lo, hi, 'low', 'high')
+            _ordered_write(mapper, lo, hi, 'low', 'high', datetime=False)
             return True
         handle = cls.x_range(plot) if axis == 'x' else cls.y_range(plot)
         if handle is None:
             return False
-        _ordered_write(handle, lo, hi, 'start', 'end')
+        # The bound-dtype check is a fallback for figures without introspectable
+        # axis state (test stubs, non-HoloViews figures): a ``datetime64`` bound
+        # implies a datetime axis even when ``_axis_is_datetime`` cannot see it.
+        datetime = _axis_is_datetime(plot, axis) or isinstance(
+            getattr(handle, 'end', None), np.datetime64
+        )
+        _ordered_write(handle, lo, hi, 'start', 'end', datetime=datetime)
         return True

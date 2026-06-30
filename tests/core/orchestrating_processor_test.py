@@ -5,15 +5,18 @@ import uuid
 from typing import Any
 
 import pydantic
+import pytest
 import scipp as sc
 
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import (
     JobId,
     WorkflowConfig,
+    WorkflowId,
     WorkflowOutputsBase,
 )
 from ess.livedata.core.handler import Accumulator
+from ess.livedata.core.job import JobResult
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
     Message,
@@ -24,6 +27,7 @@ from ess.livedata.core.message_batcher import MessageBatch, NaiveMessageBatcher
 from ess.livedata.core.orchestrating_processor import (
     MessagePreprocessor,
     OrchestratingProcessor,
+    _job_result_to_message,
 )
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
@@ -371,3 +375,23 @@ class TestEmptyBatchContextReplay:
         processor.process()
         processor.process()
         assert self._data_messages(sink) == []
+
+
+class TestJobResultToMessage:
+    def _result(self, *, start_time: Timestamp | None) -> JobResult:
+        return JobResult(
+            job_id=JobId(source_name="det", job_number=uuid.uuid4()),
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
+            start_time=start_time,
+            end_time=start_time,
+            data=sc.DataGroup(),
+        )
+
+    def test_uses_result_start_time_as_timestamp(self):
+        message = _job_result_to_message(self._result(start_time=Timestamp.from_ns(42)))
+        assert message.timestamp == Timestamp.from_ns(42)
+
+    def test_raises_when_start_time_is_none(self):
+        """Regression test for #1016: never publish an epoch-0 fallback timestamp."""
+        with pytest.raises(ValueError, match="no start time"):
+            _job_result_to_message(self._result(start_time=None))

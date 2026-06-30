@@ -61,7 +61,9 @@ class DistanceResolution(pydantic.BaseModel):
     """Resolution of the distance axis in the lookup table."""
 
     value: float = pydantic.Field(default=0.1, description="Distance bin resolution.")
-    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+    unit: LengthUnit = pydantic.Field(
+        default=LengthUnit.METER, description="Unit of the distance resolution."
+    )
 
     def get(self) -> sc.Variable:
         return sc.scalar(self.value, unit=self.unit.value)
@@ -71,7 +73,9 @@ class TimeResolution(pydantic.BaseModel):
     """Resolution of the event-time-offset axis in the lookup table."""
 
     value: float = pydantic.Field(default=250.0, description="Time bin resolution.")
-    unit: TimeUnit = pydantic.Field(default=TimeUnit.MICROSECOND, description="Unit.")
+    unit: TimeUnit = pydantic.Field(
+        default=TimeUnit.MICROSECOND, description="Unit of the time resolution."
+    )
 
     def get(self) -> sc.Variable:
         return sc.scalar(self.value, unit=self.unit.value)
@@ -82,7 +86,9 @@ class LtotalRange(RangeModel):
 
     start: float = pydantic.Field(default=5.0, description="Shortest L_total.")
     stop: float = pydantic.Field(default=30.0, description="Longest L_total.")
-    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+    unit: LengthUnit = pydantic.Field(
+        default=LengthUnit.METER, description="Unit of the L_total range."
+    )
 
 
 class CascadeBands(pydantic.BaseModel):
@@ -101,7 +107,9 @@ class CascadeBands(pydantic.BaseModel):
         default='',
         description="Comma-separated distances from the source, e.g. '6.2, 9.8'.",
     )
-    unit: LengthUnit = pydantic.Field(default=LengthUnit.METER, description="Unit.")
+    unit: LengthUnit = pydantic.Field(
+        default=LengthUnit.METER, description="Unit of the cascade-band distances."
+    )
     num_bins: int = pydantic.Field(
         default=1000,
         ge=1,

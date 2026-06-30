@@ -389,7 +389,9 @@ class JobOrchestrator:
                 workflow_id,
                 state.current.job_number,
             )
-            # Create stop commands for all old jobs (no message_id - fire and forget)
+            # Fire-and-forget: each stop gets an auto-generated message_id the
+            # dashboard does not register, so the owning worker's ack is dropped.
+            # Reusing the start's message_id would inflate its tracked ack count.
             commands.extend(
                 JobCommand(job_id=job_id, action=JobAction.stop)
                 for job_id in state.current.job_ids()

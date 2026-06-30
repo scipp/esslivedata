@@ -483,6 +483,13 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         new = data['time', 0] if 'time' in data.dims else data
         accumulated = self._accumulated_coord_names(data)
 
+        # A shape change (e.g. the number of ROIs in an ROI-spectra output changes
+        # while the job runs) means the buffered series can no longer be extended;
+        # the buffer must reset. assign() below would raise on a shape mismatch, so
+        # guard against it and report a mismatch instead.
+        if new.sizes != self._reference.sizes:
+            return False
+
         template = new.assign(self._reference.data)
         template = template.drop_coords(
             [name for name in accumulated if name in template.coords]

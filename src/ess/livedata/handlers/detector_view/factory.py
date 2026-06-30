@@ -24,6 +24,7 @@ from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
 from .types import (
+    DETECTOR_TRANSFORM,
     AccumulatedHistogram,
     CountsInRange,
     CountsTotal,
@@ -261,7 +262,14 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             )
 
-        cumulative, window = make_no_copy_accumulator_pair()
+        # Reset the cumulative histogram when the detector moves: summing across a
+        # move mixes incompatible geometries (geometric views shift screen bins;
+        # wavelength views shift the per-pixel wavelength calibration). The coord is
+        # stamped only for file-based sources, so this is a no-op for file-less
+        # logical TOA views, which stay valid across a move.
+        cumulative, window = make_no_copy_accumulator_pair(
+            reset_coord=DETECTOR_TRANSFORM
+        )
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},

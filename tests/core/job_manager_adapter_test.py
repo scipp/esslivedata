@@ -17,13 +17,15 @@ class FakeJobManager:
         self.job_command_calls: list[JobCommand] = []
         self.should_raise_key_error = False
         self.should_raise_exception = False
+        self.affected_count = 1
 
-    def job_command(self, command: JobCommand) -> None:
+    def job_command(self, command: JobCommand) -> int:
         self.job_command_calls.append(command)
         if self.should_raise_key_error:
             raise KeyError(f"Job {command.job_id} not found")
         if self.should_raise_exception:
             raise RuntimeError("Test exception")
+        return self.affected_count
 
 
 def _job_id() -> JobId:
@@ -51,13 +53,43 @@ class TestJobManagerAdapter:
         assert result.response == AcknowledgementResponse.ACK
         assert fake_job_manager.job_command_calls == [command]
 
-    def test_job_command_success_without_message_id(self, adapter, fake_job_manager):
-        """Test successful job command returns None when no message_id."""
-        command = JobCommand(action=JobAction.reset)
+    def test_job_command_workflow_id_no_match_does_not_ack(
+        self, adapter, fake_job_manager
+    ):
+        """A selector-keyed command that matches no local job stays silent even
+        with a message_id, so a non-owning service does not spuriously ack.
+
+        Unlike the job_id path (which raises KeyError when the job is absent), a
+        workflow_id-keyed command simply matches nothing on a worker that does not
+        own the workflow; the adapter must suppress the ack for the empty case.
+        """
+        from ess.livedata.config.workflow_spec import WorkflowId
+
+        fake_job_manager.affected_count = 0
+        command = JobCommand(
+            action=JobAction.reset,
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
+            message_id="test-msg-id",
+        )
         result = adapter.job_command(command)
 
         assert result is None
-        assert fake_job_manager.job_command_calls == [command]
+
+    def test_job_command_workflow_id_match_acks(self, adapter, fake_job_manager):
+        """The owning service (which matches >=1 job) acks a selector-keyed command."""
+        from ess.livedata.config.workflow_spec import WorkflowId
+
+        fake_job_manager.affected_count = 2
+        command = JobCommand(
+            action=JobAction.reset,
+            workflow_id=WorkflowId(instrument="test", name="wf", version=1),
+            message_id="test-msg-id",
+        )
+        result = adapter.job_command(command)
+
+        assert result is not None
+        assert result.message_id == "test-msg-id"
+        assert result.response == AcknowledgementResponse.ACK
 
     def test_job_command_key_error_silently_ignored(self, adapter, fake_job_manager):
         """Test that KeyError (job not found) is silently ignored.
@@ -89,15 +121,3 @@ class TestJobManagerAdapter:
         assert result.message_id == "test-msg-id"
         assert result.response == AcknowledgementResponse.ERR
         assert "Test exception" in result.message
-
-    def test_job_command_other_exception_without_message_id_returns_none(
-        self, adapter, fake_job_manager
-    ):
-        """Test that exceptions without message_id return None."""
-        fake_job_manager.should_raise_exception = True
-
-        command = JobCommand(action=JobAction.stop)
-        result = adapter.job_command(command)
-
-        # No message_id means no response even on error
-        assert result is None

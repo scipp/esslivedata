@@ -28,7 +28,9 @@ def make_reduction_service_builder(
 
     scoped = scope_stream_mapping(instrument_config, stream_mapping, 'data_reduction')
 
-    stream_counter = StreamCounter()
+    stream_counter = StreamCounter(
+        out_of_scope=stream_mapping.input_keys - scoped.input_keys
+    )
     adapter = (
         RoutingAdapterBuilder(stream_mapping=scoped, stream_counter=stream_counter)
         .with_routes_from_mapping()
