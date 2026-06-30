@@ -553,7 +553,11 @@ class TestManualColorLimitsDropAutoscaleC:
         assert plotter.autoscale_axes == frozenset({'c'})
 
     def test_slicer_manual_drops_c(self):
-        params = PlotParams3d(plot_scale=PlotScaleParams2d(manual_color_limits=True))
+        params = PlotParams3d(
+            plot_scale=PlotScaleParams2d(
+                color_scale=PlotScale.linear, manual_color_limits=True
+            )
+        )
         plotter = SlicerPlotter.from_params(params)
         assert plotter.autoscale_axes == frozenset()
 

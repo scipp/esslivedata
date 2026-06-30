@@ -643,6 +643,26 @@ class TestValidate:
         # Widget value should remain unchanged
         assert widget.widgets["value"].value == original_value
 
+    def test_validate_handles_model_level_error(self):
+        # Model validators report an empty ``loc``; validate must not crash
+        # trying to read a field name from it.
+        class TestModel(pydantic.BaseModel):
+            low: int = 0
+            high: int = 1
+
+            @pydantic.model_validator(mode='after')
+            def _check(self):
+                if self.high <= self.low:
+                    raise ValueError("high must exceed low")
+                return self
+
+        widget = ParamWidget(TestModel)
+        widget.widgets["high"].value = 0
+
+        is_valid, message = widget.validate()
+        assert is_valid is False
+        assert "high must exceed low" in message
+
 
 class TestSetErrorState:
     """Tests for set_error_state method."""
@@ -690,6 +710,24 @@ class TestSetErrorState:
 
         # Field should have no border
         assert widget.widgets["value"].styles.get("border") == "none"
+
+    def test_set_error_state_handles_model_level_error(self):
+        # A model-level error has no field to highlight; this must not crash.
+        class TestModel(pydantic.BaseModel):
+            low: int = 0
+            high: int = 1
+
+            @pydantic.model_validator(mode='after')
+            def _check(self):
+                if self.high <= self.low:
+                    raise ValueError("high must exceed low")
+                return self
+
+        widget = ParamWidget(TestModel)
+        widget.widgets["high"].value = 0
+        widget.set_error_state(True, "high must exceed low")
+
+        assert "high must exceed low" in widget._error_pane.object
 
 
 class TestPanel:
