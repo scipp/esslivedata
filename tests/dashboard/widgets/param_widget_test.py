@@ -402,6 +402,44 @@ class TestLiteralHandling:
         assert "slow" in select.options
         assert select.value == "normal"
 
+    def test_literal_uses_friendly_labels_keeping_values(self):
+        class TestModel(pydantic.BaseModel):
+            mode: Literal["toa", "wavelength"] = pydantic.Field(
+                default="toa",
+                json_schema_extra={
+                    "labels": {
+                        "toa": "Time of arrival (TOA)",
+                        "wavelength": "Wavelength",
+                    }
+                },
+            )
+
+        widget = ParamWidget(TestModel)
+
+        select = widget.widgets["mode"]
+        # Labels are user-facing; the underlying (serialized) values are unchanged.
+        assert select.options == {
+            "Time of arrival (TOA)": "toa",
+            "Wavelength": "wavelength",
+        }
+        assert select.value == "toa"
+        assert widget.create_model().mode == "toa"
+
+    def test_literal_without_labels_falls_back_to_value(self):
+        class TestModel(pydantic.BaseModel):
+            mode: Literal["toa", "wavelength"] = pydantic.Field(
+                default="toa",
+                json_schema_extra={"labels": {"toa": "Time of arrival (TOA)"}},
+            )
+
+        widget = ParamWidget(TestModel)
+
+        # Unmapped value keeps its raw string as the label.
+        assert widget.widgets["mode"].options == {
+            "Time of arrival (TOA)": "toa",
+            "wavelength": "wavelength",
+        }
+
 
 class TestGetValues:
     """Tests for get_values method."""

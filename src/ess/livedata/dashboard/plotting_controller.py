@@ -18,7 +18,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import WindowMode, WindowParams
+from .plot_params import TimeWindowMixin, TimeWindowMode, TimeWindowParams
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -213,7 +213,7 @@ class PlottingController:
             params = spec.params(**params) if spec.params else pydantic.BaseModel()
 
         spec = plotter_registry.get_spec(plot_name)
-        window = getattr(params, 'window', None)
+        window = params.time_window if isinstance(params, TimeWindowMixin) else None
 
         # Flatten keys for extractor creation
         all_keys = [key for keys in keys_by_role.values() for key in keys]
@@ -287,7 +287,7 @@ def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
 
 def create_extractors_from_params(
     keys: list[ResultKey],
-    window: WindowParams | None,
+    window: TimeWindowParams | None,
     spec: PlotterSpec | None = None,
 ) -> dict[ResultKey, UpdateExtractor]:
     """
@@ -320,7 +320,7 @@ def create_extractors_from_params(
     # the ResultKey). Only window mode with duration>0 needs aggregation.
     if (
         window is not None
-        and window.mode is WindowMode.window
+        and window.mode is TimeWindowMode.window
         and window.window_duration_seconds > 0
     ):
         return {

@@ -42,6 +42,32 @@ class TestModelWidget:
         assert valid
         assert not errors
 
+    def test_field_outputs_render_affects_outputs_line(self) -> None:
+        class Inner(pydantic.BaseModel):
+            a: int = 1
+
+        class Outer(pydantic.BaseModel):
+            edges: Inner = pydantic.Field(default_factory=Inner, title='Edges')
+            other: Inner = pydantic.Field(default_factory=Inner, title='Other')
+
+        widget = ModelWidget(
+            Outer, field_outputs={'edges': ['Histogram', 'ROI spectra']}
+        )
+
+        tabs = {field: content for field, _, content in widget.param_group_tabs}
+        edges_html = ' '.join(
+            str(obj.object)
+            for obj in tabs['edges']
+            if hasattr(obj, 'object') and isinstance(obj.object, str)
+        )
+        other_html = ' '.join(
+            str(obj.object)
+            for obj in tabs['other']
+            if hasattr(obj, 'object') and isinstance(obj.object, str)
+        )
+        assert 'Affects outputs: Histogram, ROI spectra.' in edges_html
+        assert 'Affects outputs' not in other_html
+
     def test_widget_with_constrained_default_factory(self) -> None:
         """Test that ModelWidget correctly initializes fields with default_factory."""
 

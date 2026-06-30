@@ -5,7 +5,7 @@ from typing import ClassVar
 
 import pytest
 import scipp as sc
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
@@ -226,6 +226,111 @@ class TestWorkflowSpecOutputs:
 
         # Should be different instances (not the same mutable object)
         assert template1 is not template2
+
+
+class _CouplingParams(BaseModel):
+    coordinate_mode: BaseModel = Field(
+        default_factory=BaseModel, title="Coordinate Mode"
+    )
+    toa_edges: BaseModel = Field(
+        default_factory=BaseModel, title="Time of Arrival Edges"
+    )
+    toa_range: BaseModel = Field(
+        default_factory=BaseModel, title="Time of Arrival Range"
+    )
+
+
+class _CouplingOutputs(WorkflowOutputsBase):
+    output_views: ClassVar[tuple[OutputView, ...]] = (
+        OutputView(
+            name='histogram',
+            title='Histogram',
+            streams={'since_start': 'histogram'},
+            params=('coordinate_mode', 'toa_edges'),
+        ),
+        OutputView(
+            name='total',
+            title='Total',
+            streams={'since_start': 'total'},
+        ),
+        OutputView(
+            name='total_in_range',
+            title='Total in range',
+            streams={'since_start': 'total_in_range'},
+            params=('coordinate_mode', 'toa_range'),
+        ),
+    )
+
+    histogram: sc.DataArray = Field(title='Histogram')
+    total: sc.DataArray = Field(title='Total')
+    total_in_range: sc.DataArray = Field(title='Total in range')
+
+
+def _coupling_spec(params: type[BaseModel] | None = _CouplingParams) -> WorkflowSpec:
+    return WorkflowSpec(
+        instrument="test",
+        name="test_workflow",
+        version=1,
+        title="Test Workflow",
+        description="A test workflow",
+        params=params,
+        outputs=_CouplingOutputs,
+        group=REDUCTION,
+    )
+
+
+class TestParamOutputCoupling:
+    """Tests for OutputView.params and the WorkflowSpec coupling resolvers."""
+
+    def test_output_view_params_default_empty(self) -> None:
+        view = OutputView(name='x', title='X', streams={'since_start': 'x'})
+        assert view.params == ()
+
+    def test_get_output_param_titles_resolves_in_model_order(self) -> None:
+        # Declared params order is (coordinate_mode, toa_edges) but resolution
+        # follows params-model field order.
+        spec = _coupling_spec()
+        assert spec.get_output_param_titles('histogram') == [
+            'Coordinate Mode',
+            'Time of Arrival Edges',
+        ]
+
+    def test_get_output_param_titles_empty_for_uncoupled_output(self) -> None:
+        assert _coupling_spec().get_output_param_titles('total') == []
+
+    def test_get_output_param_titles_empty_for_unknown_view(self) -> None:
+        assert _coupling_spec().get_output_param_titles('nonexistent') == []
+
+    def test_get_output_param_titles_empty_without_params(self) -> None:
+        assert _coupling_spec(params=None).get_output_param_titles('histogram') == []
+
+    def test_get_output_param_titles_skips_absent_params(self) -> None:
+        # An output may be shared with a params variant lacking some fields;
+        # absent names are skipped rather than raising.
+        class PartialParams(BaseModel):
+            coordinate_mode: BaseModel = Field(
+                default_factory=BaseModel, title="Coordinate Mode"
+            )
+
+        spec = _coupling_spec(params=PartialParams)
+        assert spec.get_output_param_titles('histogram') == ['Coordinate Mode']
+
+    def test_get_param_output_titles_inverts_the_mapping(self) -> None:
+        assert _coupling_spec().get_param_output_titles() == {
+            'coordinate_mode': ['Histogram', 'Total in range'],
+            'toa_edges': ['Histogram'],
+            'toa_range': ['Total in range'],
+        }
+
+    def test_get_param_output_titles_skips_absent_params(self) -> None:
+        class PartialParams(BaseModel):
+            coordinate_mode: BaseModel = Field(
+                default_factory=BaseModel, title="Coordinate Mode"
+            )
+
+        assert _coupling_spec(params=PartialParams).get_param_output_titles() == {
+            'coordinate_mode': ['Histogram', 'Total in range'],
+        }
 
 
 class TestWorkflowConfigAuxSourceNames:

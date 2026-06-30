@@ -21,6 +21,14 @@ from ..config.workflow_spec import (
 from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
+_TOA_EDGES_DESCRIPTION = (
+    "Time of arrival (TOA) is the time elapsed since the most recent source "
+    "pulse. These edges define the histogram bins in TOA mode. The default "
+    f"range spans one pulse period of the 14 Hz ESS source "
+    f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside the "
+    "range are excluded from the histogram."
+)
+
 
 class TOAOnlyCoordinateModeSettings(pydantic.BaseModel):
     """
@@ -33,6 +41,7 @@ class TOAOnlyCoordinateModeSettings(pydantic.BaseModel):
         default='toa',
         description="Coordinate system for event data. Only TOA (time-of-arrival) "
         "is available for this instrument.",
+        json_schema_extra={'labels': {'toa': 'Time of arrival (TOA)'}},
     )
 
     @pydantic.field_validator('mode')
@@ -83,10 +92,10 @@ class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
+        description=_TOA_EDGES_DESCRIPTION,
         default=parameter_models.TOAEdges(
             start=0.0,
-            stop=1000.0 / 14,
+            stop=parameter_models.ESS_PULSE_PERIOD_MS,
             num_bins=100,
             unit=parameter_models.TimeUnit.MS,
         ),
@@ -121,10 +130,10 @@ class MonitorDataParams(MonitorDataParamsBase):
     # TOA (time-of-arrival) settings
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming in TOA mode.",
+        description=_TOA_EDGES_DESCRIPTION,
         default=parameter_models.TOAEdges(
             start=0.0,
-            stop=1000.0 / 14,
+            stop=parameter_models.ESS_PULSE_PERIOD_MS,
             num_bins=100,
             unit=parameter_models.TimeUnit.MS,
         ),
@@ -188,6 +197,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'Monitor histogram. With "since run start" shows accumulated '
                 'counts; with "latest update" or a window, shows recent counts.'
             ),
+            params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
             name='total_counts',
@@ -214,6 +224,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'With "since run start" shows the accumulated total; with '
                 '"latest update" or a window, shows recent counts.'
             ),
+            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
     )
 

@@ -268,7 +268,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         DataSourceConfig,
         PlotConfig,
     )
-    from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
+    from ess.livedata.dashboard.plot_params import PlotParams1d, TimeWindowMode
 
     # Create first backend instance
     with DashboardBackend(
@@ -287,7 +287,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         )
         # Use real plotter with custom params
         params1 = PlotParams1d(
-            window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
+            time_window={'mode': TimeWindowMode.window, 'window_duration_seconds': 5.0}
         )
         plot_config = PlotConfig(
             data_sources={
@@ -309,7 +309,10 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Add another cell in the same grid with different params
         params2 = PlotParams1d(
-            window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
+            time_window={
+                'mode': TimeWindowMode.since_start,
+                'window_duration_seconds': 10.0,
+            }
         )
         plot_config2 = PlotConfig(
             data_sources={
@@ -434,13 +437,13 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         CombineMode,
         PlotParams2d,
         PlotScale,
-        WindowMode,
+        TimeWindowMode,
     )
 
     # Create params with enum values (the problematic case)
     params_with_enums = PlotParams2d(
         layout={'combine_mode': CombineMode.layout, 'layout_columns': 2},
-        window={'mode': WindowMode.window, 'window_duration_seconds': 10.0},
+        time_window={'mode': TimeWindowMode.window, 'window_duration_seconds': 10.0},
         plot_scale={
             'x_scale': PlotScale.linear,
             'y_scale': PlotScale.log,
@@ -513,7 +516,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         DataSourceConfig,
         PlotConfig,
     )
-    from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
+    from ess.livedata.dashboard.plot_params import PlotParams1d, TimeWindowMode
 
     workflow_id = WorkflowId(
         instrument='dummy',
@@ -523,7 +526,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
 
     # Create two layer configurations
     params1 = PlotParams1d(
-        window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
+        time_window={'mode': TimeWindowMode.window, 'window_duration_seconds': 5.0}
     )
     config1 = PlotConfig(
         data_sources={
@@ -538,7 +541,10 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
     )
 
     params2 = PlotParams1d(
-        window={'mode': WindowMode.since_start, 'window_duration_seconds': 10.0}
+        time_window={
+            'mode': TimeWindowMode.since_start,
+            'window_duration_seconds': 10.0,
+        }
     )
     config2 = PlotConfig(
         data_sources={

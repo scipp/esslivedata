@@ -52,6 +52,11 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Get auxiliary sources specification."""
         return self._spec.aux_sources
 
+    @property
+    def param_output_titles(self) -> dict[str, list[str]]:
+        """Map each param field name to the titles of the outputs it shapes."""
+        return self._spec.get_param_output_titles()
+
     def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params

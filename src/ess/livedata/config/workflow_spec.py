@@ -2,6 +2,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """
 Models for data reduction workflow widget creation and configuration.
+
+Two distinct parameter surfaces shape what a user sees, and conflating them is a
+common source of confusion:
+
+* **Workflow params** (this module, via :class:`WorkflowSpec.params`) change *what
+  is computed* — TOA edges, coordinate mode, ranges, ROIs. Configured from the
+  workflow card's gear in the Workflows tab.
+* **Plot-display params** (``dashboard/plot_params.py``) change *how an
+  already-computed output is displayed* — window, rate, scale, layout. Configured
+  in the "Add layer" plot-creation wizard.
+
+A given knob lives on exactly one surface, but nothing about a parameter's name
+makes its surface obvious. The coupling that *is* declared lives on
+:class:`OutputView.params`, which names the workflow params shaping each output and
+drives the UI's param↔output cross-references in both surfaces.
 """
 
 from __future__ import annotations
@@ -34,12 +49,21 @@ class OutputView:
     that view of the data — ``since_start`` for run-cumulative streams and
     ``per_update`` for per-update streams. Window mode (selected by the user)
     determines which role is subscribed to.
+
+    ``params`` names the workflow parameter fields (top-level fields of the
+    workflow's params model) that shape this output. It powers the UI's
+    param↔output cross-references — "this output is controlled by these
+    parameters" and the inverse. Names are resolved leniently against the
+    actual params model: an output model may be shared across several params
+    variants (e.g. a TOA-only variant lacking wavelength fields), so names
+    absent from a given model are simply skipped.
     """
 
     name: str
     title: str
     streams: Mapping[StreamRole, str]
     description: str | None = None
+    params: tuple[str, ...] = ()
 
     def field_for(self, role: StreamRole) -> str:
         """Return the backend field name for the requested role.
@@ -387,6 +411,42 @@ class WorkflowSpec(BaseModel):
         if field_info is None or not field_info.default_factory:
             return None
         return field_info.default_factory()
+
+    def get_output_param_titles(self, view_name: str) -> list[str]:
+        """Titles of the param groups that shape the given output view.
+
+        Resolves the view's ``params`` (param field names) against the
+        workflow's params model, skipping names absent from this particular
+        model (output views are shared across params-model variants). Titles
+        are returned in params-model field order for stable display.
+        """
+        view = self.get_output_view(view_name)
+        if view is None or self.params is None or not view.params:
+            return []
+        wanted = set(view.params)
+        return [
+            (field_info.title or name)
+            for name, field_info in self.params.model_fields.items()
+            if name in wanted
+        ]
+
+    def get_param_output_titles(self) -> dict[str, list[str]]:
+        """Map each param field name to the titles of the outputs it shapes.
+
+        Inverse of :attr:`OutputView.params`, used to annotate parameter
+        groups in the configuration UI with the outputs they affect. Param
+        names not present in the params model are omitted.
+        """
+        param_fields = set(self.params.model_fields) if self.params else set()
+        result: dict[str, list[str]] = {}
+        for view in self.get_output_views():
+            for name in view.params:
+                if name not in param_fields:
+                    continue
+                titles = result.setdefault(name, [])
+                if view.title not in titles:
+                    titles.append(view.title)
+        return result
 
 
 @dataclass

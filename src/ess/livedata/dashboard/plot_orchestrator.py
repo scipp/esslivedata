@@ -39,7 +39,7 @@ from .frame_clock import FrameClock
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plot_data_service import LayerId, PlotDataService
-from .plot_params import WindowMode
+from .plot_params import TimeWindowMixin, TimeWindowMode
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -270,9 +270,9 @@ class LifecycleSubscription:
     on_cell_removed: CellRemovedCallback | None = None
 
 
-def _stream_role_for_mode(mode: WindowMode) -> StreamRole:
+def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
     """Map a window mode to the stream role its data is subscribed from."""
-    return 'since_start' if mode is WindowMode.since_start else 'per_update'
+    return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
 def resolve_field_name(
@@ -298,7 +298,7 @@ def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
     """
     if slot != PRIMARY:
         return 'per_update'
-    window = getattr(params, 'window', None)
+    window = params.time_window if isinstance(params, TimeWindowMixin) else None
     return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
 
 
@@ -335,7 +335,7 @@ def _resolve_supports_windowing(
     """Determine whether the primary view exposes window/latest modes.
 
     Returns ``False`` for cumulative-only views (no ``per_update`` stream),
-    in which case only ``WindowMode.since_start`` is meaningful.
+    in which case only ``TimeWindowMode.since_start`` is meaningful.
     """
     if PRIMARY not in data_sources:
         return True
