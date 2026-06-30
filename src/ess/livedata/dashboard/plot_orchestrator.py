@@ -763,9 +763,19 @@ class PlotOrchestrator:
         -------
         :
             ID of the added layer.
+
+        Raises
+        ------
+        ValueError
+            If the resulting cell would combine a non-overlayable layer (a table
+            or a layout-mode plot) with any other layer.
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
+
+        self._check_overlayable_composition(
+            [layer.config for layer in cell.layers] + [config]
+        )
 
         layer_id = LayerId(uuid4())
         layer = Layer(layer_id=layer_id, config=config)
@@ -842,6 +852,13 @@ class PlotOrchestrator:
         if layer_index is None:
             raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
+        self._check_overlayable_composition(
+            [
+                new_config if i == layer_index else layer.config
+                for i, layer in enumerate(cell.layers)
+            ]
+        )
+
         # Fully clean up old layer (including cell mapping)
         self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=True)
 
@@ -907,6 +924,21 @@ class PlotOrchestrator:
         self._layer_resolvers.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
+
+    def _check_overlayable_composition(self, configs: list[PlotConfig]) -> None:
+        """Reject a multi-layer cell that contains a non-overlayable layer.
+
+        Tables and layout-mode plotters produce elements that cannot be fused
+        via ``hv.Overlay``, so they must be the sole layer in their cell.
+        """
+        if len(configs) > 1 and not all(
+            self._plotting_controller.is_overlayable(config.plot_name, config.params)
+            for config in configs
+        ):
+            raise ValueError(
+                'A table or layout-mode plot cannot share a cell with other '
+                'layers; place it in its own cell.'
+            )
 
     def _create_and_register_plotter(
         self, layer_id: LayerId, config: PlotConfig

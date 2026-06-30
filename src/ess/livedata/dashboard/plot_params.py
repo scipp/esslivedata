@@ -426,3 +426,49 @@ class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
         default_factory=BarOrientation,
         description="Bar orientation options.",
     )
+
+
+class TableNotation(StrEnum):
+    """Number notation for table value columns."""
+
+    auto = 'auto'
+    scientific = 'scientific'
+    decimal = 'decimal'
+    compact = 'compact'
+
+
+class TableFormatParams(pydantic.BaseModel):
+    """Number formatting for table value columns."""
+
+    notation: TableNotation = pydantic.Field(
+        default=TableNotation.auto,
+        description=(
+            "Number notation for value columns: 'auto' uses scientific notation "
+            "for very large or very small magnitudes and fixed-point otherwise, "
+            "'scientific' always uses scientific notation, 'decimal' always uses "
+            "fixed-point, 'compact' abbreviates magnitudes with k/m/b/t suffixes "
+            "(e.g. 140k, 1.4m)."
+        ),
+        title="Notation",
+    )
+    precision: int = pydantic.Field(
+        default=3,
+        description=(
+            "Digits after the decimal point (mantissa digits in scientific and "
+            "compact notation). Negative values round the magnitude to powers of "
+            "ten (e.g. -3 rounds to thousands, showing 140000); this only applies "
+            "to 'decimal' notation and is treated as 0 otherwise."
+        ),
+        title="Precision",
+        ge=-9,
+        le=10,
+    )
+
+
+class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
+    """Parameters for tabular display of 0D scalar data."""
+
+    format: TableFormatParams = pydantic.Field(
+        default_factory=TableFormatParams,
+        description="Number formatting for table value columns.",
+    )

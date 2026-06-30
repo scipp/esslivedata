@@ -21,6 +21,7 @@ from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
 from .plot_params import (
+    CombineMode,
     LayoutParams,
     PlotAspect,
     PlotDisplayParams1d,
@@ -438,6 +439,16 @@ class Plotter:
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
     """Per-axis autoscale support. Override per subclass."""
 
+    @property
+    def is_overlayable(self) -> bool:
+        """Whether this plotter's element can share a figure with sibling layers.
+
+        Layout-mode plotters produce an ``hv.Layout``, which cannot be fused via
+        ``hv.Overlay``. Cells use this to forbid such layers (and tables, see
+        :class:`TablePlotter`) from sharing a cell with other layers.
+        """
+        return self.layout_params.combine_mode != CombineMode.layout
+
     def __init__(
         self,
         *,
@@ -646,32 +657,62 @@ class Plotter:
 
         self._range_targets = {}
         resolver = title_resolver or TitleResolver()
-        plots: list[hv.Element] = []
         try:
-            for plot_index, (data_key, da) in enumerate(data.items()):
-                label = resolver.get_legend_label(
-                    data_key.job_id.source_name, data_key.output_name
-                )
-                output_display_name = resolver.get_axis_label(data_key.output_name)
-                source_display_name = resolver.source(data_key.job_id.source_name)
-                plot_element = self.plot(
-                    da,
-                    data_key,
-                    label=label,
-                    source_display_name=source_display_name,
-                    output_display_name=output_display_name,
-                    dim_label=resolver.dim,
-                    plot_index=plot_index,
-                    **kwargs,
-                )
-                plots.append(plot_element)
+            result = self._build_result(data, resolver, **kwargs)
         except Exception as e:
             self._range_targets = {}
-            plots = [
-                hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                    text_align='center', text_baseline='middle', **self._sizing_opts
-                )
-            ]
+            result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
+                text_align='center', text_baseline='middle', **self._sizing_opts
+            )
+
+        # Time bounds drive the cell titlebar's freshness indicator; they are
+        # kept off the plot title to avoid minting an OptionTree entry per tick.
+        self._time_bounds = _compute_time_bounds(data)
+        self._set_cached_state(result)
+
+    def _build_result(
+        self,
+        data: dict[ResultKey, sc.DataArray],
+        resolver: TitleResolver,
+        **kwargs,
+    ) -> hv.Element:
+        """Map each dataset through :meth:`plot` and combine into one element.
+
+        Override to fold all datasets into a single element instead (e.g. a
+        table), where per-dataset overlay/layout composition does not apply.
+
+        Parameters
+        ----------
+        data:
+            Primary-role data, already normalized to rate if configured.
+        resolver:
+            Resolves source/output names to display titles.
+        **kwargs:
+            Additional keyword arguments passed to :meth:`plot`.
+
+        Returns
+        -------
+        :
+            A single HoloViews element (Overlay or Layout) for the cached state.
+        """
+        plots: list[hv.Element] = []
+        for plot_index, (data_key, da) in enumerate(data.items()):
+            label = resolver.get_legend_label(
+                data_key.job_id.source_name, data_key.output_name
+            )
+            output_display_name = resolver.get_axis_label(data_key.output_name)
+            source_display_name = resolver.source(data_key.job_id.source_name)
+            plot_element = self.plot(
+                da,
+                data_key,
+                label=label,
+                source_display_name=source_display_name,
+                output_display_name=output_display_name,
+                dim_label=resolver.dim,
+                plot_index=plot_index,
+                **kwargs,
+            )
+            plots.append(plot_element)
 
         if len(plots) == 0:
             plots = [
@@ -681,16 +722,12 @@ class Plotter:
             ]
 
         if self.layout_params.combine_mode == 'overlay':
-            result = hv.Overlay(plots)
-        elif len(plots) == 1:
-            result = plots[0]
-        else:
-            result = hv.Layout(plots).cols(self.layout_params.layout_columns)
-
-        # Time bounds drive the cell titlebar's freshness indicator; they are
-        # kept off the plot title to avoid minting an OptionTree entry per tick.
-        self._time_bounds = _compute_time_bounds(data)
-        self._set_cached_state(result)
+            return hv.Overlay(plots)
+        # Always a Layout in layout mode, even for a single dataset, so that
+        # "produces a Layout" is a config-time property (mode only, not the
+        # runtime source count). Cells use this to forbid non-overlayable
+        # layers from sharing a cell.
+        return hv.Layout(plots).cols(self.layout_params.layout_columns)
 
     def create_presenter(self, *, owner: Plotter | None = None) -> PresenterBase:
         """
@@ -1310,8 +1347,6 @@ class Overlay1DPlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create Overlay1DPlotter from PlotParams1d."""
-        from .plot_params import CombineMode
-
         return cls(
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
             aspect_params=params.plot_aspect,
