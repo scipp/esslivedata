@@ -91,6 +91,31 @@ class LtotalRange(RangeModel):
     )
 
 
+class SourceOffset(pydantic.BaseModel):
+    """Offset of the neutron source along the beam, relative to the file.
+
+    The chopper cascade measures every chopper's flight distance from the source
+    position loaded from the geometry artifact. This shifts that reference along
+    the beam (the lab +Z axis): a positive offset moves the source downstream
+    (toward the choppers), a negative offset upstream.
+    """
+
+    offset: float = pydantic.Field(
+        default=0.0,
+        description=(
+            "Signed source offset along the beam; positive moves the source "
+            "downstream (toward the choppers)."
+        ),
+    )
+    unit: LengthUnit = pydantic.Field(
+        default=LengthUnit.METER, description="Unit of the source offset."
+    )
+
+    def get(self) -> sc.Variable:
+        """Return the offset as a beam-aligned (Z) displacement vector."""
+        return sc.scalar(self.offset, unit=self.unit.value) * sc.vector([0.0, 0.0, 1.0])
+
+
 class CascadeBands(pydantic.BaseModel):
     """Configuration of the *Chopper cascade bands* output.
 
@@ -141,6 +166,11 @@ class WavelengthLutParams(pydantic.BaseModel):
         title='Source pulse',
         description='Source pulse frequency and stride.',
         default_factory=Pulse,
+    )
+    source: SourceOffset = pydantic.Field(
+        title='Source',
+        description='Offset of the neutron source along the beam.',
+        default_factory=SourceOffset,
     )
     distance_range: LtotalRange = pydantic.Field(
         title='Distance range',
