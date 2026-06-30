@@ -6,6 +6,8 @@ import pydantic
 import pytest
 
 from ess.livedata.config.grid_template import GridSpec, load_raw_grid_templates
+from ess.livedata.config.instrument import instrument_registry
+from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.plot_orchestrator import (
@@ -16,6 +18,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotCell,
     PlotConfig,
 )
+from ess.livedata.dashboard.plotter_registry import plotter_registry
 
 
 class EmptyParams(pydantic.BaseModel):
@@ -205,3 +208,87 @@ class TestLoadRawGridTemplates:
                 for layer in cell['layers']:
                     for ds in layer['data_sources'].values():
                         WorkflowId.from_string(ds['workflow_id'])
+
+
+def _collect_template_data_sources():
+    """Yield one param per (non-static) data source in every shipped template.
+
+    Static-plotter layers (overlays like ``rectangles``) reference sentinel
+    ``static/...`` workflow ids with no registered workflow, so they are skipped
+    here; their params are validated elsewhere.
+    """
+    static_plotters = set(plotter_registry.get_static_plotters())
+    params = []
+    for instrument in available_instruments():
+        get_config(instrument)  # register specs (factories not needed)
+        for template in load_raw_grid_templates(instrument):
+            for ci, cell in enumerate(template['cells']):
+                for li, layer in enumerate(cell['layers']):
+                    plot_name = layer['plot_name']
+                    if plot_name in static_plotters:
+                        continue
+                    for role, ds in layer['data_sources'].items():
+                        params.append(
+                            pytest.param(
+                                instrument,
+                                ds['workflow_id'],
+                                ds['view_name'],
+                                tuple(ds['source_names']),
+                                plot_name,
+                                id=f"{instrument}/{template['title']}"
+                                f"/cell{ci}/layer{li}/{role}",
+                            )
+                        )
+    return params
+
+
+@pytest.mark.parametrize(
+    ('instrument', 'workflow_id_str', 'view_name', 'source_names', 'plot_name'),
+    _collect_template_data_sources(),
+)
+def test_shipped_template_data_sources_resolve(
+    instrument: str,
+    workflow_id_str: str,
+    view_name: str,
+    source_names: tuple[str, ...],
+    plot_name: str,
+):
+    """Every shipped-template data source resolves to a renderable plot.
+
+    Joins the shipped templates to the real workflow specs and plotter
+    registry: the ``workflow_id`` must resolve, ``source_names`` must be a
+    subset of the workflow's sources, ``view_name`` must be a declared output
+    view, and that view's template data must satisfy the chosen plotter's
+    data requirements.
+
+    The load path (``PlotOrchestrator._parse_single_spec``) swallows these
+    mismatches and silently degrades to empty or wrong plots, so without this
+    guard a renamed view or a changed output dimensionality ships unnoticed.
+    """
+    registry = instrument_registry[instrument].workflow_factory
+    workflow_id = WorkflowId.from_string(workflow_id_str)
+    assert workflow_id in registry, f'{workflow_id} is not a registered workflow'
+    spec = registry[workflow_id]
+
+    assert set(source_names) <= set(spec.source_names), (
+        f'{workflow_id} sources {source_names} are not a subset of {spec.source_names}'
+    )
+
+    view = spec.get_output_view(view_name)
+    available = [v.name for v in spec.get_output_views()]
+    assert view is not None, (
+        f'{workflow_id} has no output view {view_name!r} (available: {available})'
+    )
+
+    template = spec.get_output_template(view_name)
+    assert template is not None, (
+        f'view {view_name!r} of {workflow_id} has no template; add a '
+        'default_factory to its backing field'
+    )
+
+    requirements = plotter_registry.get_spec(plot_name).data_requirements
+    assert requirements.validate_data({view_name: template}), (
+        f'plotter {plot_name!r} cannot render view {view_name!r} of '
+        f'{workflow_id}: ndim={template.ndim}, dims={template.dims}, '
+        f'coords={list(template.coords)}'
+    )
