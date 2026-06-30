@@ -20,6 +20,7 @@ from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
+from .frame_aspect import make_frame_aspect_hook_from_config
 from .plot_params import (
     CombineMode,
     LayoutParams,
@@ -478,8 +479,16 @@ class Plotter:
         # All non-free aspect types are enforced by a JS hook
         # (see frame_aspect.py) that adjusts the Bokeh figure dimensions.
         # HoloViews' own aspect/data_aspect opts are not set — they conflict
-        # with responsive mode in Panel containers (upstream bug).
+        # with responsive mode in Panel containers (upstream bug). The hook is
+        # declared per leaf element type alongside ``responsive`` so it lands on
+        # every figure the plotter produces, whether the datasets are overlaid
+        # (one shared figure) or laid out (one figure per sub-plot). Each layer
+        # carries its own aspect, so an overlay of layers with differing aspects
+        # applies each hook to the shared figure (free aspect contributes none).
         self._sizing_opts: dict[str, Any] = {'responsive': True}
+        aspect_hook = make_frame_aspect_hook_from_config(aspect_params)
+        if aspect_hook is not None:
+            self._sizing_opts['hooks'] = [aspect_hook]
 
     @staticmethod
     def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
@@ -662,7 +671,7 @@ class Plotter:
         except Exception as e:
             self._range_targets = {}
             result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                text_align='center', text_baseline='middle', **self._sizing_opts
+                text_align='center', text_baseline='middle', responsive=True
             )
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
@@ -717,7 +726,7 @@ class Plotter:
         if len(plots) == 0:
             plots = [
                 hv.Text(0.5, 0.5, 'No data').opts(
-                    text_align='center', text_baseline='middle', **self._sizing_opts
+                    text_align='center', text_baseline='middle', responsive=True
                 )
             ]
 

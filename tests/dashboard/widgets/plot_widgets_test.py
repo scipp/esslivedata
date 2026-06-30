@@ -182,6 +182,76 @@ class TestGetPlotCellDisplayInfo:
         assert 'since run start' in title
 
 
+class TestPlotterTitleInDisplayInfo:
+    """Plotter title disambiguates layers sharing workflow/output/source (#645)."""
+
+    class _ImageOutputs(WorkflowOutputsBase):
+        image: sc.DataArray = pydantic.Field(
+            default_factory=lambda: sc.DataArray(
+                sc.zeros(dims=['x'], shape=[0], unit='counts'),
+                coords={'x': sc.arange('x', 0, unit='m')},
+            ),
+            title='Image',
+        )
+
+    def _config(self, plot_name: str) -> PlotConfig:
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
+        spec = WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='Detector counts',
+            description='D',
+            outputs=self._ImageOutputs,
+            params=None,
+            source_names=['src1'],
+            group=REDUCTION,
+        )
+        self._registry = {wf_id: spec}
+        return PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf_id, source_names=['src1'], view_name='image'
+                )
+            },
+            plot_name=plot_name,
+            params=_FakeParams(),
+        )
+
+    def test_title_includes_plotter_title(self) -> None:
+        config = self._config('rectangles_readback')
+        title, _ = get_plot_cell_display_info(config, self._registry)
+        assert 'ROI Rectangles (Readback)' in title
+
+    def test_readback_and_request_layers_have_distinct_titles(self) -> None:
+        readback, _ = get_plot_cell_display_info(
+            self._config('rectangles_readback'), self._registry
+        )
+        request, _ = get_plot_cell_display_info(
+            self._config('rectangles_request'), self._registry
+        )
+        assert readback != request
+
+    def test_description_includes_plotter_title(self) -> None:
+        _, description = get_plot_cell_display_info(
+            self._config('rectangles_readback'), self._registry
+        )
+        assert 'Plotter: ROI Rectangles (Readback)' in description
+
+    def test_plotter_title_suppressed_when_equal_to_output(self) -> None:
+        # Output 'Image' rendered by the 'image' plotter (title 'Image').
+        config = self._config('image')
+        title, description = get_plot_cell_display_info(config, self._registry)
+        assert title == 'Detector counts &rarr; Image (src1)'
+        assert 'Plotter:' not in description
+
+    def test_unregistered_plotter_omits_plotter_title(self) -> None:
+        config = self._config('does_not_exist')
+        title, description = get_plot_cell_display_info(config, self._registry)
+        assert title == 'Detector counts &rarr; Image (src1)'
+        assert 'Plotter:' not in description
+
+
 _GEO = CellGeometry(row=0, col=0, row_span=1, col_span=1)
 
 

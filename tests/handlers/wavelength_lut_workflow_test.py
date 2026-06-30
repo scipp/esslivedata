@@ -21,9 +21,11 @@ from ess.livedata.handlers.wavelength_lut_workflow import (
 )
 from ess.livedata.handlers.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     Pulse,
+    SourceOffset,
     WavelengthLutParams,
 )
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
@@ -151,6 +153,23 @@ class TestCascadeBands:
             CascadeBands(distances='6.2, foo')
 
 
+class TestSourceOffset:
+    def test_default_is_zero(self) -> None:
+        assert_identical(
+            SourceOffset().get(), sc.scalar(0.0, unit='m') * sc.vector([0, 0, 1.0])
+        )
+
+    def test_offset_is_beam_aligned(self) -> None:
+        vec = SourceOffset(offset=2.5).get()
+        assert vec.fields.x.value == 0.0
+        assert vec.fields.y.value == 0.0
+        assert vec.fields.z.value == 2.5
+        assert vec.unit == sc.Unit('m')
+
+    def test_negative_offset(self) -> None:
+        assert SourceOffset(offset=-3.0).get().fields.z.value == -3.0
+
+
 class TestNoChopperWorkflow:
     def test_produces_table_with_expected_dims(self, lut: sc.DataArray) -> None:
         assert lut.dims == ('distance', 'event_time_offset')
@@ -196,16 +215,17 @@ class TestNoChopperWorkflow:
         assert first.unit == second.unit
 
 
-def _run_chopper_lut(
+def _run_chopper_workflow(
     geom: Path,
     names: list[str],
     setpoints: dict[str, tuple[float, float]],
     params: WavelengthLutParams | None = None,
-) -> sc.DataArray:
+) -> dict[str, sc.DataArray]:
     """Build the chopper LUT workflow, feed setpoint context + trigger, finalize.
 
     ``setpoints`` maps chopper name to ``(speed_hz, delay_ns)``. Choppers absent
     from ``setpoints`` get no context value (simulating a not-yet-locked chopper).
+    Returns the full ``finalize`` output (LUT and cascade bands).
     """
     keys = {name: make_chopper_setpoint_keys(name) for name in names}
     wf = create_wavelength_lut_workflow(
@@ -222,7 +242,17 @@ def _run_chopper_lut(
         data[speed_setpoint_stream(name)] = _nxlog(speed, 'Hz')
         data[delay_setpoint_stream(name)] = _nxlog(delay, 'ns')
     wf.accumulate(data, start_time=0, end_time=1)
-    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+    return wf.finalize()
+
+
+def _run_chopper_lut(
+    geom: Path,
+    names: list[str],
+    setpoints: dict[str, tuple[float, float]],
+    params: WavelengthLutParams | None = None,
+) -> sc.DataArray:
+    """Build the chopper LUT workflow and return just the lookup-table output."""
+    return _run_chopper_workflow(geom, names, setpoints, params)[WAVELENGTH_LUT_OUTPUT]
 
 
 @pytest.fixture
@@ -323,6 +353,50 @@ class TestMultiChopperWorkflow:
                 ['chopper1', 'chopper2'],
                 {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
             )
+
+
+class TestSourceOffsetWorkflow:
+    def test_offset_shifts_chopper_distances_from_moderator(
+        self, tmp_path: Path
+    ) -> None:
+        # Moderator at -25 m, choppers at -15 and -13 m: distances 10 and 12 m
+        # from the source. A +2 m offset moves the source downstream to -23 m,
+        # shrinking every chopper's distance-from-source by 2 m.
+        path = tmp_path / 'moderator_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1', 'chopper2'], moderator_z=-25.0)
+        names = ['chopper1', 'chopper2']
+        setpoints = {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)}
+
+        base = _run_chopper_workflow(path, names, setpoints)[WAVELENGTH_BANDS_OUTPUT]
+        shifted = _run_chopper_workflow(
+            path,
+            names,
+            setpoints,
+            params=WavelengthLutParams(source=SourceOffset(offset=2.0)),
+        )[WAVELENGTH_BANDS_OUTPUT]
+
+        # Source row stays at distance 0; chopper rows move closer by 2 m.
+        base_d = base.coords['distance']
+        shifted_d = shifted.coords['distance']
+        assert_identical(base_d.max() - sc.scalar(2.0, unit='m'), shifted_d.max())
+
+    def test_offset_applies_without_moderator(self, two_chopper_geometry: Path) -> None:
+        # NXsource-only file (no moderator): the offset still shifts the
+        # reference, exercising the NXsource branch. The table differs from the
+        # unshifted one and remains finite.
+        names = ['chopper1', 'chopper2']
+        setpoints = {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)}
+        base = _run_chopper_lut(two_chopper_geometry, names, setpoints)
+        shifted = _run_chopper_lut(
+            two_chopper_geometry,
+            names,
+            setpoints,
+            params=WavelengthLutParams(source=SourceOffset(offset=1.5)),
+        )
+        assert np.isfinite(shifted.values).any()
+        assert not np.array_equal(
+            np.nan_to_num(base.values), np.nan_to_num(shifted.values)
+        )
 
 
 class TestDa00RoundTrip:
