@@ -1017,30 +1017,6 @@ class TestSlicerPlotter:
         result = dmap['slice', 'z', z_value, y_value, x_value]
         assert isinstance(result, hv.Image)
 
-    # === Registry test (unchanged) ===
-
-    def test_multiple_datasets_rejected_by_registry(self, data_3d, data_key):
-        """Test slicer plotter is rejected for multiple datasets by the registry."""
-        from ess.livedata.dashboard.plotter_registry import plotter_registry
-
-        workflow_id2 = WorkflowId(
-            instrument='test_instrument',
-            name='test_workflow',
-            version=1,
-        )
-        job_id2 = JobId(source_name='test_source2', job_number=uuid.uuid4())
-        data_key2 = ResultKey(
-            workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
-        )
-
-        single_data = {data_key: data_3d}
-        compatible = plotter_registry.get_compatible_plotters(single_data)
-        assert 'slicer' in compatible
-
-        multiple_data = {data_key: data_3d, data_key2: data_3d}
-        compatible = plotter_registry.get_compatible_plotters(multiple_data)
-        assert 'slicer' not in compatible
-
     # === Edge coordinate tests ===
 
     def test_edge_coordinates_in_presenter(self, slicer_plotter, data_key):
@@ -1219,10 +1195,14 @@ class TestPlotterOverlayMode:
         # Should contain two elements
         assert len(result) == 2
 
-    def test_non_overlay_mode_with_single_item_returns_raw_plot(
+    def test_layout_mode_with_single_item_returns_layout(
         self, simple_data_1, data_key_1
     ):
-        """Test that non-overlay mode returns raw plot for single item."""
+        """Layout mode always produces a Layout, even for a single item.
+
+        This keeps "produces a Layout" a config-time property (mode only, not
+        the runtime source count), which cell composition relies on.
+        """
         from ess.livedata.dashboard.plot_params import LayoutParams
 
         params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
@@ -1232,8 +1212,9 @@ class TestPlotterOverlayMode:
         plotter.compute({'primary': data_dict})
         result = plotter.get_cached_state()
 
-        # Should return raw Curve, not Overlay
-        assert isinstance(result, hv.Curve)
+        assert isinstance(result, hv.Layout)
+        assert len(result) == 1
+        assert isinstance(next(iter(result)), hv.Curve)
 
     def test_empty_data_returns_no_data_text(self):
         """Test that empty data returns 'No data' text element in overlay mode."""
@@ -1265,9 +1246,11 @@ class TestPlotterOverlayMode:
         plotter.compute(data_dict)
         result = plotter.get_cached_state()
 
-        # With layout mode and empty data, returns Text directly
-        assert isinstance(result, hv.Text)
-        assert 'No data' in str(result.data)
+        # Layout mode always wraps in a Layout, even the 'No data' placeholder.
+        assert isinstance(result, hv.Layout)
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'No data' in str(text_element.data)
 
 
 class TestBarsPlotter:
@@ -1413,6 +1396,300 @@ class TestBarsPlotter:
         """Test that bars can be rendered to Bokeh."""
         result = bars_plotter.plot(scalar_data, data_key)
         render_to_bokeh(result)
+
+
+class TestTablePlotter:
+    """Tests for TablePlotter with 0D data."""
+
+    @pytest.fixture
+    def table_plotter(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTable
+        from ess.livedata.dashboard.table_plotter import TablePlotter
+
+        return TablePlotter.from_params(PlotParamsTable())
+
+    @staticmethod
+    def _key(source: str, output: str) -> ResultKey:
+        workflow_id = WorkflowId(instrument='test', name='test', version=1)
+        return ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+            output_name=output,
+        )
+
+    def test_single_source_produces_single_table(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute(
+            {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}}
+        )
+        result = table_plotter.get_cached_state()
+        assert isinstance(result, hv.Table)
+        assert list(result.data['source']) == ['bank0']
+        assert list(result.data['counts']) == [42.0]
+
+    def test_multiple_sources_become_rows_of_one_table(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+            self._key('bank2', 'counts'): sc.DataArray(sc.scalar(30.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert isinstance(result, hv.Table)
+        assert list(result.data['source']) == ['bank0', 'bank1', 'bank2']
+        assert list(result.data['counts']) == [10.0, 20.0, 30.0]
+
+    def test_column_unit_and_label_from_resolver(self, table_plotter):
+        from ess.livedata.dashboard.plots import TitleResolver
+
+        key = self._key('raw_source', 'raw_output')
+        resolver = TitleResolver(
+            source=lambda _: 'Bank 0', output=lambda _: 'Total counts'
+        )
+        table_plotter.compute(
+            {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}},
+            title_resolver=resolver,
+        )
+        result = table_plotter.get_cached_state()
+        assert list(result.data['source']) == ['Bank 0']
+        vdim = result.vdims[0]
+        assert vdim.label == 'Total counts'
+        assert vdim.unit == 'counts'
+
+    def test_homogeneous_units_share_value_column_header(self, table_plotter):
+        # When every row carries the same unit, it belongs in the value-column
+        # header and there is no dedicated unit column.
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.vdims] == ['counts']
+        assert result.vdims[0].unit == 'counts'
+
+    def test_heterogeneous_units_get_dedicated_column(self, table_plotter):
+        # Device data forwarded by the timeseries service shares an output_name
+        # but not a unit; mixed units move into a dedicated 'unit' column and the
+        # value-column header carries no unit.
+        data = {
+            self._key('motor', 'delta'): sc.DataArray(sc.scalar(45.5, unit='deg')),
+            self._key('temperature', 'delta'): sc.DataArray(sc.scalar(298.0, unit='K')),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.vdims] == ['delta', 'unit']
+        assert result.vdims[0].unit is None
+        assert list(result.data['source']) == ['motor', 'temperature']
+        assert list(result.data['delta']) == [45.5, 298.0]
+        assert list(result.data['unit']) == ['deg', 'K']
+
+    def test_unit_column_keeps_string_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        data = {
+            self._key('motor', 'delta'): sc.DataArray(sc.scalar(45.5, unit='deg')),
+            self._key('temperature', 'delta'): sc.DataArray(sc.scalar(298.0, unit='K')),
+        }
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['delta'], ScientificFormatter)
+        # The unit column is a plain string column, not a numeric one.
+        assert isinstance(by_field['unit'], StringFormatter)
+        assert not isinstance(by_field['unit'], ScientificFormatter)
+
+    def test_rejects_non_scalar_data(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
+        table_plotter.compute({'primary': {key: data_1d}})
+        # Errors are surfaced in-band as a Text element, matching other plotters.
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_empty_data_shows_no_data(self, table_plotter):
+        table_plotter.compute({'primary': {}})
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_renders_single_datatable(self, table_plotter):
+        from bokeh.models import DataTable
+
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
+        }
+        fig = present_figure(table_plotter, data)
+        tables = [m for m in fig.references() if isinstance(m, DataTable)]
+        assert len(tables) == 1
+
+    @staticmethod
+    def _plotter(**fmt):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsTable,
+            TableFormatParams,
+        )
+        from ess.livedata.dashboard.table_plotter import TablePlotter
+
+        return TablePlotter.from_params(
+            PlotParamsTable(format=TableFormatParams(**fmt))
+        )
+
+    def _value_columns(self, plotter, output='counts'):
+        from bokeh.models import DataTable
+
+        da = sc.DataArray(sc.scalar(10.0, unit='counts'))
+        data = {self._key('bank0', output): da}
+        fig = present_figure(plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        return [c for c in table.columns if c.field != 'source'], table
+
+    def test_value_columns_use_scientific_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        data = {
+            self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0, unit='counts')),
+        }
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['counts'], ScientificFormatter)
+        # The source (index) column stays a plain string column.
+        assert isinstance(by_field['source'], StringFormatter)
+        assert not isinstance(by_field['source'], ScientificFormatter)
+
+    def test_value_columns_are_right_aligned(self):
+        columns, _ = self._value_columns(self._plotter())
+        assert all(c.formatter.text_align == 'right' for c in columns)
+
+    def test_default_precision_is_three(self):
+        columns, _ = self._value_columns(self._plotter())
+        assert columns[0].formatter.precision == 3
+
+    def test_decimal_notation_uses_fixed_point_formatter(self):
+        from bokeh.models import NumberFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.decimal, precision=2)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, NumberFormatter)
+        assert fmt.format == '0.00'
+
+    def test_decimal_notation_zero_precision_drops_decimals(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.decimal, precision=0)
+        )
+        assert columns[0].formatter.format == '0'
+
+    def test_compact_notation_uses_abbreviated_formatter(self):
+        from bokeh.models import NumberFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.compact, precision=1)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, NumberFormatter)
+        assert fmt.format == '0.0a'
+
+    def test_negative_precision_rounds_magnitude_in_decimal_mode(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.decimal, precision=-3)
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(140235.0, unit='counts')
+                    )
+                }
+            }
+        )
+        result = plotter.get_cached_state()
+        assert list(result.data['counts']) == [140000.0]
+
+    def test_negative_precision_ignored_outside_decimal_mode(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.scientific, precision=-3)
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(140235.0, unit='counts')
+                    )
+                }
+            }
+        )
+        result = plotter.get_cached_state()
+        # Value is untouched; rounding only applies to decimal notation.
+        assert list(result.data['counts']) == [140235.0]
+
+    def test_scientific_notation_forces_scientific(self):
+        from bokeh.models import ScientificFormatter
+
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        columns, _ = self._value_columns(
+            self._plotter(notation=TableNotation.scientific, precision=2)
+        )
+        fmt = columns[0].formatter
+        assert isinstance(fmt, ScientificFormatter)
+        assert fmt.precision == 2
+        # Equal power limits leave no fixed-point window: always scientific.
+        assert fmt.power_limit_low == fmt.power_limit_high == 0
+
+    def test_formatter_applied_to_columns_with_special_characters(self):
+        # Output names with special characters are sanitized into different
+        # Bokeh column fields; the formatter must still reach them.
+        from bokeh.models import ScientificFormatter
+
+        columns, _ = self._value_columns(self._plotter(), output='I(Q)')
+        assert len(columns) == 1
+        assert isinstance(columns[0].formatter, ScientificFormatter)
+
+    def test_formatter_persists_across_streaming_updates(self):
+        # HoloViews rebuilds every column on each streaming update without
+        # re-running hooks; the configured formatter must survive rather than
+        # reverting to the default comma-grouped NumberFormatter.
+        from bokeh.models import DataTable, ScientificFormatter
+
+        plotter = self._plotter()
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(10.0, unit='counts')
+                    )
+                }
+            }
+        )
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        bokeh_plot = render_to_bokeh(presenter.present(pipe))
+
+        # Stream a new value, triggering update_frame's column rebuild.
+        plotter.compute(
+            {
+                'primary': {
+                    self._key('bank0', 'counts'): sc.DataArray(
+                        sc.scalar(12345.0, unit='counts')
+                    )
+                }
+            }
+        )
+        pipe.send(plotter.get_cached_state())
+
+        table = next(
+            m for m in bokeh_plot.state.references() if isinstance(m, DataTable)
+        )
+        counts = next(c for c in table.columns if c.field == 'counts')
+        assert isinstance(counts.formatter, ScientificFormatter)
+        assert counts.formatter.text_align == 'right'
 
 
 class TestOverlay1DPlotter:
@@ -1584,7 +1861,6 @@ class TestOverlay1DPlotter:
         spec = plotter_registry.get_spec('overlay_1d')
         assert spec.data_requirements.min_dims == 2
         assert spec.data_requirements.max_dims == 2
-        assert spec.data_requirements.multiple_datasets is False
 
     def test_compatible_with_2d_data(self, data_2d_with_roi_coord, data_key):
         """Test that registry identifies overlay_1d as compatible with 2D data."""
@@ -1593,21 +1869,6 @@ class TestOverlay1DPlotter:
         data = {data_key: data_2d_with_roi_coord}
         compatible = plotter_registry.get_compatible_plotters(data)
         assert 'overlay_1d' in compatible
-
-    def test_not_compatible_with_multiple_datasets(
-        self, data_2d_with_roi_coord, data_key
-    ):
-        """Test that overlay_1d is not compatible with multiple datasets."""
-        from ess.livedata.dashboard.plotter_registry import plotter_registry
-
-        key2 = ResultKey(
-            workflow_id=data_key.workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
-            output_name='result2',
-        )
-        data = {data_key: data_2d_with_roi_coord, key2: data_2d_with_roi_coord}
-        compatible = plotter_registry.get_compatible_plotters(data)
-        assert 'overlay_1d' not in compatible
 
     def test_bin_edge_coords_produce_curves_not_histograms(
         self, overlay_plotter, data_key

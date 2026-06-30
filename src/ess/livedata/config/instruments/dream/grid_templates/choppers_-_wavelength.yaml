@@ -34,7 +34,7 @@ cells:
       line:
         mode: points
         errors: band
-      window:
+      time_window:
         mode: window
         window_duration_seconds: 0.0
         aggregation: auto
@@ -70,7 +70,7 @@ cells:
         xticks: 5
         custom_yticks: false
         yticks: 5
-      window:
+      time_window:
         mode: window
         window_duration_seconds: 0.0
         aggregation: auto

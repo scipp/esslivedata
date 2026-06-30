@@ -600,7 +600,7 @@ class CellWidget:
             Composed plot from session DMaps/elements, or None if none available.
         """
         plots = []
-        has_layout = False
+        non_overlayable = False
         cell_plotters: list = []
         for layer in self._cell.layers:
             layer_id = layer.layer_id
@@ -616,20 +616,17 @@ class CellWidget:
                 # and carry no autoscale axes; exclude them from the controller.
                 if state.plotter is not None and not layer.config.is_static():
                     cell_plotters.append(state.plotter)
+                # Tables and layout-mode plotters produce a DataTable/Layout with
+                # no single figure for the SaveTool/aspect hooks to act on. Such
+                # layers are forbidden from sharing a cell, so this flags a
+                # solitary non-overlayable layer; hooks are skipped below.
+                if state.plotter is not None and not getattr(
+                    state.plotter, 'is_overlayable', True
+                ):
+                    non_overlayable = True
 
             dmap = session_layer.dmap
             if dmap is not None:
-                # Check the DynamicMap's resolved type (set after Bokeh
-                # renders it) and the plotter's cached state.  Either
-                # being a Layout means hooks must be skipped.
-                if isinstance(dmap, hv.DynamicMap) and dmap.type is hv.Layout:
-                    has_layout = True
-                elif (
-                    state is not None
-                    and state.plotter is not None
-                    and isinstance(state.plotter.get_cached_state(), hv.Layout)
-                ):
-                    has_layout = True
                 plots.append(dmap)
 
         if not plots:
@@ -646,9 +643,11 @@ class CellWidget:
             # opts applied afterwards land on the OverlayPlot and persist.
             result = hv.Overlay(plots).collate()
 
-        # Skip hooks for Layouts — each sub-figure has its own SaveTool,
-        # so a single cell-level filename is not meaningful.
-        if has_layout:
+        # Skip figure-level hooks for a non-overlayable layer: a Layout's
+        # sub-figures each carry their own SaveTool, and a Table's DataTable
+        # widget has no figure, toolbar, or sizing handle for the SaveTool/aspect
+        # hooks to act on.
+        if non_overlayable:
             return result
 
         hooks: list = []

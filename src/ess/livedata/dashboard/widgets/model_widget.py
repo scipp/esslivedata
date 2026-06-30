@@ -43,6 +43,7 @@ class ModelWidget:
         initial_values: dict[str, Any] | None = None,
         show_descriptions: bool = True,
         hidden_fields: frozenset[str] = frozenset(),
+        field_outputs: dict[str, list[str]] | None = None,
     ) -> None:
         """
         Initialize model configuration widget.
@@ -58,11 +59,16 @@ class ModelWidget:
         hidden_fields
             Field names to exclude from the UI. Hidden fields use their
             model defaults in ``parameter_values``.
+        field_outputs
+            Optional map from field name to the titles of the workflow outputs
+            that field shapes. When provided, each parameter group shows which
+            outputs it affects.
         """
         self._model_class = model_class
         self._initial_values = initial_values or {}
         self._show_descriptions = show_descriptions
         self._hidden_fields = hidden_fields
+        self._field_outputs = field_outputs or {}
         self._parameter_widgets: dict[str, ParamWidget] = {}
         self._tab_entries: list[tuple[str, str, pn.Column]] = []
         self._failing_field_names: list[str] = []
@@ -81,6 +87,18 @@ class ModelWidget:
             self._parameter_widgets[field_name] = param_widget
 
             content: list[Any] = [param_widget.panel()]
+            outputs = self._field_outputs.get(field_name)
+            if self._show_descriptions and outputs:
+                content.insert(
+                    0,
+                    pn.pane.HTML(
+                        "<p style='margin: 0 0 10px 0; "
+                        f"color: {Colors.TEXT_MUTED}; font-size: 0.9em; "
+                        "font-style: italic;'>"
+                        f"Affects outputs: {', '.join(outputs)}.</p>",
+                        margin=(5, 5),
+                    ),
+                )
             if self._show_descriptions and data['description']:
                 content.insert(
                     0,

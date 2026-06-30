@@ -591,7 +591,7 @@ class TestComposeMixedLayers:
             PlotCell,
             PlotConfig,
         )
-        from ess.livedata.dashboard.plot_params import WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowParams
         from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.range_hook import Axis
         from ess.livedata.dashboard.session_layer import SessionLayer
@@ -640,7 +640,7 @@ class TestComposeMixedLayers:
                 )
             },
             plot_name='lines',
-            params=WindowParams(),
+            params=TimeWindowParams(),
         )
         static_config = PlotConfig(
             data_sources={
@@ -649,7 +649,7 @@ class TestComposeMixedLayers:
                 )
             },
             plot_name='vlines',
-            params=WindowParams(),
+            params=TimeWindowParams(),
         )
         assert static_config.is_static()
 
@@ -683,6 +683,92 @@ class TestComposeMixedLayers:
         assert cell_widget.has_plot
         # The dynamic layer still drives autoscale; controller was built.
         assert cell_widget.autoscale_controller is not None
+
+
+class TestComposeTableLayer:
+    """Composition of a cell containing a table layer.
+
+    Tables render as a DataTable widget, not a plain Bokeh figure, so they
+    cannot be fused via ``hv.Overlay``. Such a layer is forbidden from sharing a
+    cell with other layers (enforced in ``PlotOrchestrator``); the cell widget
+    therefore only ever renders a table as the sole layer.
+    """
+
+    @staticmethod
+    def _add_table_layer(plot_grid_tabs, plot_data_service, *, output: str):
+        import uuid
+
+        import holoviews as hv
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import (
+            JobId,
+            ResultKey,
+            WorkflowId,
+        )
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            Layer,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import PlotParamsTable
+        from ess.livedata.dashboard.session_layer import SessionLayer
+        from ess.livedata.dashboard.table_plotter import TablePlotter
+
+        wf = WorkflowId(instrument='test', name='wf', version=1)
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=['bank0'], view_name=output
+                )
+            },
+            plot_name='table',
+            params=PlotParamsTable(),
+        )
+        layer = Layer(layer_id=LayerId(uuid.uuid4()), config=config)
+
+        plotter = TablePlotter.from_params(PlotParamsTable())
+        key = ResultKey(
+            workflow_id=wf,
+            job_id=JobId(source_name='bank0', job_number=uuid.uuid4()),
+            output_name=output,
+        )
+        plotter.compute({PRIMARY: {key: sc.DataArray(sc.scalar(1.0, unit='counts'))}})
+        assert isinstance(plotter.get_cached_state(), hv.Table)
+
+        plot_data_service.job_started(layer.layer_id, plotter)
+        plot_data_service.data_arrived(layer.layer_id)
+        state = plot_data_service.get(layer.layer_id)
+        session_layer = SessionLayer(
+            layer_id=layer.layer_id, last_seen_version=state.version
+        )
+        session_layer.ensure_components(state)
+        plot_grid_tabs._session_layers[layer.layer_id] = session_layer
+        return layer
+
+    def test_single_table_layer_is_not_a_layout(
+        self, plot_grid_tabs, plot_data_service
+    ):
+        from uuid import uuid4
+
+        import holoviews as hv
+
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry, PlotCell
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
+
+        layer = self._add_table_layer(
+            plot_grid_tabs, plot_data_service, output='counts'
+        )
+        cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            layers=[layer],
+        )
+        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
+
+        assert cell_widget.has_plot
+        assert not isinstance(cell_widget._plot, hv.Layout)
 
 
 class TestDisabledGridTabs:

@@ -252,6 +252,10 @@ class FakePlottingController:
         self.created_plotters.append(plotter)
         return plotter
 
+    def is_overlayable(self, plot_name: str, params) -> bool:
+        """Report 'table' as non-overlayable, standing in for tables/layouts."""
+        return plot_name != 'table'
+
 
 @pytest.fixture
 def job_number():
@@ -2308,6 +2312,72 @@ class TestCellTitle:
         data = plot_orchestrator.serialize_grid(grid_id)
         parsed = plot_orchestrator.parse_raw_cell(data['cells'][0])
         assert parsed.user_title == 'Round trip'
+
+
+class TestForbidNonOverlayableComposition:
+    """A non-overlayable layer (table/layout-mode) may not share a cell.
+
+    ``FakePlottingController`` reports ``plot_name == 'table'`` as
+    non-overlayable, standing in for real tables and layout-mode plotters.
+    """
+
+    def _add_cell(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        return plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+
+    def test_single_table_layer_is_allowed(self, plot_orchestrator, workflow_id):
+        cell_id = self._add_cell(plot_orchestrator)
+        plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id, plot_name='table')
+        )
+        assert len(plot_orchestrator.get_cell(cell_id).layers) == 1
+
+    def test_two_overlayable_layers_are_allowed(self, plot_orchestrator, workflow_id):
+        cell_id = self._add_cell(plot_orchestrator)
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        assert len(plot_orchestrator.get_cell(cell_id).layers) == 2
+
+    def test_table_onto_populated_cell_is_rejected(
+        self, plot_orchestrator, workflow_id
+    ):
+        cell_id = self._add_cell(plot_orchestrator)
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        with pytest.raises(ValueError, match='cannot share a cell'):
+            plot_orchestrator.add_layer(
+                cell_id, make_plot_config(workflow_id, plot_name='table')
+            )
+        assert len(plot_orchestrator.get_cell(cell_id).layers) == 1
+
+    def test_layer_onto_table_cell_is_rejected(self, plot_orchestrator, workflow_id):
+        cell_id = self._add_cell(plot_orchestrator)
+        plot_orchestrator.add_layer(
+            cell_id, make_plot_config(workflow_id, plot_name='table')
+        )
+        with pytest.raises(ValueError, match='cannot share a cell'):
+            plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        assert len(plot_orchestrator.get_cell(cell_id).layers) == 1
+
+    def test_update_to_table_in_multi_layer_cell_is_rejected(
+        self, plot_orchestrator, workflow_id
+    ):
+        cell_id = self._add_cell(plot_orchestrator)
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        with pytest.raises(ValueError, match='cannot share a cell'):
+            plot_orchestrator.update_layer_config(
+                layer_id, make_plot_config(workflow_id, plot_name='table')
+            )
+
+    def test_update_to_table_in_single_layer_cell_is_allowed(
+        self, plot_orchestrator, workflow_id
+    ):
+        cell_id = self._add_cell(plot_orchestrator)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        plot_orchestrator.update_layer_config(
+            layer_id, make_plot_config(workflow_id, plot_name='table')
+        )
+        assert plot_orchestrator.get_cell(cell_id).layers[0].config.plot_name == 'table'
 
 
 class TestReplaceGrid:

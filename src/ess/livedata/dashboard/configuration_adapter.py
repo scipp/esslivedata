@@ -85,6 +85,15 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         return frozenset()
 
     @property
+    def param_output_titles(self) -> dict[str, list[str]]:
+        """Map each param field name to the titles of the outputs it shapes.
+
+        Used to annotate parameter groups with the outputs they affect. Empty
+        by default; adapters backed by a workflow spec override this.
+        """
+        return {}
+
+    @property
     def aux_sources(self) -> AuxSources | None:
         """Auxiliary source specification, or None if the workflow has none."""
 

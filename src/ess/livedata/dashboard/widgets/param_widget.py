@@ -161,9 +161,13 @@ class ParamWidget:
                 **shared_options,
             )
         elif get_origin(field_type) is Literal:
-            # Handle Literal types (e.g., Literal['a', 'b', 'c'])
+            # Handle Literal types (e.g., Literal['a', 'b', 'c']). A field may
+            # supply human-readable labels via Field(json_schema_extra={'labels':
+            # {value: label}}); the underlying (serialized) value is unchanged.
             literal_values = get_args(field_type)
-            options = {str(val): val for val in literal_values}
+            extra = field_info.json_schema_extra
+            labels = extra.get('labels', {}) if isinstance(extra, dict) else {}
+            options = {labels.get(val, str(val)): val for val in literal_values}
 
             default_widget_value = default_value if default_value else literal_values[0]
             return pn.widgets.Select(

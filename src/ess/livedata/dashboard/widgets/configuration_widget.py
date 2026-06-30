@@ -181,6 +181,7 @@ class ConfigurationWidget:
             initial_values=self._config.initial_parameter_values,
             show_descriptions=True,
             hidden_fields=self._config.hidden_fields,
+            field_outputs=self._config.param_output_titles,
         )
 
     def _create_title_pane(self) -> pn.pane.HTML:

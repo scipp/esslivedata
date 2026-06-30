@@ -18,7 +18,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import WindowMode, WindowParams
+from .plot_params import TimeWindowMixin, TimeWindowMode, TimeWindowParams
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -213,7 +213,7 @@ class PlottingController:
             params = spec.params(**params) if spec.params else pydantic.BaseModel()
 
         spec = plotter_registry.get_spec(plot_name)
-        window = getattr(params, 'window', None)
+        window = params.time_window if isinstance(params, TimeWindowMixin) else None
 
         # Flatten keys for extractor creation
         all_keys = [key for keys in keys_by_role.values() for key in keys]
@@ -252,6 +252,25 @@ class PlottingController:
             plotter.set_roi_publisher(self._roi_publisher)
         return plotter
 
+    def is_overlayable(self, plot_name: str, params: dict | pydantic.BaseModel) -> bool:
+        """Whether a layer with this config can share a cell with other layers.
+
+        Tables and layout-mode plotters produce elements that cannot be fused
+        via ``hv.Overlay``. Overlayability is not a static flag: for the general
+        plot it derives from the params (``combine_mode``), so we build the
+        plotter to ask it.
+
+        This method only gates the overlay UI (disabling "Add layer", hiding
+        overlay buttons). A config that fails to build is therefore treated as
+        overlayable rather than blocked here; a genuinely broken config raises
+        again at actual plotter creation, which is the authoritative path.
+        """
+        try:
+            plotter = self.create_plotter(plot_name, params=params)
+        except Exception:
+            return True
+        return getattr(plotter, 'is_overlayable', True)
+
 
 def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
     """Return whether the window controls (mode, duration, aggregation) apply.
@@ -287,7 +306,7 @@ def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
 
 def create_extractors_from_params(
     keys: list[ResultKey],
-    window: WindowParams | None,
+    window: TimeWindowParams | None,
     spec: PlotterSpec | None = None,
 ) -> dict[ResultKey, UpdateExtractor]:
     """
@@ -320,7 +339,7 @@ def create_extractors_from_params(
     # the ResultKey). Only window mode with duration>0 needs aggregation.
     if (
         window is not None
-        and window.mode is WindowMode.window
+        and window.mode is TimeWindowMode.window
         and window.window_duration_seconds > 0
     ):
         return {
