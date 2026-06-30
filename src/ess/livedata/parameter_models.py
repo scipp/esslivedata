@@ -9,6 +9,7 @@ frontend.
 """
 
 import json
+import math
 from abc import ABC
 from enum import StrEnum
 from pathlib import Path
@@ -19,8 +20,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # One pulse period of the 14 Hz ESS source, in milliseconds (1000 / 14 ≈ 71.43).
 # Used as the default upper edge for time-of-arrival histograms: a single pulse
 # period is the natural span for events measured relative to the source pulse.
-# Rounded for a clean default; the exact period differs by < 0.01 ms.
-ESS_PULSE_PERIOD_MS = round(1000.0 / 14, 2)
+# Rounded *up* to 2 decimals for a clean default: as the histogram's upper edge
+# it must not fall below the true period, or events in the final sliver would be
+# silently dropped.
+ESS_PULSE_PERIOD_MS = math.ceil(1000.0 / 14 * 100) / 100
 
 
 def parse_number_list(value: str) -> list[float]:
