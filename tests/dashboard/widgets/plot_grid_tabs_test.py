@@ -591,7 +591,7 @@ class TestComposeMixedLayers:
             PlotCell,
             PlotConfig,
         )
-        from ess.livedata.dashboard.plot_params import WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowParams
         from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.range_hook import Axis
         from ess.livedata.dashboard.session_layer import SessionLayer
@@ -640,7 +640,7 @@ class TestComposeMixedLayers:
                 )
             },
             plot_name='lines',
-            params=WindowParams(),
+            params=TimeWindowParams(),
         )
         static_config = PlotConfig(
             data_sources={
@@ -649,7 +649,7 @@ class TestComposeMixedLayers:
                 )
             },
             plot_name='vlines',
-            params=WindowParams(),
+            params=TimeWindowParams(),
         )
         assert static_config.is_static()
 

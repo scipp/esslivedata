@@ -10,7 +10,7 @@ from enum import StrEnum
 import pydantic
 
 
-class WindowMode(enum.StrEnum):
+class TimeWindowMode(enum.StrEnum):
     """Enumeration of extraction modes.
 
     - ``since_start``: latest cumulative value (subscribes to the
@@ -195,11 +195,11 @@ class LayoutParams(pydantic.BaseModel):
     )
 
 
-class WindowParams(pydantic.BaseModel):
-    """Parameters for windowing and aggregation."""
+class TimeWindowParams(pydantic.BaseModel):
+    """Parameters for time-windowing and aggregation."""
 
-    mode: WindowMode = pydantic.Field(
-        default=WindowMode.window,
+    mode: TimeWindowMode = pydantic.Field(
+        default=TimeWindowMode.window,
         description=(
             "Extraction mode: 'since_start' for the cumulative value since the "
             "run started, 'window' for the most recent update plus optional "
@@ -305,11 +305,11 @@ _WINDOW_DESCRIPTION = (
 )
 
 
-class WindowMixin(pydantic.BaseModel):
-    """Mixin adding a windowing/aggregation section to plot parameters."""
+class TimeWindowMixin(pydantic.BaseModel):
+    """Mixin adding a time-windowing/aggregation section to plot parameters."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
+    time_window: TimeWindowParams = pydantic.Field(
+        default_factory=TimeWindowParams,
         description=_WINDOW_DESCRIPTION,
         title="Time Window",
     )
@@ -402,15 +402,15 @@ class PlotParamsTimeseries(PlotDisplayParams1d):
     )
 
 
-class PlotParams1d(RateMixin, WindowMixin, PlotDisplayParams1d):
+class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
-class PlotParams2d(RateMixin, WindowMixin, PlotDisplayParams2d):
+class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
 
-class PlotParams3d(RateMixin, WindowMixin, PlotDisplayParams2d):
+class PlotParams3d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Parameters for 3D slicer plots (renders a 2D slice)."""
 
 
@@ -424,7 +424,7 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(RateMixin, WindowMixin, PlotParamsBase):
+class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data."""
 
     orientation: BarOrientation = pydantic.Field(

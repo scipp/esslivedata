@@ -687,37 +687,41 @@ class TestCreateExtractorsFromParams:
         import uuid as _uuid  # noqa: F401  (avoid masking)
 
         from ess.livedata.dashboard.extractors import LatestValueExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.since_start)
+        params = TimeWindowParams(mode=TimeWindowMode.since_start)
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_with_zero_duration_uses_latest_value_extractor(self) -> None:
         from ess.livedata.dashboard.extractors import LatestValueExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.window, window_duration_seconds=0.0)
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=0.0
+        )
         extractors = create_extractors_from_params(keys, params)
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_uses_window_aggregating_extractor(self) -> None:
         from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
-        from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
         from ess.livedata.dashboard.plotting_controller import (
             create_extractors_from_params,
         )
 
         keys = self._make_keys()
-        params = WindowParams(mode=WindowMode.window, window_duration_seconds=5.0)
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=5.0
+        )
         extractors = create_extractors_from_params(keys, params)
         assert all(
             isinstance(e, WindowAggregatingExtractor) for e in extractors.values()

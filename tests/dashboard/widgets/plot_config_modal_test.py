@@ -349,7 +349,7 @@ class TestResolveOutputDisplayHints:
         hints = _resolve_output_display_hints(
             is_static=False, workflow_spec=spec, view_name="spectrum"
         )
-        assert 'window' in hints.hidden_fields
+        assert 'time_window' in hints.hidden_fields
 
     def test_output_without_time_coord_hides_window(self):
         class Outputs(WorkflowOutputsBase):
@@ -361,7 +361,7 @@ class TestResolveOutputDisplayHints:
         hints = _resolve_output_display_hints(
             is_static=False, workflow_spec=spec, view_name="total"
         )
-        assert 'window' in hints.hidden_fields
+        assert 'time_window' in hints.hidden_fields
 
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):

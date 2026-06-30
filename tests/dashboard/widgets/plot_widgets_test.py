@@ -18,7 +18,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotCell,
     PlotConfig,
 )
-from ess.livedata.dashboard.plot_params import WindowMode, WindowParams
+from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
 from ess.livedata.dashboard.widgets.plot_widgets import (
     _create_configure_button_or_menu,
     _create_toolbar_visibility_button,
@@ -53,24 +53,30 @@ class TestPerPanelToolHooks:
 
 
 class _FakeParams(pydantic.BaseModel):
-    window: WindowParams = pydantic.Field(default_factory=WindowParams)
+    time_window: TimeWindowParams = pydantic.Field(default_factory=TimeWindowParams)
 
 
 class TestFormatWindowInfo:
     def test_returns_since_run_start_for_since_start_mode(self) -> None:
-        params = _FakeParams(window=WindowParams(mode=WindowMode.since_start))
+        params = _FakeParams(
+            time_window=TimeWindowParams(mode=TimeWindowMode.since_start)
+        )
         assert _format_window_info(params) == 'since run start'
 
     def test_returns_empty_for_window_mode(self) -> None:
         """Window mode shows no static label; data range comes from the plot."""
         params = _FakeParams(
-            window=WindowParams(mode=WindowMode.window, window_duration_seconds=10)
+            time_window=TimeWindowParams(
+                mode=TimeWindowMode.window, window_duration_seconds=10
+            )
         )
         assert _format_window_info(params) == ''
 
     def test_returns_empty_for_window_mode_zero_duration(self) -> None:
         params = _FakeParams(
-            window=WindowParams(mode=WindowMode.window, window_duration_seconds=0)
+            time_window=TimeWindowParams(
+                mode=TimeWindowMode.window, window_duration_seconds=0
+            )
         )
         assert _format_window_info(params) == ''
 
@@ -163,7 +169,9 @@ class TestGetPlotCellDisplayInfo:
                 )
             },
             plot_name='lines',
-            params=_FakeParams(window=WindowParams(mode=WindowMode.since_start)),
+            params=_FakeParams(
+                time_window=TimeWindowParams(mode=TimeWindowMode.since_start)
+            ),
         )
 
         title, _ = get_plot_cell_display_info(config, registry)

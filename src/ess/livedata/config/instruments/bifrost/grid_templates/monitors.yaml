@@ -24,7 +24,7 @@ cells:
     params:
       plot_aspect:
         aspect_type: Free
-      window:
+      time_window:
         mode: window
 - geometry:
     row: 1
@@ -46,7 +46,7 @@ cells:
     params:
       plot_aspect:
         aspect_type: Free
-      window:
+      time_window:
         mode: window
         window_duration_seconds: 30.0
 - geometry:
@@ -69,5 +69,5 @@ cells:
     params:
       plot_aspect:
         aspect_type: Free
-      window:
+      time_window:
         mode: since_start

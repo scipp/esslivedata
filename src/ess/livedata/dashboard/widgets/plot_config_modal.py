@@ -147,7 +147,7 @@ def _resolve_output_display_hints(
     )
 
     supports_windowing = output_view_supports_windowing(workflow_spec, view_name)
-    hidden = frozenset({'window'}) if not supports_windowing else frozenset()
+    hidden = frozenset({'time_window'}) if not supports_windowing else frozenset()
 
     template = (
         workflow_spec.get_output_template(view_name)
@@ -1198,7 +1198,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             workflow_spec=workflow_spec if not is_static else None,
             view_name=self._plotter_selection.view_name,
         )
-        self._supports_windowing = 'window' not in hints.hidden_fields
+        self._supports_windowing = 'time_window' not in hints.hidden_fields
 
         # For new plots, use display hints to decide source pre-selection.
         # 2D+ outputs (images) default to empty so the user picks one source.
@@ -1284,11 +1284,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         Returns ``True`` if the configuration may proceed. Otherwise shows an
         error and returns ``False`` so the modal stays open.
         """
-        from ess.livedata.dashboard.plot_params import WindowMode
+        from ess.livedata.dashboard.plot_params import TimeWindowMode
         from ess.livedata.dashboard.plotting_controller import since_start_available
 
-        window = getattr(params, 'window', None)
-        if window is None or window.mode is not WindowMode.since_start:
+        window = getattr(params, 'time_window', None)
+        if window is None or window.mode is not TimeWindowMode.since_start:
             return True
         if self._plotter_selection is None:
             return True
