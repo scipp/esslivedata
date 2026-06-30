@@ -305,6 +305,25 @@ _WINDOW_DESCRIPTION = (
 )
 
 
+class WindowMixin(pydantic.BaseModel):
+    """Mixin adding a windowing/aggregation section to plot parameters."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description=_WINDOW_DESCRIPTION,
+        title="Time Window",
+    )
+
+
+class RateMixin(pydantic.BaseModel):
+    """Mixin adding a rate-normalization section to plot parameters."""
+
+    rate: RateNormalizationParams = pydantic.Field(
+        default_factory=RateNormalizationParams,
+        description="Rate normalization options.",
+    )
+
+
 _TIMESERIES_DOWNSAMPLING_DESCRIPTION = (
     "Controls how much detail this plot shows over the lifetime of the run. "
     "Performance depends on the total number of points displayed: too many "
@@ -383,54 +402,16 @@ class PlotParamsTimeseries(PlotDisplayParams1d):
     )
 
 
-class PlotParams1d(PlotDisplayParams1d):
+class PlotParams1d(RateMixin, WindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-        title="Time Window",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
 
-
-class PlotParams2d(PlotDisplayParams2d):
+class PlotParams2d(RateMixin, WindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-        title="Time Window",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
 
-
-class PlotParams3d(PlotParamsBase):
-    """Parameters for 3D slicer plots."""
-
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-        title="Time Window",
-    )
-    plot_scale: PlotScaleParams2d = pydantic.Field(
-        default_factory=PlotScaleParams2d,
-        description="Scaling options for the plot axes and color.",
-    )
-    ticks: TickParams = pydantic.Field(
-        default_factory=TickParams,
-        description="Tick configuration for plot axes.",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
-    )
+class PlotParams3d(RateMixin, WindowMixin, PlotDisplayParams2d):
+    """Parameters for 3D slicer plots (renders a 2D slice)."""
 
 
 class BarOrientation(pydantic.BaseModel):
@@ -443,19 +424,10 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(PlotParamsBase):
+class PlotParamsBars(RateMixin, WindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data."""
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description=_WINDOW_DESCRIPTION,
-        title="Time Window",
-    )
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
-    )
-    rate: RateNormalizationParams = pydantic.Field(
-        default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
     )
