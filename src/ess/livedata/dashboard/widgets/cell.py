@@ -27,7 +27,6 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..format_utils import extract_error_summary
-from ..frame_aspect import make_frame_aspect_hook_from_config
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellId,
@@ -643,10 +642,12 @@ class CellWidget:
             # opts applied afterwards land on the OverlayPlot and persist.
             result = hv.Overlay(plots).collate()
 
-        # Skip figure-level hooks for a non-overlayable layer: a Layout's
+        # Skip the cell-level hooks for a non-overlayable layer: a Layout's
         # sub-figures each carry their own SaveTool, and a Table's DataTable
-        # widget has no figure, toolbar, or sizing handle for the SaveTool/aspect
-        # hooks to act on.
+        # widget has no figure for the SaveTool/autoscale hooks to act on. The
+        # frame-aspect hook is not among these — it is declared per element type
+        # by the plotter (see Plotter._sizing_opts), so it reaches every
+        # sub-figure of a Layout regardless.
         if non_overlayable:
             return result
 
@@ -658,12 +659,6 @@ class CellWidget:
         )
         if filename is not None:
             hooks.append(make_save_filename_hook(filename))
-        if self._cell.layers:
-            params = self._cell.layers[0].config.params
-            if hasattr(params, 'plot_aspect'):
-                aspect_hook = make_frame_aspect_hook_from_config(params.plot_aspect)
-                if aspect_hook is not None:
-                    hooks.append(aspect_hook)
         # Fresh controller on every cell rebuild: keeps tools and toggle state
         # local to this session's Bokeh document. The previous cell widget's
         # controller is disposed by the owner after the swap, breaking its
