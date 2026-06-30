@@ -613,6 +613,10 @@ class TestComposeMixedLayers:
                 self._cached_state = None
                 self._presenters = []
 
+            @property
+            def autoscale_axes(self):
+                return self.AUTOSCALE_AXES
+
             def compute(self, data):
                 self._cached_state = data
 

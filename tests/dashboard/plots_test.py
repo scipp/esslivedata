@@ -333,6 +333,57 @@ class TestImagePlotter:
         result = plotter.plot(zero_data, data_key)
         assert result.vdims[0].label == 'values'
 
+    def test_manual_color_limits_pin_color_mapper(
+        self, constant_nonzero_data, data_key
+    ):
+        """Manual limits fix the rendered color mapper, ignoring the data range."""
+        from bokeh.models import LinearColorMapper
+
+        params = PlotParams2d()
+        params.plot_scale.color_scale = PlotScale.linear
+        params.plot_scale.manual_color_limits = True
+        params.plot_scale.color_min = 2.0
+        params.plot_scale.color_max = 9.0
+        plotter = plots.ImagePlotter.from_params(params)
+        fig = present_figure(plotter, {data_key: constant_nonzero_data})
+        mappers = fig.select(LinearColorMapper)
+        assert mappers
+        assert mappers[0].low == 2.0
+        assert mappers[0].high == 9.0
+
+
+class TestPlotScaleParams2dManualLimits:
+    def test_rejects_max_not_greater_than_min_when_manual(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            PlotScaleParams2d(manual_color_limits=True, color_min=5.0, color_max=5.0)
+
+    def test_rejects_nonpositive_min_on_log_scale(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            PlotScaleParams2d(
+                color_scale=PlotScale.log,
+                manual_color_limits=True,
+                color_min=0.0,
+                color_max=10.0,
+            )
+
+    def test_allows_nonpositive_min_on_linear_scale(self):
+        params = PlotScaleParams2d(
+            color_scale=PlotScale.linear,
+            manual_color_limits=True,
+            color_min=-5.0,
+            color_max=10.0,
+        )
+        assert params.color_min == -5.0
+
+    def test_limits_unvalidated_when_manual_off(self):
+        # Limits are ignored when manual is off, so an inverted pair is allowed.
+        params = PlotScaleParams2d(color_min=5.0, color_max=1.0)
+        assert params.manual_color_limits is False
+
 
 class TestLinePlotter:
     @pytest.fixture

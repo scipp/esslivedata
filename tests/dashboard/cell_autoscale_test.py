@@ -36,7 +36,7 @@ class _FakePlotter:
     """Stand-in for a real :class:`Plotter`.
 
     Implements the minimum surface used by :class:`CellAutoscaleController`:
-    ``AUTOSCALE_AXES`` class attribute and ``iter_range_targets()``.
+    the ``autoscale_axes`` property and ``iter_range_targets()``.
     """
 
     def __init__(
@@ -44,7 +44,7 @@ class _FakePlotter:
         axes: frozenset[Axis],
         targets_by_key: dict[ResultKey, dict[Axis, tuple[float, float]]] | None = None,
     ) -> None:
-        self.AUTOSCALE_AXES = axes
+        self.autoscale_axes = axes
         self._targets = targets_by_key or {}
 
     def iter_range_targets(self):

@@ -266,6 +266,16 @@ class CorrelationHistogramPlotter:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
 
+    @property
+    def autoscale_axes(self) -> frozenset[Axis]:
+        """Delegate effective autoscale axes to the inner renderer.
+
+        The renderer narrows its axes for static config such as manual color
+        limits, so the cell controller inherits that here without the outer
+        plotter knowing about it.
+        """
+        return self._renderer.autoscale_axes
+
     def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
         """Delegate per-axis target lookup to the inner renderer."""
         return self._renderer.get_range_targets(data_key)

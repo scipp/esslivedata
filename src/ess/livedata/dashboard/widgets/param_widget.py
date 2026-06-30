@@ -236,7 +236,10 @@ class ParamWidget:
             # Extract first error message for display
             error_details = e.errors()
             if error_details:
-                field_name = error_details[0].get('loc', [''])[0]
+                # Model-level validators report an empty ``loc``; only field
+                # errors carry a field name to prefix the message with.
+                loc = error_details[0].get('loc', ())
+                field_name = loc[0] if loc else ''
                 error_msg = error_details[0].get('msg', str(e))
                 return False, f"{field_name}: {error_msg}" if field_name else error_msg
             return False, str(e)
@@ -257,7 +260,8 @@ class ParamWidget:
             except pydantic.ValidationError as e:
                 error_details = e.errors()
                 if error_details:
-                    field_name = error_details[0].get('loc', [''])[0]
+                    loc = error_details[0].get('loc', ())
+                    field_name = loc[0] if loc else ''
                     if field_name in self.widgets:
                         # Apply error styling to the failing widget
                         self.widgets[field_name].styles = {
