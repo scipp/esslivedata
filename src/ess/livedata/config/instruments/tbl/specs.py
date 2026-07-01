@@ -36,6 +36,9 @@ instrument = Instrument(
     name='tbl',
     detector_names=detector_names,
     monitors=monitor_names,
+    # Bandwidth choppers feeding the wavelength-LUT cascade, in beam order
+    # (source -> sample): bwc_2 sits at 14.5 m from the source, bwc_1 at 15.5 m.
+    choppers=['bwc_2', 'bwc_1'],
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
         'timepix3_detector': SourceMetadata(title='Timepix3'),
