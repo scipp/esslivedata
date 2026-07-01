@@ -309,6 +309,46 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
     return devices
 
 
+#: Kafka topic suffixes with a PROD ACL grant for f144 log streams, plus
+#: ``tn_data_general`` which is authorized outright. PROD topic authorization
+#: is temporarily incomplete; entries in a ``streams_parsed`` module whose
+#: topic falls outside this set are dropped by :func:`filter_authorized_streams`
+#: so instruments do not attempt to subscribe to a topic they cannot read.
+_AUTHORIZED_TOPIC_SUFFIXES: tuple[str, ...] = ('_choppers', '_motion', '_sample_env')
+_AUTHORIZED_TOPICS: frozenset[str] = frozenset({'tn_data_general'})
+
+
+def filter_authorized_streams(parsed: dict[str, Stream]) -> dict[str, Stream]:
+    """Drop streams whose Kafka topic lacks a PROD ACL grant.
+
+    Temporary workaround for an incomplete PROD topic authorization list:
+    keeps only entries whose ``topic`` is ``tn_data_general`` or ends in
+    ``_choppers``, ``_motion``, or ``_sample_env``. Remove this filtering
+    once PROD ACLs cover the full topic set used by ``streams_parsed``
+    modules.
+
+    Parameters
+    ----------
+    parsed:
+        Path-keyed stream dict, typically the ``PARSED_STREAMS`` imported
+        from an instrument's auto-generated ``streams_parsed`` module.
+
+    Returns
+    -------
+    :
+        The subset of ``parsed`` whose topic is authorized.
+    """
+    return {
+        path: stream
+        for path, stream in parsed.items()
+        if stream.topic in _AUTHORIZED_TOPICS
+        or (
+            stream.topic is not None
+            and stream.topic.endswith(_AUTHORIZED_TOPIC_SUFFIXES)
+        )
+    }
+
+
 def name_streams(
     parsed: dict[str, Stream],
     *,

@@ -11,6 +11,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
+    filter_authorized_streams,
     instrument_registry,
     name_streams,
 )
@@ -185,7 +186,7 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
     )
 
 
-streams = name_streams(PARSED_STREAMS)
+streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
 instrument = Instrument(
     name='estia',

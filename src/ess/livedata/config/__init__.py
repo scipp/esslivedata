@@ -2,7 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
-from .stream import ContextBinding, Device, F144Stream, Stream, name_streams
+from .stream import (
+    ContextBinding,
+    Device,
+    F144Stream,
+    Stream,
+    filter_authorized_streams,
+    name_streams,
+)
 
 __all__ = [
     'ContextBinding',
@@ -11,6 +18,7 @@ __all__ = [
     'Instrument',
     'SourceMetadata',
     'Stream',
+    'filter_authorized_streams',
     'instrument_registry',
     'name_streams',
 ]

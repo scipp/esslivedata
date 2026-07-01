@@ -4,7 +4,12 @@
 NMX instrument spec registration.
 """
 
-from ess.livedata.config import Instrument, instrument_registry, name_streams
+from ess.livedata.config import (
+    Instrument,
+    filter_authorized_streams,
+    instrument_registry,
+    name_streams,
+)
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
@@ -26,7 +31,7 @@ instrument = Instrument(
     name='nmx',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
-    streams=name_streams(PARSED_STREAMS),
+    streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
 )
 
 # Register instrument
