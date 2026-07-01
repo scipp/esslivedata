@@ -1,0 +1,769 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Per-instrument stream registry &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+    <script src="../../_static/documentation_options.js?v=70bb3503"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/design/stream-registry';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Stream Keying" href="stream-keying.html" />
+    <link rel="prev" title="Rate-Aware Message Batcher" href="rate-aware-batcher.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.7.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Per-instrument stream registry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../adr/index.html">Architecture Decision Records</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#shape">Shape</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stream-and-f144stream-records"><code class="docutils literal notranslate"><span class="pre">Stream</span></code> and <code class="docutils literal notranslate"><span class="pre">F144Stream</span></code> records</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#synthesised-streams">Synthesised streams</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#logcontextbinding"><code class="docutils literal notranslate"><span class="pre">LogContextBinding</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#display-info-source-metadata-not-stream">Display info: <code class="docutils literal notranslate"><span class="pre">source_metadata</span></code>, not <code class="docutils literal notranslate"><span class="pre">Stream</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#codegen-seam">Codegen seam</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#construction-time-invariants">Construction-time invariants</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#open-questions">Open questions</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/design/stream-registry.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Per-instrument stream registry</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="per-instrument-stream-registry">
+<h1>Per-instrument stream registry<a class="headerlink" href="#per-instrument-stream-registry" title="Link to this heading">#</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>Each instrument carries a single source of truth for streaming data declarations: one record per group that the ESS filewriter would write into a NeXus file.
+NeXus-rich instruments auto-generate the bulk of the registry from a geometry artifact, with code-side overrides for the few names that need to differ.</p>
+<p>Two routing-layer consumers shaped the design:</p>
+<ul class="simple">
+<li><p><em>Dynamic detector transforms</em> drive entries in a <code class="docutils literal notranslate"><span class="pre">depends_on</span></code> chain from live f144 streams.</p></li>
+<li><p><em>Chopper workflows</em> drive per-chopper geometry assembly from live f144 setpoint streams, including synthesised streams that are emitted in-process rather than read from Kafka.</p></li>
+</ul>
+<p>Both need a stream → Sciline-key routing layer with per-consumer scoping.</p>
+</section>
+<section id="shape">
+<h2>Shape<a class="headerlink" href="#shape" title="Link to this heading">#</a></h2>
+<section id="stream-and-f144stream-records">
+<h3><code class="docutils literal notranslate"><span class="pre">Stream</span></code> and <code class="docutils literal notranslate"><span class="pre">F144Stream</span></code> records<a class="headerlink" href="#stream-and-f144stream-records" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Stream</span></code> is a frozen dataclass for any streaming group; <code class="docutils literal notranslate"><span class="pre">F144Stream</span></code> subclasses it for the f144 writer module and adds <code class="docutils literal notranslate"><span class="pre">units</span></code>.
+The base carries the NeXus identity (<code class="docutils literal notranslate"><span class="pre">nexus_path</span></code>, <code class="docutils literal notranslate"><span class="pre">nx_class</span></code>) and the wire identity (<code class="docutils literal notranslate"><span class="pre">topic</span></code>, <code class="docutils literal notranslate"><span class="pre">source</span></code>) — the facts the filewriter collocates as group attrs at a specific HDF5 path.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Stream</span><span class="p">:</span>
+    <span class="n">writer_module</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">nexus_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">topic</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">nx_class</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">F144Stream</span><span class="p">(</span><span class="n">Stream</span><span class="p">):</span>
+    <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">writer_module</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;f144&#39;</span>
+    <span class="n">nx_class</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;NXlog&#39;</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Instrument.streams:</span> <span class="pre">dict[str,</span> <span class="pre">Stream]</span></code> holds streams of all writer modules, keyed by the instrument-facing <em>stream name</em>.
+The name is the routing handle for every non-kafka-boundary consumer; <code class="docutils literal notranslate"><span class="pre">topic</span></code> / <code class="docutils literal notranslate"><span class="pre">source</span></code> are read only by the Kafka boundary (<code class="docutils literal notranslate"><span class="pre">streams.py</span></code> per instrument, <code class="docutils literal notranslate"><span class="pre">message_adapter</span></code>, kafka source).
+Per-kind views are filters (<code class="docutils literal notranslate"><span class="pre">instrument.f144_streams</span></code> returns <code class="docutils literal notranslate"><span class="pre">dict[str,</span> <span class="pre">F144Stream]</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">nexus_path</span></code> is on the base because consumers that splice live values into a NeXus structure — transform-chain patching, chopper <code class="docutils literal notranslate"><span class="pre">DataGroup</span></code> assembly — dispatch on it.
+It is None only for synthesised streams.</p>
+</section>
+<section id="synthesised-streams">
+<h3>Synthesised streams<a class="headerlink" href="#synthesised-streams" title="Link to this heading">#</a></h3>
+<p>A synthesised stream (no NeXus row, emitted in-process by a synthesiser) is <code class="docutils literal notranslate"><span class="pre">Stream(topic=None,</span> <span class="pre">source=None,</span> <span class="pre">nexus_path=None,</span> <span class="pre">...)</span></code>.
+The predicate “synthesised” is <code class="docutils literal notranslate"><span class="pre">stream.topic</span> <span class="pre">is</span> <span class="pre">None</span></code>.
+<code class="docutils literal notranslate"><span class="pre">__post_init__</span></code> enforces that <code class="docutils literal notranslate"><span class="pre">topic</span></code> and <code class="docutils literal notranslate"><span class="pre">source</span></code> are both None or both set.</p>
+<p>Consumers are oblivious to the distinction: workflow harnesses, timeseries UI, and binding resolution all index into <code class="docutils literal notranslate"><span class="pre">streams</span></code> by name.
+The only place that filters by <code class="docutils literal notranslate"><span class="pre">topic</span> <span class="pre">is</span> <span class="pre">None</span></code> is the Kafka-boundary <code class="docutils literal notranslate"><span class="pre">StreamLUT</span></code> builder, which has no entry to emit for a stream that never arrives over Kafka.</p>
+</section>
+<section id="logcontextbinding">
+<h3><code class="docutils literal notranslate"><span class="pre">LogContextBinding</span></code><a class="headerlink" href="#logcontextbinding" title="Link to this heading">#</a></h3>
+<p>The runtime overlay — wiring f144 streams into Sciline workflows — is a separate list referencing streams by name:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LogContextBinding</span><span class="p">:</span>
+    <span class="n">stream_name</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># references Instrument.streams[stream_name]</span>
+    <span class="n">workflow_key</span><span class="p">:</span> <span class="n">Any</span>           <span class="c1"># Sciline key type (e.g. InstrumentAngle[SampleRun])</span>
+    <span class="n">dependent_sources</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># spec source_names that pick up this binding</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Instrument.log_context_bindings:</span> <span class="pre">list[LogContextBinding]</span></code>.
+A binding declares only “stream X feeds Sciline key K, scoped to dependents D”; it does not mirror <code class="docutils literal notranslate"><span class="pre">units</span></code> or <code class="docutils literal notranslate"><span class="pre">nexus_path</span></code>, which live on the stream record it references.</p>
+<p>Bindings live separately from the record because <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code> and <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> belong to <em>a binding</em>, not to a stream: a single stream can participate in multiple bindings with different scoping (e.g., feeding two Sciline workflows triggered by different sources).
+A field on the stream record would force one global answer.</p>
+<p>Factories derive <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow.context_keys</span></code> by calling <code class="docutils literal notranslate"><span class="pre">instrument.get_context_keys(source_name)</span></code>, which filters the binding list by <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code>.
+The aux-source routing mechanism iterates <code class="docutils literal notranslate"><span class="pre">log_context_bindings</span></code> once and filters by <code class="docutils literal notranslate"><span class="pre">dependent_sources</span> <span class="pre">&amp;</span> <span class="pre">spec.source_names</span></code>.</p>
+<p>The same binding type covers both known consumers:</p>
+<ul class="simple">
+<li><p><em>Dynamic-transforms</em>: the detector spec picks up the live readback as an aux input, keyed by a <code class="docutils literal notranslate"><span class="pre">TransformValueLog</span></code> subclass, and patches it into the transform chain.</p></li>
+<li><p><em>Chopper-workflow</em>: a chopper workflow spec is triggered by a synthetic <code class="docutils literal notranslate"><span class="pre">chopper_cascade_in_phase</span></code> stream; every chopper f144 stream declares itself as an aux input to that trigger and feeds a typed Sciline key.</p></li>
+</ul>
+<p>Dispatch between the two is driven by the <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> type and the Sciline graph downstream, not by separate binding kinds.</p>
+</section>
+<section id="display-info-source-metadata-not-stream">
+<h3>Display info: <code class="docutils literal notranslate"><span class="pre">source_metadata</span></code>, not <code class="docutils literal notranslate"><span class="pre">Stream</span></code><a class="headerlink" href="#display-info-source-metadata-not-stream" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">title</span></code> and <code class="docutils literal notranslate"><span class="pre">description</span></code> live in <code class="docutils literal notranslate"><span class="pre">Instrument.source_metadata:</span> <span class="pre">dict[str,</span> <span class="pre">SourceMetadata]</span></code>, the side-dict that already holds display info for detectors and monitors.
+<code class="docutils literal notranslate"><span class="pre">Stream</span></code> is data plumbing; display labels have a different audience and lifecycle, and merging them onto the record would pull human-readable strings into every record-equality test, override path, and parser fixture.</p>
+</section>
+</section>
+<section id="codegen-seam">
+<h2>Codegen seam<a class="headerlink" href="#codegen-seam" title="Link to this heading">#</a></h2>
+<p>For instruments with O(100) NXlogs the registry is bootstrapped <em>offline</em> by the CLI generator <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">ess.livedata.nexus_helpers</span> <span class="pre">&lt;geometry.nxs&gt;</span> <span class="pre">--generate</span></code>.
+The generator emits a checked-in <code class="docutils literal notranslate"><span class="pre">streams_parsed.py</span></code> containing a path-keyed dict literal:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># config/instruments/&lt;inst&gt;/streams_parsed.py  -- auto-generated</span>
+<span class="n">PARSED_STREAMS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">F144Stream</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;/entry/instrument/sample/temperature&#39;</span><span class="p">:</span> <span class="n">F144Stream</span><span class="p">(</span>
+        <span class="n">nexus_path</span><span class="o">=</span><span class="s1">&#39;/entry/instrument/sample/temperature&#39;</span><span class="p">,</span>
+        <span class="n">source</span><span class="o">=</span><span class="s1">&#39;SAMPLE-Tmp:RBV&#39;</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="s1">&#39;&lt;inst&gt;_sample&#39;</span><span class="p">,</span> <span class="n">units</span><span class="o">=</span><span class="s1">&#39;K&#39;</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The hand-edited <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> composes the final name-keyed registry via <code class="docutils literal notranslate"><span class="pre">name_streams</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">.streams_parsed</span><span class="w"> </span><span class="kn">import</span> <span class="n">PARSED_STREAMS</span>
+
+<span class="n">streams</span> <span class="o">=</span> <span class="n">name_streams</span><span class="p">(</span>
+    <span class="n">PARSED_STREAMS</span><span class="p">,</span>
+    <span class="n">rename</span><span class="o">=</span><span class="p">{</span>
+        <span class="s1">&#39;/entry/instrument/detector_carriage/value&#39;</span><span class="p">:</span> <span class="s1">&#39;detector_carriage_value&#39;</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">name_streams</span></code> auto-suggests an instrument-facing name from the tail of each NeXus path (generic container groups like <code class="docutils literal notranslate"><span class="pre">entry</span></code> / <code class="docutils literal notranslate"><span class="pre">instrument</span></code> / <code class="docutils literal notranslate"><span class="pre">sample</span></code> are filtered out) and accepts a <code class="docutils literal notranslate"><span class="pre">rename=</span></code> map keyed by <code class="docutils literal notranslate"><span class="pre">nexus_path</span></code>.
+It raises if a rename key matches no parsed entry, or if the resulting names collide.</p>
+<p>Codegen rather than runtime parsing: backend and dashboard both import the per-instrument config module at startup, and the dashboard has no file-access path.
+Parsing at runtime would force a Pooch download with cold-start dependencies on cache state and network.
+Codegen keeps both processes file-free at startup and makes the parser output reviewable as code.
+<code class="docutils literal notranslate"><span class="pre">Stream</span></code> is a frozen dataclass that round-trips through any serialisation layer, so moving to dynamic distribution later is a local change to who populates <code class="docutils literal notranslate"><span class="pre">Instrument.streams</span></code>.</p>
+<p>For instruments with few streams (today: <code class="docutils literal notranslate"><span class="pre">dummy</span></code>), the registry is a hand-written <code class="docutils literal notranslate"><span class="pre">dict[str,</span> <span class="pre">F144Stream]</span></code> literal and the codegen path is not used.</p>
+</section>
+<section id="construction-time-invariants">
+<h2>Construction-time invariants<a class="headerlink" href="#construction-time-invariants" title="Link to this heading">#</a></h2>
+<p>Misconfiguration in the registry, bindings, or overrides crashes the process at startup, not at pytest time:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Instrument.__post_init__</span></code> raises if any <code class="docutils literal notranslate"><span class="pre">log_context_bindings[i].stream_name</span></code> is missing from <code class="docutils literal notranslate"><span class="pre">Instrument.streams</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">name_streams</span></code> raises if a rename key matches no parsed entry, or if names collide.</p></li>
+<li><p>End of <code class="docutils literal notranslate"><span class="pre">Instrument.load_factories()</span></code> raises if any <code class="docutils literal notranslate"><span class="pre">log_context_bindings[i].dependent_sources</span></code> element does not match the <code class="docutils literal notranslate"><span class="pre">source_names</span></code> of some registered spec.
+This runs <em>after</em> factory loading because spec registration populates <code class="docutils literal notranslate"><span class="pre">source_names</span></code>.</p></li>
+</ul>
+<p>The dashboard and backend both import <code class="docutils literal notranslate"><span class="pre">Instrument</span></code> at startup, so any typo in <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> (wrong stream_name, missing rename target, unknown dependent source) crashes the process before traffic starts.</p>
+<p>Consumer-specific reachability checks (e.g., “every binding’s <code class="docutils literal notranslate"><span class="pre">nexus_path</span></code> lies on a <code class="docutils literal notranslate"><span class="pre">depends_on</span></code> chain”) are the consuming module’s responsibility, not the registry’s.
+The registry validates registry invariants only.</p>
+</section>
+<section id="open-questions">
+<h2>Open questions<a class="headerlink" href="#open-questions" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p><strong>Generalising overlay beyond f144.</strong>
+When ev44/tdct streams gain per-stream runtime config (rate hints, decoder choices), each gets its own <code class="docutils literal notranslate"><span class="pre">Stream</span></code> subclass.
+A consumer that needs a binding shape other than the f144 triple <code class="docutils literal notranslate"><span class="pre">(stream_name,</span> <span class="pre">workflow_key,</span> <span class="pre">dependent_sources)</span></code> gets its own binding type — <code class="docutils literal notranslate"><span class="pre">LogContextBinding</span></code> unifies f144 Sciline-key consumers, not all writer modules.</p></li>
+<li><p><strong>Codegen drift protection.</strong>
+<code class="docutils literal notranslate"><span class="pre">streams_parsed.py</span></code> is regenerated by hand; staleness against the latest geometry file is not caught automatically.
+An earlier drift test was dropped because it skipped in CI (the geometry files are not in Pooch) and so gave false confidence without catching the realistic failure mode.
+A real check needs a stable geometry-file input pinned in Pooch first.</p></li>
+</ol>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="rate-aware-batcher.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Rate-Aware Message Batcher</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="stream-keying.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Stream Keying</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.7.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.19.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

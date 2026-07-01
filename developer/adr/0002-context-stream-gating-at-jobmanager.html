@@ -1,0 +1,841 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0002: Gate workflow execution at the JobManager on context-stream readiness &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+    <script src="../../_static/documentation_options.js?v=70bb3503"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0002-context-stream-gating-at-jobmanager';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="ADR 0003: Unified declaration model for workflow context bindings" href="0003-context-input-declaration-model.html" />
+    <link rel="prev" title="ADR 0001: In-process synthesis of merged device streams" href="0001-in-process-device-stream-synthesis.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.7.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-registry.html">Per-instrument stream registry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-needs-gating-and-what-does-not">What needs gating, and what does not</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-design-choices">Key design choices</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-gate-set-is-derived-not-declared-per-workflow">The gate set is derived, not declared per workflow</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-context-cache-is-the-gates-only-readiness-source">The context cache is the gate’s only readiness source</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-distinct-stage-not-a-per-tick-skip">A distinct stage, not a per-tick skip</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#primary-data-arriving-before-context-is-dropped">Primary data arriving before context is dropped</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dedicated-jobstate-pending-context">Dedicated <code class="docutils literal notranslate"><span class="pre">JobState.pending_context</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0002-context-stream-gating-at-jobmanager.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0002-gate-workflow-execution-at-the-jobmanager-on-context-stream-readiness">
+<h1>ADR 0002: Gate workflow execution at the JobManager on context-stream readiness<a class="headerlink" href="#adr-0002-gate-workflow-execution-at-the-jobmanager-on-context-stream-readiness" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: accepted</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-05-21</p></li>
+</ul>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p>Sciline-based workflows parametrise their reduction graph on <em>context</em> values —
+motor positions, sample geometry, choppers — delivered as their own streams
+alongside detector data. <code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code> holds a hidden <code class="docutils literal notranslate"><span class="pre">None</span></code> seed for every
+such context binding. If a workflow runs before its context stream has produced a
+value, the providers downstream of that input receive <code class="docutils literal notranslate"><span class="pre">None</span></code> and either crash
+(bifrost’s <code class="docutils literal notranslate"><span class="pre">process_chunk_workflow</span></code> reads rotation inside <code class="docutils literal notranslate"><span class="pre">accumulate</span></code>, raising
+<code class="docutils literal notranslate"><span class="pre">'NoneType'</span> <span class="pre">object</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">attribute</span> <span class="pre">'ndim'</span></code>) or — worse — silently produce
+detector data attributed to a default geometry. Both failure modes have surfaced
+in production.</p>
+<p>The system needs a gate that prevents workflow invocation until every context
+input <em>that has no safe default</em> has a value. The design questions are where this
+gate lives and how it learns which inputs to gate on.</p>
+<section id="what-needs-gating-and-what-does-not">
+<h3>What needs gating, and what does not<a class="headerlink" href="#what-needs-gating-and-what-does-not" title="Link to this heading">#</a></h3>
+<p>A job consumes several kinds of input beyond its primary data stream. They differ
+in whether the workflow tolerates the input being absent:</p>
+<ul class="simple">
+<li><p><strong>Dynamic aux</strong> — inputs that accumulate over time inside the workflow (e.g.
+LOKI’s incident/transmission monitors). They flow through
+<code class="docutils literal notranslate"><span class="pre">StreamProcessor.accumulate</span></code> and tolerate late arrival: events processed against
+an empty accumulator still produce a useful (uncorrected) result the consumer can
+ignore. Gating these would break accumulation — events arriving before monitors
+would be dropped, and no result would ever appear even after the monitors do.</p></li>
+<li><p><strong>Context with a safe default</strong> — inputs that parametrise the graph but map a
+missing value to a well-defined result. ROI is the example: the Sciline providers
+treat “no request” and “empty request” identically as <em>no ROI selected</em>
+(<code class="docutils literal notranslate"><span class="pre">detector_view/roi.py</span></code>). There is no failure mode to prevent, so these are not
+gated either; ROI is routed as an ordinary auxiliary source.</p></li>
+<li><p><strong>Context with no safe default</strong> — inputs that parametrise the graph and whose
+absence is unrepresentable: motion/geometry (bifrost rotation, LOKI carriage).
+<code class="docutils literal notranslate"><span class="pre">None</span></code> crashes or yields silently-wrong geometry. <strong>Only this category is gated.</strong></p></li>
+</ul>
+<p>The gating axis is therefore <em>“does this input tolerate absence?”</em>, not
+<em>“<code class="docutils literal notranslate"><span class="pre">set_context</span></code> vs <code class="docutils literal notranslate"><span class="pre">accumulate</span></code>”</em> — ROI flows through <code class="docutils literal notranslate"><span class="pre">set_context</span></code> yet is not
+gated. The set of gated streams for a job is derived from <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>
+declarations at job-creation time; the declaration model is settled in ADR 0003.</p>
+</section>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<p>Gate at <code class="docutils literal notranslate"><span class="pre">JobManager</span></code>, not at the workflow execution unit.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Job</span></code> carries <code class="docutils literal notranslate"><span class="pre">gating_streams:</span> <span class="pre">set[str]</span></code> — the wire stream names whose values the
+workflow needs before it can run. <code class="docutils literal notranslate"><span class="pre">Job.missing_context(available)</span></code> returns the
+gating streams not present in <code class="docutils literal notranslate"><span class="pre">available</span></code>. The set is populated at
+<code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> from the <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> declarations that resolve for the
+specific <code class="docutils literal notranslate"><span class="pre">(spec,</span> <span class="pre">source)</span></code> (ADR 0003).</p>
+<p>A gated job occupies a dedicated stage <strong>between</strong> <em>scheduled</em> and <em>active</em>, held in
+its own <code class="docutils literal notranslate"><span class="pre">_pending_context_jobs</span></code> bucket. When <code class="docutils literal notranslate"><span class="pre">should_start</span></code> fires, <code class="docutils literal notranslate"><span class="pre">_start_job</span></code>
+routes the job by <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code>: empty → it becomes <code class="docutils literal notranslate"><span class="pre">active</span></code> at once; non-empty →
+it enters <code class="docutils literal notranslate"><span class="pre">pending_context</span></code> with a <code class="docutils literal notranslate"><span class="pre">pending_context_warning</span></code>. Only active jobs are
+processed — a pending job is never fed primary data.</p>
+<p>The preprocessor’s <strong>context cache</strong> is the single source of truth for which
+context streams have a value. <code class="docutils literal notranslate"><span class="pre">JobManager</span></code> holds a <code class="docutils literal notranslate"><span class="pre">context_reader</span></code> onto it; each
+tick, <code class="docutils literal notranslate"><span class="pre">_open_context_gates</span></code> refills the batch from the cache for every gating
+stream of a pending job still absent, then checks <code class="docutils literal notranslate"><span class="pre">job.missing_context(available)</span></code>
+against the post-refill batch:</p>
+<ul class="simple">
+<li><p>non-empty → the job stays pending; its <code class="docutils literal notranslate"><span class="pre">pending_context_warning(missing)</span></code> is
+refreshed to the still-missing streams.</p></li>
+<li><p>empty → the job graduates to <code class="docutils literal notranslate"><span class="pre">active</span></code> (<code class="docutils literal notranslate"><span class="pre">_activate_pending_job</span></code>), dropping its
+warning; its own processing outcome drives its state from there.</p></li>
+</ul>
+<p>Because gate opening and value delivery read the same dict, the gate-opening batch
+structurally carries every context value the job needs — a gate cannot open without
+its values being deliverable to <code class="docutils literal notranslate"><span class="pre">set_context</span></code>. Context values arrive intermittently
+— a motor position is published once and then is quiet — but the cache holds every
+value ever received, so availability is sticky across ticks.</p>
+<p>Graduation is <strong>one-way</strong>: <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code> is fixed and the cache only grows, so
+once a job is active it has left the gate permanently and is never re-checked, and a
+job with no context never enters the stage at all. The per-tick gate therefore scans
+only the small, transient pending bucket — not every active job — and refills only
+gating streams of pending jobs, never the cached context of steady-state active jobs
+(which would re-fire <code class="docutils literal notranslate"><span class="pre">set_context</span></code> and force eager downstream recompute on unchanged
+values).</p>
+<p>Time-based activation is preserved: <code class="docutils literal notranslate"><span class="pre">should_start(current_time)</span></code> drives the job <em>out
+of</em> <code class="docutils literal notranslate"><span class="pre">scheduled</span></code> on time, independent of stream-arrival timing. The readiness gate
+governs only the subsequent pending → active transition, so a job blocked on a dead
+producer stays visible as <code class="docutils literal notranslate"><span class="pre">pending_context</span></code> rather than silently rewriting its
+schedule.</p>
+<p><code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> remains a pure “given dynamic + context, produce result”
+unit. It does not consult the gate, does not track which keys have arrived, and does
+not drop dynamic data.</p>
+<p>There is no seeding mechanism. The gate stays closed until the producer publishes.
+If the producer is down, the workflow does not run — which is the correct behaviour
+for a context with no safe default.</p>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Gate at JobManager on context streams with no safe default (chosen)</strong></p></td>
+<td><p>The gate respects the workflow’s own tolerates-absence distinction. The set is derived from declarations, so adding a gated workflow needs no JobManager change.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Gate at JobManager on all aux</p></td>
+<td><p>Conflates routing with execution; gates dynamic aux (monitors) that legitimately accumulate without context. Forces tests and production to pre-publish dynamic aux before events. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Gate inside <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> with per-workflow opt-in</p></td>
+<td><p>Couples scheduling to workflow execution; forces <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> to carry a “drop dynamic while pending” branch and spreads gate configuration across factories. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Defer job construction until context ready</p></td>
+<td><p>Conflicts with time-based scheduling and moves the Sciline-pipeline build cost from config-load to first-data-arrival, introducing user-visible latency. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Hold gated jobs in <code class="docutils literal notranslate"><span class="pre">scheduled</span></code> rather than a distinct stage</p></td>
+<td><p>Entangles the schedule contract with producer liveness — a dead motion producer would keep a job “scheduled” past its start, and the dashboard could not tell “not due yet” from “started but blocked”. A dedicated <code class="docutils literal notranslate"><span class="pre">pending_context</span></code> stage keeps the two axes separate. Rejected.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="key-design-choices">
+<h2>Key design choices<a class="headerlink" href="#key-design-choices" title="Link to this heading">#</a></h2>
+<section id="the-gate-set-is-derived-not-declared-per-workflow">
+<h3>The gate set is derived, not declared per workflow<a class="headerlink" href="#the-gate-set-is-derived-not-declared-per-workflow" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Job.gating_streams</span></code> is populated at <code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> from the <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>
+records resolved for the <code class="docutils literal notranslate"><span class="pre">(spec,</span> <span class="pre">source)</span></code>. Declarations are the single source of
+truth for which inputs gate; adding a workflow that needs gating requires only the
+standard declaration (ADR 0003), no <code class="docutils literal notranslate"><span class="pre">JobManager</span></code> change.</p>
+</section>
+<section id="the-context-cache-is-the-gates-only-readiness-source">
+<h3>The context cache is the gate’s only readiness source<a class="headerlink" href="#the-context-cache-is-the-gates-only-readiness-source" title="Link to this heading">#</a></h3>
+<p>Gating compares against the streams present in the batch <em>after</em> refilling it from
+the preprocessor’s context cache (<code class="docutils literal notranslate"><span class="pre">context_reader</span></code>), not against the streams that
+happened to arrive this tick. The cache holds every context value ever received, so
+a value seen once stays available and the gate can open on a tick where the last
+missing stream finally arrives, with all earlier values refilled alongside it.
+Tracking readiness separately (e.g. a per-job set of seen stream names) was
+rejected: a second sticky store can disagree with the cache, opening a gate whose
+values are not deliverable — the workflow would then finalize against the hidden
+<code class="docutils literal notranslate"><span class="pre">None</span></code> seed, the exact failure this ADR exists to prevent. With a single source,
+gate opening and value delivery cannot diverge.</p>
+</section>
+<section id="a-distinct-stage-not-a-per-tick-skip">
+<h3>A distinct stage, not a per-tick skip<a class="headerlink" href="#a-distinct-stage-not-a-per-tick-skip" title="Link to this heading">#</a></h3>
+<p>A gated job is held in its own <code class="docutils literal notranslate"><span class="pre">_pending_context_jobs</span></code> bucket, not left among the
+active jobs with a per-tick “skip if gated” branch. Because <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code> is fixed
+and the cache only grows, readiness is monotonic: a job graduates once and never
+re-gates. Modelling that as a one-way stage move means the processing loop iterates
+only runnable jobs, the per-tick gate scans only the (small) pending bucket, and a
+job that never needed context never participates in gating at all.</p>
+</section>
+<section id="primary-data-arriving-before-context-is-dropped">
+<h3>Primary data arriving before context is dropped<a class="headerlink" href="#primary-data-arriving-before-context-is-dropped" title="Link to this heading">#</a></h3>
+<p>A pending job is not among the active jobs a batch is dispatched to, so primary data
+arriving while a gating stream is still missing simply is not delivered to it and
+nothing is buffered. It processes the first primary batch on or after the tick its
+gate opens. This is conceptually correct: detector events whose geometry context is
+unknown cannot be meaningfully reduced, and silent attribution to a default geometry
+is the exact failure mode the gate exists to prevent. Dynamic aux is unaffected — it
+is not in the gate set and accumulates normally.</p>
+</section>
+<section id="dedicated-jobstate-pending-context">
+<h3>Dedicated <code class="docutils literal notranslate"><span class="pre">JobState.pending_context</span></code><a class="headerlink" href="#dedicated-jobstate-pending-context" title="Link to this heading">#</a></h3>
+<p>A job held in the pending stage is conceptually distinct both from one not yet due
+(<code class="docutils literal notranslate"><span class="pre">scheduled</span></code>) and from one whose last processing attempt errored (<code class="docutils literal notranslate"><span class="pre">warning</span></code>).
+<code class="docutils literal notranslate"><span class="pre">JobState.pending_context</span></code> is healthy and waiting on a producer; surfacing it
+distinctly lets an operator tell a dead motion producer from a job that simply has
+not started.</p>
+</section>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> stays focused on workflow execution and carries no gate
+state.</p></li>
+<li><p>Any workflow that declares motion or geometry context gets correct startup
+behaviour automatically — the only requirement is the <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>
+declaration (ADR 0003). No per-instrument gate opt-in.</p></li>
+<li><p>Dynamic aux (LOKI monitors) flows through unchanged — the gate does not see it.</p></li>
+<li><p>ROI is routed as an auxiliary source, not gated: “no ROI” is a safe default, so
+there is no readiness to wait on and no seed to inject.</p></li>
+<li><p>Warning emission for context-pending jobs is consolidated inside <code class="docutils literal notranslate"><span class="pre">JobManager</span></code>.
+There is no warning channel between the workflow execution unit and the job layer.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">JobState.pending_context</span></code> is added to the job state machine, backed by a
+<code class="docutils literal notranslate"><span class="pre">_pending_context_jobs</span></code> bucket between <code class="docutils literal notranslate"><span class="pre">_scheduled_jobs</span></code> and <code class="docutils literal notranslate"><span class="pre">_active_jobs</span></code>. Job
+lookup, control, reset, status, and finish handling all account for the new bucket.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">JobManager</span></code> takes a <code class="docutils literal notranslate"><span class="pre">context_reader</span></code> onto the preprocessor’s context cache; the
+gate’s refill-then-check runs entirely inside <code class="docutils literal notranslate"><span class="pre">JobManager</span></code>, so gate correctness
+does not depend on callers enriching the batch.</p></li>
+<li><p>Tests at JobManager level cover: dynamic aux not gated; context (motion) blocks
+then unblocks once its stream has a value; a value cached on an earlier tick
+still opens the gate (and is delivered) when the last stream arrives later;
+primary dropped while gated; gates independent across jobs.</p></li>
+<li><p>The declaration model that feeds <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code> and <code class="docutils literal notranslate"><span class="pre">context_keys</span></code>, and the
+routing that ensures the gated streams are actually subscribed, are settled in
+ADR 0003.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0001-in-process-device-stream-synthesis.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0001: In-process synthesis of merged device streams</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="0003-context-input-declaration-model.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">ADR 0003: Unified declaration model for workflow context bindings</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.7.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.19.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

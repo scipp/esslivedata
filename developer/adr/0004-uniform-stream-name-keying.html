@@ -1,0 +1,810 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0004: Key workflow inputs uniformly by canonical stream name &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+    <script src="../../_static/documentation_options.js?v=70bb3503"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0004-uniform-stream-name-keying';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="ADR 0005: Frame-gated per-session plot flush" href="0005-frame-gated-session-flush.html" />
+    <link rel="prev" title="ADR 0003: Unified declaration model for workflow context bindings" href="0003-context-input-declaration-model.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.7.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-registry.html">Per-instrument stream registry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-design-choices">Key design choices</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#only-one-naming-scheme-is-on-the-data-path">Only one naming scheme is on the data path</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#role-resolution-is-a-build-time-concern-co-located-with-the-factory">Role resolution is a build-time concern, co-located with the factory</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#two-independent-sources-must-agree-on-the-canonical-name">Two independent sources must agree on the canonical name</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0004-uniform-stream-name-keying.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0004: Key workflow inputs uniformly by canonical stream name</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0004-key-workflow-inputs-uniformly-by-canonical-stream-name">
+<h1>ADR 0004: Key workflow inputs uniformly by canonical stream name<a class="headerlink" href="#adr-0004-key-workflow-inputs-uniformly-by-canonical-stream-name" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: accepted</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-06-02</p></li>
+</ul>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p>A message’s identifier passes through four naming schemes between Kafka and a
+Sciline provider:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">(topic,</span> <span class="pre">source_name)</span></code> — raw Kafka identity.</p></li>
+<li><p><strong>role</strong> — the logical input a workflow author and a user reason in for
+auxiliary data (“the incident monitor used for normalisation”), which may be
+filled by any of several physical streams.</p></li>
+<li><p><strong>canonical <code class="docutils literal notranslate"><span class="pre">stream_name</span></code></strong> — the name a stream is given in the instrument stream
+config once <code class="docutils literal notranslate"><span class="pre">StreamLUT</span></code> resolves its Kafka identity on ingress. It is a NeXus
+name: for f144 streams the NeXus path generated from the geometry file; for
+detector/monitor data the NeXus group name, which the workflow spec calls
+<code class="docutils literal notranslate"><span class="pre">source_name</span></code> and which need not equal the Kafka <code class="docutils literal notranslate"><span class="pre">source_name</span></code> it resolved from.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">sciline.Key</span></code></strong> — the graph’s type-addressed input (e.g.
+<code class="docutils literal notranslate"><span class="pre">NeXusData[Incident,</span> <span class="pre">SampleRun]</span></code>).</p></li>
+</ul>
+<p>The three kinds of workflow input (primary detector data, dynamic auxiliary
+data, context — ADR 0002/0003) all arrive on the data path and all end up inside
+the wrapped <code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code>, differing only in how their stream binding is
+chosen and how they are fed into the graph.</p>
+<p>Dynamic aux used to be keyed in <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> by its stable role (e.g.
+<code class="docutils literal notranslate"><span class="pre">incident_monitor</span></code>), while the primary input and context inputs were keyed by
+canonical stream name. That asymmetry leaked the role scheme onto the data path:
+the role→stream map had to be threaded into <code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms</span></code> (to match
+bindings against canonical <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code>) and into the <code class="docutils literal notranslate"><span class="pre">Job</span></code>’s runtime
+routing (a <code class="docutils literal notranslate"><span class="pre">_stream_to_fields</span></code> remap turning incoming stream-named data back into
+roles before handing it to the workflow). Two layers spoke a scheme that only
+mattered at construction.</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<p>Key <strong>every</strong> dynamic input — primary, aux, context — uniformly by its canonical
+<code class="docutils literal notranslate"><span class="pre">stream_name</span></code> on the data path. The role scheme is resolved to a stream name
+exactly once, at workflow construction, and never enters the running workflow
+object.</p>
+<p>Translation between schemes happens at three points, only two of which are on
+the data path:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Boundary</p></th>
+<th class="head"><p>From → To</p></th>
+<th class="head"><p>Performed by</p></th>
+<th class="head"><p>Path</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>Kafka ingress</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(topic,</span> <span class="pre">source_name)</span></code> → <code class="docutils literal notranslate"><span class="pre">stream_name</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MessageAdapter.get_stream_id</span></code> + <code class="docutils literal notranslate"><span class="pre">StreamLUT</span></code></p></td>
+<td><p>data</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Workflow construction</p></td>
+<td><p>role → <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> (building <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code>)</p></td>
+<td><p>instrument factory, inline <code class="docutils literal notranslate"><span class="pre">aux_source_names[role]</span></code></p></td>
+<td><p>build-time</p></td>
+</tr>
+<tr class="row-even"><td><p>3</p></td>
+<td><p>Workflow runtime</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">stream_name</span></code> → <code class="docutils literal notranslate"><span class="pre">sciline.Key</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow.accumulate</span></code> / <code class="docutils literal notranslate"><span class="pre">set_context</span></code> (dict lookup)</p></td>
+<td><p>data</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> computes the role→stream map (<code class="docutils literal notranslate"><span class="pre">aux_source_names</span></code>) from
+<code class="docutils literal notranslate"><span class="pre">AuxSources.render</span></code> — instrument defaults overlaid with the user’s selection —
+and passes it to the factory. The factory keys <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> by canonical stream
+name directly, resolving each role inline (<code class="docutils literal notranslate"><span class="pre">aux_source_names['incident_monitor']:</span> <span class="pre">NeXusData[Incident,</span> <span class="pre">SampleRun]</span></code>). An unknown role raises <code class="docutils literal notranslate"><span class="pre">KeyError</span></code> at job
+creation, visible in factory code. The primary input is the degenerate case: its
+binding is the job’s identity (<code class="docutils literal notranslate"><span class="pre">source_name</span></code>), so translation 2 is the identity
+function and the factory keys it directly without <code class="docutils literal notranslate"><span class="pre">aux_source_names</span></code>. Context
+wire names equal their stream names (ADR 0003), so translation 2 does not touch
+them either — it concerns auxiliary inputs only.</p>
+<p>Consequently the <code class="docutils literal notranslate"><span class="pre">Job</span></code> carries no mapping: <code class="docutils literal notranslate"><span class="pre">input_streams</span></code> and <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code>
+are plain <code class="docutils literal notranslate"><span class="pre">set[str]</span></code> of stream names, and <code class="docutils literal notranslate"><span class="pre">Job.add</span></code> forwards
+<code class="docutils literal notranslate"><span class="pre">{**primary_data,</span> <span class="pre">**aux_data}</span></code> to the workflow unchanged. The only place a
+<code class="docutils literal notranslate"><span class="pre">stream_name</span></code> becomes a <code class="docutils literal notranslate"><span class="pre">sciline.Key</span></code> is the dict lookup inside
+<code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow.accumulate</span></code>, where which dict the name is found in
+(<code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> vs <code class="docutils literal notranslate"><span class="pre">context_keys</span></code>) decides <code class="docutils literal notranslate"><span class="pre">accumulate</span></code> vs <code class="docutils literal notranslate"><span class="pre">set_context</span></code>.</p>
+<p>Because the routing layer must inject per-job context and f144-driven transforms
+<em>after</em> the factory has produced the workflow but <em>before</em> the wrapped
+<code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code> is built, <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> defers construction behind
+<code class="docutils literal notranslate"><span class="pre">SupportsContext.build(context_keys,</span> <span class="pre">chain_patch_bindings)</span></code>. The factory passes
+only its own internal context (e.g. ROI) to the constructor; <code class="docutils literal notranslate"><span class="pre">build</span></code> merges the
+routing-layer <code class="docutils literal notranslate"><span class="pre">context_keys</span></code>, wires <code class="docutils literal notranslate"><span class="pre">chain_patch_bindings</span></code>, and bakes the graph.</p>
+<p>One-stream-to-many-roles multiplexing is dropped. It was unused and is
+incompatible with canonical-name keying: a single incoming <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> maps to exactly
+one <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> entry.</p>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Uniform canonical-name keying, role resolved at construction (chosen)</strong></p></td>
+<td><p>One scheme on the data path; <code class="docutils literal notranslate"><span class="pre">Job</span></code> is a plain name set; role lives only in factory code where an unknown role fails loudly at job creation.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Keep aux keyed by role; remap <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> → role in <code class="docutils literal notranslate"><span class="pre">Job</span></code></p></td>
+<td><p>The prior state. Forces the role map into <code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms</span></code> and a <code class="docutils literal notranslate"><span class="pre">Job._stream_to_fields</span></code> remap on every batch; two data-path layers carry a scheme that only matters at build time. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Resolve roles at runtime in <code class="docutils literal notranslate"><span class="pre">Job</span></code>/<code class="docutils literal notranslate"><span class="pre">JobManager</span></code></p></td>
+<td><p>Moves a construction-time concern onto the hot path and re-introduces the remap. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Preserve one-stream-to-many-roles multiplexing</p></td>
+<td><p>Unused, and irreconcilable with a one-to-one <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> → <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> mapping. Rejected.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="key-design-choices">
+<h2>Key design choices<a class="headerlink" href="#key-design-choices" title="Link to this heading">#</a></h2>
+<section id="only-one-naming-scheme-is-on-the-data-path">
+<h3>Only one naming scheme is on the data path<a class="headerlink" href="#only-one-naming-scheme-is-on-the-data-path" title="Link to this heading">#</a></h3>
+<p>Translation 2 happens at construction. Once messages flow, the entire stack from
+<code class="docutils literal notranslate"><span class="pre">WorkflowData.data</span></code> down to the <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> dict lookup speaks a
+single language — <code class="docutils literal notranslate"><span class="pre">stream_name</span></code>. Only the innermost shell (<code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code> /
+Sciline) speaks <code class="docutils literal notranslate"><span class="pre">sciline.Key</span></code>. This is the invariant that lets <code class="docutils literal notranslate"><span class="pre">Job</span></code> hold plain
+name sets and forward data untouched.</p>
+</section>
+<section id="role-resolution-is-a-build-time-concern-co-located-with-the-factory">
+<h3>Role resolution is a build-time concern, co-located with the factory<a class="headerlink" href="#role-resolution-is-a-build-time-concern-co-located-with-the-factory" title="Link to this heading">#</a></h3>
+<p>The role scheme is the one a workflow author and a user reason in. Resolving it
+in the factory that constructs the workflow — the same module that declares the
+<code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> — keeps role knowledge local and makes a typo a loud <code class="docutils literal notranslate"><span class="pre">KeyError</span></code> at
+job creation rather than a silent mis-route.</p>
+</section>
+<section id="two-independent-sources-must-agree-on-the-canonical-name">
+<h3>Two independent sources must agree on the canonical name<a class="headerlink" href="#two-independent-sources-must-agree-on-the-canonical-name" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">StreamLUT</span></code> drives translation 1 on ingress; the <code class="docutils literal notranslate"><span class="pre">render</span></code> / <code class="docutils literal notranslate"><span class="pre">aux_source_names</span></code>
+map drives translation 2 in the factory. Nothing cross-checks them: an aux source
+whose rendered <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> never appears on ingress simply never delivers data.
+This is the price of decoupling routing from construction; it is acceptable
+because both sides derive from the same instrument stream definitions.</p>
+</section>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Job.input_streams</span></code> / <code class="docutils literal notranslate"><span class="pre">gating_streams</span></code> are <code class="docutils literal notranslate"><span class="pre">set[str]</span></code>; <code class="docutils literal notranslate"><span class="pre">Job.add</span></code> forwards
+primary and aux data to the workflow unchanged, with no remap.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code> is keyed by canonical stream name for every input; the role scheme
+never enters the workflow object.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms</span></code> takes only the workflow and the resolved
+<code class="docutils literal notranslate"><span class="pre">ChainPatchBinding</span></code> records — no <code class="docutils literal notranslate"><span class="pre">aux_source_names</span></code> — because it reads component
+types off <code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code>, which is already stream-name-keyed (ADR 0003).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> defers its <code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code> construction behind
+<code class="docutils literal notranslate"><span class="pre">SupportsContext.build</span></code>, so the routing layer can inject per-job context and
+chain-patch bindings before the graph is baked.</p></li>
+<li><p>One-stream-to-many-roles multiplexing is no longer supported.</p></li>
+<li><p>The naming model and its translation points are illustrated in</p>
+<dl class="myst field-list simple">
+<dt class="field-odd">doc<span class="colon">:</span></dt>
+<dd class="field-odd"><p><code class="docutils literal notranslate"><span class="pre">/developer/design/stream-keying</span></code>.</p>
+</dd>
+</dl>
+</li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0003-context-input-declaration-model.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0003: Unified declaration model for workflow context bindings</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="0005-frame-gated-session-flush.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">ADR 0005: Frame-gated per-session plot flush</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.7.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.19.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

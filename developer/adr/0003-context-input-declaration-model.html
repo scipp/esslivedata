@@ -1,0 +1,915 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0003: Unified declaration model for workflow context bindings &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+    <script src="../../_static/documentation_options.js?v=70bb3503"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0003-context-input-declaration-model';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="ADR 0004: Key workflow inputs uniformly by canonical stream name" href="0004-uniform-stream-name-keying.html" />
+    <link rel="prev" title="ADR 0002: Gate workflow execution at the JobManager on context-stream readiness" href="0002-context-stream-gating-at-jobmanager.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.7.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-registry.html">Per-instrument stream registry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#param-dependent-context-explicit-non-goal">Param-dependent context — explicit non-goal</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#two-declaration-sites">Two declaration sites</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#resolution-at-job-creation">Resolution at job creation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#skip-instrument-contexts-opt-out"><code class="docutils literal notranslate"><span class="pre">skip_instrument_contexts</span></code> opt-out</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#chain-patching">Chain patching</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#routing-pickup">Routing pickup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#workflow-protocol-stays-pure">Workflow protocol stays pure</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-design-choices">Key design choices</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#workflow-keys-stay-out-of-specs-py-via-late-binding">Workflow keys stay out of <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> via late-binding</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#two-scopes-one-record-shape">Two scopes, one record shape</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#chain-path-derived-not-declared">Chain path derived, not declared</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0003-context-input-declaration-model.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0003: Unified declaration model for workflow context bindings</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0003-unified-declaration-model-for-workflow-context-bindings">
+<h1>ADR 0003: Unified declaration model for workflow context bindings<a class="headerlink" href="#adr-0003-unified-declaration-model-for-workflow-context-bindings" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: accepted</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-05-21</p></li>
+</ul>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p>ADR 0002 settles where the context-stream gate lives (at the JobManager) and the
+failure modes it prevents. It does not settle where context streams are <em>declared</em>,
+nor how a context value reaches the Sciline pipeline. Before this ADR those concerns
+were spread across several mechanisms with three sharp edges:</p>
+<ol class="arabic simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">AuxSources</span></code> carried two unrelated concerns.</strong> It was built for user-facing
+dynamic-aux selection (the <code class="docutils literal notranslate"><span class="pre">AuxInput.choices</span></code> widget side). Context streams
+piggybacked on it for routing, declared as plain-string aux entries the UI
+happened to ignore. A routing primitive doubled as a workflow-execution
+primitive.</p></li>
+<li><p><strong>Two parallel declarations for the same stream.</strong> LOKI’s <code class="docutils literal notranslate"><span class="pre">detector_carriage</span></code>
+was declared once for routing and once for graph wiring, with nothing enforcing
+that the names agree.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">Workflow.context_keys</span></code> was a protocol leak.</strong> Only <code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code>
+consulted it, only at job-creation time, yet every <code class="docutils literal notranslate"><span class="pre">Workflow</span></code> implementation had
+to expose it (the actual keys for <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code>, empty stubs for
+<code class="docutils literal notranslate"><span class="pre">AreaDetectorView</span></code> and <code class="docutils literal notranslate"><span class="pre">TimeseriesStreamProcessor</span></code>). A configuration concern
+leaked into the runtime protocol.</p></li>
+</ol>
+<p>A standing constraint shapes the solution: the dashboard imports workflow <code class="docutils literal notranslate"><span class="pre">specs.py</span></code>
+to generate UI, so <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> must stay free of workflow-key imports — the dashboard
+must not depend on instrument-specific Sciline pipelines. The hard requirement is the
+absence of heavy science-package imports, but the rule is applied as written: even a
+dashboard-safe <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> (a <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> chain-patch marker, which subclasses a
+<code class="docutils literal notranslate"><span class="pre">config</span></code>-layer type) is declared in <code class="docutils literal notranslate"><span class="pre">factories.py</span></code>, co-located with the
+<code class="docutils literal notranslate"><span class="pre">add_context_binding</span></code> that consumes it, rather than in <code class="docutils literal notranslate"><span class="pre">specs.py</span></code>.</p>
+<section id="param-dependent-context-explicit-non-goal">
+<h3>Param-dependent context — explicit non-goal<a class="headerlink" href="#param-dependent-context-explicit-non-goal" title="Link to this heading">#</a></h3>
+<p>Detector-view and monitor-view factories wire position context unconditionally for
+sources that have a motion binding, regardless of <code class="docutils literal notranslate"><span class="pre">coordinate_mode</span></code> (TOA vs
+wavelength). A precise design would gate only in wavelength mode (TOA does not consume
+position). We accept the over-gate: an instrument wiring a stream as context must keep
+the producer healthy. If “plot raw detector with a broken motion controller” becomes a
+real operational need, the answer is to split the spec into a TOA-only and a wavelength
+variant, not to introduce param-dependent gating. Today this is hypothetical; YAGNI.</p>
+</section>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<p>One declaration record, <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>, declarable at two scopes, feeds both the
+factory’s <code class="docutils literal notranslate"><span class="pre">context_keys</span></code> (wired into <code class="docutils literal notranslate"><span class="pre">set_context</span></code>) and the job’s gating set (ADR
+0002).</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ContextBinding</span><span class="p">:</span>
+    <span class="n">stream_name</span><span class="p">:</span> <span class="nb">str</span>                 <span class="c1"># internal stream name; the data-path lookup key into context_keys</span>
+    <span class="n">workflow_key</span><span class="p">:</span> <span class="n">Any</span>                <span class="c1"># opaque Sciline graph key, consumed by the factory</span>
+    <span class="n">dependent_sources</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>It is a single concrete dataclass — no subclasses, no resolver/seed callables. Two
+flavours share the record, discriminated by the <em>type</em> of <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code>:</p>
+<ul class="simple">
+<li><p><strong>Direct parameter.</strong> <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> is an arbitrary Sciline key (e.g.
+<code class="docutils literal notranslate"><span class="pre">InstrumentAngle[SampleRun]</span></code>). The stream value is fed straight into
+<code class="docutils literal notranslate"><span class="pre">set_context</span></code>.</p></li>
+<li><p><strong>NXtransformations chain patch.</strong> <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> is a <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> subclass. The
+value is patched into the NeXus <code class="docutils literal notranslate"><span class="pre">depends_on</span></code> chain rather than bound directly.
+<code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms</span></code> discovers these by
+<code class="docutils literal notranslate"><span class="pre">issubclass(workflow_key,</span> <span class="pre">ValueLog)</span></code>. The chain entry to patch is <em>derived</em> from
+<code class="docutils literal notranslate"><span class="pre">stream_name</span></code> (the f144 substream’s <code class="docutils literal notranslate"><span class="pre">nexus_path</span></code>) via <code class="docutils literal notranslate"><span class="pre">Instrument.chain_patch_path</span></code>
+— there is no separate <code class="docutils literal notranslate"><span class="pre">transform_path</span></code> field, keeping a single source of truth in
+the parsed stream definitions.</p></li>
+</ul>
+<section id="two-declaration-sites">
+<h3>Two declaration sites<a class="headerlink" href="#two-declaration-sites" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">Instrument.add_context_binding(*,</span> <span class="pre">stream_name,</span> <span class="pre">dependent_sources,</span> <span class="pre">workflow_key)</span></code></strong>
+— source-scoped. Stored on <code class="docutils literal notranslate"><span class="pre">Instrument.context_bindings</span></code>. Used for instrument-property
+context (motion/geometry). Chain-patch bindings live at instrument scope only.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">SpecHandle.add_context_binding(stream_name,</span> <span class="pre">workflow_key,</span> <span class="pre">dependent_sources=None)</span></code></strong>
+— spec-scoped. Late-bound from <code class="docutils literal notranslate"><span class="pre">factories.py</span></code> (mirroring <code class="docutils literal notranslate"><span class="pre">attach_factory()</span></code>),
+keeping <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> free of workflow-key imports. <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code> defaults to the
+spec’s <code class="docutils literal notranslate"><span class="pre">source_names</span></code>. Stored on <code class="docutils literal notranslate"><span class="pre">WorkflowRegistration.context_bindings</span></code>. Rejects
+<code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> keys: chain-patch is instrument-scope. There are no callables — the wire
+name equals <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> and there is no seed, so the gate stays closed until the
+producer publishes (correct for a context with no safe default).</p></li>
+</ol>
+</section>
+<section id="resolution-at-job-creation">
+<h3>Resolution at job creation<a class="headerlink" href="#resolution-at-job-creation" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Instrument.resolve_context_keys(workflow_id,</span> <span class="pre">source_name)</span></code> merges instrument- and
+spec-scope bindings filtered by source membership and returns
+<code class="docutils literal notranslate"><span class="pre">{stream_name:</span> <span class="pre">workflow_key}</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">instrument_bindings</span> <span class="o">=</span> <span class="p">[]</span> <span class="k">if</span> <span class="n">registration</span><span class="o">.</span><span class="n">skip_instrument_contexts</span> \
+    <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">context_bindings</span>
+<span class="k">return</span> <span class="p">{</span><span class="n">binding</span><span class="o">.</span><span class="n">stream_name</span><span class="p">:</span> <span class="n">binding</span><span class="o">.</span><span class="n">workflow_key</span>
+        <span class="k">for</span> <span class="n">binding</span> <span class="ow">in</span> <span class="p">(</span><span class="o">*</span><span class="n">instrument_bindings</span><span class="p">,</span> <span class="o">*</span><span class="n">registration</span><span class="o">.</span><span class="n">context_bindings</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">source_name</span> <span class="ow">in</span> <span class="n">binding</span><span class="o">.</span><span class="n">dependent_sources</span><span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> calls it once per job. The resolved <code class="docutils literal notranslate"><span class="pre">{stream_name:</span> <span class="pre">workflow_key}</span></code>
+mapping is the single source of the gate ADR 0002 applies: it goes to the factory as
+<code class="docutils literal notranslate"><span class="pre">context_keys</span></code>, and its key set becomes <code class="docutils literal notranslate"><span class="pre">Job.gating_streams</span></code> — the streams whose values
+must be present before the job runs (context wire names equal their stream names). This
+is where “which streams are gated” is decided: the gated set <em>is</em> the set of resolved
+context bindings for the <code class="docutils literal notranslate"><span class="pre">(spec,</span> <span class="pre">source)</span></code>, nothing more. The merge lives on <code class="docutils literal notranslate"><span class="pre">Instrument</span></code>
+rather than inlined in <code class="docutils literal notranslate"><span class="pre">JobFactory</span></code> so workflow visualization can resolve the same keys
+without constructing a job.
+<code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> returns a bare <code class="docutils literal notranslate"><span class="pre">Job</span></code>. <code class="docutils literal notranslate"><span class="pre">AuxSources</span></code> is slimmed to dynamic,
+user-selectable aux only — no context-flavoured entries, no <code class="docutils literal notranslate"><span class="pre">initial_context_messages</span></code>.</p>
+</section>
+<section id="skip-instrument-contexts-opt-out">
+<h3><code class="docutils literal notranslate"><span class="pre">skip_instrument_contexts</span></code> opt-out<a class="headerlink" href="#skip-instrument-contexts-opt-out" title="Link to this heading">#</a></h3>
+<p>Motion is a property of the <em>source</em>, but not every spec on that source consumes the
+geometry value (LOKI <code class="docutils literal notranslate"><span class="pre">tube_view</span></code>, bifrost <code class="docutils literal notranslate"><span class="pre">detector_ratemeter</span></code>, the bifrost detector
+view). Such a spec declares <code class="docutils literal notranslate"><span class="pre">SpecHandle.skip_instrument_contexts()</span></code>, which drops
+instrument-scope bindings for that spec’s jobs (spec-scope bindings are unaffected).
+The opt-out is called from <code class="docutils literal notranslate"><span class="pre">factories.py</span></code>, co-located with the
+<code class="docutils literal notranslate"><span class="pre">Instrument.add_context_binding</span></code> it negates: the flag is meaningless without the
+binding it cancels, and the rationale is implementation knowledge. It needs no
+workflow-key import, so — unlike <code class="docutils literal notranslate"><span class="pre">add_context_binding</span></code> — its placement is not forced
+by the <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> import constraint; co-location is a legibility choice.</p>
+<p>Instrument scope as the default — with an opt-out — is chosen over spec scope as the
+default deliberately. Spec-scope-by-default makes “added a new spec on the source,
+forgot to declare carriage” a <em>silently-wrong</em> failure (the workflow runs with stale
+geometry). Instrument-scope-plus-opt-out makes the symmetric mistake <em>noisy</em>: a
+forgotten <code class="docutils literal notranslate"><span class="pre">skip_instrument_contexts()</span></code> gates a workflow on a stream it never reads, so
+the workflow visibly never runs rather than producing wrong output.</p>
+</section>
+<section id="chain-patching">
+<h3>Chain patching<a class="headerlink" href="#chain-patching" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> lives in <code class="docutils literal notranslate"><span class="pre">config/value_log.py</span></code>, next to <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>, so <code class="docutils literal notranslate"><span class="pre">config</span></code> does
+not import <code class="docutils literal notranslate"><span class="pre">handlers</span></code>. Each chain-patch binding declares its own <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> subclass,
+giving it a distinct Sciline parameter so multiple dynamic transforms can coexist on
+one workflow without colliding.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Instrument.chain_patch_bindings</span></code> selects the instrument-scope chain-patch
+<code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> records (those whose <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code> is a <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> subclass),
+resolves each one’s NeXus transform path via <code class="docutils literal notranslate"><span class="pre">Instrument.chain_patch_path</span></code>, and returns
+them as <code class="docutils literal notranslate"><span class="pre">ChainPatchBinding</span></code> records — a <em>resolved form</em> of the declaration, not a second
+declaration type, carrying <code class="docutils literal notranslate"><span class="pre">transform_path</span></code> alongside the <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> key and
+<code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code>. <code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms(workflow,</span> <span class="pre">bindings)</span></code> is then a pure
+function over those records: it reads each input’s component type off the workflow’s own
+<code class="docutils literal notranslate"><span class="pre">dynamic_keys</span></code>, groups the matching bindings by component type, and builds one fused
+per-component provider (<code class="docutils literal notranslate"><span class="pre">build_patched_chain_provider</span></code> / <code class="docutils literal notranslate"><span class="pre">synthesise_provider</span></code> in
+<code class="docutils literal notranslate"><span class="pre">handlers/dynamic_transforms.py</span></code>) that replaces essreduce’s
+<code class="docutils literal notranslate"><span class="pre">NeXusTransformationChain[T,</span> <span class="pre">SampleRun]</span></code> provider and writes the latest sample of each
+<code class="docutils literal notranslate"><span class="pre">ValueLog</span></code> parameter into the chain. Resolving the path up front keeps the wiring step
+free of any reference to the instrument’s stream topology. The same seam works for the
+detector-view factory and for a pre-built <code class="docutils literal notranslate"><span class="pre">LokiWorkflow()</span></code>.</p>
+</section>
+<section id="routing-pickup">
+<h3>Routing pickup<a class="headerlink" href="#routing-pickup" title="Link to this heading">#</a></h3>
+<p>Routing (the Kafka subscription set) is decided per <em>namespace</em> at service startup,
+ahead of any specific job, and may over-subscribe; the bandwidth cost of an unused
+f144 stream is negligible. Gating is decided per <em>job</em> at <code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code> and must
+be precise. <code class="docutils literal notranslate"><span class="pre">config/route_derivation.py:gather_source_names</span></code> therefore includes context
+bindings in the subscription set: spec-scope entries by stream name, instrument-scope
+entries when a spec in the namespace shares a source with the binding’s
+<code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code>. This pickup is a co-requirement of this ADR, not a follow-up:
+without it the namespace never subscribes to motion streams and the gate stays closed
+indefinitely.</p>
+</section>
+<section id="workflow-protocol-stays-pure">
+<h3>Workflow protocol stays pure<a class="headerlink" href="#workflow-protocol-stays-pure" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Workflow.context_keys</span></code> is removed from the protocol. The routing layer injects the
+resolved <code class="docutils literal notranslate"><span class="pre">context_keys</span></code> via <code class="docutils literal notranslate"><span class="pre">SupportsContext.build</span></code> <em>after</em> the factory returns the
+workflow, so factories never declare <code class="docutils literal notranslate"><span class="pre">context_keys</span></code> in their signature;
+<code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code> defers constructing the wrapped <code class="docutils literal notranslate"><span class="pre">StreamProcessor</span></code> until
+<code class="docutils literal notranslate"><span class="pre">build</span></code> so the keys can be merged before the graph is baked (the uniform-keying and
+deferred-build seam is settled in
+ADR 0004). <code class="docutils literal notranslate"><span class="pre">AreaDetectorView</span></code> and <code class="docutils literal notranslate"><span class="pre">TimeseriesStreamProcessor</span></code> lose their empty-stub
+property. The <code class="docutils literal notranslate"><span class="pre">Workflow</span></code> protocol reduces to <code class="docutils literal notranslate"><span class="pre">accumulate</span></code>, <code class="docutils literal notranslate"><span class="pre">finalize</span></code>, <code class="docutils literal notranslate"><span class="pre">clear</span></code>;
+context handling is a <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code>-internal concern, opaque to <code class="docutils literal notranslate"><span class="pre">Job</span></code>
+and <code class="docutils literal notranslate"><span class="pre">JobManager</span></code>.</p>
+</section>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>One <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> record, two declaration sites (chosen)</strong></p></td>
+<td><p>Single type covers both scopes and both flavours. Late-binding for the spec side keeps <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> workflow-key-free.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Separate types per scope or per flavour (subclass split)</p></td>
+<td><p>Overlapping shapes whose differences are in <em>defaults</em>, not data; a hierarchy adds friction without paying its way. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>One declaration on <code class="docutils literal notranslate"><span class="pre">WorkflowSpec</span></code> as a constructor field carrying <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code></p></td>
+<td><p>Drags workflow-key imports into <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> and therefore the dashboard. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Spec lists stream fields; factory declares keys separately; cross-reference by name</p></td>
+<td><p>Two declarations must still agree on names; restores the routing-vs-factory drift in a new form. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Spec scope as default for motion</p></td>
+<td><p>Makes a forgotten declaration silently-wrong (stale geometry). Instrument-scope-plus-opt-out makes it noisy instead. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Per-source <code class="docutils literal notranslate"><span class="pre">transform_name</span></code> dict local to <code class="docutils literal notranslate"><span class="pre">loki/factories.py</span></code></p></td>
+<td><p>The chain path is derived from <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> via <code class="docutils literal notranslate"><span class="pre">chain_patch_path</span></code>; a parallel dict would re-introduce manual sync. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Keep <code class="docutils literal notranslate"><span class="pre">Workflow.context_keys</span></code> as the gate source</p></td>
+<td><p>Leaves the <code class="docutils literal notranslate"><span class="pre">AuxSources</span></code>/factory duplication and the protocol leak in place. Rejected.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="key-design-choices">
+<h2>Key design choices<a class="headerlink" href="#key-design-choices" title="Link to this heading">#</a></h2>
+<section id="workflow-keys-stay-out-of-specs-py-via-late-binding">
+<h3>Workflow keys stay out of <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> via late-binding<a class="headerlink" href="#workflow-keys-stay-out-of-specs-py-via-late-binding" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">SpecHandle.add_context_binding(...)</span></code> is invoked from <code class="docutils literal notranslate"><span class="pre">factories.py</span></code>, the module that
+owns <code class="docutils literal notranslate"><span class="pre">attach_factory()</span></code>. Dashboards importing <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> to render UI never see a
+workflow-key import.</p>
+</section>
+<section id="two-scopes-one-record-shape">
+<h3>Two scopes, one record shape<a class="headerlink" href="#two-scopes-one-record-shape" title="Link to this heading">#</a></h3>
+<p>Instrument scope is for source properties (motion), where chain-patch also lives. Spec
+scope is for context that is a property of one workflow. The spec-scope path has no
+current user — it is the extension point for the motivating future case, a
+<strong>sample-temperature</strong> stream feeding one reduction workflow: gated (no safe default),
+a real shared Kafka stream (wire name == <code class="docutils literal notranslate"><span class="pre">stream_name</span></code>), no seed. That drops straight
+into <code class="docutils literal notranslate"><span class="pre">SpecHandle.add_context_binding</span></code> with no further machinery.</p>
+</section>
+<section id="chain-path-derived-not-declared">
+<h3>Chain path derived, not declared<a class="headerlink" href="#chain-path-derived-not-declared" title="Link to this heading">#</a></h3>
+<p>The NeXus transformation-chain entry a chain-patch binding writes is derived from its
+<code class="docutils literal notranslate"><span class="pre">stream_name</span></code> via <code class="docutils literal notranslate"><span class="pre">Instrument.chain_patch_path</span></code>, so the f144 substream definition is the
+single source of truth and a binding cannot disagree with the stream it patches.</p>
+</section>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> lives in <code class="docutils literal notranslate"><span class="pre">config/stream.py</span></code> as a single concrete dataclass
+(<code class="docutils literal notranslate"><span class="pre">stream_name</span></code>, <code class="docutils literal notranslate"><span class="pre">workflow_key</span></code>, <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code>). Its resolved chain-patch
+form <code class="docutils literal notranslate"><span class="pre">ChainPatchBinding</span></code> (adding <code class="docutils literal notranslate"><span class="pre">transform_path</span></code>) lives alongside it; <code class="docutils literal notranslate"><span class="pre">ValueLog</span></code>
+lives in <code class="docutils literal notranslate"><span class="pre">config/value_log.py</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Instrument</span></code> carries <code class="docutils literal notranslate"><span class="pre">context_bindings:</span> <span class="pre">list[ContextBinding]</span></code> and
+<code class="docutils literal notranslate"><span class="pre">add_context_binding(...)</span></code>, and exposes <code class="docutils literal notranslate"><span class="pre">chain_patch_bindings</span></code> (the resolved
+<code class="docutils literal notranslate"><span class="pre">ChainPatchBinding</span></code> records); <code class="docutils literal notranslate"><span class="pre">wire_dynamic_transforms(workflow,</span> <span class="pre">bindings)</span></code> patches
+those into the pipeline.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowRegistration</span></code> carries <code class="docutils literal notranslate"><span class="pre">context_bindings</span></code> and a <code class="docutils literal notranslate"><span class="pre">skip_instrument_contexts</span></code>
+flag; <code class="docutils literal notranslate"><span class="pre">SpecHandle</span></code> gains <code class="docutils literal notranslate"><span class="pre">add_context_binding(...)</span></code> and <code class="docutils literal notranslate"><span class="pre">skip_instrument_contexts()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Instrument.resolve_context_keys</span></code> merges instrument + spec bindings; <code class="docutils literal notranslate"><span class="pre">JobFactory.create</span></code>
+calls it, hands <code class="docutils literal notranslate"><span class="pre">context_keys</span></code> to the factory (injected via <code class="docutils literal notranslate"><span class="pre">SupportsContext.build</span></code>,
+ADR 0004), sets <code class="docutils literal notranslate"><span class="pre">Job.gating_streams</span></code>, and returns a bare <code class="docutils literal notranslate"><span class="pre">Job</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AuxSources</span></code> is dynamic, user-selectable aux only. ROI remains an <code class="docutils literal notranslate"><span class="pre">AuxSources</span></code>
+(<code class="docutils literal notranslate"><span class="pre">DetectorROIAuxSources</span></code>, job-prefixed per job) — it is not a context binding, since
+ADR 0002 routes ROI as aux rather than gating it.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Workflow.context_keys</span></code> is removed from the protocol; <code class="docutils literal notranslate"><span class="pre">StreamProcessorWorkflow</span></code>
+receives the routing
+layer’s <code class="docutils literal notranslate"><span class="pre">context_keys</span></code> via <code class="docutils literal notranslate"><span class="pre">build</span></code> (ADR 0004), other implementations drop the stub.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gather_source_names</span></code> includes context bindings so the namespace subscribes to gated
+streams. Without it the gate never opens for motion.</p></li>
+<li><p>Validators enforce the record’s invariants: chain-patch <code class="docutils literal notranslate"><span class="pre">(stream_name,</span> <span class="pre">workflow_key)</span></code>
+uniqueness; wire-name collisions across instrument/spec scope and against aux field
+names; <code class="docutils literal notranslate"><span class="pre">dependent_sources</span></code> against registered spec <code class="docutils literal notranslate"><span class="pre">source_names</span></code>. <code class="docutils literal notranslate"><span class="pre">synthesise_provider</span></code>
+validates identifier names before splicing into its <code class="docutils literal notranslate"><span class="pre">exec</span></code> template.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tests/config/motion_binding_test.py</span></code> walks every chain-patch binding’s derived
+transform path against the registered NeXus geometry artifact and fails if the path is
+not on the declared consumer’s <code class="docutils literal notranslate"><span class="pre">depends_on</span></code> chain — closing wrong-path as a silent
+failure without putting NeXus introspection on the construction hot path.</p></li>
+<li><p>Per ADR 0002, the gate mechanism inside <code class="docutils literal notranslate"><span class="pre">JobManager</span></code> is unchanged; this ADR settles
+only the declaration model that feeds it.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0002-context-stream-gating-at-jobmanager.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="0004-uniform-stream-name-keying.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">ADR 0004: Key workflow inputs uniformly by canonical stream name</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.7.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.19.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

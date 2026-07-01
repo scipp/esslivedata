@@ -1,0 +1,911 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0006: Expose designated workflow outputs to NICOS as derived devices &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+    <script src="../../_static/documentation_options.js?v=70bb3503"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0006-nicos-derived-devices';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="About" href="../../about/index.html" />
+    <link rel="prev" title="ADR 0005: Frame-gated per-session plot flush" href="0005-frame-gated-session-flush.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.7.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-registry.html">Per-instrument stream registry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable-keyed-device-extraction-onto-a-dedicated-topic">Stable-keyed device extraction onto a dedicated topic</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#start-time-as-the-generation-marker"><code class="docutils literal notranslate"><span class="pre">start_time</span></code> as the generation marker</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#registry-derived-committed-contract">Registry-derived, committed contract</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-single-unified-job-per-workflow-source-gated-in-the-dashboard">A single unified job per <code class="docutils literal notranslate"><span class="pre">(workflow,</span> <span class="pre">source)</span></code>, gated in the dashboard</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nicos-initiated-reset">NICOS-initiated reset</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-design-choices">Key design choices</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#start-time-is-the-single-source-of-truth-for-the-reset-signal"><code class="docutils literal notranslate"><span class="pre">start_time</span></code> is the single source of truth for the reset signal</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-contract-cannot-drift-from-the-registry">The contract cannot drift from the registry</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-gate-and-the-marker-are-complementary">The gate and the marker are complementary</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reset-is-whole-workflow-confirmed-via-the-data-topic">Reset is whole-workflow, confirmed via the data topic</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0006-nicos-derived-devices.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0006-expose-designated-workflow-outputs-to-nicos-as-derived-devices">
+<h1>ADR 0006: Expose designated workflow outputs to NICOS as derived devices<a class="headerlink" href="#adr-0006-expose-designated-workflow-outputs-to-nicos-as-derived-devices" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: accepted</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-06-29</p></li>
+</ul>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p>NICOS, the ESS experiment control software, runs alongside ESSlivedata. Through
+NICOS (UI and scripts) users count or drive multi-day scans against <em>derived</em>
+quantities — total counts in a monitor or detector bank, a fitted peak statistic
+— that ESSlivedata computes. NICOS consumes the results but does the stream
+processing nowhere itself.</p>
+<p>NICOS prefers each such quantity to look like an ordinary device, the way the EPICS
+PVs it connects to directly already do: a <strong>static, git-tracked device list</strong>,
+each device addressed by a <strong>stable identifier</strong>, delivered on a <strong>low-volume
+dedicated topic</strong>, and protected from accidental reset / stop / reconfigure.
+NICOS dislikes runtime-published configuration and does not re-accumulate values
+— it reads the current cumulative reading.</p>
+<p>The obstacle was thought to be naming. ESSlivedata’s internal result stream is
+keyed by <code class="docutils literal notranslate"><span class="pre">ResultKey</span> <span class="pre">=</span> <span class="pre">WorkflowId</span> <span class="pre">+</span> <span class="pre">JobId</span> <span class="pre">+</span> <span class="pre">output_name</span></code>, and <code class="docutils literal notranslate"><span class="pre">JobId</span></code> carries a
+random <code class="docutils literal notranslate"><span class="pre">job_number</span></code> regenerated on every (re)start, so the external key is
+unstable. Three options were circled for months (a fixed <code class="docutils literal notranslate"><span class="pre">job_number</span></code>; replicate
+the result under a fixed id; hoist <code class="docutils literal notranslate"><span class="pre">job_number</span></code> out of <code class="docutils literal notranslate"><span class="pre">ResultKey</span></code> wholesale).
+The reframing that unblocked it: NICOS does not need to read the internal result
+stream at all. A dedicated, stable-keyed extraction of designated outputs lets
+the <code class="docutils literal notranslate"><span class="pre">job_number</span></code> simply drop out of the external identity, and then <em>no consumer
+ever needs to detect a job transition from the data stream</em> — the signal the
+naming schemes were straining to encode.</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<section id="stable-keyed-device-extraction-onto-a-dedicated-topic">
+<h3>Stable-keyed device extraction onto a dedicated topic<a class="headerlink" href="#stable-keyed-device-extraction-onto-a-dedicated-topic" title="Link to this heading">#</a></h3>
+<p>The backend extracts designated outputs of running jobs and republishes them on a
+dedicated <code class="docutils literal notranslate"><span class="pre">StreamKind.LIVEDATA_NICOS_DATA</span></code> topic (<code class="docutils literal notranslate"><span class="pre">{instrument}_livedata_nicos_data</span></code>),
+keyed by a stable <strong>device name</strong>. <code class="docutils literal notranslate"><span class="pre">DeviceExtractor</span></code> (<code class="docutils literal notranslate"><span class="pre">core/nicos_devices.py</span></code>)
+selects the contracted outputs from each <code class="docutils literal notranslate"><span class="pre">JobResult</span></code> and emits one message per
+device.</p>
+<ul class="simple">
+<li><p><strong>Identity</strong>: <code class="docutils literal notranslate"><span class="pre">WorkflowId</span> <span class="pre">(instrument</span> <span class="pre">+</span> <span class="pre">name</span> <span class="pre">+</span> <span class="pre">version)</span> <span class="pre">+</span> <span class="pre">source_name</span> <span class="pre">+</span> <span class="pre">output_name</span></code>, mapped to a device name by the contract. The random <code class="docutils literal notranslate"><span class="pre">job_number</span></code>
+is not part of the external identity.</p></li>
+<li><p><strong>Wire schema</strong>: <code class="docutils literal notranslate"><span class="pre">da00</span></code>. It carries the signal, its error bar, and the
+<code class="docutils literal notranslate"><span class="pre">start_time</span></code> coordinate as named variables. <code class="docutils literal notranslate"><span class="pre">f144</span></code> is a lone scalar and cannot
+carry the marker; it is not used.</p></li>
+<li><p><strong>Eligibility</strong>: decided by the workflow registry (<code class="docutils literal notranslate"><span class="pre">WorkflowSpec.device_outputs</span></code>).
+The extractor trusts the contract and emits whatever it designates; there is no
+runtime scalar/cumulative check. Devices are scalar cumulative outputs by
+authoring convention, not by an enforced gate.</p></li>
+</ul>
+</section>
+<section id="start-time-as-the-generation-marker">
+<h3><code class="docutils literal notranslate"><span class="pre">start_time</span></code> as the generation marker<a class="headerlink" href="#start-time-as-the-generation-marker" title="Link to this heading">#</a></h3>
+<p>A stable identity does not by itself signal when an accumulation was reset (job
+start/stop, reconfigure, run transition, backend restart): a cumulative value
+dropping to zero is otherwise indistinguishable from a genuine low reading. A
+cumulative output already carries a 0-D <code class="docutils literal notranslate"><span class="pre">start_time</span></code> coordinate, stamped by the
+<code class="docutils literal notranslate"><span class="pre">JobManager</span></code> as the time of the first data accumulated in the current generation.
+It is constant for a generation’s lifetime and re-armed on reset, so a change
+tells NICOS the prior accumulation ended and a fresh series began. The extractor
+republishes it untouched — there is no separate generation token.</p>
+<p>Because the marker is the first-data time (ns since epoch), a later generation
+has a later marker: it advances monotonically across resets and backend restarts
+with no stored counter. It is the same coordinate the dashboard uses to label a
+plot’s accumulation interval, so the reset signal cannot drift from the value’s
+provenance.</p>
+</section>
+<section id="registry-derived-committed-contract">
+<h3>Registry-derived, committed contract<a class="headerlink" href="#registry-derived-committed-contract" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">(workflow,</span> <span class="pre">source,</span> <span class="pre">output)</span> <span class="pre">→</span> <span class="pre">device</span></code> mapping is <strong>derived from the workflow
+registry</strong>, not hand-authored. A <code class="docutils literal notranslate"><span class="pre">WorkflowSpec</span></code> declares <code class="docutils literal notranslate"><span class="pre">device_outputs</span></code> (output
+field → device-name template); <code class="docutils literal notranslate"><span class="pre">DeviceContract</span></code> (<code class="docutils literal notranslate"><span class="pre">config/device_contract.py</span></code>)
+expands that over the spec’s <code class="docutils literal notranslate"><span class="pre">source_names</span></code>. The registry is the single source of
+truth, read directly by the backend (what to extract) and the dashboard (which
+outputs are devices).</p>
+<p>For example, the monitor-histogram spec declares one device output,</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">device_outputs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;counts_total_cumulative&#39;</span><span class="p">:</span> <span class="s1">&#39;</span><span class="si">{source_name}</span><span class="s1">_counts_total&#39;</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>which <code class="docutils literal notranslate"><span class="pre">DeviceContract</span></code> expands over the spec’s <code class="docutils literal notranslate"><span class="pre">source_names</span></code> into the committed
+export NICOS reads:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">devices</span><span class="p">:</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">device_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monitor1_counts_total</span>
+<span class="w">  </span><span class="nt">workflow_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dummy/monitor_histogram/1</span>
+<span class="w">  </span><span class="nt">source_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monitor1</span>
+<span class="w">  </span><span class="nt">output_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">counts_total_cumulative</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">device_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monitor2_counts_total</span>
+<span class="w">  </span><span class="nt">workflow_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dummy/monitor_histogram/1</span>
+<span class="w">  </span><span class="nt">source_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monitor2</span>
+<span class="w">  </span><span class="nt">output_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">counts_total_cumulative</span>
+</pre></div>
+</div>
+<p>Each instrument’s <code class="docutils literal notranslate"><span class="pre">device_contract.yaml</span></code> is a <strong>generated, committed export</strong> for
+NICOS’s static-list preference; nothing reads it back. Regenerate with
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">ess.livedata.config.device_contract</span></code>; a test fails if a committed
+export drifts from the registry. <code class="docutils literal notranslate"><span class="pre">WorkflowId.version</span></code> is part of device identity, so
+an incompatible workflow change — e.g. redefining what an output means — is published
+under a bumped version: the old device name retires (goes silent on the wire, so a
+NICOS script pinned to it notices, assuming NICOS checks the version) rather than
+silently changing semantics under a stable name.</p>
+</section>
+<section id="a-single-unified-job-per-workflow-source-gated-in-the-dashboard">
+<h3>A single unified job per <code class="docutils literal notranslate"><span class="pre">(workflow,</span> <span class="pre">source)</span></code>, gated in the dashboard<a class="headerlink" href="#a-single-unified-job-per-workflow-source-gated-in-the-dashboard" title="Link to this heading">#</a></h3>
+<p>There are no dedicated NICOS jobs, no separate orchestrator, no fixed
+<code class="docutils literal notranslate"><span class="pre">job_number</span></code>. One job per <code class="docutils literal notranslate"><span class="pre">(workflow,</span> <span class="pre">source)</span></code> is shared by dashboard and NICOS,
+and is <strong>live as a device iff its owning job is running</strong> — the backend extracts
+every contracted output of a running job. There is no per-output activation
+toggle, no persisted activation state, and no dashboard→backend control channel;
+exposure is declared once, in the registry/yaml, and the dashboard only reflects
+and protects it.</p>
+<p>The dashboard’s role is configuration of the workflow backing the devices plus
+protection (<code class="docutils literal notranslate"><span class="pre">dashboard/derived_devices.py</span></code> is the single source of truth for the
+derivation, reused by every surface):</p>
+<ul class="simple">
+<li><p>a <strong>per-output NICOS marker</strong> on output chips;</p></li>
+<li><p>a <strong>confirmation gate</strong> intercepting reset / stop / reconfigure on device-bearing
+workflows, naming the affected devices; <em>staging</em> the next config is allowed,
+<em>commit</em> is gated;</p></li>
+<li><p>a read-only <strong>NICOS devices</strong> overview (contract ∩ running jobs).</p></li>
+</ul>
+<p>The gate re-reads live job state inside the orchestrator method, not only in the
+widget, so an action that races a job restart cannot act on stale state.</p>
+</section>
+<section id="nicos-initiated-reset">
+<h3>NICOS-initiated reset<a class="headerlink" href="#nicos-initiated-reset" title="Link to this heading">#</a></h3>
+<p>NICOS drives the accumulation lifecycle of a measurement: a <code class="docutils literal notranslate"><span class="pre">count</span></code> zeros the
+cumulative reading and waits for it to reach a target, and a <code class="docutils literal notranslate"><span class="pre">scan</span></code> repeats that per
+point (move motor, reset, count, move, …). A device’s reading therefore restarts
+many times within a run, on NICOS’s schedule rather than ESSlivedata’s. NICOS
+triggers each reset by producing a <code class="docutils literal notranslate"><span class="pre">JobCommand</span></code> JSON on the
+<code class="docutils literal notranslate"><span class="pre">{instrument}_livedata_commands</span></code> topic, keyed by the <code class="docutils literal notranslate"><span class="pre">WorkflowId</span></code> it already holds
+from the contract export:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;job_command&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;action&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;reset&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;workflow_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bifrost/monitor_histogram/1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;message_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;uuid4&gt;&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>Granularity is whole-workflow.</strong> Omitting <code class="docutils literal notranslate"><span class="pre">job_id</span></code> selects every running job
+of the workflow; all its sources reset together. This matches NICOS usage — a
+single device, or several counted in sync (e.g. a difference of two monitors) —
+and there is no per-source selector. Reset acts on the job, so it zeros all of
+that job’s outputs together.</p></li>
+<li><p><strong>Carries a <code class="docutils literal notranslate"><span class="pre">message_id</span></code>.</strong> NICOS generates a uuid like any command producer, and
+the owning worker publishes a command ack referencing it. Because the command omits
+<code class="docutils literal notranslate"><span class="pre">job_id</span></code>, the ack reports <code class="docutils literal notranslate"><span class="pre">device:</span> <span class="pre">&quot;all&quot;</span></code> rather than naming a job, so the random
+<code class="docutils literal notranslate"><span class="pre">job_number</span></code> never leaks into it. To confirm a reset took effect NICOS can either
+match that ack by <code class="docutils literal notranslate"><span class="pre">message_id</span></code>, or watch the <code class="docutils literal notranslate"><span class="pre">start_time</span></code> jump on the device topic.
+The latter reports a reset from <em>any</em> source (backend restart, dashboard action),
+not only NICOS’s own command, so it is the more robust signal.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowId</span></code> accepts its <code class="docutils literal notranslate"><span class="pre">instrument/name/version</span></code> string form on the wire, so
+NICOS sends the contract string verbatim; the dashboard keeps sending the nested
+object form.</p></li>
+</ul>
+</section>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Stable-keyed extraction, <code class="docutils literal notranslate"><span class="pre">job_number</span></code> dropped from external identity (chosen)</strong></p></td>
+<td><p>No consumer detects job transitions from data; naming becomes a non-problem.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Fixed <code class="docutils literal notranslate"><span class="pre">job_number</span></code> for NICOS jobs</p></td>
+<td><p>Keeps <code class="docutils literal notranslate"><span class="pre">job_number</span></code> in the identity; needs a parallel orchestrator, a curated fixed-id yaml, a dedicated stream kind. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Replicate the result under a fixed id in <code class="docutils literal notranslate"><span class="pre">ResultKey</span></code></p></td>
+<td><p>Still bakes <code class="docutils literal notranslate"><span class="pre">job_number</span></code> semantics into the key and duplicates the result. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hoist <code class="docutils literal notranslate"><span class="pre">JobId</span></code> out of <code class="docutils literal notranslate"><span class="pre">ResultKey</span></code> (dashboard-wide refactor)</p></td>
+<td><p>Not forced by NICOS; the extraction decouples NICOS from <code class="docutils literal notranslate"><span class="pre">ResultKey</span></code> entirely. An optional internal cleanup judged on dashboard merits alone. Deferred.</p></td>
+</tr>
+<tr class="row-even"><td><p>Delta stream, NICOS accumulates</p></td>
+<td><p>Elegant for additive quantities, but non-additive peak devices cannot be deltas, and NICOS prefers not to accumulate. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ep01</span></code> as a reset/epoch signal</p></td>
+<td><p>Its native meaning (“transient loss, value persists”) is the opposite of a reset, forcing fragile sequence interpretation. The explicit <code class="docutils literal notranslate"><span class="pre">start_time</span></code> field replaces it. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Separate generation token variable</p></td>
+<td><p>Redundant with <code class="docutils literal notranslate"><span class="pre">start_time</span></code>, which already exists and already drives plot labelling. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Dedicated NICOS jobs</p></td>
+<td><p>Physical isolation guarantees nothing a UI gate doesn’t, while duplicating heavy detector-stream processing and maintaining a permanent parallel code path. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Runtime per-output activation toggle</p></td>
+<td><p>Adds a control channel and persisted state the design avoids, and fights the static-list premise — liveness would depend on operator UI state. The low-volume extraction is harmless when unscanned. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Per-<code class="docutils literal notranslate"><span class="pre">source_name</span></code> reset selector</p></td>
+<td><p>Not needed given whole-workflow usage, and avoids perturbing dashboard bookkeeping that has no per-source reset state. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Dedicated inbound NICOS command topic keyed by device name</p></td>
+<td><p>Cleaner decoupling, but a new topic plus a contract-resolution translation point. Reusing <code class="docutils literal notranslate"><span class="pre">livedata_commands</span></code> needs no new wiring and NICOS already holds the <code class="docutils literal notranslate"><span class="pre">WorkflowId</span></code>. Rejected for v1.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="key-design-choices">
+<h2>Key design choices<a class="headerlink" href="#key-design-choices" title="Link to this heading">#</a></h2>
+<p>The Decision section says <em>what</em> was decided and how it is wired. The points below
+restate the load-bearing invariants as standalone guarantees — the properties the
+whole design hinges on and that a later change could quietly erode.</p>
+<section id="start-time-is-the-single-source-of-truth-for-the-reset-signal">
+<h3><code class="docutils literal notranslate"><span class="pre">start_time</span></code> is the single source of truth for the reset signal<a class="headerlink" href="#start-time-is-the-single-source-of-truth-for-the-reset-signal" title="Link to this heading">#</a></h3>
+<p>The marker and the value share one coordinate, so the reset signal cannot drift
+from the value’s provenance, and the backend stores no extra counter. The mark
+advances across backend restarts for free.</p>
+</section>
+<section id="the-contract-cannot-drift-from-the-registry">
+<h3>The contract cannot drift from the registry<a class="headerlink" href="#the-contract-cannot-drift-from-the-registry" title="Link to this heading">#</a></h3>
+<p>Deriving the contract from <code class="docutils literal notranslate"><span class="pre">device_outputs</span></code> means an output that does not exist,
+or a source a spec does not declare, simply cannot appear. The only remaining
+failure mode — a template rendering a duplicate device name — fails loud at
+construction. <code class="docutils literal notranslate"><span class="pre">version</span></code> in the identity makes a breaking change fail-fast (the
+device goes silent) rather than silently re-defining a stable name.</p>
+</section>
+<section id="the-gate-and-the-marker-are-complementary">
+<h3>The gate and the marker are complementary<a class="headerlink" href="#the-gate-and-the-marker-are-complementary" title="Link to this heading">#</a></h3>
+<p>The dashboard gate guards against <em>accidental</em> disruption; <em>intentional</em>
+transitions and backend restarts still reset the accumulation, and NICOS detects
+those via <code class="docutils literal notranslate"><span class="pre">start_time</span></code> regardless of gating. The dashboard cannot know whether
+NICOS is actively scanning a device (one-way publish, separate system), so the
+gate states the change is disruptive <em>iff</em> NICOS happens to be using the device.</p>
+</section>
+<section id="reset-is-whole-workflow-confirmed-via-the-data-topic">
+<h3>Reset is whole-workflow, confirmed via the data topic<a class="headerlink" href="#reset-is-whole-workflow-confirmed-via-the-data-topic" title="Link to this heading">#</a></h3>
+<p>A job produces all its outputs together, so lifecycle operations exist only at job
+granularity; “reset device X” means “reset the job feeding X”. Keying by
+<code class="docutils literal notranslate"><span class="pre">WorkflowId</span></code> decouples NICOS from <code class="docutils literal notranslate"><span class="pre">job_number</span></code>; the device topic’s <code class="docutils literal notranslate"><span class="pre">start_time</span></code>
+jump carries the reset confirmation. Surfacing a reset to dashboard users — for resets from any source,
+not just NICOS — would need an explicit reset <em>event</em> from the backend (the
+<code class="docutils literal notranslate"><span class="pre">JobManager</span></code> knows when <code class="docutils literal notranslate"><span class="pre">reset_job</span></code> fires); inferring it from the data is unsafe
+because a non-cumulative output’s <code class="docutils literal notranslate"><span class="pre">start_time</span></code> advances every finalize, so only the
+job-level generation marker is a reliable signal. That notification is deferred.</p>
+</section>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>A new <code class="docutils literal notranslate"><span class="pre">StreamKind.LIVEDATA_NICOS_DATA</span></code> and its topic; <code class="docutils literal notranslate"><span class="pre">DeviceExtractor</span></code> runs in
+the result/serialization path.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">device_contract.yaml</span></code> is generated and committed per instrument, guarded by a
+drift test; regeneration is a single command.</p></li>
+<li><p>Dashboard derived-device surfaces are read-only reflections plus a confirmation
+gate; no new orchestrator, persisted state, or control channel.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowId</span></code> validates from its <code class="docutils literal notranslate"><span class="pre">instrument/name/version</span></code> string form on the
+wire, so external producers (NICOS) can address commands by the exported string.</p></li>
+<li><p>Backend restart resets cumulative values to zero; NICOS does not re-accumulate.
+The marker makes the reset detectable but recovery of the lost accumulation is
+manual — we bank on backend stability. The bounded escalation, if restarts prove
+frequent, is accumulator checkpointing for simple additive devices only, never
+generic raw-data replay (intractable for reduction workflows whose normalization
+needs windows longer than the update period).</p></li>
+<li><p><strong>Out of v1</strong>: liveness (NICOS can later subscribe to the existing job
+heartbeat; <code class="docutils literal notranslate"><span class="pre">ep01</span></code> is not used) and a separate validity channel (the <code class="docutils literal notranslate"><span class="pre">da00</span></code> error
+bar carries the uncertainty; NICOS scripts its own statistic). The internal
+<code class="docutils literal notranslate"><span class="pre">ResultKey</span></code> / <code class="docutils literal notranslate"><span class="pre">job_number</span></code> refactor is off this critical path.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0005-frame-gated-session-flush.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0005: Frame-gated per-session plot flush</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../../about/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">About</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.7.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.19.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
