@@ -17,6 +17,11 @@ logger = structlog.get_logger(__name__)
 # Timeout threshold for considering a worker stale (30 seconds in nanoseconds)
 SERVICE_HEARTBEAT_TIMEOUT_NS = 30_000_000_000
 
+# Max inactive (stopped/stale) workers kept per (instrument, service_name). A
+# crash-looping service mints a fresh worker_id on every restart, so without
+# this cap its terminal heartbeats would accumulate indefinitely.
+DEFAULT_MAX_INACTIVE_WORKERS_PER_KIND = 3
+
 
 def make_worker_key(status: ServiceStatus) -> str:
     """Create a unique key for a worker from its status."""
@@ -35,10 +40,12 @@ class ServiceRegistry:
         self,
         *,
         heartbeat_timeout_ns: int = SERVICE_HEARTBEAT_TIMEOUT_NS,
+        max_inactive_workers_per_kind: int = DEFAULT_MAX_INACTIVE_WORKERS_PER_KIND,
     ) -> None:
         self._worker_statuses: dict[str, ServiceStatus] = {}
         self._worker_timestamps: dict[str, int] = {}
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
+        self._max_inactive_workers_per_kind = max_inactive_workers_per_kind
 
     @property
     def worker_statuses(self) -> dict[str, ServiceStatus]:
@@ -64,6 +71,28 @@ class ServiceRegistry:
                 status = replace(status, stream_stats=previous.stream_stats)
         self._worker_statuses[worker_key] = status
         self._worker_timestamps[worker_key] = time.time_ns()
+        self._prune_inactive_workers(status.instrument, status.service_name)
+
+    def _prune_inactive_workers(self, instrument: str, service_name: str) -> None:
+        """Drop the oldest inactive workers once a kind exceeds its cap.
+
+        Only ``stopped``/stale entries are pruned, and only among those
+        sharing ``instrument`` and ``service_name`` with the just-updated
+        status; active workers are never removed automatically.
+        """
+        same_kind_inactive = []
+        for key in self.get_inactive_worker_keys():
+            status = self._worker_statuses[key]
+            if status.instrument == instrument and status.service_name == service_name:
+                same_kind_inactive.append(key)
+
+        excess = len(same_kind_inactive) - self._max_inactive_workers_per_kind
+        if excess <= 0:
+            return
+
+        same_kind_inactive.sort(key=lambda key: self._worker_timestamps[key])
+        for key in same_kind_inactive[:excess]:
+            self.remove_worker(key)
 
     def remove_worker(self, worker_key: str) -> None:
         """Remove a worker from tracking."""

@@ -412,3 +412,96 @@ class TestServiceRegistry:
         assert removed == 2
         assert len(registry.worker_statuses) == 1
         assert make_worker_key(fresh) in registry.worker_statuses
+
+    def test_prunes_oldest_inactive_worker_once_kind_exceeds_cap(self) -> None:
+        """A crash-looping service mints a new worker_id per restart; only the
+        most recent ``max_inactive_workers_per_kind`` terminal heartbeats
+        should be kept."""
+        registry = ServiceRegistry(max_inactive_workers_per_kind=2)
+
+        for i in range(4):
+            registry.status_updated(
+                ServiceStatus(
+                    instrument="dream",
+                    service_name="crash_looper",
+                    worker_id=f"worker{i}",
+                    state=ServiceState.stopped,
+                    started_at=Timestamp.from_ns(1000),
+                    active_job_count=0,
+                )
+            )
+            time.sleep(0.01)
+
+        assert len(registry.worker_statuses) == 2
+        remaining_ids = {key.split(":")[-1] for key in registry.worker_statuses}
+        assert remaining_ids == {"worker2", "worker3"}
+
+    def test_pruning_does_not_remove_active_workers(self) -> None:
+        registry = ServiceRegistry(max_inactive_workers_per_kind=2)
+        running = ServiceStatus(
+            instrument="dream",
+            service_name="crash_looper",
+            worker_id="running_worker",
+            state=ServiceState.running,
+            started_at=Timestamp.from_ns(1000),
+            active_job_count=1,
+        )
+        registry.status_updated(running)
+
+        for i in range(4):
+            registry.status_updated(
+                ServiceStatus(
+                    instrument="dream",
+                    service_name="crash_looper",
+                    worker_id=f"stopped{i}",
+                    state=ServiceState.stopped,
+                    started_at=Timestamp.from_ns(1000),
+                    active_job_count=0,
+                )
+            )
+
+        assert make_worker_key(running) in registry.worker_statuses
+        inactive_count = len([k for k in registry.worker_statuses if "stopped" in k])
+        assert inactive_count == 2
+
+    def test_pruning_is_scoped_per_kind(self) -> None:
+        """Inactive workers of one service_name must not count against the
+        cap of a different service_name, nor a different instrument."""
+        registry = ServiceRegistry(max_inactive_workers_per_kind=1)
+
+        for i in range(3):
+            registry.status_updated(
+                ServiceStatus(
+                    instrument="dream",
+                    service_name="service_a",
+                    worker_id=f"a{i}",
+                    state=ServiceState.stopped,
+                    started_at=Timestamp.from_ns(1000),
+                    active_job_count=0,
+                )
+            )
+        registry.status_updated(
+            ServiceStatus(
+                instrument="dream",
+                service_name="service_b",
+                worker_id="b0",
+                state=ServiceState.stopped,
+                started_at=Timestamp.from_ns(1000),
+                active_job_count=0,
+            )
+        )
+        registry.status_updated(
+            ServiceStatus(
+                instrument="loki",
+                service_name="service_a",
+                worker_id="loki0",
+                state=ServiceState.stopped,
+                started_at=Timestamp.from_ns(1000),
+                active_job_count=0,
+            )
+        )
+
+        assert len(registry.worker_statuses) == 3
+        assert "dream:service_a:a2" in registry.worker_statuses
+        assert "dream:service_b:b0" in registry.worker_statuses
+        assert "loki:service_a:loki0" in registry.worker_statuses
