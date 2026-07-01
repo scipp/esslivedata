@@ -13,6 +13,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
+    filter_authorized_streams,
     instrument_registry,
     name_streams,
 )
@@ -176,7 +177,7 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # f144 streams come from streams_parsed.py (auto-generated from the LOKI
 # geometry file). The detector carriage readback is the position dependency of
 # loki_detector_0 (depends_on -> /entry/instrument/detector_carriage/value).
-streams = name_streams(PARSED_STREAMS)
+streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
 # Create instrument
 instrument = Instrument(

@@ -17,7 +17,12 @@ from typing import Literal
 import pydantic
 import scipp as sc
 
-from ess.livedata.config import Instrument, instrument_registry, name_streams
+from ess.livedata.config import (
+    Instrument,
+    filter_authorized_streams,
+    instrument_registry,
+    name_streams,
+)
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -230,7 +235,7 @@ monitors = [
 ]
 
 
-streams = name_streams(PARSED_STREAMS)
+streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
 # Create instrument
 instrument = Instrument(

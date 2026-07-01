@@ -6,12 +6,17 @@ from __future__ import annotations
 
 import pytest
 
-from ess.livedata.config import Device, F144Stream, name_streams
+from ess.livedata.config import (
+    Device,
+    F144Stream,
+    filter_authorized_streams,
+    name_streams,
+)
 from ess.livedata.config.stream import Stream, suggest_names
 
 
-def _parsed(path: str, *, source: str = 'src') -> F144Stream:
-    return F144Stream(nexus_path=path, source=source, topic='topic', units='mm')
+def _parsed(path: str, *, source: str = 'src', topic: str = 'topic') -> F144Stream:
+    return F144Stream(nexus_path=path, source=source, topic=topic, units='mm')
 
 
 class TestSuggestNames:
@@ -370,3 +375,36 @@ class TestDeviceDetection:
         result = name_streams(parsed)
         assert isinstance(result['a/motor'], Device)
         assert isinstance(result['b/motor'], Device)
+
+
+class TestFilterAuthorizedStreams:
+    @pytest.mark.parametrize(
+        'topic',
+        [
+            'loki_choppers',
+            'loki_motion',
+            'loki_sample_env',
+            'tn_data_general',
+        ],
+    )
+    def test_keeps_authorized_topic(self, topic: str) -> None:
+        parsed = {'/entry/instrument/a/value': _parsed('a', topic=topic)}
+        assert filter_authorized_streams(parsed) == parsed
+
+    @pytest.mark.parametrize(
+        'topic',
+        [
+            'loki_misc_devices',
+            'loki_nicos_devices',
+        ],
+    )
+    def test_drops_unauthorized_topic(self, topic: str) -> None:
+        parsed = {'/entry/instrument/a/value': _parsed('a', topic=topic)}
+        assert filter_authorized_streams(parsed) == {}
+
+    def test_keeps_only_authorized_subset(self) -> None:
+        parsed = {
+            '/a/value': _parsed('a', topic='loki_motion'),
+            '/b/value': _parsed('b', topic='loki_nicos_devices'),
+        }
+        assert filter_authorized_streams(parsed) == {'/a/value': parsed['/a/value']}

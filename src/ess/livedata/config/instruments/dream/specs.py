@@ -13,6 +13,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
+    filter_authorized_streams,
     instrument_registry,
     name_streams,
 )
@@ -110,7 +111,7 @@ instrument = Instrument(
         'overlap_chopper',
         'T0_chopper',
     ],
-    streams=name_streams(PARSED_STREAMS),
+    streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
         'mantle_detector': SourceMetadata(
             title='Mantle',

@@ -7,6 +7,7 @@ TBL workflow spec registration.
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
+    filter_authorized_streams,
     instrument_registry,
     name_streams,
 )
@@ -35,7 +36,7 @@ instrument = Instrument(
     name='tbl',
     detector_names=detector_names,
     monitors=monitor_names,
-    streams=name_streams(PARSED_STREAMS),
+    streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
         'timepix3_detector': SourceMetadata(title='Timepix3'),
         'multiblade_detector': SourceMetadata(title='Multiblade'),
