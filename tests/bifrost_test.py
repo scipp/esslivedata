@@ -16,6 +16,7 @@ from ess.livedata.config.instruments.bifrost import specs
 from ess.livedata.config.instruments.bifrost.factories import (
     _create_base_reduction_workflow,
 )
+from ess.livedata.core.timestamp import Timestamp
 
 
 @pytest.fixture
@@ -23,14 +24,15 @@ def bifrost_workflow():
     """
     Create and configure the base reduction workflow for tests.
 
-    Returns a tuple of (workflow, DetectorRegionCounts) where the workflow
-    has the detector_ratemeter function already inserted.
+    Returns ``(workflow, DetectorRegionCountsRaw)``. The workflow has the
+    ratemeter providers inserted; the raw per-update counts are what the sciline
+    graph computes directly (accumulation into current/cumulative views happens
+    in ``StreamProcessorWorkflow``, not in the bare graph).
     """
-    workflow, DetectorRegionCounts, detector_ratemeter = (
+    workflow, _DetectorRegionCounts, DetectorRegionCountsRaw = (
         _create_base_reduction_workflow()
     )
-    workflow.insert(detector_ratemeter)
-    return workflow, DetectorRegionCounts
+    return workflow, DetectorRegionCountsRaw
 
 
 @pytest.mark.slow
@@ -139,7 +141,7 @@ class TestDetectorRatemeter:
 
     def test_ratemeter_sums_events_in_selected_arc(self, bifrost_workflow):
         """Test that ratemeter correctly sums events in the selected arc."""
-        reduction_workflow, DetectorRegionCounts = bifrost_workflow
+        reduction_workflow, DetectorRegionCountsRaw = bifrost_workflow
         # Create test data with 100 events in arc 2
         nexus_data = _make_test_event_data(arc_events={2: 100})
 
@@ -154,7 +156,7 @@ class TestDetectorRatemeter:
         wf[specs.DetectorRatemeterRegionParams] = region_params
 
         # Compute result
-        result = wf.compute(DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCountsRaw)
 
         # Check that we get the expected count
         assert result.value == 100
@@ -162,7 +164,7 @@ class TestDetectorRatemeter:
 
     def test_ratemeter_with_pixel_range_selection(self, bifrost_workflow):
         """Test that pixel range selection works correctly."""
-        reduction_workflow, DetectorRegionCounts = bifrost_workflow
+        reduction_workflow, DetectorRegionCountsRaw = bifrost_workflow
         # Create test data with events evenly distributed across arc 0
         nexus_data = _make_test_event_data(arc_events={0: 900})
 
@@ -176,14 +178,14 @@ class TestDetectorRatemeter:
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
         wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCountsRaw)
 
         # Should get approximately half the events (allowing some tolerance)
         assert 400 <= result.value <= 500
 
     def test_ratemeter_with_different_arcs(self, bifrost_workflow):
         """Test that arc selection correctly isolates events."""
-        reduction_workflow, DetectorRegionCounts = bifrost_workflow
+        reduction_workflow, DetectorRegionCountsRaw = bifrost_workflow
         # Create test data with different event counts per arc
         nexus_data = _make_test_event_data(arc_events={0: 50, 2: 150, 4: 200})
 
@@ -197,27 +199,87 @@ class TestDetectorRatemeter:
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
         wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCountsRaw)
         assert result.value == 200
 
-    def test_ratemeter_includes_time_coordinate(self, bifrost_workflow):
-        """Test that the result includes a time coordinate."""
-        reduction_workflow, DetectorRegionCounts = bifrost_workflow
+    def test_ratemeter_raw_counts_carry_no_time_coords(self, bifrost_workflow):
+        """Per-update counts are bare: time coords are stamped on accumulation.
+
+        Stamping a ``time`` coord here would suppress the ``start_time``/
+        ``end_time`` the dashboard's rate normalization needs (see
+        ``_add_time_coords``) and break coord matching across the accumulator sum.
+        """
+        reduction_workflow, DetectorRegionCountsRaw = bifrost_workflow
         nexus_data = _make_test_event_data(arc_events={1: 50})
 
         wf = reduction_workflow.copy()
-        region_params = specs.DetectorRatemeterRegionParams(
-            arc=specs.ArcEnergy.ARC_3_2,  # Arc index 1
+        wf[NeXusData[NXdetector, SampleRun]] = nexus_data
+        wf[specs.DetectorRatemeterRegionParams] = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_3_2,
             pixel_start=0,
             pixel_stop=900,
         )
-        wf[NeXusData[NXdetector, SampleRun]] = nexus_data
-        wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCountsRaw)
 
-        assert 'time' in result.coords
-        assert result.coords['time'].unit == 'ns'
+        assert result.unit == 'counts'
+        assert 'time' not in result.coords
+        assert 'start_time' not in result.coords
+        assert 'end_time' not in result.coords
+
+    @pytest.mark.slow
+    def test_ratemeter_current_output_normalizes_to_rate(self):
+        """The current output carries the time bounds needed for counts/s.
+
+        Drives the real ``StreamProcessorWorkflow`` (as the production factory
+        builds it) and checks the current output can be normalized to a rate,
+        while the cumulative output defers its time bounds to the job layer.
+        """
+        from ess.livedata.dashboard.plots import _normalize_to_rate
+        from ess.livedata.handlers.accumulation_mode import Cumulative, Current
+        from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
+        from ess.livedata.handlers.stream_processor_workflow import (
+            StreamProcessorWorkflow,
+        )
+
+        reduction_workflow, DetectorRegionCounts, _ = _create_base_reduction_workflow()
+        wf = reduction_workflow.copy()
+        wf[specs.DetectorRatemeterRegionParams] = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_5_0, pixel_start=0, pixel_stop=900
+        )
+        cumulative, window = make_no_copy_accumulator_pair()
+        workflow = StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
+            target_keys={
+                'detector_region_counts': DetectorRegionCounts[Current],
+                'detector_region_counts_cumulative': DetectorRegionCounts[Cumulative],
+            },
+            accumulators={
+                DetectorRegionCounts[Cumulative]: cumulative,
+                DetectorRegionCounts[Current]: window,
+            },
+            window_outputs=['detector_region_counts'],
+        )
+        workflow.build()
+        workflow.accumulate(
+            {'unified_detector': _make_test_event_data(arc_events={4: 100})},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(2_000_000_000),  # 2 s window
+        )
+        results = workflow.finalize()
+
+        current = results['detector_region_counts']
+        assert current.value == 100
+        assert {'time', 'start_time', 'end_time'} <= set(current.coords)
+        rate = _normalize_to_rate(current)
+        assert rate.unit == 'counts/s'
+        assert rate.value == 50  # 100 counts / 2 s
+
+        # Cumulative defers time bounds to the job layer (_add_time_coords).
+        cumulative_out = results['detector_region_counts_cumulative']
+        assert cumulative_out.value == 100
+        assert 'start_time' not in cumulative_out.coords
 
 
 class TestUnifiedDetectorViewLayout:

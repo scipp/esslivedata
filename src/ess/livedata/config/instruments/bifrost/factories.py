@@ -60,7 +60,8 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.accumulators import LatestValue
+    from ess.livedata.handlers.accumulation_mode import Cumulative, Current
+    from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     from .streams import detector_number
@@ -90,9 +91,8 @@ def setup_factories(instrument: Instrument) -> None:
     (
         reduction_workflow,
         DetectorRegionCounts,
-        detector_ratemeter,
+        _DetectorRegionCountsRaw,
     ) = _create_base_reduction_workflow()
-    reduction_workflow.insert(detector_ratemeter)
 
     @specs.detector_ratemeter_handle.attach_factory()
     def _detector_ratemeter_workflow(
@@ -100,11 +100,19 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         wf = reduction_workflow.copy()
         wf[DetectorRatemeterRegionParams] = params.region
+        cumulative, window = make_no_copy_accumulator_pair()
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-            target_keys={'detector_region_counts': DetectorRegionCounts},
-            accumulators={DetectorRegionCounts: LatestValue},
+            target_keys={
+                'detector_region_counts': DetectorRegionCounts[Current],
+                'detector_region_counts_cumulative': DetectorRegionCounts[Cumulative],
+            },
+            accumulators={
+                DetectorRegionCounts[Cumulative]: cumulative,
+                DetectorRegionCounts[Current]: window,
+            },
+            window_outputs=['detector_region_counts'],
         )
 
     # Q-map workflow factories
@@ -270,15 +278,17 @@ def _create_base_reduction_workflow():
     Returns
     -------
     reduction_workflow:
-        The base TofWorkflow configured with detector geometry.
+        The base TofWorkflow configured with detector geometry, with the
+        ratemeter providers inserted.
     DetectorRegionCounts:
-        NewType for detector region counts.
-    detector_ratemeter:
-        Function that computes detector region counts.
+        Accumulation-mode-scoped type for detector region counts.
+    DetectorRegionCountsRaw:
+        Type for the bare per-update region counts (before accumulation).
     """
     # Lazy imports
     from typing import NewType
 
+    import sciline
     from ess.reduce.nexus.types import (
         EmptyDetector,
         Filename,
@@ -289,6 +299,7 @@ def _create_base_reduction_workflow():
     from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
     from scippnexus import NXdetector
 
+    from ess.livedata.handlers.accumulation_mode import AccumulationMode
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
 
     # Detector group names in the pinned (pre-2026-06-08) geometry artifact
@@ -311,21 +322,44 @@ def _create_base_reduction_workflow():
         ArcEnergy.ARC_5_0: 4,
     }
 
-    DetectorRegionCounts = NewType('DetectorRegionCounts', sc.DataArray)
+    DetectorRegionCountsRaw = NewType('DetectorRegionCountsRaw', sc.DataArray)
+
+    class DetectorRegionCounts(
+        sciline.Scope[AccumulationMode, sc.DataArray],
+        sc.DataArray,  # type: ignore[misc]
+    ):
+        """Region counts scalar, parametrized by accumulation mode.
+
+        - ``DetectorRegionCounts[Cumulative]``: accumulated since the start of the
+          run (reset only on a run transition).
+        - ``DetectorRegionCounts[Current]``: the latest update interval only
+          (cleared after each finalize).
+        """
 
     def _detector_ratemeter(
         data: RawDetector[SampleRun], region: DetectorRatemeterRegionParams
-    ) -> DetectorRegionCounts:
-        """Calculate detector count rate for selected arc and pixel range."""
+    ) -> DetectorRegionCountsRaw:
+        """Sum detector counts in the selected arc and pixel range for one update.
+
+        Emits bare per-update counts with no time coords: ``StreamProcessorWorkflow``
+        stamps ``start_time``/``end_time`` (needed for the dashboard's rate
+        normalization) on the accumulated outputs, per the window/cumulative
+        convention. Stamping here instead would suppress that (see
+        ``_add_time_coords``) and break coord matching across the accumulator sum.
+        """
         arc_idx = _arc_energy_to_index[region.arc]
         arc_data = data['arc', arc_idx]
         flat = arc_data.flatten(dims=('channel', 'pixel'), to='position')
         selected = flat['position', region.pixel_start : region.pixel_stop]
         counts = selected.sum()
-        time = selected.bins.coords['event_time_zero'].min()
-        counts.coords['time'] = time
         counts.variances = counts.values
-        return DetectorRegionCounts(counts)
+        return DetectorRegionCountsRaw(counts)
+
+    def _accumulated_region_counts(
+        counts: DetectorRegionCountsRaw,
+    ) -> DetectorRegionCounts[AccumulationMode]:
+        """Route per-update counts to the accumulation-mode-specific accumulator."""
+        return DetectorRegionCounts[AccumulationMode](counts)
 
     reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
     # Pin detector geometry to the pre-2026-06-08 survey. The 2026-06-08 file
@@ -343,4 +377,6 @@ def _create_base_reduction_workflow():
         .reduce(func=_combine_banks)
     )
 
-    return reduction_workflow, DetectorRegionCounts, _detector_ratemeter
+    reduction_workflow.insert(_detector_ratemeter)
+    reduction_workflow.insert(_accumulated_region_counts)
+    return reduction_workflow, DetectorRegionCounts, DetectorRegionCountsRaw
