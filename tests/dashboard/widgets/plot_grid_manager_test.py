@@ -392,6 +392,41 @@ class TestGridUpload:
         assert grid_manager._title_input.value == original_title
         assert grid_manager._pending_upload_cells is None
 
+    def test_upload_overlapping_cells_rejected(self, grid_manager):
+        """A config with cells claiming the same slot is rejected on upload."""
+        yaml_content = b"""
+title: Overlapping
+nrows: 2
+ncols: 2
+cells:
+  - geometry: {row: 0, col: 0, row_span: 1, col_span: 1}
+    layers:
+    - data_sources:
+        primary:
+          workflow_id: test_instrument/test_workflow/1
+          source_names: [source1]
+          view_name: result
+      plot_name: image
+  - geometry: {row: 0, col: 0, row_span: 1, col_span: 2}
+    layers:
+    - data_sources:
+        primary:
+          workflow_id: test_instrument/test_workflow/1
+          source_names: [source1]
+          view_name: result
+      plot_name: image
+"""
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Rejected before form/pending state is populated.
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
     def test_upload_invalid_cell_does_not_update_form(self, grid_manager):
         """Test that cell with missing geometry does not update form fields."""
         yaml_content = b"""

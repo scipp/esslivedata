@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -115,6 +115,30 @@ class CellGeometry:
     col: int
     row_span: int
     col_span: int
+
+    def overlaps(self, other: CellGeometry) -> bool:
+        """Return True if this cell shares any grid slot with ``other``."""
+        return (
+            self.row < other.row + other.row_span
+            and other.row < self.row + self.row_span
+            and self.col < other.col + other.col_span
+            and other.col < self.col + self.col_span
+        )
+
+
+def reject_overlapping_cells(geometries: Iterable[CellGeometry]) -> None:
+    """Raise ValueError if any two cell geometries overlap.
+
+    Grid cells must tile without overlap; overlapping cells claim the same
+    slot for two plots. This guards the collection-level entry points (config
+    load, file upload) that build a full cell set at once.
+    """
+    seen: list[CellGeometry] = []
+    for geometry in geometries:
+        for other in seen:
+            if geometry.overlaps(other):
+                raise ValueError(f'Cell geometry {geometry} overlaps {other}')
+        seen.append(geometry)
 
 
 @dataclass
@@ -664,10 +688,23 @@ class PlotOrchestrator:
         -------
         :
             ID of the added cell.
+
+        Raises
+        ------
+        ValueError
+            If the geometry overlaps an existing cell in the grid. Grid cells
+            must tile the grid without overlap; overlapping cells would claim
+            the same slot for two plots.
         """
+        grid = self._grids[grid_id]
+        for existing in grid.cells.values():
+            if existing.geometry.overlaps(geometry):
+                raise ValueError(
+                    f'Cell geometry {geometry} overlaps existing cell '
+                    f'{existing.geometry} in grid {grid_id}'
+                )
         cell_id = CellId(uuid4())
         cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
-        grid = self._grids[grid_id]
         grid.cells[cell_id] = cell
         self._cell_to_grid[cell_id] = grid_id
         return cell_id
@@ -1469,6 +1506,7 @@ class PlotOrchestrator:
                 parsed = self.parse_raw_cell(cell_data)
                 if parsed is not None:
                     cells.append(parsed)
+            reject_overlapping_cells(c.geometry for c in cells)
 
             return GridSpec(
                 name=name,
