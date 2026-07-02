@@ -47,7 +47,11 @@ class DataServiceSubscriber(ABC, Generic[K]):
         Whether the subscriber currently wants update notifications.
 
         Inactive subscribers are skipped during notification: no data is
-        extracted, copied, or delivered for them. Their extractors stay
+        extracted, copied, or delivered for them. This matters because
+        extraction runs per subscriber per update on the ingestion thread,
+        ahead of visible-plot flushes, and can be expensive — aggregating
+        extractors reduce over the buffered history on every call, which
+        dominates delivery cost for image-sized data. Their extractors stay
         registered, so buffer type and history retention are unaffected —
         buffering continues while delivery is paused. A caller reactivating
         a subscriber is responsible for refreshing it, e.g. via
