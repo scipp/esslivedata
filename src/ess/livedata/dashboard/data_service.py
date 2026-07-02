@@ -62,7 +62,10 @@ class DataService(MutableMapping[K, V]):
     ``transaction`` / ``__setitem__``) and the UI thread (via
     ``register_subscriber`` / ``unregister_subscriber``). A single ``RLock``
     serializes all access to the internal state (buffer manager, subscriber
-    list, pending updates, transaction depth).
+    list, pending updates). Transaction depth is thread-local: a transaction
+    defers notifications only for updates made on its own thread, so
+    concurrent transactions on different threads flush independently and
+    cannot suppress each other's root notify.
 
     The lock is **never** held while calling ``subscriber.trigger`` (which runs
     arbitrary compute, including Bokeh document mutation). Data handed to a
@@ -71,6 +74,12 @@ class DataService(MutableMapping[K, V]):
     data and cannot observe a concurrent buffer mutation. Keeping ``trigger``
     outside the lock also means no compute-side lock (the Bokeh document lock,
     or ``ActiveJobRegistry``'s ingestion guard) can deadlock against this one.
+
+    A consequence is that ``trigger`` delivery is not globally ordered: the
+    initial trigger from ``register_subscriber`` and an update notification
+    from the ingestion thread may run concurrently and out of order, so a
+    subscriber can transiently receive older data after newer data (healed by
+    the next update). Subscribers must tolerate concurrent ``trigger`` calls.
 
     Lock ordering: ``ActiveJobRegistry.ingestion_guard`` -> ``DataService`` lock.
     The ingestion path and ``ActiveJobRegistry.cleanup`` both hold the guard
@@ -83,26 +92,30 @@ class DataService(MutableMapping[K, V]):
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[DataServiceSubscriber[K]] = []
         self._pending_updates: set[K] = set()
-        self._transaction_depth = 0
+        self._local = threading.local()
         self._lock = threading.RLock()
 
     @contextmanager
     def transaction(self):
         """Context manager for batching multiple updates."""
-        with self._lock:
-            self._transaction_depth += 1
+        self._local.transaction_depth = self._transaction_depth + 1
         try:
             yield
         finally:
             # Stay in transaction until notifications are done. This ensures that
             # subscribers that make further updates during their notification do not
             # trigger intermediate notifications.
-            with self._lock:
-                at_root = self._transaction_depth == 1
-            if at_root:
-                self._notify()
-            with self._lock:
-                self._transaction_depth -= 1
+            try:
+                if self._transaction_depth == 1:
+                    self._notify()
+            finally:
+                # Always restore depth, even if a notification raised: a stuck
+                # depth would silently suppress all future notifications.
+                self._local.transaction_depth -= 1
+
+    @property
+    def _transaction_depth(self) -> int:
+        return getattr(self._local, 'transaction_depth', 0)
 
     @property
     def _in_transaction(self) -> bool:
@@ -261,8 +274,7 @@ class DataService(MutableMapping[K, V]):
                 self._buffer_manager.create_buffer(key, extractors)
             self._buffer_manager.update_buffer(key, value)
             self._pending_updates.add(key)
-            notify = not self._in_transaction
-        if notify:
+        if not self._in_transaction:
             self._notify()
 
     def __delitem__(self, key: K) -> None:
@@ -270,8 +282,7 @@ class DataService(MutableMapping[K, V]):
         with self._lock:
             self._buffer_manager.delete_buffer(key)
             self._pending_updates.add(key)
-            notify = not self._in_transaction
-        if notify:
+        if not self._in_transaction:
             self._notify()
 
     def __iter__(self) -> Iterator[K]:

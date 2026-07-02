@@ -1335,3 +1335,84 @@ class TestThreadSafety:
 
         assert not errors, f"concurrent access raised: {errors[0]!r}"
         assert service["key1"].value >= 0
+
+    def test_transaction_on_another_thread_does_not_defer_notification(self):
+        """Transaction depth is thread-local.
+
+        A transaction held open on one thread must not suppress notifications
+        for updates made on another thread.
+        """
+        service = DataService[str, int]()
+        triggered: list[int] = []
+
+        class RecordingSubscriber(DataServiceSubscriber[str]):
+            def __init__(self) -> None:
+                self._extractors = {"key1": LatestValueExtractor()}
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                if store:
+                    triggered.append(store["key1"].value)
+
+        service.register_subscriber(RecordingSubscriber())
+
+        in_transaction = threading.Event()
+        release = threading.Event()
+
+        def hold_transaction() -> None:
+            with service.transaction():
+                in_transaction.set()
+                release.wait(timeout=5)
+
+        holder = threading.Thread(target=hold_transaction)
+        holder.start()
+        assert in_transaction.wait(timeout=5)
+
+        service["key1"] = make_test_data(42, time=1.0)
+        assert triggered == [42]
+
+        release.set()
+        holder.join(timeout=5)
+
+    def test_notification_failure_does_not_wedge_transactions(self):
+        """An exception escaping notification at transaction exit must not
+        leave the service permanently in-transaction, which would silently
+        suppress all future notifications."""
+        service = DataService[str, int]()
+        triggered: list[int] = []
+
+        class ExplodingKeysSubscriber(DataServiceSubscriber[str]):
+            explode = False
+
+            def __init__(self) -> None:
+                self._extractors = {"key1": LatestValueExtractor()}
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            @property
+            def keys(self):
+                if self.explode:
+                    raise RuntimeError("boom")
+                return super().keys
+
+            def trigger(self, store: dict[str, Any]) -> None:
+                if store:
+                    triggered.append(store["key1"].value)
+
+        sub = ExplodingKeysSubscriber()
+        service.register_subscriber(sub)
+
+        sub.explode = True
+        with pytest.raises(RuntimeError), service.transaction():
+            service["key1"] = make_test_data(1, time=1.0)
+
+        sub.explode = False
+        service["key1"] = make_test_data(2, time=2.0)
+        assert triggered == [2]
