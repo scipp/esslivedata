@@ -61,10 +61,10 @@ class LayerState(Enum):
 class ComputeTask:
     """A pending plotter.compute() invocation released by the layer gate.
 
-    Returned from :meth:`LayerStateMachine.stash_pending` and
-    :meth:`LayerStateMachine.set_active` when a build should run now. The
-    caller invokes the build outside any locks and reports completion via
-    ``data_arrived`` / ``error_occurred`` on the owning ``PlotDataService``.
+    Returned from :meth:`LayerStateMachine.stash_pending` when a build should
+    run now. The caller invokes the build outside any locks and reports
+    completion via ``data_arrived`` / ``error_occurred`` on the owning
+    ``PlotDataService``.
     """
 
     plotter: Plotter
@@ -90,13 +90,15 @@ class LayerStateMachine:
     Threading of the compute gate
     -----------------------------
     ``stash_pending`` is called from the data-subscriber callback on the
-    background ingestion thread; ``set_active`` is called from the per-session
-    polling thread (Bokeh main). Both return a ``ComputeTask`` when a build
-    should run; the caller invokes ``task.run()`` on its own thread (outside
-    the gate lock). So regular Kafka-delta builds execute on the bg ingestion
-    thread, while the 0→1 activation flush executes on the polling thread —
-    deliberately, so the same poll pass's component rebuild observes fresh
-    ``has_cached_state``.
+    background ingestion thread and returns a ``ComputeTask`` when a viewer is
+    watching; the caller invokes ``task.run()`` on its own thread (outside the
+    gate lock). ``set_active`` is called from the per-session polling thread
+    (Bokeh main). While no token is held, ``has_viewers`` pauses DataService
+    delivery for the layer's subscriber, so no input flows at all; on the 0→1
+    transition ``set_active`` returns True and the orchestrator refreshes the
+    layer from a fresh DataService snapshot, synchronously on the polling
+    thread — deliberately, so the same poll pass's component rebuild observes
+    fresh ``has_cached_state``.
 
     Parameters
     ----------
@@ -109,9 +111,10 @@ class LayerStateMachine:
         self._version = 0
         self._plotter: Plotter | None = None
         self._error_message: str | None = None
-        # Compute gate: tokens express viewer interest, _pending stashes the
-        # latest input while no token is held. Decoupled from lifecycle state
-        # because interest is per-(session, layer) and lifecycle is per-layer.
+        # Compute gate: tokens express viewer interest; _pending stashes the
+        # latest input, consumed when a token is held. Decoupled from lifecycle
+        # state because interest is per-(session, layer) and lifecycle is
+        # per-layer.
         self._active_tokens: set[int] = set()
         # Tokens we've already attached a weakref finalizer to, so we don't
         # register a second one on a False→True re-acquire.
@@ -254,11 +257,14 @@ class LayerStateMachine:
     ) -> ComputeTask | None:
         """Stash the latest input; return a flush task if a viewer is watching.
 
-        Called from the data-subscriber callback on every Kafka delta. When no
-        token is currently held, the input is stashed and the dirty flag is
-        set; intermediate updates collapse to last-writer-wins. When at least
-        one token is held, the returned ``ComputeTask`` should be run by the
-        caller (outside any locks) to produce the build.
+        Called from the data-subscriber callback on every Kafka delta. While
+        no token is held, delivery is paused upstream (``has_viewers`` gates
+        the DataService subscription), so this is only reached by an
+        in-flight delivery racing a pause; the input is stashed
+        last-writer-wins and superseded by the snapshot refresh on the next
+        activation. When at least one token is held, the returned
+        ``ComputeTask`` should be run by the caller (outside any locks) to
+        produce the build.
 
         Parameters
         ----------
@@ -274,13 +280,13 @@ class LayerStateMachine:
             self._dirty = True
             return self._consume_for_flush()
 
-    def set_active(self, token: object, active: bool) -> ComputeTask | None:
+    def set_active(self, token: object, active: bool) -> bool:
         """Acquire or release a viewer interest token on this layer.
 
-        On the 0→1 transition with dirty pending input, returns a
-        ``ComputeTask`` so the caller can rebuild synchronously. Releasing a
-        token does not drop the stash — it persists until the next 0→1
-        triggers a flush or a plotter replacement clears it.
+        Returns True on the 0→1 transition, i.e. when the first token is
+        acquired. Delivery was paused while no viewer was watching (see
+        ``has_viewers``), so the caller must then refresh the layer from
+        current DataService content.
 
         A ``weakref.finalize`` is attached on first acquire so the token is
         auto-released if the caller is garbage-collected without an explicit
@@ -303,9 +309,13 @@ class LayerStateMachine:
                     weakref.finalize(token, self._release_token, key)
             else:
                 self._active_tokens.discard(key)
-            if was_active or not self._active_tokens:
-                return None
-            return self._consume_for_flush()
+            return active and not was_active
+
+    @property
+    def has_viewers(self) -> bool:
+        """Whether any viewer token is held; gates DataService delivery."""
+        with self._gate_lock:
+            return bool(self._active_tokens)
 
     def _release_token(self, key: int) -> None:
         """Drop a token key from the gate (called by the weakref finalizer)."""

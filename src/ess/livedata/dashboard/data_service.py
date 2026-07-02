@@ -41,6 +41,24 @@ class DataServiceSubscriber(ABC, Generic[K]):
         Returns a mapping from key to the extractor to use for that key.
         """
 
+    @property
+    def active(self) -> bool:
+        """
+        Whether the subscriber currently wants update notifications.
+
+        Inactive subscribers are skipped during notification: no data is
+        extracted, copied, or delivered for them. This matters because
+        extraction runs per subscriber per update on the ingestion thread,
+        ahead of visible-plot flushes, and can be expensive — aggregating
+        extractors reduce over the buffered history on every call, which
+        dominates delivery cost for image-sized data. Their extractors stay
+        registered, so buffer type and history retention are unaffected —
+        buffering continues while delivery is paused. A caller reactivating
+        a subscriber is responsible for refreshing it, e.g. via
+        :py:meth:`DataService.snapshot`.
+        """
+        return True
+
     @abstractmethod
     def trigger(self, store: dict[K, Any]) -> None:
         """Trigger the subscriber with updated data."""
@@ -187,7 +205,9 @@ class DataService(MutableMapping[K, V]):
         """
         Register a subscriber for updates with extractor-based data access.
 
-        Triggers the subscriber immediately with existing data using its extractors.
+        Triggers the subscriber immediately with existing data using its
+        extractors, unless the subscriber is currently inactive (see
+        :py:attr:`DataServiceSubscriber.active`).
 
         Parameters
         ----------
@@ -203,11 +223,34 @@ class DataService(MutableMapping[K, V]):
                     extractor = subscriber.extractors[key]
                     self._buffer_manager.add_extractor(key, extractor)
 
-            # Snapshot existing data using subscriber's extractors
+        # Active check and trigger outside the lock: the property may consult
+        # another component's lock, and compute must not run while holding ours.
+        if not subscriber.active:
+            return
+        with self._lock:
             existing_data = self._build_subscriber_data(subscriber)
-
-        # Trigger outside the lock: compute must not run while holding it.
         subscriber.trigger(existing_data)
+
+    def snapshot(self, subscriber: DataServiceSubscriber[K]) -> dict[K, Any]:
+        """
+        Extract current data for a subscriber without triggering it.
+
+        For refreshing a subscriber whose notifications were paused (see
+        :py:attr:`DataServiceSubscriber.active`): the caller delivers the
+        result itself, e.g. through a synchronous compute path.
+
+        Parameters
+        ----------
+        subscriber:
+            The subscriber whose extractors to apply.
+
+        Returns
+        -------
+        :
+            Extracted data, detached from the internal buffers.
+        """
+        with self._lock:
+            return self._build_subscriber_data(subscriber)
 
     def unregister_subscriber(self, subscriber: DataServiceSubscriber[K]) -> bool:
         """
@@ -250,13 +293,19 @@ class DataService(MutableMapping[K, V]):
         with self._lock:
             subscribers = list(self._subscribers)
         for subscriber in subscribers:
-            if updated_keys & subscriber.keys:
-                try:
-                    with self._lock:
-                        subscriber_data = self._build_subscriber_data(subscriber)
-                    subscriber.trigger(subscriber_data)
-                except Exception:
-                    logger.exception("Failed to notify subscriber %s", subscriber)
+            if not (updated_keys & subscriber.keys):
+                continue
+            try:
+                # Checked outside self._lock: the property may consult another
+                # component's lock (e.g. the plot layer's viewer gate), which
+                # must never nest inside this one.
+                if not subscriber.active:
+                    continue
+                with self._lock:
+                    subscriber_data = self._build_subscriber_data(subscriber)
+                subscriber.trigger(subscriber_data)
+            except Exception:
+                logger.exception("Failed to notify subscriber %s", subscriber)
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""

@@ -136,7 +136,14 @@ class FullHistoryExtractor(UpdateExtractor):
 
 
 class WindowAggregatingExtractor(UpdateExtractor):
-    """Extracts a window from the buffer and aggregates over the time dimension."""
+    """Extracts a window from the buffer and aggregates over the time dimension.
+
+    The aggregation runs on every ``extract`` call; its cost scales with
+    window length x element size and dominates delivery cost for image-sized
+    data (milliseconds per call, vs. microseconds for a plain copy). Callers
+    that deliver per update should avoid extracting for consumers that do not
+    currently need the result (see ``DataServiceSubscriber.active``).
+    """
 
     def __init__(
         self,

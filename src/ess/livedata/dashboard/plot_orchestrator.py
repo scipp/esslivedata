@@ -406,7 +406,7 @@ class PlotOrchestrator:
         self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
-        self._data_subscriptions: dict[LayerId, Any] = {}  # DataServiceSubscriber
+        self._data_subscriptions: dict[LayerId, Any] = {}  # DataSubscriber
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
         # Per-grid compute buckets filled during a burst by ``_enqueue_compute``
         # and drained by ``flush_frames``. Touched only on the ingestion thread.
@@ -1033,9 +1033,11 @@ class PlotOrchestrator:
         """Submit input through the layer compute gate, returning a due task.
 
         Stashes input on the layer state machine. A build is due (a task is
-        returned) only if at least one viewer holds an interest token;
-        otherwise the latest input is retained and rebuilt on the next 0→1
-        token transition (see ``activate_layer``).
+        returned) only if at least one viewer holds an interest token. With no
+        token held, delivery is normally paused upstream and this is only
+        reached by an in-flight delivery racing a pause; the next 0→1 token
+        transition rebuilds from a fresh DataService snapshot instead (see
+        ``activate_layer``).
         """
         if layer_id not in self._layer_to_cell:
             return None
@@ -1044,6 +1046,11 @@ class PlotOrchestrator:
             return None
         title_resolver = self._layer_resolvers.get(layer_id)
         return state.stash_pending(data, title_resolver=title_resolver)
+
+    def _layer_has_viewers(self, layer_id: LayerId) -> bool:
+        """Delivery gate for a layer's data subscription (see activate_layer)."""
+        state = self._plot_data_service.get(layer_id)
+        return state is not None and state.has_viewers
 
     def _grid_of_layer(self, layer_id: LayerId) -> GridId:
         return self._cell_to_grid[self._layer_to_cell[layer_id]]
@@ -1099,16 +1106,32 @@ class PlotOrchestrator:
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.
 
-        On the 0→1 transition with pending input, the stashed build is run
-        synchronously on the caller's thread (the polling thread). This keeps
-        the same poll pass's component rebuild seeing fresh ``has_cached_state``.
+        While no viewer holds a token, DataService delivery is paused for the
+        layer's subscriber (no extraction, copies, or compute for hidden
+        layers); buffering continues. On the 0→1 transition the layer is
+        refreshed from a DataService snapshot, synchronously on the caller's
+        thread (the polling thread). This keeps the same poll pass's component
+        rebuild seeing fresh ``has_cached_state``.
         """
         state = self._plot_data_service.get(layer_id)
         if state is None:
             return
-        task = state.set_active(token, active)
-        if task is not None:
-            self._dispatch_compute_task(layer_id, task)
+        if state.set_active(token, active):
+            self._refresh_layer(layer_id)
+
+    def _refresh_layer(self, layer_id: LayerId) -> None:
+        """Rebuild a layer from current DataService content.
+
+        Used on viewer activation: no input was delivered while the layer had
+        no viewers, so the stash (if any) is stale and is superseded by a
+        fresh pull through the subscriber's own extractors.
+        """
+        subscriber = self._data_subscriptions.get(layer_id)
+        if subscriber is None:
+            return
+        assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
+        if assembled is not None:
+            self._run_compute(layer_id, assembled)
 
     def _dispatch_compute_task(self, layer_id: LayerId, task: Any) -> None:
         """Run a flush task and transition the layer to READY or ERROR.
@@ -1240,6 +1263,7 @@ class PlotOrchestrator:
                 plot_name=config.plot_name,
                 params=config.params,
                 on_data=lambda data: self._enqueue_compute(layer_id, data),
+                is_active=lambda: self._layer_has_viewers(layer_id),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:
