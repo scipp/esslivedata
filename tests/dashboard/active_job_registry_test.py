@@ -138,7 +138,7 @@ class TestCleanup:
         ds[key_a] = sc.scalar(1.0)
         ds[key_b] = sc.scalar(2.0)
 
-        triggers: list[set[ResultKey]] = []
+        notifications: list[set[ResultKey]] = []
 
         class RecordingSubscriber(DataServiceSubscriber):
             @property
@@ -148,13 +148,13 @@ class TestCleanup:
                     key_b: LatestValueExtractor(),
                 }
 
-            def trigger(self, store):
-                triggers.append(set(store.keys()))
+            def on_updated(self, updated_keys: set[ResultKey]) -> None:
+                notifications.append(updated_keys)
 
         ds.register_subscriber(RecordingSubscriber())
-        triggers.clear()  # discard initial trigger from registration
 
         registry.cleanup(job_number)
 
         # Every notification must show either both keys or neither — never one.
-        assert all(t in ({key_a, key_b}, set()) for t in triggers), triggers
+        # After cleanup both keys are deleted, so we see them marked as updated
+        assert all(t in ({key_a, key_b}, set()) for t in notifications), notifications
