@@ -1416,3 +1416,73 @@ class TestThreadSafety:
         sub.explode = False
         service["key1"] = make_test_data(2, time=2.0)
         assert triggered == [2]
+
+
+class GatedSubscriber(DataServiceSubscriber[str]):
+    """Subscriber whose delivery is gated by a mutable ``active`` flag."""
+
+    def __init__(self, extractor=None) -> None:
+        self._extractors = {"key1": extractor or LatestValueExtractor()}
+        self.active_flag = True
+        self.triggered: list[dict[str, Any]] = []
+        super().__init__()
+
+    @property
+    def extractors(self):
+        return self._extractors
+
+    @property
+    def active(self) -> bool:
+        return self.active_flag
+
+    def trigger(self, store: dict[str, Any]) -> None:
+        if store:  # ignore the empty initial trigger from registration
+            self.triggered.append(store)
+
+
+class TestInactiveSubscribers:
+    """Delivery is paused for inactive subscribers; buffering continues."""
+
+    def test_inactive_subscriber_is_not_triggered_on_update(self):
+        service = DataService[str, int]()
+        sub = GatedSubscriber()
+        service.register_subscriber(sub)
+        sub.active_flag = False
+        service["key1"] = make_test_data(1)
+        assert sub.triggered == []
+        sub.active_flag = True
+        service["key1"] = make_test_data(2)
+        assert [s["key1"].value for s in sub.triggered] == [2]
+
+    def test_register_skips_initial_trigger_when_inactive(self):
+        service = DataService[str, int]()
+        service["key1"] = make_test_data(1)
+        sub = GatedSubscriber()
+        sub.active_flag = False
+        service.register_subscriber(sub)
+        assert sub.triggered == []
+
+    def test_snapshot_returns_data_regardless_of_active(self):
+        service = DataService[str, int]()
+        service["key1"] = make_test_data(1, time=1.0)
+        sub = GatedSubscriber()
+        sub.active_flag = False
+        service.register_subscriber(sub)
+        snapshot = service.snapshot(sub)
+        assert snapshot["key1"].value == 1
+        assert sub.triggered == []  # snapshot does not trigger
+
+    def test_buffering_continues_while_inactive(self):
+        """History accumulates for a paused history subscriber, so a snapshot
+        on reactivation sees everything that arrived in the meantime."""
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+
+        service = DataService[str, int]()
+        sub = GatedSubscriber(extractor=FullHistoryExtractor())
+        service.register_subscriber(sub)
+        sub.active_flag = False
+        for i in range(3):
+            service["key1"] = make_test_data(i, time=float(i))
+        assert sub.triggered == []
+        snapshot = service.snapshot(sub)
+        assert snapshot["key1"].sizes["time"] == 3

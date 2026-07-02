@@ -12,7 +12,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .data_service import DataServiceSubscriber
+from .data_subscriber import DataSubscriber
 from .extractors import (
     LatestValueExtractor,
     UpdateExtractor,
@@ -178,7 +178,8 @@ class PlottingController:
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_data: Callable[[dict[ResultKey, Any]], None],
-    ) -> DataServiceSubscriber[ResultKey]:
+        is_active: Callable[[], bool] | None = None,
+    ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
 
@@ -199,6 +200,9 @@ class PlottingController:
             Callback invoked on every data update with role-grouped data
             (dict[role, dict[ResultKey, DataArray]]). Called when at least one
             key from each role has data.
+        is_active
+            Optional delivery gate consulted before each update; see
+            :py:class:`DataSubscriber`. None means always active.
 
         Returns
         -------
@@ -224,6 +228,7 @@ class PlottingController:
             keys_by_role=keys_by_role,
             on_data=on_data,
             extractors=extractors,
+            is_active=is_active,
         )
 
     def create_plotter(

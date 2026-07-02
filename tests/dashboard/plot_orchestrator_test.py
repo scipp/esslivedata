@@ -209,6 +209,7 @@ class FakePlottingController:
         plot_name: str,
         params,
         on_data,
+        is_active=None,
     ):
         """Set up data pipeline using real StreamManager (unified interface)."""
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -231,6 +232,7 @@ class FakePlottingController:
         return self._stream_manager.make_stream(
             keys_by_role,
             on_data=on_data,
+            is_active=is_active,
         )
 
     def create_plotter(
@@ -2577,6 +2579,61 @@ class TestPersistenceRoundTrip:
 
         raw = config_store.get('plot_grids')
         assert 'enabled' not in raw['grids'][0]
+
+
+class TestDeliveryPausedForHiddenLayers:
+    """Layers without a viewer token receive no deliveries or computes;
+    activation refreshes them from current DataService content."""
+
+    def test_hidden_layer_skips_compute_and_refreshes_on_activation(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id, source_names=['monitor_0'], output_name='output_a'
+        )
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, config)
+        # No viewer token acquired: the layer sits on a hidden tab.
+
+        key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='monitor_0', job_number=job_number),
+            output_name='output_a',
+        )
+        fake_data_service[key] = sc.scalar(1.0)
+        fake_data_service[key] = sc.scalar(2.0)
+        plot_orchestrator.flush_frames()
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        assert plotter.compute_calls == []
+
+        # Activation refreshes from DataService: one compute, latest value.
+        viewer = _Viewer()
+        plot_orchestrator.activate_layer(layer_id, viewer, True)
+        assert len(plotter.compute_calls) == 1
+        ((role_data,),) = [plotter.compute_calls[0]['data'].values()]
+        (value,) = role_data.values()
+        assert value.value == 2.0
+
+        # Releasing the last token pauses delivery again.
+        plot_orchestrator.activate_layer(layer_id, viewer, False)
+        fake_data_service[key] = sc.scalar(3.0)
+        plot_orchestrator.flush_frames()
+        assert len(plotter.compute_calls) == 1
 
 
 class TestFrameGeneration:

@@ -249,30 +249,33 @@ class TestLayerComputeGate:
         task.run()
         assert plotter.compute_calls == [({'k': 1}, {'title_resolver': None})]
 
-    def test_stash_then_set_active_flushes_on_zero_to_one_transition(self):
-        state, plotter = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        state.stash_pending({'k': 1})
-        assert plotter.compute_calls == []
-        task = state.set_active(token, True)
-        assert task is not None
-        task.run()
-        assert plotter.compute_calls == [({'k': 1}, {'title_resolver': None})]
-
-    def test_only_zero_to_one_transition_returns_a_task(self):
+    def test_set_active_reports_only_zero_to_one_transition(self):
         state, _plotter = self._ready_state()
         token = _Token()
-        state.set_active(token, True)
-        state.stash_pending({'k': 1}).run()
-        # Re-asserting True after the flush returns None (no pending dirty).
-        assert state.set_active(token, True) is None
+        assert state.set_active(token, True) is True
+        # Re-asserting True is not a transition.
+        assert state.set_active(token, True) is False
+        state.set_active(token, False)
+        assert state.set_active(token, True) is True
+
+    def test_has_viewers_tracks_token_count(self):
+        state, _plotter = self._ready_state()
+        t1, t2 = _Token(), _Token()
+        assert not state.has_viewers
+        state.set_active(t1, True)
+        state.set_active(t2, True)
+        assert state.has_viewers
+        state.set_active(t1, False)
+        assert state.has_viewers
+        state.set_active(t2, False)
+        assert not state.has_viewers
 
     def test_multiple_tokens_keep_active_until_last_released(self):
         state, plotter = self._ready_state()
         t1, t2 = _Token(), _Token()
-        state.set_active(t1, True)
-        state.set_active(t2, True)
+        assert state.set_active(t1, True) is True
+        # Second token while already active is not a transition.
+        assert state.set_active(t2, True) is False
         task = state.stash_pending({'k': 1})
         assert task is not None
         task.run()
@@ -287,33 +290,12 @@ class TestLayerComputeGate:
         # Only the first two computes ran; the third is stashed.
         assert [d for d, _ in plotter.compute_calls] == [{'k': 1}, {'k': 2}]
 
-    def test_intermediate_updates_collapse_to_latest(self):
-        state, plotter = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        for i in range(5):
-            state.stash_pending({'k': i})
-        task = state.set_active(token, True)
-        assert task is not None
-        task.run()
-        assert plotter.compute_calls == [({'k': 4}, {'title_resolver': None})]
-
     def test_release_of_unknown_token_is_noop(self):
         state, _plotter = self._ready_state()
         # Releasing a token never seen does not raise or change anything.
         unknown = _Token()
-        assert state.set_active(unknown, False) is None
-
-    def test_pending_cleared_when_plotter_replaced(self):
-        state, _old = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        state.stash_pending({'k': 1})  # stashed for old plotter
-        new_plotter = FakePlotter()
-        state.job_started(new_plotter)  # replaces plotter, clears stash
-        # New plotter activation must not re-run the old plotter's pending input.
-        assert state.set_active(token, True) is None
-        assert new_plotter.compute_calls == []
+        assert state.set_active(unknown, False) is False
+        assert not state.has_viewers
 
     def test_stash_returns_no_task_before_job_started(self):
         state = LayerStateMachine()
@@ -335,4 +317,5 @@ class TestLayerComputeGate:
         del token
         gc.collect()
         # Gate is now closed (no active tokens) → next stash returns None.
+        assert not state.has_viewers
         assert state.stash_pending({'k': 2}) is None

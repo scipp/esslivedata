@@ -33,6 +33,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         keys_by_role: dict[str, list[ResultKey]],
         extractors: Mapping[ResultKey, UpdateExtractor],
         on_data: Callable[[dict[str, dict[ResultKey, Any]]], None],
+        is_active: Callable[[], bool] | None = None,
     ) -> None:
         """
         Initialize the subscriber.
@@ -48,6 +49,11 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         on_data
             Callback invoked on every data update with the grouped data.
             Called when at least one key from each role has data.
+        is_active
+            Optional callable consulted by DataService before each delivery;
+            returning False pauses delivery (buffering continues). None means
+            always active. The caller owns refreshing the consumer when the
+            gate reopens (see ``DataService.snapshot``).
         """
         self._keys_by_role = keys_by_role
         self._all_keys = {key for keys in keys_by_role.values() for key in keys}
@@ -57,6 +63,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
 
         self._extractors = extractors
         self._on_data = on_data
+        self._is_active = is_active
 
         # Initialize parent class to cache keys
         super().__init__()
@@ -71,12 +78,27 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         """Return extractors for obtaining data views."""
         return self._extractors
 
+    @property
+    def active(self) -> bool:
+        """Whether delivery is currently wanted (see ``is_active`` in init)."""
+        return self._is_active is None or self._is_active()
+
     def _is_ready(self, available_keys: set[ResultKey]) -> bool:
         """Check if we have at least one key from each role."""
         return all(bool(available_keys & ks) for ks in self._key_sets_by_role)
 
-    def _assemble(self, data: dict[ResultKey, Any]) -> dict[str, dict[ResultKey, Any]]:
-        """Group data by role, sorted deterministically within each role."""
+    def assemble(
+        self, store: dict[ResultKey, Any]
+    ) -> dict[str, dict[ResultKey, Any]] | None:
+        """
+        Group this subscriber's keys from ``store`` by role.
+
+        Returns None unless at least one key from each role is present.
+        Within each role, keys are sorted deterministically.
+        """
+        data = {key: store[key] for key in self._all_keys if key in store}
+        if not data or not self._is_ready(set(data.keys())):
+            return None
         result: dict[str, dict[ResultKey, Any]] = {}
         for role, role_keys in self._keys_by_role.items():
             sorted_keys = sorted(
@@ -90,9 +112,6 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
 
     def trigger(self, store: dict[ResultKey, Any]) -> None:
         """Trigger the subscriber with the current data store."""
-        data = {key: store[key] for key in self._all_keys if key in store}
-
-        # Only invoke callback when we have data and are ready
-        if data and self._is_ready(set(data.keys())):
-            assembled = self._assemble(data)
+        assembled = self.assemble(store)
+        if assembled is not None:
             self._on_data(assembled)
