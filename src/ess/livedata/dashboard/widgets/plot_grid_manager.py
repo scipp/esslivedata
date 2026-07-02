@@ -24,6 +24,7 @@ from ..plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
     SubscriptionId,
+    reject_overlapping_cells,
 )
 from .buttons import ButtonStyles, create_download_button, create_tool_button
 from .plot_widgets import get_workflow_display_info
@@ -853,6 +854,12 @@ class PlotGridManager:
                 except (KeyError, TypeError, ValueError) as e:
                     show_error(f'Invalid cell {i + 1}: {e}')
                     return
+
+            try:
+                reject_overlapping_cells(c.geometry for c in parsed_cells)
+            except ValueError as e:
+                show_error(f'Invalid grid: {e}')
+                return
 
             # Store parsed cells and config values from uploaded file
             self._pending_upload_cells = parsed_cells
