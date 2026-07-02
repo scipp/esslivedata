@@ -20,7 +20,21 @@ V = TypeVar('V')
 
 
 class DataServiceSubscriber(ABC, Generic[K]):
-    """Base class for data service subscribers with cached keys and extractors."""
+    """Base class for data service subscribers with cached keys and extractors.
+
+    Notifications carry no data: :py:meth:`on_updated` only reports which keys
+    changed, so a notification is O(changed keys) regardless of data size.
+    Consumers pull extracted data when (and if) they need it, via
+    :py:meth:`DataService.snapshot` — typically at frame-flush time, and only
+    for consumers that are currently displayed. Extraction can be expensive
+    (aggregating extractors reduce over the buffered history on every call,
+    which dominates cost for image-sized data), so deferring it to the pull
+    is what keeps ingestion cheap.
+
+    The subscriber's extractors still determine buffer type and history
+    retention from the moment of registration, independent of when or whether
+    the consumer pulls.
+    """
 
     def __init__(self) -> None:
         """Initialize subscriber and cache keys from extractors."""
@@ -41,27 +55,16 @@ class DataServiceSubscriber(ABC, Generic[K]):
         Returns a mapping from key to the extractor to use for that key.
         """
 
-    @property
-    def active(self) -> bool:
-        """
-        Whether the subscriber currently wants update notifications.
-
-        Inactive subscribers are skipped during notification: no data is
-        extracted, copied, or delivered for them. This matters because
-        extraction runs per subscriber per update on the ingestion thread,
-        ahead of visible-plot flushes, and can be expensive — aggregating
-        extractors reduce over the buffered history on every call, which
-        dominates delivery cost for image-sized data. Their extractors stay
-        registered, so buffer type and history retention are unaffected —
-        buffering continues while delivery is paused. A caller reactivating
-        a subscriber is responsible for refreshing it, e.g. via
-        :py:meth:`DataService.snapshot`.
-        """
-        return True
-
     @abstractmethod
-    def trigger(self, store: dict[K, Any]) -> None:
-        """Trigger the subscriber with updated data."""
+    def on_updated(self, updated_keys: set[K]) -> None:
+        """
+        Notify that some of this subscriber's keys changed (or were deleted).
+
+        Called with the intersection of the changed keys and :py:attr:`keys`.
+        Must be cheap and must not raise: it runs once per subscriber per
+        update batch on the ingestion thread. Pull data via
+        :py:meth:`DataService.snapshot` instead of computing here.
+        """
 
 
 class DataService(MutableMapping[K, V]):
@@ -74,6 +77,16 @@ class DataService(MutableMapping[K, V]):
     Uses buffers internally for storage, but presents a dict-like interface
     that returns the latest value for each key.
 
+    Notification vs. data flow
+    --------------------------
+    Notifications are keys-only: writes mark keys as updated and
+    ``subscriber.on_updated`` reports the changed keys, nothing more.
+    Consumers pull extracted data on their own schedule via
+    :py:meth:`snapshot`, which applies the subscriber's extractors and copies
+    the result out of the buffers. Every pull observes the buffer state at
+    pull time, so coalescing, deferring, or dropping notifications never
+    delivers stale data.
+
     Thread safety
     -------------
     Mutated from two threads: the background ingestion thread (via
@@ -85,19 +98,11 @@ class DataService(MutableMapping[K, V]):
     concurrent transactions on different threads flush independently and
     cannot suppress each other's root notify.
 
-    The lock is **never** held while calling ``subscriber.trigger`` (which runs
-    arbitrary compute, including Bokeh document mutation). Data handed to a
-    subscriber is copied out of the buffers under the lock first
-    (see :py:meth:`_build_subscriber_data`), so compute operates on detached
-    data and cannot observe a concurrent buffer mutation. Keeping ``trigger``
-    outside the lock also means no compute-side lock (the Bokeh document lock,
-    or ``ActiveJobRegistry``'s ingestion guard) can deadlock against this one.
-
-    A consequence is that ``trigger`` delivery is not globally ordered: the
-    initial trigger from ``register_subscriber`` and an update notification
-    from the ingestion thread may run concurrently and out of order, so a
-    subscriber can transiently receive older data after newer data (healed by
-    the next update). Subscribers must tolerate concurrent ``trigger`` calls.
+    The lock is **never** held while calling ``subscriber.on_updated``, so no
+    lock a subscriber callback takes can deadlock against this one. Extracted
+    values returned by ``snapshot`` are copied under the lock before being
+    handed out: extractors may return views aliasing a buffer's backing
+    store, which a concurrent ``update``/``drop`` would mutate.
 
     Lock ordering: ``ActiveJobRegistry.ingestion_guard`` -> ``DataService`` lock.
     The ingestion path and ``ActiveJobRegistry.cleanup`` both hold the guard
@@ -184,9 +189,9 @@ class DataService(MutableMapping[K, V]):
         Notes
         -----
         Must be called while holding ``self._lock``. Extracted values are
-        copied so callers can hand them to ``subscriber.trigger`` after
-        releasing the lock: extractors may return views aliasing the buffer's
-        backing store, which a concurrent ``update``/``drop`` would mutate.
+        copied so callers can use them after releasing the lock: extractors
+        may return views aliasing the buffer's backing store, which a
+        concurrent ``update``/``drop`` would mutate.
         """
         subscriber_data = {}
 
@@ -203,11 +208,12 @@ class DataService(MutableMapping[K, V]):
 
     def register_subscriber(self, subscriber: DataServiceSubscriber[K]) -> None:
         """
-        Register a subscriber for updates with extractor-based data access.
+        Register a subscriber for update notifications.
 
-        Triggers the subscriber immediately with existing data using its
-        extractors, unless the subscriber is currently inactive (see
-        :py:attr:`DataServiceSubscriber.active`).
+        Registers the subscriber's extractors with the buffer manager so
+        history retention covers its needs from now on. Does not notify:
+        the caller pulls existing data via :py:meth:`snapshot` if it wants
+        an initial delivery.
 
         Parameters
         ----------
@@ -223,21 +229,14 @@ class DataService(MutableMapping[K, V]):
                     extractor = subscriber.extractors[key]
                     self._buffer_manager.add_extractor(key, extractor)
 
-        # Active check and trigger outside the lock: the property may consult
-        # another component's lock, and compute must not run while holding ours.
-        if not subscriber.active:
-            return
-        with self._lock:
-            existing_data = self._build_subscriber_data(subscriber)
-        subscriber.trigger(existing_data)
-
     def snapshot(self, subscriber: DataServiceSubscriber[K]) -> dict[K, Any]:
         """
-        Extract current data for a subscriber without triggering it.
+        Extract current data for a subscriber through its extractors.
 
-        For refreshing a subscriber whose notifications were paused (see
-        :py:attr:`DataServiceSubscriber.active`): the caller delivers the
-        result itself, e.g. through a synchronous compute path.
+        The pull side of the notification protocol: call at any time after
+        an :py:meth:`DataServiceSubscriber.on_updated` notification (or on
+        demand, e.g. when a consumer becomes visible) to obtain the current
+        state of the subscriber's keys.
 
         Parameters
         ----------
@@ -275,35 +274,29 @@ class DataService(MutableMapping[K, V]):
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
-        Notify relevant subscribers about data updates.
+        Notify relevant subscribers which of their keys changed.
 
-        The subscriber data is built under the lock (copying it out of the
-        buffers), then ``trigger`` is called with the lock released so compute
-        never runs while the lock is held.
+        Keys-only: no extraction or copying happens here. ``on_updated`` is
+        called with the lock released so no lock a callback takes can nest
+        inside ours.
 
         Parameters
         ----------
         updated_keys
             The set of data keys that were updated.
         """
-        # Iterate over a snapshot: a subscriber's trigger, or a concurrent
-        # unregister from the UI thread, may mutate self._subscribers mid-loop.
-        # Without the copy the list-index iterator would silently skip the
-        # subscriber following a removed one.
+        # Iterate over a snapshot: a concurrent register/unregister from the
+        # UI thread may mutate self._subscribers mid-loop. Without the copy
+        # the list-index iterator would silently skip the subscriber
+        # following a removed one.
         with self._lock:
             subscribers = list(self._subscribers)
         for subscriber in subscribers:
-            if not (updated_keys & subscriber.keys):
+            keys = updated_keys & subscriber.keys
+            if not keys:
                 continue
             try:
-                # Checked outside self._lock: the property may consult another
-                # component's lock (e.g. the plot layer's viewer gate), which
-                # must never nest inside this one.
-                if not subscriber.active:
-                    continue
-                with self._lock:
-                    subscriber_data = self._build_subscriber_data(subscriber)
-                subscriber.trigger(subscriber_data)
+                subscriber.on_updated(keys)
             except Exception:
                 logger.exception("Failed to notify subscriber %s", subscriber)
 
@@ -346,7 +339,7 @@ class DataService(MutableMapping[K, V]):
 
     def _notify(self) -> None:
         # Some updates may have been added while notifying. Drain pending under
-        # the lock; notify (which triggers compute) without it.
+        # the lock; call subscriber callbacks without it.
         while True:
             with self._lock:
                 if not self._pending_updates:

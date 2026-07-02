@@ -1,6 +1,6 @@
 # ADR 0005: Frame-gated per-session plot flush
 
-- Status: accepted
+- Status: accepted (amended 2026-07-02, see bottom)
 - Deciders: Simon
 - Date: 2026-06-25
 
@@ -183,3 +183,28 @@ above, and this section should be revisited if intra-tab stagger proves visible.
   compute per batch (observed in practice) holding the loop. The result is a
   one-tick (~100 ms) stagger: acceptable and self-correcting. How often this
   happens in real traffic is unmeasured.
+
+## Amendment (2026-07-02): pull-on-frame input side
+
+The input side of the mechanism changed from push to pull (issue #1044). As a
+burst drains, `DataService` no longer extracts data and delivers it to each
+layer's subscriber; it notifies keys-only, and the orchestrator merely marks
+the affected layers dirty (per grid). `flush_frames` then pulls each dirty
+*viewed* layer's input through its extractors from the current buffer state
+(`DataService.snapshot`), rebuilds, and commits the grid as before. Dirty
+flags of unviewed layers are dropped; the 0→1 viewer transition rebuilds from
+current buffer state unconditionally.
+
+Consequences for the guarantees above:
+
+- The frame a grid's layers repaint from is now *the buffer state at flush
+  time* rather than *the drained burst's payload*. Layers of one grid are
+  pulled back-to-back on the ingestion thread with no writes in between, so
+  intra-grid coherence is unchanged.
+- A logical frame that splits across bursts now heals at the next flush by
+  construction (the pull sees whatever has arrived), rather than by a
+  one-tick stagger of stashed payloads.
+- Deferring or coalescing flushes is lossless: a pull can never observe older
+  data than a delivery would have carried. This is what makes a future
+  min-frame-interval throttle in `flush_frames` a policy choice rather than a
+  correctness question.

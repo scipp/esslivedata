@@ -14,6 +14,7 @@ Coordinates plot creation and management across multiple plot grids:
 from __future__ import annotations
 
 import copy
+import threading
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -408,9 +409,11 @@ class PlotOrchestrator:
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
         self._data_subscriptions: dict[LayerId, Any] = {}  # DataSubscriber
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
-        # Per-grid compute buckets filled during a burst by ``_enqueue_compute``
-        # and drained by ``flush_frames``. Touched only on the ingestion thread.
-        self._frame_buckets: dict[GridId, list[tuple[LayerId, Any]]] = {}
+        # Layers whose DataService keys changed since the last flush, bucketed
+        # per grid. Filled by ``_mark_layer_dirty`` (any thread ending a
+        # DataService transaction), drained by ``flush_frames``.
+        self._dirty_layers: dict[GridId, set[LayerId]] = {}
+        self._dirty_lock = threading.Lock()
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -1025,93 +1028,57 @@ class PlotOrchestrator:
                     layer.layer_id
                 )
 
-    def _stash_pending(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> Any:
-        """Submit input through the layer compute gate, returning a due task.
+    def _mark_layer_dirty(self, layer_id: LayerId) -> None:
+        """Record that a layer's input changed; ``flush_frames`` rebuilds it.
 
-        Stashes input on the layer state machine. A build is due (a task is
-        returned) only if at least one viewer holds an interest token. With no
-        token held, delivery is normally paused upstream and this is only
-        reached by an in-flight delivery racing a pause; the next 0→1 token
-        transition rebuilds from a fresh DataService snapshot instead (see
-        ``activate_layer``).
+        The data-subscriber callback: runs once per update batch on the
+        ingestion thread and does no extraction or compute. Dirty flags
+        coalesce, so any number of updates between flushes costs one rebuild.
         """
         if layer_id not in self._layer_to_cell:
-            return None
-        state = self._plot_data_service.get(layer_id)
-        if state is None:
-            return None
-        title_resolver = self._layer_resolvers.get(layer_id)
-        return state.stash_pending(data, title_resolver=title_resolver)
-
-    def _layer_has_viewers(self, layer_id: LayerId) -> bool:
-        """Delivery gate for a layer's data subscription (see activate_layer)."""
-        state = self._plot_data_service.get(layer_id)
-        return state is not None and state.has_viewers
+            return
+        grid_id = self._grid_of_layer(layer_id)
+        with self._dirty_lock:
+            self._dirty_layers.setdefault(grid_id, set()).add(layer_id)
 
     def _grid_of_layer(self, layer_id: LayerId) -> GridId:
         return self._cell_to_grid[self._layer_to_cell[layer_id]]
 
-    def _run_compute(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> None:
-        """Stash input and run a due build synchronously, committing its grid.
-
-        The synchronous path for setup-time builds (e.g. static overlays added
-        on the UI thread): compute and commit the grid inline so the layer is
-        displayed without waiting for the next ingestion flush.
-        """
-        task = self._stash_pending(layer_id, data)
-        if task is not None:
-            self._dispatch_compute_task(layer_id, task)
-            self._frame_clock.commit(self._grid_of_layer(layer_id))
-
-    def _enqueue_compute(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> None:
-        """Stash input and bucket a due build per grid for ``flush_frames``.
-
-        The ingestion-thread path for Kafka-delta builds. Deferring dispatch
-        out of the inline ``DataService._notify`` lets ``flush_frames`` run a
-        burst grid-by-grid and commit each grid the moment its layers finish,
-        so a session waits only on its own tab's compute.
-        """
-        task = self._stash_pending(layer_id, data)
-        if task is not None:
-            grid_id = self._grid_of_layer(layer_id)
-            self._frame_buckets.setdefault(grid_id, []).append((layer_id, task))
-
     def flush_frames(self) -> None:
-        """Run each grid's bucketed builds, committing that grid as it finishes.
+        """Rebuild each grid's dirty viewed layers, committing per grid.
 
-        Called on the ingestion thread once a burst has drained. Running
+        Called on the ingestion thread once a burst has drained. Each dirty
+        layer with a viewer is rebuilt from a fresh DataService pull; running
         grid-by-grid and committing per grid means a session showing one tab
         sees its frame the moment that grid's layers finish, rather than after
         every other visible tab's compute.
+
+        Dirty flags of layers without viewers are dropped: the 0→1 viewer
+        transition rebuilds unconditionally from current DataService content
+        (see ``activate_layer``), so nothing is lost.
         """
-        buckets = self._frame_buckets
-        self._frame_buckets = {}
-        for grid_id, tasks in buckets.items():
-            for layer_id, task in tasks:
-                self._dispatch_compute_task(layer_id, task)
-            self._frame_clock.commit(grid_id)
+        with self._dirty_lock:
+            buckets = self._dirty_layers
+            self._dirty_layers = {}
+        for grid_id, layer_ids in buckets.items():
+            computed = False
+            for layer_id in layer_ids:
+                state = self._plot_data_service.get(layer_id)
+                if state is None or not state.has_viewers:
+                    continue
+                computed |= self._pull_and_build(layer_id)
+            if computed:
+                self._frame_clock.commit(grid_id)
 
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.
 
-        While no viewer holds a token, DataService delivery is paused for the
-        layer's subscriber (no extraction, copies, or compute for hidden
-        layers); buffering continues. On the 0→1 transition the layer is
-        refreshed from a DataService snapshot, synchronously on the caller's
-        thread (the polling thread). This keeps the same poll pass's component
-        rebuild seeing fresh ``has_cached_state``.
+        While no viewer holds a token, frame flushes skip the layer (no
+        extraction or compute for hidden layers); buffering continues. On the
+        0→1 transition the layer is rebuilt from a DataService pull,
+        synchronously on the caller's thread (the polling thread). This keeps
+        the same poll pass's component rebuild seeing fresh
+        ``has_cached_state``.
         """
         state = self._plot_data_service.get(layer_id)
         if state is None:
@@ -1120,34 +1087,52 @@ class PlotOrchestrator:
             self._refresh_layer(layer_id)
 
     def _refresh_layer(self, layer_id: LayerId) -> None:
-        """Rebuild a layer from current DataService content.
+        """Rebuild a layer from current DataService content, committing its grid."""
+        if self._pull_and_build(layer_id):
+            self._frame_clock.commit(self._grid_of_layer(layer_id))
 
-        Used on viewer activation: no input was delivered while the layer had
-        no viewers, so the stash (if any) is stale and is superseded by a
-        fresh pull through the subscriber's own extractors.
+    def _pull_and_build(self, layer_id: LayerId) -> bool:
+        """Pull a layer's data through its extractors and rebuild its plot.
+
+        Returns True if a build ran (also on a failed build, which transitions
+        the layer to ERROR and thus still warrants a frame commit), False if
+        the layer is gone or its data is not ready.
         """
+        if layer_id not in self._layer_to_cell:
+            return False
         subscriber = self._data_subscriptions.get(layer_id)
         if subscriber is None:
-            return
+            return False
         assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
-        if assembled is not None:
-            self._run_compute(layer_id, assembled)
+        if assembled is None:
+            return False
+        return self._build_layer(layer_id, assembled)
 
-    def _dispatch_compute_task(self, layer_id: LayerId, task: Any) -> None:
-        """Run a flush task and transition the layer to READY or ERROR.
+    def _build_layer(
+        self,
+        layer_id: LayerId,
+        data: dict[str, dict[ResultKey, Any]],
+    ) -> bool:
+        """Run ``plotter.compute`` and transition the layer to READY or ERROR.
 
         Thread-agnostic: runs on whatever thread the caller is on — the bg
         ingestion thread when entered via ``flush_frames``, the polling thread
-        when entered via ``activate_layer`` or the synchronous ``_run_compute``
-        setup path. See ``LayerStateMachine`` for the gate's threading contract.
+        when entered via ``activate_layer``, the UI thread for setup-time
+        static-overlay builds.
         """
+        state = self._plot_data_service.get(layer_id)
+        if state is None or state.plotter is None:
+            return False
         try:
-            task.run()
+            state.plotter.compute(
+                data, title_resolver=self._layer_resolvers.get(layer_id)
+            )
             self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to compute state for layer_id=%s', layer_id)
             self._plot_data_service.error_occurred(layer_id, error_msg)
+        return True
 
     def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
@@ -1180,9 +1165,11 @@ class PlotOrchestrator:
 
         if config.is_static():
             # Static overlay: create plot immediately without subscription.
+            # Built unconditionally (no viewer gate): there is no data
+            # subscription to pull from later, and the build is a one-off.
             plotter = self._create_and_register_plotter(layer_id, config)
-            if plotter is not None:
-                self._run_compute(layer_id, {})
+            if plotter is not None and self._build_layer(layer_id, {}):
+                self._frame_clock.commit(self._grid_of_layer(layer_id))
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
             self._persist_to_store()
@@ -1256,16 +1243,18 @@ class PlotOrchestrator:
 
         self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
 
-        # Set up data pipeline - _enqueue_compute buckets builds as data arrives
+        # Set up data pipeline - updates mark the layer dirty; flush_frames
+        # pulls and rebuilds. The immediate mark covers a restart with data
+        # already present, so the plot shows without waiting for a new delta.
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=lambda data: self._enqueue_compute(layer_id, data),
-                is_active=lambda: self._layer_has_viewers(layer_id),
+                on_update=lambda: self._mark_layer_dirty(layer_id),
             )
             self._data_subscriptions[layer_id] = subscriber
+            self._mark_layer_dirty(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(

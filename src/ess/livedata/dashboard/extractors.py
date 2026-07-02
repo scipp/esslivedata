@@ -139,10 +139,10 @@ class WindowAggregatingExtractor(UpdateExtractor):
     """Extracts a window from the buffer and aggregates over the time dimension.
 
     The aggregation runs on every ``extract`` call; its cost scales with
-    window length x element size and dominates delivery cost for image-sized
-    data (milliseconds per call, vs. microseconds for a plain copy). Callers
-    that deliver per update should avoid extracting for consumers that do not
-    currently need the result (see ``DataServiceSubscriber.active``).
+    window length x element size and dominates extraction cost for image-sized
+    data (milliseconds per call, vs. microseconds for a plain copy). This is
+    why extraction is pull-based: it runs only when a displayed consumer
+    pulls a ``DataService.snapshot``, not per ingested update.
     """
 
     def __init__(
