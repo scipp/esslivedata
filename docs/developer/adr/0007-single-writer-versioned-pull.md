@@ -32,13 +32,15 @@ mechanisms:
 
 The 2026-07 audits (#1039, #1044; standalone issues #1040, #955; assessment
 #1042) showed the two mechanisms have sharply different defect profiles.
-Every confirmed cross-thread race, session leak, and category of compute waste
-was located in push machinery: registration racing ingestion, notify loops
-iterating live sets mutated by the UI thread, cross-session document mutation
-outside the document lock, the viewer gate and stash bolted onto the push path
-along with their documented races, and the rebinding chain that exists only to
-push "the job key changed" to consumers. The code built on versioned pull was
-audited clean. The same failure was fixed once before (#1007), in push code.
+Every confirmed cross-thread race and session leak was located in push
+machinery, and the audited compute waste concentrated in its delivery path:
+registration racing ingestion, notify loops iterating live sets mutated by
+the UI thread, cross-session document mutation outside the document lock, the
+viewer gate and stash bolted onto the push path along with their documented
+races, and the rebinding chain that exists only to push "the job key changed"
+to consumers. The code built on versioned pull had no concurrency findings
+(it has ordinary bugs like any code — e.g. buffer edge cases — but no races).
+The same failure was fixed once before (#1007), in push code.
 
 The structural reason: under push, thread-safety is a per-call-site
 obligation. Each new entry point (add-layer-while-running, heartbeat
@@ -101,9 +103,10 @@ Concretely:
   rebinding chain is deleted via stable keys (#1042 Option B); grid widgets
   move to version polling and reaper teardown moves to the owning IOLoop
   (#1040, #955).
-- Audited races #1039-2/3/9 and the session-leak items #1039-5/11 are removed
+- Audited races #1039-2/3/9 and the session-leak item #1039-11 are removed
   structurally rather than guarded; field symptoms #789 and #714 are expected
-  to resolve (verify after landing).
+  to resolve (verify after landing). (#1039-5 is a deterministic
+  index-mapping bug, not a race — it is fixed directly, outside this program.)
 - New features inherit safety by construction: a new consumer polls a version
   and pulls a snapshot; a new producer bumps a version. Review can enforce a
   simple rule — "who is the single writer, and where is the version?" —
