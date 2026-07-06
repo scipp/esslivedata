@@ -87,6 +87,20 @@ def test_malformed_payload_is_contained_and_does_not_affect_next_message(
     assert adapted[0].timestamp == Timestamp.from_ns(GOOD_TIME_NS)
 
 
+def test_ev44_mismatched_event_vectors_accepted_on_plain_monitor_path() -> None:
+    """Pins current behavior: for non-pixellated monitors ``pixel_id`` is
+    ignored, so a payload with disagreeing vector lengths adapts cleanly and
+    all time-of-arrival entries survive. (The detector path, where the
+    mismatch matters, is tracked in #1054.)
+    """
+    payload = hostile_wire.ev44_mismatched_event_vectors(
+        SOURCE, reference_time_ns=GOOD_TIME_NS
+    )
+    adapted = _monitor_adapter().adapt(_kafka_message(payload))
+    assert adapted.timestamp == Timestamp.from_ns(GOOD_TIME_NS)
+    assert len(adapted.value.time_of_arrival) == 10
+
+
 @pytest.mark.xfail(
     strict=True,
     reason='#1038 finding 2: absent event vectors raise deep in the adapter '

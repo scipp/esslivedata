@@ -42,6 +42,12 @@ FAR_FUTURE_NS = 7_258_118_400 * 1_000_000_000
 # 2026-01-01: a fixed, deterministic "realistic" base time for good messages.
 REALISTIC_EPOCH_NS = 1_767_225_600 * 1_000_000_000
 
+# ~1938 (negative nanosecond epoch): physically impossible as a data timestamp.
+# Note there is deliberately no "too old" analogue of the far-future adapter
+# invariant: consuming a Kafka backlog makes genuinely old timestamps
+# legitimate, so pre-epoch values are exercised for service *liveness* only.
+PRE_EPOCH_NS = -(10**18)
+
 
 def ev44_events(
     source_name: str,
@@ -103,6 +109,27 @@ def ev44_without_event_vectors(source_name: str) -> bytes:
     data = Event44Message.Event44MessageEnd(builder)
     builder.Finish(data, file_identifier=eventdata_ev44.FILE_IDENTIFIER)
     return bytes(builder.Output())
+
+
+def ev44_mismatched_event_vectors(
+    source_name: str, *, reference_time_ns: int, n_events: int = 10
+) -> bytes:
+    """ev44 payload whose per-event vectors disagree in length.
+
+    ``time_of_flight`` carries ``n_events`` entries but ``pixel_id`` only half
+    as many. The schema cannot express which is authoritative, so consumers
+    must not index one by the other's length. Not in :func:`malformed_corpus`:
+    the plain (non-pixellated) monitor path deliberately ignores ``pixel_id``
+    and *accepts* this payload, so "must be dropped" is not its contract.
+    """
+    return eventdata_ev44.serialise_ev44(
+        source_name=source_name,
+        message_id=0,
+        reference_time=[reference_time_ns],
+        reference_time_index=0,
+        time_of_flight=np.arange(n_events, dtype=np.int32),
+        pixel_id=np.zeros(n_events // 2, dtype=np.int32),
+    )
 
 
 def f144_log(source_name: str, *, timestamp_ns: int, value: float = 1.0) -> bytes:

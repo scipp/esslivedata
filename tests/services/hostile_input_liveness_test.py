@@ -73,13 +73,17 @@ class MonitorServiceHarness:
         """Queue a raw payload on the monitor topic without stepping."""
         self.app.publish_data(topic=self.app.monitor_topic, time=0, data=payload)
 
+    def next_time_ns(self) -> int:
+        """Advance and return the data clock, for hand-built in-sequence payloads."""
+        self._time_ns += SECOND_NS
+        return self._time_ns
+
     def publish_good(self) -> None:
         """Queue a well-formed event message one second after the previous."""
-        self._time_ns += SECOND_NS
         self._seed += 1
         self.publish_payload(
             hostile_wire.ev44_events(
-                SOURCE, reference_time_ns=self._time_ns, seed=self._seed
+                SOURCE, reference_time_ns=self.next_time_ns(), seed=self._seed
             )
         )
 
@@ -147,14 +151,53 @@ def test_far_future_timestamp_mid_stream_does_not_stall_service(
     assert_service_live(harness)
 
 
+@pytest.mark.parametrize(
+    'timestamp_ns',
+    [1, hostile_wire.PRE_EPOCH_NS],
+    ids=['near_epoch', 'pre_epoch'],
+)
 def test_ancient_timestamp_mid_stream_does_not_stall_service(
-    harness: MonitorServiceHarness,
+    harness: MonitorServiceHarness, timestamp_ns: int
 ) -> None:
-    """A near-epoch timestamp mid-stream counts as a late message; it lands in
-    the current batch and must not disturb batch progression.
+    """An ancient (even pre-epoch) timestamp mid-stream counts as a late
+    message; it lands in the current batch and must not disturb progression.
     """
     harness.run_good_cycles(3)
-    harness.publish_payload(hostile_wire.ev44_events(SOURCE, reference_time_ns=1))
+    harness.publish_payload(
+        hostile_wire.ev44_events(SOURCE, reference_time_ns=timestamp_ns)
+    )
+    harness.app.step()
+    assert_service_live(harness)
+
+
+def test_pre_epoch_timestamp_in_first_batch_does_not_stall_service(
+    harness: MonitorServiceHarness,
+) -> None:
+    """The mirror of the far-future wedge: an initial batch opening at a
+    pre-epoch time only stretches the first batch backwards; subsequent
+    batches align to the newest data and output must keep flowing.
+    """
+    harness.publish_payload(
+        hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.PRE_EPOCH_NS)
+    )
+    harness.publish_good()
+    harness.app.step()
+    assert_service_live(harness)
+
+
+def test_mismatched_event_vectors_do_not_stall_service(
+    harness: MonitorServiceHarness,
+) -> None:
+    """Disagreeing time_of_flight/pixel_id lengths adapt on the monitor path
+    (pixel_id is unused there); nothing downstream may index one vector by
+    the other's length.
+    """
+    harness.run_good_cycles(3)
+    harness.publish_payload(
+        hostile_wire.ev44_mismatched_event_vectors(
+            SOURCE, reference_time_ns=harness.next_time_ns()
+        )
+    )
     harness.app.step()
     assert_service_live(harness)
 
