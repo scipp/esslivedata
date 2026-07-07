@@ -155,6 +155,9 @@ pydocstyle.convention = "numpy"
     "TID251",  # scripts can use stdlib logging
     "T201",  # print is the right output mechanism for CLI entry points
 ]
+"benchmarks/*" = [
+    "T201",  # print is the right output mechanism for benchmark scripts
+]
 "src/ess/livedata/scripts/*" = [
     "T201",  # print is the right output mechanism for CLI entry points
 ]
