@@ -1,47 +1,64 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import threading
-from typing import NewType
-
-import dask
 import pytest
-import sciline
 
-from ess.livedata.service_factory import DataServiceRunner
+from ess.livedata.service_factory import DataServiceRunner, _resolve_scheduler_mode
 
 
 def _make_runner() -> DataServiceRunner:
     return DataServiceRunner(pretty_name='test', make_builder=lambda **kw: None)
 
 
-@pytest.fixture(autouse=True)
-def _clean_dask_pool_config():
-    """Ensure dask pool config is reset after each test."""
-    yield
-    dask.config.set(pool=None)
+def test_scheduler_flag_defaults_to_none_resolving_to_naive():
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--instrument', 'dummy'])
+    assert args.scheduler is None
+    assert (
+        _resolve_scheduler_mode(scheduler=args.scheduler, sync_scheduler=None)
+        == 'naive'
+    )
 
 
-def test_sync_scheduler_flag_is_registered():
+@pytest.mark.parametrize('mode', ['naive', 'dask-sync', 'dask-threaded'])
+def test_scheduler_flag_accepts_all_modes(mode):
+    runner = _make_runner()
+    args = runner.parser.parse_args(['--scheduler', mode, '--instrument', 'dummy'])
+    assert args.scheduler == mode
+
+
+def test_scheduler_flag_rejects_unknown_mode():
+    runner = _make_runner()
+    with pytest.raises(SystemExit):
+        runner.parser.parse_args(['--scheduler', 'bogus', '--instrument', 'dummy'])
+
+
+def test_deprecated_sync_scheduler_flag_still_parses():
     runner = _make_runner()
     args = runner.parser.parse_args(['--sync-scheduler', '--instrument', 'dummy'])
     assert args.sync_scheduler is True
-
-
-def test_sync_scheduler_flag_defaults_to_true():
-    runner = _make_runner()
-    args = runner.parser.parse_args(['--instrument', 'dummy'])
-    assert args.sync_scheduler is True
-
-
-def test_sync_scheduler_can_be_disabled():
-    runner = _make_runner()
     args = runner.parser.parse_args(['--no-sync-scheduler', '--instrument', 'dummy'])
     assert args.sync_scheduler is False
+    args = runner.parser.parse_args(['--instrument', 'dummy'])
+    assert args.sync_scheduler is None
 
 
-A = NewType('A', int)
-B = NewType('B', int)
-Result = NewType('Result', int)
+def test_resolve_scheduler_mode_defaults_to_naive():
+    assert _resolve_scheduler_mode(scheduler=None, sync_scheduler=None) == 'naive'
+
+
+def test_resolve_scheduler_mode_maps_deprecated_flag_to_dask_modes():
+    assert _resolve_scheduler_mode(scheduler=None, sync_scheduler=True) == 'dask-sync'
+    assert (
+        _resolve_scheduler_mode(scheduler=None, sync_scheduler=False) == 'dask-threaded'
+    )
+
+
+def test_resolve_scheduler_mode_explicit_scheduler_wins_over_deprecated_flag():
+    assert _resolve_scheduler_mode(scheduler='naive', sync_scheduler=True) == 'naive'
+    assert (
+        _resolve_scheduler_mode(scheduler='dask-threaded', sync_scheduler=True)
+        == 'dask-threaded'
+    )
 
 
 def test_job_threads_flag_is_registered():
@@ -66,36 +83,3 @@ def test_check_flag_is_registered():
     runner = _make_runner()
     args = runner.parser.parse_args(['--check', '--instrument', 'dummy'])
     assert args.check is True
-
-
-def test_sciline_with_sync_pool_runs_on_calling_thread():
-    """Setting dask pool to SynchronousExecutor makes sciline run on the calling thread.
-
-    This verifies that the ``--sync-scheduler`` mechanism actually takes effect
-    end-to-end through sciline's DaskScheduler.
-    """
-    from dask.local import SynchronousExecutor
-
-    dask.config.set(pool=SynchronousExecutor())
-
-    task_threads: list[int] = []
-
-    def provider_a() -> A:
-        task_threads.append(threading.current_thread().ident)
-        return A(1)
-
-    def provider_b() -> B:
-        task_threads.append(threading.current_thread().ident)
-        return B(2)
-
-    def provider_result(a: A, b: B) -> Result:
-        task_threads.append(threading.current_thread().ident)
-        return Result(a + b)
-
-    pl = sciline.Pipeline(providers=[provider_a, provider_b, provider_result])
-    result = pl.compute(Result)
-
-    assert result == 3
-    calling_thread = threading.current_thread().ident
-    assert len(task_threads) == 3
-    assert all(tid == calling_thread for tid in task_threads)
