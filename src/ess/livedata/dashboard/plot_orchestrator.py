@@ -1034,10 +1034,17 @@ class PlotOrchestrator:
         The data-subscriber callback: runs once per update batch on the
         ingestion thread and does no extraction or compute. Dirty flags
         coalesce, so any number of updates between flushes costs one rebuild.
+
+        ``DataService`` notifies from a snapshot of its subscriber list taken
+        before the callbacks run, so the UI thread may remove this layer while
+        the notification is in flight. The grid lookup therefore tolerates the
+        mappings changing underneath it; dropping the mark is correct, since a
+        removed layer has no state left for ``flush_frames`` to rebuild.
         """
-        if layer_id not in self._layer_to_cell:
+        try:
+            grid_id = self._grid_of_layer(layer_id)
+        except KeyError:
             return
-        grid_id = self._grid_of_layer(layer_id)
         with self._dirty_lock:
             self._dirty_layers.setdefault(grid_id, set()).add(layer_id)
 
