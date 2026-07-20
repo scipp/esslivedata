@@ -15,6 +15,9 @@ Two ways to use it:
           dash.goto_tab("Detectors")
           dash.screenshot("plots.png")
 
+  For multi-session scenarios (state is process-global, widgets per-session),
+  :meth:`Dashboard.connect_many` opens n isolated sessions on one server.
+
 * As a **CLI** against a running server, or self-launching a Kafka-free fake
   backend seeded from the committed dummy fixture::
 
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -48,6 +52,7 @@ from pathlib import Path
 from urllib.error import URLError
 
 from playwright.sync_api import (
+    Browser,
     Page,
     sync_playwright,
 )
@@ -63,6 +68,23 @@ DEFAULT_URL = f"http://localhost:{DEFAULT_PORT}"
 # Time for Bokeh models to settle / the first refresh tick to rebuild rows after
 # load, before any click. See the "cold start" window in the rule file.
 SETTLE_MS = 5000
+# Override the Chromium binary when the installed playwright package does not
+# match the browsers available on disk (e.g. a preprovisioned container).
+_CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
+
+
+def _launch_browser(playwright) -> Browser:
+    executable = os.environ.get(_CHROMIUM_ENV)
+    return playwright.chromium.launch(executable_path=executable or None)
+
+
+def _open_session(browser: Browser, url: str, settle_ms: int) -> Page:
+    """One dashboard session: an isolated context, loaded and settled."""
+    context = browser.new_context(viewport={"width": 1600, "height": 1000})
+    page = context.new_page()
+    page.goto(url, wait_until="networkidle")
+    page.wait_for_timeout(settle_ms)
+    return page
 
 
 class Dashboard:
@@ -76,12 +98,30 @@ class Dashboard:
     def connect(cls, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS):
         """Open a browser on a running dashboard, waiting for it to settle."""
         with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page = browser.new_page(viewport={"width": 1600, "height": 1000})
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(settle_ms)
+            browser = _launch_browser(p)
             try:
-                yield cls(page)
+                yield cls(_open_session(browser, url, settle_ms))
+            finally:
+                browser.close()
+
+    @classmethod
+    @contextmanager
+    def connect_many(
+        cls, n: int, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS
+    ):
+        """Open ``n`` independent sessions on the same running dashboard.
+
+        Each session gets its own isolated browser context -- own websocket,
+        own Bokeh session -- like ``n`` separate users. Sessions connect
+        sequentially, so the returned list is ordered oldest first; use this
+        to script late-joiner scenarios (dashboard state is process-global,
+        widgets are per-session, so "renders in one session but not another"
+        is the classic multi-session regression).
+        """
+        with sync_playwright() as p:
+            browser = _launch_browser(p)
+            try:
+                yield [cls(_open_session(browser, url, settle_ms)) for _ in range(n)]
             finally:
                 browser.close()
 
