@@ -23,6 +23,11 @@ from .core.message_batcher import (
 )
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.rate_aware_batcher import RateAwareMessageBatcher
+from .core.sciline_scheduler import (
+    SCHEDULER_MODES,
+    SchedulerMode,
+    configure_sciline_scheduler,
+)
 from .core.service import Service
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
@@ -238,6 +243,31 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         )
 
 
+def _resolve_scheduler_mode(
+    *, scheduler: SchedulerMode | None, sync_scheduler: bool | None
+) -> SchedulerMode:
+    """Resolve --scheduler, honoring the deprecated --sync-scheduler flag.
+
+    An explicit --scheduler always wins. Otherwise --sync-scheduler /
+    --no-sync-scheduler select the pre-existing dask behaviors so existing
+    deployment configurations keep working unchanged.
+    """
+    if scheduler is not None:
+        if sync_scheduler is not None:
+            logger.warning(
+                "sync_scheduler_ignored",
+                reason="--scheduler given; deprecated --sync-scheduler ignored",
+            )
+        return scheduler
+    if sync_scheduler is not None:
+        logger.warning(
+            "sync_scheduler_deprecated",
+            hint="use --scheduler=dask-sync or --scheduler=dask-threaded",
+        )
+        return 'dask-sync' if sync_scheduler else 'dask-threaded'
+    return 'naive'
+
+
 class DataServiceRunner:
     def __init__(
         self,
@@ -248,11 +278,22 @@ class DataServiceRunner:
         self._make_builder = make_builder
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
+            '--scheduler',
+            choices=list(SCHEDULER_MODES),
+            default=None,
+            help='Scheduler used by sciline to execute workflow graphs.'
+            ' "naive" (default) runs providers sequentially without dask,'
+            ' avoiding per-cycle dask overhead; "dask-sync" is dask\'s threaded'
+            ' scheduler with a synchronous executor (the previous default);'
+            ' "dask-threaded" uses a real thread pool (GIL contention likely).',
+        )
+        self._parser.add_argument(
             '--sync-scheduler',
             action=argparse.BooleanOptionalAction,
-            default=True,
-            help='Use synchronous dask scheduler instead of threaded'
-            ' (reduces GIL contention)',
+            default=None,
+            help='Deprecated, use --scheduler. --sync-scheduler maps to'
+            ' --scheduler=dask-sync, --no-sync-scheduler to'
+            ' --scheduler=dask-threaded.',
         )
         self._parser.add_argument(
             '--job-threads',
@@ -291,13 +332,11 @@ class DataServiceRunner:
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
 
-        sync_scheduler = args.pop('sync_scheduler')
-        if sync_scheduler:
-            import dask
-            from dask.local import SynchronousExecutor
-
-            dask.config.set(pool=SynchronousExecutor())
-            logger.info("dask_scheduler", mode="synchronous")
+        scheduler_mode = _resolve_scheduler_mode(
+            scheduler=args.pop('scheduler'), sync_scheduler=args.pop('sync_scheduler')
+        )
+        configure_sciline_scheduler(scheduler_mode)
+        logger.info("sciline_scheduler", mode=scheduler_mode)
 
         # Configure logging with parsed arguments
         log_level = getattr(logging, args.pop('log_level'))

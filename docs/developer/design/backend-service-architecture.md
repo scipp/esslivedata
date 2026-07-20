@@ -207,5 +207,5 @@ Services use `ExitStack` for automatic resource cleanup on service exit or error
 
 ## Building Services with DataServiceBuilder
 
-`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--sync-scheduler`, `--job-threads`). Services can publish initialization messages on startup for workflow specifications or configuration values.
+`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--scheduler`, `--job-threads`). The `--scheduler` option selects the scheduler sciline uses for workflow execution (default `naive`, which avoids per-cycle dask overhead; see `ess.livedata.core.sciline_scheduler`). Services can publish initialization messages on startup for workflow specifications or configuration values.
 
