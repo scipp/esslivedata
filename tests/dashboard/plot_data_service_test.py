@@ -226,8 +226,13 @@ class _Token:
     """Weakref-compatible stand-in for a viewer (real callers are SessionLayer)."""
 
 
-class TestLayerComputeGate:
-    """Tests for the lazy compute gate on LayerStateMachine."""
+class TestLayerViewerGate:
+    """Tests for the viewer gate on LayerStateMachine.
+
+    The gate tracks viewer interest tokens. On 0→1 transition (first viewer),
+    the orchestrator rebuilds the layer from DataService; on 1→0 (last
+    viewer released), the layer is skipped at frame flushes.
+    """
 
     def _ready_state(self) -> tuple[LayerStateMachine, FakePlotter]:
         state = LayerStateMachine()
@@ -235,104 +240,61 @@ class TestLayerComputeGate:
         state.job_started(plotter)
         return state, plotter
 
-    def test_stash_without_active_token_does_not_flush(self):
-        state, plotter = self._ready_state()
-        assert state.stash_pending({'k': 1}) is None
-        assert plotter.compute_calls == []
-
-    def test_set_active_then_stash_flushes_immediately(self):
-        state, plotter = self._ready_state()
-        token = _Token()
-        state.set_active(token, True)
-        task = state.stash_pending({'k': 1})
-        assert task is not None
-        task.run()
-        assert plotter.compute_calls == [({'k': 1}, {'title_resolver': None})]
-
-    def test_stash_then_set_active_flushes_on_zero_to_one_transition(self):
-        state, plotter = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        state.stash_pending({'k': 1})
-        assert plotter.compute_calls == []
-        task = state.set_active(token, True)
-        assert task is not None
-        task.run()
-        assert plotter.compute_calls == [({'k': 1}, {'title_resolver': None})]
-
-    def test_only_zero_to_one_transition_returns_a_task(self):
+    def test_set_active_reports_zero_to_one_transition(self):
+        """set_active returns True on the 0→1 transition only."""
         state, _plotter = self._ready_state()
         token = _Token()
-        state.set_active(token, True)
-        state.stash_pending({'k': 1}).run()
-        # Re-asserting True after the flush returns None (no pending dirty).
-        assert state.set_active(token, True) is None
+        assert state.set_active(token, True) is True
+        # Re-activating the same token is not a transition.
+        assert state.set_active(token, True) is False
+        state.set_active(token, False)
+        assert state.set_active(token, True) is True
 
-    def test_multiple_tokens_keep_active_until_last_released(self):
-        state, plotter = self._ready_state()
+    def test_has_viewers_tracks_active_tokens(self):
+        """has_viewers reflects whether any viewer holds a token."""
+        state, _plotter = self._ready_state()
         t1, t2 = _Token(), _Token()
+        assert not state.has_viewers
         state.set_active(t1, True)
         state.set_active(t2, True)
-        task = state.stash_pending({'k': 1})
-        assert task is not None
-        task.run()
-        # Release one; still active — stash flushes immediately.
+        assert state.has_viewers
         state.set_active(t1, False)
-        task = state.stash_pending({'k': 2})
-        assert task is not None
-        task.run()
-        # Release the second; gate closes, next stash returns None.
+        assert state.has_viewers
         state.set_active(t2, False)
-        assert state.stash_pending({'k': 3}) is None
-        # Only the first two computes ran; the third is stashed.
-        assert [d for d, _ in plotter.compute_calls] == [{'k': 1}, {'k': 2}]
+        assert not state.has_viewers
 
-    def test_intermediate_updates_collapse_to_latest(self):
-        state, plotter = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        for i in range(5):
-            state.stash_pending({'k': i})
-        task = state.set_active(token, True)
-        assert task is not None
-        task.run()
-        assert plotter.compute_calls == [({'k': 4}, {'title_resolver': None})]
+    def test_multiple_tokens_keep_layer_active(self):
+        """Layer stays active while any viewer holds a token."""
+        state, _plotter = self._ready_state()
+        t1, t2 = _Token(), _Token()
+        assert state.set_active(t1, True) is True
+        # Second token while already active is not a transition.
+        assert state.set_active(t2, True) is False
+        assert state.has_viewers
+        # Release one; still active (t2 holds it).
+        state.set_active(t1, False)
+        assert state.has_viewers
+        # Release the second; gate closes.
+        state.set_active(t2, False)
+        assert not state.has_viewers
 
     def test_release_of_unknown_token_is_noop(self):
+        """Releasing a token never acquired is safe."""
         state, _plotter = self._ready_state()
-        # Releasing a token never seen does not raise or change anything.
         unknown = _Token()
-        assert state.set_active(unknown, False) is None
-
-    def test_pending_cleared_when_plotter_replaced(self):
-        state, _old = self._ready_state()
-        token = _Token()
-        state.set_active(token, False)
-        state.stash_pending({'k': 1})  # stashed for old plotter
-        new_plotter = FakePlotter()
-        state.job_started(new_plotter)  # replaces plotter, clears stash
-        # New plotter activation must not re-run the old plotter's pending input.
-        assert state.set_active(token, True) is None
-        assert new_plotter.compute_calls == []
-
-    def test_stash_returns_no_task_before_job_started(self):
-        state = LayerStateMachine()
-        token = _Token()
-        state.set_active(token, True)
-        # No plotter yet → no flush.
-        assert state.stash_pending({'k': 1}) is None
+        assert state.set_active(unknown, False) is False
+        assert not state.has_viewers
 
     def test_token_auto_released_on_garbage_collection(self):
-        """Safety net: if the caller is gc'd without releasing, the gate closes."""
+        """Finalizer closes gate if caller is gc'd without explicit release."""
         import gc
 
         state, _plotter = self._ready_state()
         token = _Token()
         state.set_active(token, True)
-        # Active: stash flushes immediately.
-        assert state.stash_pending({'k': 1}) is not None
+        assert state.has_viewers
         # Drop the only reference and force gc; finalizer must release the key.
         del token
         gc.collect()
-        # Gate is now closed (no active tokens) → next stash returns None.
-        assert state.stash_pending({'k': 2}) is None
+        # Gate is now closed.
+        assert not state.has_viewers

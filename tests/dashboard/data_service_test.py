@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import Any
 
 import pytest
 import scipp as sc
@@ -24,12 +23,11 @@ def make_test_data(value: int, time: float = 0.0) -> sc.DataArray:
 class FakePipe:
     """Fake pipe for testing."""
 
-    def __init__(self, data: Any = None) -> None:
-        self.init_data = data
-        self.sent_data: list[dict[str, Any]] = []
+    def __init__(self) -> None:
+        self.notifications: list[set[str]] = []
 
-    def send(self, data: Any) -> None:
-        self.sent_data.append(data)
+    def record_keys(self, updated_keys: set[str]) -> None:
+        self.notifications.append(updated_keys)
 
 
 class SimpleTestSubscriber(DataServiceSubscriber[str]):
@@ -38,7 +36,7 @@ class SimpleTestSubscriber(DataServiceSubscriber[str]):
     def __init__(self, keys: set[str]) -> None:
         self._keys_set = keys
         self._extractors = {key: LatestValueExtractor() for key in keys}
-        self._pipe: FakePipe | None = None
+        self._pipe = FakePipe()
         super().__init__()
 
     @property
@@ -47,29 +45,22 @@ class SimpleTestSubscriber(DataServiceSubscriber[str]):
 
     @property
     def pipe(self) -> FakePipe:
-        if self._pipe is None:
-            raise RuntimeError("Pipe not yet created")
         return self._pipe
 
-    def trigger(self, store: dict[str, Any]) -> None:
-        # Filter to only subscribed keys
-        data = {key: store[key] for key in self._keys_set if key in store}
-        if self._pipe is None:
-            self._pipe = FakePipe(data)
-        else:
-            self._pipe.send(data)
+    def on_updated(self, updated_keys: set[str]) -> None:
+        self._pipe.record_keys(updated_keys)
 
 
 def create_test_subscriber(keys: set[str]) -> tuple[SimpleTestSubscriber, Callable]:
     """
     Create a test subscriber with the given keys.
 
-    Returns the subscriber and a callable to get the pipe after it's created.
+    Returns the subscriber and a callable to get the pipe.
     """
     subscriber = SimpleTestSubscriber(keys)
 
     def get_pipe() -> FakePipe:
-        """Get the pipe (created on first trigger)."""
+        """Get the pipe."""
         return subscriber.pipe
 
     return subscriber, get_pipe
@@ -116,8 +107,9 @@ def test_setitem_without_subscribers_no_error(data_service: DataService[str, int
 def test_register_subscriber_adds_to_list(data_service: DataService[str, int]):
     subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
-    # Verify pipe was created and subscriber was added
-    _ = get_pipe()  # Ensure pipe exists
+    # Registration does not trigger notification
+    pipe = get_pipe()
+    assert len(pipe.notifications) == 0
 
 
 def test_unregister_subscriber_removes_from_list(data_service: DataService[str, int]):
@@ -130,8 +122,7 @@ def test_unregister_subscriber_removes_from_list(data_service: DataService[str, 
     # Subscriber should no longer receive updates
     data_service["key1"] = make_test_data(42)
     pipe = get_pipe()
-    # Only received data from initial registration trigger, not the new update
-    assert len(pipe.sent_data) == 0
+    assert len(pipe.notifications) == 0
 
 
 def test_unregister_nonexistent_subscriber_returns_false(
@@ -151,7 +142,7 @@ def test_unregister_during_notification_does_not_skip_other_subscribers(
     """A subscriber removed mid-notification must not cause a sibling to be skipped.
 
     Reproduces the list-index skip: notifying iterates the subscriber list, and a
-    trigger (or, in production, a concurrent UI-thread teardown) removes a
+    notification (or, in production, a concurrent UI-thread teardown) removes a
     subscriber positioned before one not yet visited. A raw list-index iterator
     would then skip the following subscriber.
     """
@@ -168,8 +159,8 @@ def test_unregister_during_notification_does_not_skip_other_subscribers(
         def extractors(self):
             return self._extractors
 
-        def trigger(self, store: dict[str, Any]) -> None:
-            if "key1" not in store:
+        def on_updated(self, updated_keys: set[str]) -> None:
+            if "key1" not in updated_keys:
                 return
             triggered.append(self.name)
             if self.target is not None:
@@ -185,7 +176,6 @@ def test_unregister_during_notification_does_not_skip_other_subscribers(
     for sub in (first, middle, last):
         data_service.register_subscriber(sub)
 
-    triggered.clear()
     data_service["key1"] = make_test_data(42)
 
     assert triggered == ["first", "middle", "last"]
@@ -198,8 +188,10 @@ def test_setitem_notifies_matching_subscriber(data_service: DataService[str, int
     data_service["key1"] = make_test_data(42)
 
     pipe = get_pipe()
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 42
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
 
 
 def test_setitem_ignores_non_matching_subscriber(data_service: DataService[str, int]):
@@ -209,7 +201,7 @@ def test_setitem_ignores_non_matching_subscriber(data_service: DataService[str, 
     data_service["key1"] = make_test_data(42)
 
     pipe = get_pipe()
-    assert len(pipe.sent_data) == 0
+    assert len(pipe.notifications) == 0
 
 
 def test_setitem_notifies_multiple_matching_subscribers(
@@ -226,9 +218,9 @@ def test_setitem_notifies_multiple_matching_subscribers(
     data_service["key1"] = make_test_data(42)
 
     pipe1, pipe2, pipe3 = get_pipe1(), get_pipe2(), get_pipe3()
-    assert len(pipe1.sent_data) == 1
-    assert len(pipe2.sent_data) == 1
-    assert len(pipe3.sent_data) == 0
+    assert len(pipe1.notifications) == 1
+    assert len(pipe2.notifications) == 1
+    assert len(pipe3.notifications) == 0
 
 
 def test_setitem_multiple_updates_notify_separately(
@@ -241,10 +233,12 @@ def test_setitem_multiple_updates_notify_separately(
     data_service["key2"] = make_test_data(84)
 
     pipe = get_pipe()
-    assert len(pipe.sent_data) == 2
-    assert pipe.sent_data[0]["key1"].value == 42
-    assert pipe.sent_data[1]["key1"].value == 42
-    assert pipe.sent_data[1]["key2"].value == 84
+    assert len(pipe.notifications) == 2
+    assert pipe.notifications[0] == {"key1"}
+    assert pipe.notifications[1] == {"key2"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
+    assert snapshot["key2"].value == 84
 
 
 def test_transaction_batches_notifications(data_service: DataService[str, int]):
@@ -256,12 +250,14 @@ def test_transaction_batches_notifications(data_service: DataService[str, int]):
         data_service["key1"] = make_test_data(42)
         data_service["key2"] = make_test_data(84)
         # No notifications yet
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
 
     # Single notification after transaction
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 42
-    assert pipe.sent_data[0]["key2"].value == 84
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1", "key2"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
+    assert snapshot["key2"].value == 84
 
 
 def test_transaction_nested_batches_correctly(data_service: DataService[str, int]):
@@ -273,16 +269,18 @@ def test_transaction_nested_batches_correctly(data_service: DataService[str, int
         data_service["key1"] = make_test_data(42)
         with data_service.transaction():
             data_service["key2"] = make_test_data(84)
-            assert len(pipe.sent_data) == 0
+            assert len(pipe.notifications) == 0
         # Still in outer transaction
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
         data_service["key3"] = make_test_data(126)
 
     # Single notification after all transactions
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 42
-    assert pipe.sent_data[0]["key2"].value == 84
-    assert pipe.sent_data[0]["key3"].value == 126
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1", "key2", "key3"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
+    assert snapshot["key2"].value == 84
+    assert snapshot["key3"].value == 126
 
 
 def test_transaction_exception_still_notifies(data_service: DataService[str, int]):
@@ -299,8 +297,10 @@ def test_transaction_exception_still_notifies(data_service: DataService[str, int
 
     # Notification should still happen
     pipe = get_pipe()
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 42
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
 
 
 def test_dictionary_operations_work(
@@ -336,7 +336,7 @@ def test_update_method_triggers_notifications(data_service: DataService[str, int
 
     # Should trigger notifications for each key
     pipe = get_pipe()
-    assert len(pipe.sent_data) == 2
+    assert len(pipe.notifications) == 2
 
 
 def test_clear_removes_all_data(
@@ -382,9 +382,11 @@ def test_subscriber_gets_full_data_dict(data_service: DataService[str, int]):
     data_service["existing"] = make_test_data(999)
     data_service["key1"] = make_test_data(42)
 
-    # Subscriber should get the full data dict
+    # Subscriber should get notified with matching keys
     pipe = get_pipe()
-    assert pipe.sent_data[-1]["key1"].value == 42
+    assert {"key1"} in pipe.notifications
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
 
 
 def test_subscriber_only_gets_subscribed_keys(data_service: DataService[str, int]):
@@ -397,15 +399,18 @@ def test_subscriber_only_gets_subscribed_keys(data_service: DataService[str, int
     data_service["key3"] = make_test_data(126)
     data_service["unrelated"] = make_test_data(999)  # Not subscribed to this key
 
-    # Subscriber should only receive data for keys it's interested in
+    # Subscriber should only receive notifications for keys it's interested in
     pipe = get_pipe()
-    last_data = pipe.sent_data[-1]
-    assert last_data["key1"].value == 42
-    assert last_data["key3"].value == 126
+    assert {"key1"} in pipe.notifications
+    assert {"key3"} in pipe.notifications
+    assert {"key2"} not in pipe.notifications
+    assert {"unrelated"} not in pipe.notifications
 
-    # Verify unrelated keys are not included
-    assert "key2" not in last_data
-    assert "unrelated" not in last_data
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
+    assert snapshot["key3"].value == 126
+    assert "key2" not in snapshot
+    assert "unrelated" not in snapshot
 
 
 def test_empty_transaction_no_notifications(data_service: DataService[str, int]):
@@ -416,7 +421,7 @@ def test_empty_transaction_no_notifications(data_service: DataService[str, int])
     with data_service.transaction():
         pass  # No changes
 
-    assert len(pipe.sent_data) == 0
+    assert len(pipe.notifications) == 0
 
 
 def test_delitem_notifies_subscribers(data_service: DataService[str, int]):
@@ -427,15 +432,18 @@ def test_delitem_notifies_subscribers(data_service: DataService[str, int]):
     data_service["key1"] = make_test_data(42)
     data_service["key2"] = make_test_data(84)
     pipe = get_pipe()
-    pipe.sent_data.clear()  # Clear previous notifications
+    pipe.notifications.clear()  # Clear previous notifications
 
     # Delete a key
     del data_service["key1"]
 
-    # Should notify with remaining data
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key2"].value == 84
+    # Should notify about the deleted key
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
     assert "key1" not in data_service
+    snapshot = data_service.snapshot(subscriber)
+    assert "key1" not in snapshot
+    assert snapshot["key2"].value == 84
 
 
 def test_delitem_in_transaction_batches_notifications(
@@ -448,17 +456,20 @@ def test_delitem_in_transaction_batches_notifications(
     data_service["key1"] = make_test_data(42)
     data_service["key2"] = make_test_data(84)
     pipe = get_pipe()
-    pipe.sent_data.clear()  # Clear previous notifications
+    pipe.notifications.clear()  # Clear previous notifications
 
     with data_service.transaction():
         del data_service["key1"]
         data_service["key2"] = make_test_data(99)
         # No notifications yet
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
 
     # Single notification after transaction
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key2"].value == 99
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1", "key2"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key2"].value == 99
+    assert "key1" not in snapshot
 
 
 def test_transaction_set_then_del_same_key(data_service: DataService[str, int]):
@@ -468,18 +479,21 @@ def test_transaction_set_then_del_same_key(data_service: DataService[str, int]):
     # Add some initial data
     data_service["key2"] = make_test_data(84)
     pipe = get_pipe()
-    pipe.sent_data.clear()
+    pipe.notifications.clear()
 
     with data_service.transaction():
         data_service["key1"] = make_test_data(42)  # Set key1
         del data_service["key1"]  # Then delete key1
         # No notifications yet
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
 
-    # After transaction: key1 should not exist, only key2 should be in notification
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key2"].value == 84
+    # After transaction: key1 should not exist, but it was in the pending set
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
     assert "key1" not in data_service
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key2"].value == 84
+    assert "key1" not in snapshot
 
 
 def test_transaction_del_then_set_same_key(data_service: DataService[str, int]):
@@ -490,18 +504,20 @@ def test_transaction_del_then_set_same_key(data_service: DataService[str, int]):
     data_service["key1"] = make_test_data(42)
     data_service["key2"] = make_test_data(84)
     pipe = get_pipe()
-    pipe.sent_data.clear()
+    pipe.notifications.clear()
 
     with data_service.transaction():
         del data_service["key1"]  # Delete key1
         data_service["key1"] = make_test_data(99)  # Then set key1 to new value
         # No notifications yet
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
 
     # After transaction: key1 should have the new value
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 99
-    assert pipe.sent_data[0]["key2"].value == 84
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 99
+    assert snapshot["key2"].value == 84
     assert data_service["key1"].value == 99
 
 
@@ -512,7 +528,7 @@ def test_transaction_multiple_operations_same_key(data_service: DataService[str,
     # Add initial data
     data_service["key1"] = make_test_data(10)
     pipe = get_pipe()
-    pipe.sent_data.clear()
+    pipe.notifications.clear()
 
     with data_service.transaction():
         data_service["key1"] = make_test_data(20)  # Update
@@ -520,11 +536,13 @@ def test_transaction_multiple_operations_same_key(data_service: DataService[str,
         del data_service["key1"]  # Delete
         data_service["key1"] = make_test_data(40)  # Set again
         # No notifications yet
-        assert len(pipe.sent_data) == 0
+        assert len(pipe.notifications) == 0
 
     # After transaction: key1 should have final value
-    assert len(pipe.sent_data) == 1
-    assert pipe.sent_data[0]["key1"].value == 40
+    assert len(pipe.notifications) == 1
+    assert pipe.notifications[0] == {"key1"}
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 40
     assert data_service["key1"].value == 40
 
 
@@ -546,15 +564,17 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    derived_value = store["input"].value * 2
-                    self._service["derived"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        derived_value = snapshot["input"].value * 2
+                        self._service["derived"] = make_test_data(derived_value)
 
         subscriber = UpdatingSubscriber({"input"}, service)
         service.register_subscriber(subscriber)
 
-        # This should trigger the subscriber, which updates "derived"
+        # This should notify the subscriber, which updates "derived"
         service["input"] = make_test_data(10)
 
         assert service["input"].value == 10
@@ -575,10 +595,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    derived_value = store["input"].value * 2
-                    self._service["derived"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        derived_value = snapshot["input"].value * 2
+                        self._service["derived"] = make_test_data(derived_value)
 
         subscriber = UpdatingSubscriber({"input"}, service)
         service.register_subscriber(subscriber)
@@ -613,11 +635,13 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    key = f"derived_{self._multiplier}x"
-                    derived_value = store["input"].value * self._multiplier
-                    self._service[key] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        key = f"derived_{self._multiplier}x"
+                        derived_value = snapshot["input"].value * self._multiplier
+                        self._service[key] = make_test_data(derived_value)
 
         sub1 = MultiplierSubscriber({"input"}, service, 2)
         sub2 = MultiplierSubscriber({"input"}, service, 3)
@@ -647,10 +671,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    derived_value = store["input"].value * 2
-                    self._service["level1"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        derived_value = snapshot["input"].value * 2
+                        self._service["level1"] = make_test_data(derived_value)
 
         class SecondLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
@@ -665,10 +691,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "level1" in store:
-                    derived_value = store["level1"].value * 3
-                    self._service["level2"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "level1" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "level1" in snapshot:
+                        derived_value = snapshot["level1"].value * 3
+                        self._service["level2"] = make_test_data(derived_value)
 
         sub1 = FirstLevelSubscriber(service)
         sub2 = SecondLevelSubscriber(service)
@@ -698,10 +726,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    derived_value = store["input"].value * 2
-                    self._service["level1"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        derived_value = snapshot["input"].value * 2
+                        self._service["level1"] = make_test_data(derived_value)
 
         class SecondLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
@@ -716,10 +746,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "level1" in store:
-                    derived_value = store["level1"].value * 3
-                    self._service["level2"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "level1" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "level1" in snapshot:
+                        derived_value = snapshot["level1"].value * 3
+                        self._service["level2"] = make_test_data(derived_value)
 
         sub1 = FirstLevelSubscriber(service)
         sub2 = SecondLevelSubscriber(service)
@@ -756,13 +788,15 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    input_value = store["input"].value
-                    with self._service.transaction():
-                        self._service["double"] = make_test_data(input_value * 2)
-                        self._service["triple"] = make_test_data(input_value * 3)
-                        self._service["square"] = make_test_data(input_value**2)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        input_value = snapshot["input"].value
+                        with self._service.transaction():
+                            self._service["double"] = make_test_data(input_value * 2)
+                            self._service["triple"] = make_test_data(input_value * 3)
+                            self._service["square"] = make_test_data(input_value**2)
 
         subscriber = MultiUpdateSubscriber(service)
         service.register_subscriber(subscriber)
@@ -792,10 +826,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    derived_value = store["input"].value * 10
-                    self._service["existing"] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        derived_value = snapshot["input"].value * 10
+                        self._service["existing"] = make_test_data(derived_value)
 
         subscriber = OverwriteSubscriber(service)
         service.register_subscriber(subscriber)
@@ -823,14 +859,18 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
+            def on_updated(self, updated_keys: set[str]) -> None:
                 update_count["count"] += 1
                 if update_count["count"] < 5:  # Prevent infinite recursion in test
-                    if "input" in store and "output" not in store:
-                        derived_value = store["input"].value + 1
+                    snapshot = self._service.snapshot(self)
+                    if "input" in updated_keys and "output" not in snapshot:
+                        derived_value = snapshot["input"].value + 1
                         self._service["output"] = make_test_data(derived_value)
-                    elif "output" in store and store["output"].value < 10:
-                        derived_value = store["output"].value + 1
+                    elif (
+                        "output" in updated_keys
+                        and snapshot.get("output", make_test_data(0)).value < 10
+                    ):
+                        derived_value = snapshot["output"].value + 1
                         self._service["output"] = make_test_data(derived_value)
 
         subscriber = CircularSubscriber(service)
@@ -861,8 +901,8 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "trigger" in store and "to_delete" in self._service:
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "trigger" in updated_keys and "to_delete" in self._service:
                     del self._service["to_delete"]
                     self._service["deleted_flag"] = make_test_data(1)
 
@@ -892,14 +932,18 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    input_value = store["input"].value
-                    with self._service.transaction():
-                        self._service["derived1"] = make_test_data(input_value * 2)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        input_value = snapshot["input"].value
                         with self._service.transaction():
-                            self._service["derived2"] = make_test_data(input_value * 3)
-                        self._service["derived3"] = make_test_data(input_value * 4)
+                            self._service["derived1"] = make_test_data(input_value * 2)
+                            with self._service.transaction():
+                                self._service["derived2"] = make_test_data(
+                                    input_value * 3
+                                )
+                            self._service["derived3"] = make_test_data(input_value * 4)
 
         subscriber = ComplexSubscriber(service)
         service.register_subscriber(subscriber)
@@ -938,10 +982,12 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if self._input_key in store:
-                    derived_value = store[self._input_key].value + 1
-                    self._service[self._output_key] = make_test_data(derived_value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if self._input_key in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if self._input_key in snapshot:
+                        derived_value = snapshot[self._input_key].value + 1
+                        self._service[self._output_key] = make_test_data(derived_value)
 
         # Create a chain: input -> step1 -> step2 -> step3
         sub1 = ChainSubscriber("input", "step1", service)
@@ -976,19 +1022,21 @@ class TestDataServiceUpdatingSubscribers:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, int]) -> None:
-                if "input" in store:
-                    input_value = store["input"].value
-                    # Immediate update
-                    self._service["immediate"] = make_test_data(input_value * 2)
-                    # Transaction update
-                    with self._service.transaction():
-                        self._service["transactional1"] = make_test_data(
-                            input_value * 3
-                        )
-                        self._service["transactional2"] = make_test_data(
-                            input_value * 4
-                        )
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if "input" in updated_keys:
+                    snapshot = self._service.snapshot(self)
+                    if "input" in snapshot:
+                        input_value = snapshot["input"].value
+                        # Immediate update
+                        self._service["immediate"] = make_test_data(input_value * 2)
+                        # Transaction update
+                        with self._service.transaction():
+                            self._service["transactional1"] = make_test_data(
+                                input_value * 3
+                            )
+                            self._service["transactional2"] = make_test_data(
+                                input_value * 4
+                            )
 
         subscriber = MixedSubscriber(service)
         service.register_subscriber(subscriber)
@@ -1018,7 +1066,7 @@ class TestNotifySubscriberErrorIsolation:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, Any]) -> None:
+            def on_updated(self, updated_keys: set[str]) -> None:
                 if self._armed:
                     raise RuntimeError("subscriber failed")
 
@@ -1032,8 +1080,9 @@ class TestNotifySubscriberErrorIsolation:
         service["key1"] = make_test_data(42)
 
         pipe = get_pipe()
-        assert len(pipe.sent_data) == 1
-        assert pipe.sent_data[0]["key1"].value == 42
+        assert len(pipe.notifications) == 1
+        snapshot = service.snapshot(good)
+        assert snapshot["key1"].value == 42
 
     def test_failing_extractor_does_not_block_subsequent_subscribers(self):
         service = DataService[str, int]()
@@ -1063,7 +1112,7 @@ class TestNotifySubscriberErrorIsolation:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, Any]) -> None:
+            def on_updated(self, updated_keys: set[str]) -> None:
                 pass
 
         extractor = BrokenExtractor()
@@ -1077,8 +1126,9 @@ class TestNotifySubscriberErrorIsolation:
         service["key1"] = make_test_data(42)
 
         pipe = get_pipe()
-        assert len(pipe.sent_data) == 1
-        assert pipe.sent_data[0]["key1"].value == 42
+        assert len(pipe.notifications) == 1
+        snapshot = service.snapshot(good)
+        assert snapshot["key1"].value == 42
 
 
 class TestExtractorBasedSubscription:
@@ -1098,15 +1148,15 @@ class TestExtractorBasedSubscription:
             def __init__(self, keys: set[str], extractor):
                 self._keys_set = keys
                 self._extractor = extractor
-                self.received_data: list[dict] = []
+                self.notification_keys: list[set[str]] = []
                 super().__init__()
 
             @property
             def extractors(self) -> dict:
                 return dict.fromkeys(self._keys_set, self._extractor)
 
-            def trigger(self, data: dict) -> None:
-                self.received_data.append(data)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                self.notification_keys.append(updated_keys)
 
         # Create service
         service = DataService()
@@ -1133,13 +1183,14 @@ class TestExtractorBasedSubscription:
             )
 
         # Both subscribers should have received all updates
-        # sub1: 1 initial trigger + 1 update before sub2 registration + 10 after = 12
-        assert len(sub1.received_data) == 12
-        # sub2: 1 initial trigger on registration (with copied data) + 10 updates = 11
-        assert len(sub2.received_data) == 11
+        # sub1: 1 update before sub2 registration + 10 after = 11
+        assert len(sub1.notification_keys) == 11
+        # sub2: 10 updates after registration = 10
+        assert len(sub2.notification_keys) == 10
 
         # sub1 should get latest value only (unwrapped)
-        last_from_sub1 = sub1.received_data[-1]["data"]
+        snapshot1 = service.snapshot(sub1)
+        last_from_sub1 = snapshot1["data"]
         assert last_from_sub1.ndim == 0  # Scalar (unwrapped)
         assert last_from_sub1.value == 11
 
@@ -1147,7 +1198,8 @@ class TestExtractorBasedSubscription:
         # When sub2 registered, buffer switched from SingleValueBuffer to
         # TemporalBuffer, copying the first data point, then receiving 10 more
         # updates = 11 total
-        last_from_sub2 = sub2.received_data[-1]["data"]
+        snapshot2 = service.snapshot(sub2)
+        last_from_sub2 = snapshot2["data"]
         assert last_from_sub2.sizes == {'time': 11}
 
     def test_multiple_keys_with_different_extractors(self):
@@ -1162,7 +1214,7 @@ class TestExtractorBasedSubscription:
 
         class MultiKeySubscriber(DataServiceSubscriber[str]):
             def __init__(self):
-                self.received_data: list[dict] = []
+                self.notification_keys: list[set[str]] = []
                 super().__init__()
 
             @property
@@ -1172,8 +1224,8 @@ class TestExtractorBasedSubscription:
                     "history": FullHistoryExtractor(),
                 }
 
-            def trigger(self, data: dict) -> None:
-                self.received_data.append(data)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                self.notification_keys.append(updated_keys)
 
         service = DataService()
         subscriber = MultiKeySubscriber()
@@ -1192,10 +1244,10 @@ class TestExtractorBasedSubscription:
 
         # Should have received updates (batched in transaction would be less,
         # but here each setitem triggers separately)
-        assert len(subscriber.received_data) > 0
+        assert len(subscriber.notification_keys) > 0
 
-        # Check last received data
-        last_data = subscriber.received_data[-1]
+        # Check last received data via snapshot
+        last_data = service.snapshot(subscriber)
 
         # "latest" should be unwrapped scalar
         if "latest" in last_data:
@@ -1228,11 +1280,11 @@ class TestThreadSafety:
         # Distinct objects: the returned value is copied, not a buffer view.
         assert service["key1"] is not service["key1"]
 
-    def test_trigger_runs_without_holding_lock(self):
-        """A subscriber's trigger must not block other threads' locked ops.
+    def test_on_updated_runs_without_holding_lock(self):
+        """A subscriber's on_updated must not block other threads' locked ops.
 
-        Proves the lock is released around ``trigger``: while one subscriber is
-        mid-trigger, another thread can complete a ``__setitem__`` (which needs
+        Proves the lock is released around ``on_updated``: while one subscriber is
+        mid-notification, another thread can complete a ``__setitem__`` (which needs
         the lock) on an unrelated key.
         """
         service = DataService[str, int]()
@@ -1249,21 +1301,21 @@ class TestThreadSafety:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, Any]) -> None:
-                if store:  # block only on a real data update, not the empty register
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if updated_keys:  # block only on a real update
                     entered.set()
                     release.wait(timeout=5)
 
         service.register_subscriber(BlockingSubscriber())
 
-        # Ingestion thread enters trigger and blocks there.
+        # Ingestion thread enters on_updated and blocks there.
         ingest = threading.Thread(
             target=lambda: service.__setitem__("key1", make_test_data(1))
         )
         ingest.start()
-        assert entered.wait(timeout=5), "trigger was not entered"
+        assert entered.wait(timeout=5), "on_updated was not entered"
 
-        # While trigger is blocked, an unrelated locked op must still complete.
+        # While on_updated is blocked, an unrelated locked op must still complete.
         other_done = threading.Event()
 
         def other() -> None:
@@ -1272,7 +1324,9 @@ class TestThreadSafety:
 
         other_thread = threading.Thread(target=other)
         other_thread.start()
-        assert other_done.wait(timeout=5), "lock held during trigger blocked a writer"
+        assert other_done.wait(timeout=5), (
+            "lock held during on_updated blocked a writer"
+        )
 
         release.set()
         ingest.join(timeout=5)
@@ -1312,7 +1366,7 @@ class TestThreadSafety:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, Any]) -> None:
+            def on_updated(self, updated_keys: set[str]) -> None:
                 pass
 
         def churn() -> None:
@@ -1354,9 +1408,11 @@ class TestThreadSafety:
             def extractors(self):
                 return self._extractors
 
-            def trigger(self, store: dict[str, Any]) -> None:
-                if store:
-                    triggered.append(store["key1"].value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if updated_keys:
+                    snapshot = service.snapshot(self)
+                    if "key1" in snapshot:
+                        triggered.append(snapshot["key1"].value)
 
         service.register_subscriber(RecordingSubscriber())
 
@@ -1402,9 +1458,11 @@ class TestThreadSafety:
                     raise RuntimeError("boom")
                 return super().keys
 
-            def trigger(self, store: dict[str, Any]) -> None:
-                if store:
-                    triggered.append(store["key1"].value)
+            def on_updated(self, updated_keys: set[str]) -> None:
+                if updated_keys:
+                    snapshot = service.snapshot(self)
+                    if "key1" in snapshot:
+                        triggered.append(snapshot["key1"].value)
 
         sub = ExplodingKeysSubscriber()
         service.register_subscriber(sub)
@@ -1416,3 +1474,27 @@ class TestThreadSafety:
         sub.explode = False
         service["key1"] = make_test_data(2, time=2.0)
         assert triggered == [2]
+
+
+def test_snapshot_returns_data_after_registration(data_service: DataService[str, int]):
+    """Snapshot returns existing data even if subscriber hasn't received updates."""
+    data_service["key1"] = make_test_data(42, time=1.0)
+    subscriber, _ = create_test_subscriber({"key1"})
+    data_service.register_subscriber(subscriber)
+    snapshot = data_service.snapshot(subscriber)
+    assert snapshot["key1"].value == 42
+
+
+def test_buffering_continues_after_registration():
+    """History accumulates from the moment of registration."""
+    from ess.livedata.dashboard.extractors import FullHistoryExtractor
+
+    service = DataService[str, int]()
+    subscriber = SimpleTestSubscriber({"key1"})
+    # Replace extractor with FullHistoryExtractor
+    subscriber._extractors = {"key1": FullHistoryExtractor()}
+    service.register_subscriber(subscriber)
+    for i in range(3):
+        service["key1"] = make_test_data(i, time=float(i))
+    snapshot = service.snapshot(subscriber)
+    assert snapshot["key1"].sizes["time"] == 3
