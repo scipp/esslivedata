@@ -149,6 +149,13 @@ class DashboardServices:
             try:
                 self.orchestrator.update()
                 self.session_registry.cleanup_stale_sessions()
+                # The burst is drained once update() returns; now rebuild the
+                # dirty viewed layers and commit each grid's frame as it
+                # finishes. No-op unless a visible layer was recomputed, so
+                # empty/hidden-only passes do not trigger session flushes.
+                # Inside the try: an escaping exception would kill this thread
+                # and silently freeze ingestion for every session.
+                self.plot_orchestrator.flush_frames()
             except KafkaException:
                 # Auth/fatal Kafka errors are not self-healing. Crash so systemd
                 # restarts the process with a fresh consumer; the in-process
@@ -159,12 +166,6 @@ class DashboardServices:
                 return
             except Exception:
                 logger.exception("orchestrator_update_error")
-
-            # The burst is drained once update() returns; now run the deferred
-            # per-grid compute buckets and commit each grid's frame as it
-            # finishes. No-op unless a visible layer was recomputed, so
-            # empty/hidden-only passes do not trigger session flushes.
-            self.plot_orchestrator.flush_frames()
 
             # Only sleep if update was quick (no work to do), to avoid busy-wait.
             # If there was real work, loop immediately to check for more data.

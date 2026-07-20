@@ -9,7 +9,7 @@ from typing import Any
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_service import DataService, DataServiceSubscriber
+from .data_service import DataService
 from .data_subscriber import DataSubscriber
 
 
@@ -22,14 +22,15 @@ class StreamManager:
     def make_stream(
         self,
         keys_by_role: dict[str, list[ResultKey]],
-        on_data: Callable[[dict[str, dict[ResultKey, Any]]], None],
+        on_update: Callable[[], None],
         extractors: dict[ResultKey, Any] | None = None,
-    ) -> DataServiceSubscriber[ResultKey]:
+    ) -> DataSubscriber:
         """
         Create a data stream for the given result keys organized by role.
 
-        Registers a subscriber that groups data by role and invokes the
-        callback with ``dict[role, dict[ResultKey, data]]``.
+        Registers a subscriber whose ``on_update`` callback fires when any of
+        the keys change. The consumer pulls role-grouped data via
+        ``subscriber.assemble(data_service.snapshot(subscriber))``.
 
         Parameters
         ----------
@@ -37,9 +38,9 @@ class StreamManager:
             Dict mapping role names to lists of ResultKeys. For standard plots,
             this is {"primary": [keys...]}. For correlation plots, includes
             additional roles like "x_axis", "y_axis".
-        on_data
-            Callback invoked on every data update with the grouped data.
-            Called when at least one key from each role has data.
+        on_update
+            Callback invoked when any of the keys changed; see
+            :py:class:`DataSubscriber`.
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not
             provided, uses LatestValueExtractor for all keys.
@@ -63,7 +64,7 @@ class StreamManager:
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
             extractors=extractors,
-            on_data=on_data,
+            on_update=on_update,
         )
         self.data_service.register_subscriber(subscriber)
         return subscriber

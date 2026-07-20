@@ -631,6 +631,53 @@ class TestOrchestratorJobFiltering:
 
         assert len(job_service.job_statuses) == 0
 
+    def test_ack_activating_job_admits_data_from_same_batch(self) -> None:
+        """Control messages are handled before data messages in a batch: an
+        ack that activates a job must admit that job's data even when the
+        data message precedes the ack in consumption order."""
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
+
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
+        job_number = make_job_number()
+
+        class ActivatingJobOrchestrator:
+            def process_acknowledgement(
+                self, message_id: str, response: str, error_message: str | None = None
+            ) -> None:
+                registry.activate(job_number)
+
+        orchestrator = _make_orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            job_orchestrator=ActivatingJobOrchestrator(),
+            active_job_registry=registry,
+        )
+
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+        result_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name="det1", job_number=job_number),
+            output_name="result",
+        )
+        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
+        source.add_message(result_key.model_dump_json(), data)
+        source.add_config_message(
+            CommandAcknowledgement(
+                message_id="m1", device="det1", response=AcknowledgementResponse.ACK
+            )
+        )
+
+        orchestrator.update()
+
+        assert result_key in data_service
+
 
 def _data_stream_id(key: ResultKey) -> StreamId:
     return StreamId(kind=StreamKind.LIVEDATA_DATA, name=key.model_dump_json())

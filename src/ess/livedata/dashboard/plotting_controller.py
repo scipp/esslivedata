@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import pydantic
 
@@ -12,7 +12,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .data_service import DataServiceSubscriber
+from .data_subscriber import DataSubscriber
 from .extractors import (
     LatestValueExtractor,
     UpdateExtractor,
@@ -177,8 +177,8 @@ class PlottingController:
         keys_by_role: dict[str, list[ResultKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
-        on_data: Callable[[dict[ResultKey, Any]], None],
-    ) -> DataServiceSubscriber[ResultKey]:
+        on_update: Callable[[], None],
+    ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
 
@@ -195,10 +195,9 @@ class PlottingController:
             Name of the plotter to use.
         params
             Plotter parameters as a dict or validated Pydantic model.
-        on_data
-            Callback invoked on every data update with role-grouped data
-            (dict[role, dict[ResultKey, DataArray]]). Called when at least one
-            key from each role has data.
+        on_update
+            Callback invoked when any of the keys changed; see
+            :py:class:`DataSubscriber`.
 
         Returns
         -------
@@ -222,7 +221,7 @@ class PlottingController:
         extractors = create_extractors_from_params(all_keys, window, spec)
         return self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
-            on_data=on_data,
+            on_update=on_update,
             extractors=extractors,
         )
 
