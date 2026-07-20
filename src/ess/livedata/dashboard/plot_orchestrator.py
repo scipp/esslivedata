@@ -1120,10 +1120,16 @@ class PlotOrchestrator:
         state = self._plot_data_service.get(layer_id)
         if state is None or state.plotter is None:
             return False
-        # Capture version before plotter: ``job_started`` bumps the version
-        # before swapping the plotter, so reading in this order guarantees a
-        # concurrent swap — which also replaces the subscription this pull
-        # goes through — is caught by the version check in ``_compute_layer``.
+        # ``state`` is the live state machine, so these two reads are not
+        # atomic against a concurrent ``job_started`` on the UI thread.
+        # Capturing version first rules out the harmful pairing (stale version
+        # with new plotter): ``job_started`` bumps the version before swapping
+        # the plotter, so an old version implies the swap had not yet run.
+        # The converse pairing (new version, old plotter) is possible and
+        # tolerated: the check in ``_compute_layer`` then passes and flips the
+        # layer READY on the old plotter's result. The swap also replaced this
+        # layer's subscription and re-marked it dirty, so the next flush
+        # overwrites that frame. See #1060.
         version = state.version
         plotter = state.plotter
         try:
@@ -1136,18 +1142,8 @@ class PlotOrchestrator:
             return True
         if assembled is None:
             return False
-        return self._compute_layer(layer_id, plotter, version, assembled)
-
-    def _build_layer(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> bool:
-        """Run the layer's current plotter on ``data`` (setup-time entry point)."""
-        state = self._plot_data_service.get(layer_id)
-        if state is None or state.plotter is None:
-            return False
-        return self._compute_layer(layer_id, state.plotter, state.version, data)
+        self._compute_layer(layer_id, plotter, version, assembled)
+        return True
 
     def _compute_layer(
         self,
@@ -1155,7 +1151,7 @@ class PlotOrchestrator:
         plotter: Any,
         version: int,
         data: dict[str, dict[ResultKey, Any]],
-    ) -> bool:
+    ) -> None:
         """Run ``plotter.compute`` and transition the layer to READY or ERROR.
 
         ``plotter`` and ``version`` are the caller's pre-pull capture. If the
@@ -1179,7 +1175,6 @@ class PlotOrchestrator:
             self._logger.exception('Failed to compute state for layer_id=%s', layer_id)
             if self._layer_version(layer_id) == version:
                 self._plot_data_service.error_occurred(layer_id, error_msg)
-        return True
 
     def _layer_version(self, layer_id: LayerId) -> int | None:
         state = self._plot_data_service.get(layer_id)
@@ -1219,7 +1214,10 @@ class PlotOrchestrator:
             # Built unconditionally (no viewer gate): there is no data
             # subscription to pull from later, and the build is a one-off.
             plotter = self._create_and_register_plotter(layer_id, config)
-            if plotter is not None and self._build_layer(layer_id, {}):
+            state = self._plot_data_service.get(layer_id)
+            if plotter is not None and state is not None:
+                # Empty input: a static overlay computes from its params alone.
+                self._compute_layer(layer_id, plotter, state.version, {})
                 self._frame_clock.commit(self._grid_of_layer(layer_id))
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
