@@ -164,18 +164,15 @@ class ActiveJobRegistry:
             if dropped is not None:
                 self._job_service.remove_jobs_by_number(dropped.job_number)
 
-    def restore(
-        self,
-        workflow_id: WorkflowId,
-        *,
-        current: Generation | None,
-        last: Generation | None = None,
-    ) -> None:
-        """Restore persisted generations without acquiring the lock.
+    def restore(self, workflow_id: WorkflowId, *, current: Generation) -> None:
+        """Restore the persisted current generation without acquiring the lock.
 
-        Used during initialization when no other threads are running.
+        Used during initialization when no other threads are running. Only
+        ``current`` survives a dashboard restart: a stopped backend job no
+        longer heartbeats, so there is nothing a restored ``last`` generation
+        would admit.
         """
-        self._generations[workflow_id] = _GenerationRecord(current=current, last=last)
+        self._generations[workflow_id] = _GenerationRecord(current=current)
 
     def resolve_config(
         self, workflow_id: WorkflowId, job_number: JobNumber

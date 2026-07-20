@@ -98,7 +98,6 @@ class WorkflowState:
     """State for an active workflow, including transitions."""
 
     current: JobSet | None = None
-    previous: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
     version: int = 0
     stopped_reason: StoppedReason | None = None
@@ -238,21 +237,9 @@ class JobOrchestrator:
                             e,
                         )
 
-                if previous_data := config_data.get('previous_job'):
-                    try:
-                        state.previous = JobSet.model_validate(previous_data)
-                    except (KeyError, ValueError, TypeError) as e:
-                        logger.warning(
-                            'Failed to restore previous job for workflow %s: %s',
-                            workflow_id,
-                            e,
-                        )
-
-                if state.current is not None or state.previous is not None:
+                if state.current is not None:
                     self._active_job_registry.restore(
-                        workflow_id,
-                        current=_generation_of(state.current),
-                        last=_generation_of(state.previous),
+                        workflow_id, current=_generation_of(state.current)
                     )
 
             self._workflows[workflow_id] = state
@@ -393,7 +380,6 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            state.previous = state.current
 
         # Send workflow configs to all staged sources
         # Note: Currently all jobs use same params, but aux_source_names may
@@ -494,9 +480,6 @@ class JobOrchestrator:
         # Add active job state
         if state.current is not None:
             config_dict['current_job'] = state.current.model_dump(mode='json')
-
-        if state.previous is not None:
-            config_dict['previous_job'] = state.previous.model_dump(mode='json')
 
         # Persist if we have something to save
         if config_dict:
@@ -740,25 +723,6 @@ class JobOrchestrator:
             aux_source_names=first_job.aux_source_names,
         )
 
-    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
-        """
-        Get the job number of the previous job for a workflow.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow to query.
-
-        Returns
-        -------
-        :
-            The job number if there's a previous job, None otherwise.
-        """
-        state = self._workflows.get(workflow_id)
-        if state is None or state.previous is None:
-            return None
-        return state.previous.job_number
-
     def stop_workflow(self, workflow_id: WorkflowId) -> bool:
         """
         Stop all jobs for a workflow.
@@ -792,10 +756,10 @@ class JobOrchestrator:
     ) -> None:
         """Clear active job state, persist, and notify subscribers.
 
-        The just-stopped job becomes state.previous. Its buffered data stays
-        under the workflow's stable keys — nothing is evicted on stop — so
-        plots created while the workflow is stopped still display its last
-        results; the next commit's generation flip clears them.
+        The just-stopped job's buffered data stays under the workflow's
+        stable keys — nothing is evicted on stop — so plots created while
+        the workflow is stopped still display its last results; the next
+        commit's generation flip clears them.
         """
         state = self._workflows[workflow_id]
 
@@ -803,7 +767,6 @@ class JobOrchestrator:
             for job_id in state.current.job_ids():
                 self._job_states.pop(job_id, None)
             self._active_job_registry.deactivate(workflow_id)
-            state.previous = state.current
             state.current = None
         state.stopped_reason = reason
 

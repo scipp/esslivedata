@@ -204,18 +204,10 @@ class TestRestore:
         assert registry.is_current(_workflow_id, job_number)
         assert registry.resolve_config(_workflow_id, job_number) == {"a": 1}
 
-    def test_restored_last_is_known_but_not_current(self):
+    def test_unrestored_workflow_admits_nothing(self):
         registry, _ds, _js = _make_registry()
-        job_number = uuid.uuid4()
 
-        registry.restore(
-            _workflow_id,
-            current=None,
-            last=Generation(job_number=job_number, config={}),
-        )
-
-        assert not registry.is_current(_workflow_id, job_number)
-        assert registry.is_known_job(job_number)
+        assert not registry.is_current(_workflow_id, uuid.uuid4())
 
 
 class TestRecordStale:

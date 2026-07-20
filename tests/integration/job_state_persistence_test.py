@@ -79,15 +79,12 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
         assert restored_active['monitor1'].params == custom_params.model_dump()
 
 
-def test_job_transition_persists_previous_job(tmp_path) -> None:
+def test_recommit_persists_only_current_job(tmp_path) -> None:
     """
-    Test that stopping old jobs and starting new ones persists both states.
+    Committing over a running job replaces the persisted current job.
 
-    When committing a workflow that already has an active job:
-    1. Old job moves to 'previous'
-    2. New job becomes 'current'
-    3. Both current and previous are persisted
-    4. After restoration, both current and previous are restored
+    Only the current job survives a dashboard restart; the replaced job is
+    not persisted (its retained data does not survive a restart either).
     """
     workflow_id = WorkflowId(
         instrument='dummy',
@@ -100,12 +97,11 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend1:
         # Start first job
-        job_ids_1 = backend1.workflow_controller.start_workflow(
+        backend1.workflow_controller.start_workflow(
             workflow_id=workflow_id,
             source_names=source_names,
             config=MonitorDataParams(),
         )
-        first_job_number = job_ids_1[0].job_number
 
         # Start second job (stops first)
         job_ids_2 = backend1.workflow_controller.start_workflow(
@@ -119,31 +115,17 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
         )
         second_job_number = job_ids_2[0].job_number
 
-        # Verify state in first backend using public API
         current_job_number = backend1.job_orchestrator.get_active_job_number(
             workflow_id
         )
-        previous_job_number = backend1.job_orchestrator.get_previous_job_number(
-            workflow_id
-        )
         assert current_job_number == second_job_number
-        assert previous_job_number == first_job_number
 
     # Restore in second backend
     with DashboardBackend(
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend2:
-        # Both current and previous should be restored
         restored_current = backend2.job_orchestrator.get_active_job_number(workflow_id)
-        restored_previous = backend2.job_orchestrator.get_previous_job_number(
-            workflow_id
-        )
-
-        assert restored_current is not None
         assert restored_current == second_job_number
-
-        assert restored_previous is not None
-        assert restored_previous == first_job_number
 
 
 def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:
