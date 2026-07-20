@@ -71,7 +71,14 @@ Concretely:
   consumers poll the version on their own clock (session poll, frame flush)
   and pull an immutable snapshot when it advanced. Callbacks, where they
   survive, carry no data — at most "something changed" wake-ups that
-  degrade to the next poll tick if lost.
+  degrade to the next poll tick if lost. The sanctioned instance is the
+  ingestion thread scheduling a data-free session tick via
+  `doc.add_next_tick_callback` once `flush_frames` has committed a grid: only
+  the *scheduling* crosses threads, the woken tick body runs in the owning
+  session's document context, and a lost or duplicated wake is harmless
+  because the tick is idempotent and generation-gated. ADR 0005's rejection
+  of `add_next_tick_callback` scopes to data-carrying push and to
+  `pn.state.execute`, not to wake-ups — see its 2026-07-06 amendment.
 - **Data flows by pull at display cadence.** Ingestion records what changed
   (dirty keys); extraction, copy, and compute happen when a consumer with a
   viewer pulls — not eagerly per delta on the ingestion thread. "No viewers,
@@ -94,9 +101,11 @@ Concretely:
   the audited failure mode. Locks survive, but narrowly, protecting buffer
   writes rather than delivery.
 - **Marshal all mutation onto session IOLoops** (`add_next_tick_callback`
-  everywhere). Rejected: Panel cannot resolve session context from background
-  threads (ADR 0005), fan-out to N sessions multiplies work, and shared
-  (non-session) state still needs an owner.
+  everywhere). Rejected: fan-out to N sessions multiplies the work per change,
+  the mutating thread ends up owning each session's update order, and shared
+  (non-session) state still needs a single writer regardless. Scheduling
+  itself is sound — hence the data-free wake-up above — but it is a trigger
+  mechanism, not a state-ownership model.
 - **Full actor model / message-passing rewrite.** Rejected as
   disproportionate: versioned pull achieves the same isolation for this
   system's shapes (one ingestion writer, per-session readers) with the
@@ -120,7 +129,11 @@ Concretely:
   instead of re-deriving interleavings per PR.
 - Worst-case freshness is bounded by the consumer's poll cadence (100 ms
   session tick; see ADR 0005 for why this does not add visible latency over
-  push).
+  push). Where a wake-up backs the poll, the bound tightens to data cadence
+  plus milliseconds and the poll becomes a safety net: the 100 ms fast tick —
+  and with it the per-tick `hold`+`freeze` recompute and O(grids×cells×layers)
+  layer scan (#1055 Target 3, #1044 scalability note) — can then be retired
+  rather than optimized.
 - Cost: dirty-flag/version bookkeeping replaces eager delivery, and
   during migration both mechanisms coexist — the migration is sequenced so
   each step deletes more push machinery than it adds pull machinery.
