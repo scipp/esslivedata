@@ -542,12 +542,11 @@ class PlotGridTabs:
         view = cell_widget.view
 
         # Defer insertion for plots to allow Panel to update layout sizing.
-        # When a workflow is already running with data, subscribing triggers
-        # plot creation synchronously (in subscribe_to_workflow's immediate
-        # callback path). This can cause the HoloViews pane to initialize with
-        # collapsed/default size before the grid container is properly sized,
-        # resulting in "glitched" rendering. Deferring to the next event loop
-        # iteration allows Panel to process layout updates first.
+        # A layer's plot is created synchronously at add-layer time, so the
+        # HoloViews pane can initialize with collapsed/default size before the
+        # grid container is properly sized, resulting in "glitched" rendering.
+        # Deferring to the next event loop iteration allows Panel to process
+        # layout updates first.
         if cell_widget.has_plot:
             pn.state.execute(
                 lambda g=cell.geometry: plot_grid.insert_widget_at(g, view)

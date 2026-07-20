@@ -7,7 +7,7 @@ Coordinates plot creation and management across multiple plot grids:
 - Configuration staging and persistence
 - Plot grid lifecycle (create, remove)
 - Plot cell management (add, remove)
-- Event-driven plot creation via JobOrchestrator subscriptions
+- Static plot creation at add-layer time; run-state driven via polling
 - Grid template loading and parsing
 """
 
@@ -37,8 +37,6 @@ from .config_store import ConfigStore
 from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
-from .job_orchestrator import WorkflowCallbacks
-from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plot_data_service import LayerId, PlotDataService
 from .plot_params import TimeWindowMixin, TimeWindowMode
 from .plotting_controller import PlottingController
@@ -54,53 +52,12 @@ CellId = NewType('CellId', UUID)
 class JobOrchestratorProtocol(Protocol):
     """Protocol for JobOrchestrator interface needed by PlotOrchestrator."""
 
-    def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callbacks: WorkflowCallbacks
-    ) -> tuple[SubscriptionId, bool]:
-        """
-        Subscribe to workflow job lifecycle notifications.
-
-        The on_started callback will be called with the job_number when:
-        1. A workflow is committed (immediately after commit)
-        2. Immediately if subscribing and workflow already has an active job
-
-        The on_stopped callback (if provided) will be called when the workflow
-        is stopped, with the job_number of the stopped job.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow to subscribe to.
-        callbacks
-            Callbacks for job lifecycle events (on_started, on_stopped).
-
-        Returns
-        -------
-        :
-            Tuple of (subscription_id, callback_invoked_immediately).
-            subscription_id can be used to unsubscribe.
-            callback_invoked_immediately is True if the workflow was already
-            running and the callback was invoked synchronously during this call.
-        """
-        ...
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """
-        Unsubscribe from workflow lifecycle notifications.
-
-        Parameters
-        ----------
-        subscription_id
-            The subscription ID returned from subscribe_to_workflow.
-        """
-        ...
-
     def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
         """Get the workflow registry containing all managed workflows."""
         ...
 
-    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
-        """Get the job_number of the most recently stopped job, if any."""
+    def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """Get the job_number of the currently active job, if any."""
         ...
 
 
@@ -329,6 +286,28 @@ def _build_resolved_data_sources(
     return resolved
 
 
+def _build_keys_by_role(
+    data_sources: dict[str, DataSourceConfig],
+) -> dict[str, list[DataKey]]:
+    """Build stable DataKeys grouped by role.
+
+    Keys carry no job identity — they are fully determined by the plot
+    config. ``DataSourceConfig.view_name`` is expected to already carry the
+    resolved backend pydantic field name (see ``_build_resolved_data_sources``).
+    """
+    return {
+        role: [
+            DataKey(
+                workflow_id=ds.workflow_id,
+                source_name=sn,
+                output_name=ds.view_name,
+            )
+            for sn in ds.source_names
+        ]
+        for role, ds in data_sources.items()
+    }
+
+
 def _resolve_supports_windowing(
     data_sources: dict[str, DataSourceConfig],
     registry: Mapping[WorkflowId, WorkflowSpec],
@@ -347,6 +326,20 @@ def _resolve_supports_windowing(
     if spec is None:
         return True
     return output_view_supports_windowing(spec, primary.view_name)
+
+
+@dataclass
+class _LayerJobTracker:
+    """Last-observed run-state of the workflows feeding a layer.
+
+    ``sync_job_states`` compares the polled job numbers against
+    ``job_numbers`` to detect generation changes (→ reset presentation) and
+    stops (→ STOPPED). ``workflow_ids`` is deduplicated: a workflow shared by
+    several roles contributes one entry.
+    """
+
+    workflow_ids: tuple[WorkflowId, ...]
+    job_numbers: tuple[JobNumber | None, ...]
 
 
 class PlotOrchestrator:
@@ -404,7 +397,7 @@ class PlotOrchestrator:
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
+        self._layer_jobs: dict[LayerId, _LayerJobTracker] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
         self._data_subscriptions: dict[LayerId, Any] = {}  # DataSubscriber
@@ -785,7 +778,7 @@ class PlotOrchestrator:
         cell.layers.append(layer)
 
         self._layer_to_cell[layer_id] = cell_id
-        self._subscribe_layer(grid_id, cell_id, layer)
+        self._setup_layer(grid_id, cell_id, layer)
         self._refresh_resolvers_for_cell(cell_id)
 
         return layer_id
@@ -809,7 +802,7 @@ class PlotOrchestrator:
         cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
 
         # Unsubscribe and clean up layer state
-        self._unsubscribe_and_cleanup_layer(layer_id)
+        self._cleanup_layer(layer_id)
 
         # If no layers left, remove the entire cell
         if not cell.layers:
@@ -863,7 +856,7 @@ class PlotOrchestrator:
         )
 
         # Fully clean up old layer (including cell mapping)
-        self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=True)
+        self._cleanup_layer(layer_id, remove_from_cell_mapping=True)
 
         # Create new layer with new identity
         new_layer = Layer(layer_id=new_layer_id, config=new_config)
@@ -873,7 +866,7 @@ class PlotOrchestrator:
         self._layer_to_cell[new_layer_id] = cell_id
 
         # Subscribe new layer to workflow
-        self._subscribe_layer(grid_id, cell_id, new_layer)
+        self._setup_layer(grid_id, cell_id, new_layer)
         self._refresh_resolvers_for_cell(cell_id)
 
     def _remove_cell_and_cleanup(
@@ -893,31 +886,33 @@ class PlotOrchestrator:
         """
         # Unsubscribe all layers in the cell
         for layer in cell.layers:
-            self._unsubscribe_and_cleanup_layer(layer.layer_id)
+            self._cleanup_layer(layer.layer_id)
 
         # Remove cell from grid and mapping
         grid = self._grids[grid_id]
         del grid.cells[cell_id]
         del self._cell_to_grid[cell_id]
 
-    def _unsubscribe_and_cleanup_layer(
+    def _cleanup_layer(
         self, layer_id: LayerId, *, remove_from_cell_mapping: bool = True
     ) -> None:
         """
-        Unsubscribe a layer from workflow notifications and clean up state.
+        Tear down a layer's pipeline and clean up state.
+
+        Layer removal is the sole owner of extractor cleanup: unregistering
+        the data subscriber recomputes the buffers' retention requirements
+        from the surviving subscribers.
 
         Parameters
         ----------
         layer_id
-            ID of the layer to unsubscribe and clean up.
+            ID of the layer to clean up.
         remove_from_cell_mapping
             If True, remove the layer from _layer_to_cell mapping.
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
-        if layer_id in self._layer_subscriptions:
-            self._layer_subscriptions[layer_id].unsubscribe()
-            del self._layer_subscriptions[layer_id]
+        self._layer_jobs.pop(layer_id, None)
         # Clean up data subscription
         if layer_id in self._data_subscriptions:
             self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
@@ -1180,22 +1175,22 @@ class PlotOrchestrator:
         state = self._plot_data_service.get(layer_id)
         return None if state is None else state.version
 
-    def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
+    def _setup_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
-        Subscribe a layer to workflow lifecycle and set up initial notification.
+        Create a layer's plotter and data pipeline.
 
-        Uses LayerSubscription to handle both single and multi-source layers uniformly.
-        LayerSubscription manages:
-        - Subscribing to all required workflows
-        - Tracking which workflows have started
-        - Notifying when ALL workflows are ready (for multi-source layers)
-        - Propagating stop notifications
+        Keys are computable from the plot config alone (stable DataKeys carry
+        no job identity), so the pipeline is set up unconditionally at
+        add-layer time — no waiting for a workflow job. The initial dirty
+        mark pulls whatever the DataService retains under those keys, so a
+        layer bound to a stopped workflow renders its last results.
 
         Branches based on layer type (determined by data sources):
 
-        - **Static overlay** (single data source with empty source_names): Create plot
-          immediately without workflow subscription.
-        - **Dynamic layers** (single or multiple data sources): Use LayerSubscription.
+        - **Static overlay** (single data source with empty source_names):
+          computed once from params alone, no data pipeline.
+        - **Dynamic layers** (single or multiple data sources): pipeline plus
+          a run-state tracker consumed by ``sync_job_states``.
 
         Parameters
         ----------
@@ -1204,15 +1199,15 @@ class PlotOrchestrator:
         cell_id
             ID of the cell containing the layer.
         layer
-            The layer to subscribe.
+            The layer to set up.
         """
         layer_id = layer.layer_id
         config = layer.config
 
         if config.is_static():
-            # Static overlay: create plot immediately without subscription.
-            # Built unconditionally (no viewer gate): there is no data
-            # subscription to pull from later, and the build is a one-off.
+            # Static overlay: built unconditionally (no viewer gate): there is
+            # no data subscription to pull from later, and the build is a
+            # one-off.
             plotter = self._create_and_register_plotter(layer_id, config)
             state = self._plot_data_service.get(layer_id)
             if plotter is not None and state is not None:
@@ -1224,123 +1219,100 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        # Unified path for all non-static layers (single or multi-source)
-        def on_all_jobs_ready(ready: SubscriptionReady) -> None:
-            self._on_all_jobs_ready(layer_id, ready)
-
-        def on_any_job_stopped(job_number: JobNumber) -> None:
-            self._on_layer_job_stopped(layer_id, job_number)
-
         resolved_data_sources = _build_resolved_data_sources(
             config, self._job_orchestrator.get_workflow_registry()
         )
-        subscription = LayerSubscription(
-            data_sources=resolved_data_sources,
-            job_orchestrator=self._job_orchestrator,
-            on_ready=on_all_jobs_ready,
-            on_stopped=on_any_job_stopped,
+        workflow_ids = tuple(
+            dict.fromkeys(ds.workflow_id for ds in resolved_data_sources.values())
         )
-        self._layer_subscriptions[layer_id] = subscription
+        self._layer_jobs[layer_id] = _LayerJobTracker(
+            workflow_ids=workflow_ids,
+            job_numbers=self._current_job_numbers(workflow_ids),
+        )
 
-        # Register layer in WAITING_FOR_JOB state before starting subscription
-        # This ensures PlotDataService has state for the layer when widgets are notified
-        self._plot_data_service.layer_added(layer_id)
-
-        subscription.start()  # May fire on_ready synchronously if workflows running
+        plotter = self._create_and_register_plotter(layer_id, config)
+        if plotter is not None:
+            self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
+            # Set up data pipeline - updates mark the layer dirty; flush_frames
+            # pulls and rebuilds. The immediate mark covers retained data
+            # already present, so the plot shows without waiting for a delta.
+            try:
+                subscriber = self._plotting_controller.setup_pipeline(
+                    keys_by_role=_build_keys_by_role(resolved_data_sources),
+                    plot_name=config.plot_name,
+                    params=config.params,
+                    on_update=lambda: self._mark_layer_dirty(layer_id),
+                )
+                self._data_subscriptions[layer_id] = subscriber
+                self._mark_layer_dirty(layer_id)
+            except Exception:
+                error_msg = traceback.format_exc()
+                self._logger.exception(
+                    'Failed to set up data pipeline for layer_id=%s', layer_id
+                )
+                self._plot_data_service.error_occurred(layer_id, error_msg)
+            else:
+                if any(n is None for n in self._layer_jobs[layer_id].job_numbers):
+                    self._plot_data_service.job_stopped(layer_id)
 
         # Always notify current config - sessions will poll PlotDataService for state
         cell = self._grids[grid_id].cells[cell_id]
         self._notify_cell_updated(grid_id, cell_id, cell)
         self._persist_to_store()
 
-    def _on_all_jobs_ready(
-        self,
-        layer_id: LayerId,
-        ready: SubscriptionReady,
-    ) -> None:
-        """
-        Handle notification when all workflows for a layer are ready.
-
-        Called by LayerSubscription when all data sources have running jobs.
-        Sets up the data pipeline that computes plot state and stores it in
-        PlotDataService. Sessions poll PlotDataService for updates.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer to create plot for.
-        ready
-            SubscriptionReady containing keys_by_role for structured data access.
-        """
-        # Defensive check: layer may have been removed before callback fires
-        if layer_id not in self._layer_to_cell:
-            self._logger.warning(
-                'Ignoring all-jobs-ready for removed layer_id=%s', layer_id
-            )
-            return
-
-        config = self.get_layer_config(layer_id)
-
-        # Cleanup old data subscription if this layer had one (e.g., workflow restart)
-        if layer_id in self._data_subscriptions:
-            self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
-            del self._data_subscriptions[layer_id]
-
-        plotter = self._create_and_register_plotter(layer_id, config)
-        if plotter is None:
-            return
-
-        self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
-
-        # Set up data pipeline - updates mark the layer dirty; flush_frames
-        # pulls and rebuilds. The immediate mark covers a restart with data
-        # already present, so the plot shows without waiting for a new delta.
-        try:
-            subscriber = self._plotting_controller.setup_pipeline(
-                keys_by_role=ready.keys_by_role,
-                plot_name=config.plot_name,
-                params=config.params,
-                on_update=lambda: self._mark_layer_dirty(layer_id),
-            )
-            self._data_subscriptions[layer_id] = subscriber
-            self._mark_layer_dirty(layer_id)
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception(
-                'Failed to set up data pipeline for layer_id=%s', layer_id
-            )
-            self._plot_data_service.error_occurred(layer_id, error_msg)
-
-    def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
-        """
-        Handle workflow stopped notification for a layer.
-
-        Called when a workflow job is stopped. Marks the layer as stopped
-        and notifies the UI. The plot (if any) is preserved but marked as
-        no longer receiving updates.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer whose workflow was stopped.
-        job_number
-            Job number that was stopped.
-        """
-        # Defensive check: layer may have been removed before callback fires
-        if layer_id not in self._layer_to_cell:
-            self._logger.warning(
-                'Ignoring workflow stopped for removed layer_id=%s', layer_id
-            )
-            return
-
-        self._logger.info(
-            'Workflow stopped for layer_id=%s, job_number=%s',
-            layer_id,
-            job_number,
+    def _current_job_numbers(
+        self, workflow_ids: tuple[WorkflowId, ...]
+    ) -> tuple[JobNumber | None, ...]:
+        return tuple(
+            self._job_orchestrator.get_active_job_number(w) for w in workflow_ids
         )
 
-        # Transition to STOPPED state - UI will detect via polling
-        self._plot_data_service.job_stopped(layer_id)
+    def sync_job_states(self) -> None:
+        """Drive layer lifecycle state from polled workflow run-state.
+
+        Called from the orchestrator update loop (before ``flush_frames``),
+        replacing per-commit callbacks. For each layer, the active job
+        numbers of its workflows are compared against the last observed:
+
+        - changed and all running → a new generation was committed (its
+          buffers were cleared at commit): reset the layer presentation so
+          the stale frame is not shown.
+        - changed and not all running → the workflow stopped: freeze the
+          layer (retained data stays displayed).
+
+        A commit immediately followed by a stop within one poll interval is
+        observed as a stop, retaining the pre-commit frame instead of the
+        cleared buffers' blank; accepted as unreachable in practice.
+        """
+        for layer_id, tracker in list(self._layer_jobs.items()):
+            job_numbers = self._current_job_numbers(tracker.workflow_ids)
+            if job_numbers == tracker.job_numbers:
+                continue
+            was_running = all(n is not None for n in tracker.job_numbers)
+            tracker.job_numbers = job_numbers
+            if all(n is not None for n in job_numbers):
+                self._reset_layer_presentation(layer_id)
+            elif was_running:
+                self._plot_data_service.job_stopped(layer_id)
+
+    def _reset_layer_presentation(self, layer_id: LayerId) -> None:
+        """Give a layer a fresh plotter on generation change.
+
+        The commit that started the new generation cleared the workflow's
+        buffers; without a reset the layer would keep showing the previous
+        generation's last frame. Replacing the plotter drives the layer to
+        WAITING_FOR_DATA (blank until new data arrives) and deliberately
+        resets plotter-internal accumulation such as autoscale ranges —
+        previously an accident of the per-commit pipeline rebuild, now an
+        explicit choice. The data pipeline is untouched: extractors and keys
+        are generation-independent.
+        """
+        try:
+            config = self.get_layer_config(layer_id)
+        except KeyError:
+            # Layer removed on the UI thread while this poll pass was running.
+            return
+        self._create_and_register_plotter(layer_id, config)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]

@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for job state persistence in JobOrchestrator."""
 
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
@@ -77,54 +77,6 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
 
         # Verify params were also restored correctly
         assert restored_active['monitor1'].params == custom_params.model_dump()
-
-
-def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
-    """
-    Test that subscribers are notified when an active job is restored.
-
-    This verifies Option A behavior: passive restoration notifies subscribers
-    so they can display restored job state.
-    """
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        name='monitor_histogram',
-        version=1,
-    )
-    source_names = ['monitor1']
-
-    # Start workflow and persist state
-    with DashboardBackend(
-        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
-    ) as backend1:
-        job_ids = backend1.workflow_controller.start_workflow(
-            workflow_id=workflow_id,
-            source_names=source_names,
-            config=MonitorDataParams(),
-        )
-        original_job_number = job_ids[0].job_number
-
-    # Create second backend and subscribe before restoration
-    with DashboardBackend(
-        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
-    ) as backend2:
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        # Track subscriber notifications
-        notified_job_numbers = []
-
-        def track_notification(job_number: JobNumber) -> None:
-            notified_job_numbers.append(job_number)
-
-        # Subscribe to workflow - should be immediately notified of restored job
-        backend2.job_orchestrator.subscribe_to_workflow(
-            workflow_id,
-            WorkflowCallbacks(on_started=track_notification),
-        )
-
-        # Subscriber should have been notified immediately with restored job_number
-        assert len(notified_job_numbers) == 1
-        assert notified_job_numbers[0] == original_job_number
 
 
 def test_job_transition_persists_previous_job(tmp_path) -> None:

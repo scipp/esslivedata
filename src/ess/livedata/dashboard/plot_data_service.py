@@ -4,8 +4,8 @@
 Plot data service for multi-session synchronization.
 
 Provides storage for plot layer state using an explicit state machine.
-Each layer transitions through well-defined states: WAITING_FOR_JOB,
-WAITING_FOR_DATA, READY, STOPPED, and ERROR.
+Each layer transitions through well-defined states: WAITING_FOR_DATA,
+READY, STOPPED, and ERROR.
 
 Change notification uses version-based polling - UI components track
 last-seen versions and rebuild when versions change.
@@ -30,26 +30,28 @@ logger = structlog.get_logger(__name__)
 class LayerState(Enum):
     """Explicit states for a plot layer's lifecycle.
 
-    State transitions are validated to ensure correct sequencing:
-
-    WAITING_FOR_JOB → WAITING_FOR_DATA   [job_started(plotter)]
-    WAITING_FOR_JOB → ERROR              [error_occurred(msg)]
+    States are derived from workflow run-state (polled) plus data arrival,
+    not from job lifecycle callbacks. State transitions are validated to
+    ensure correct sequencing:
 
     WAITING_FOR_DATA → READY             [data_arrived()]
     WAITING_FOR_DATA → STOPPED           [job_stopped()]
     WAITING_FOR_DATA → ERROR             [error_occurred(msg)]
 
     READY → STOPPED                      [job_stopped()]
-    READY → WAITING_FOR_DATA             [job_restarted(plotter)]
+    READY → WAITING_FOR_DATA             [job_started(plotter)]
     READY → ERROR                        [error_occurred(msg)]
 
     STOPPED → WAITING_FOR_DATA           [job_started(plotter)]
     STOPPED → ERROR                      [error_occurred(msg)]
 
     ERROR → WAITING_FOR_DATA             [job_started(plotter)]
+
+    A layer in STOPPED may still display retained data: ``data_arrived``
+    while STOPPED is a no-op and ``has_displayable_plot`` reports True once
+    the plotter holds a computed frame.
     """
 
-    WAITING_FOR_JOB = auto()
     WAITING_FOR_DATA = auto()
     READY = auto()
     STOPPED = auto()
@@ -74,15 +76,10 @@ class LayerStateMachine:
     True and the orchestrator rebuilds the layer from a fresh DataService
     snapshot, synchronously on the polling thread — deliberately, so the same
     poll pass's component rebuild observes fresh ``has_cached_state``.
-
-    Parameters
-    ----------
-    initial_state:
-        Initial state for the layer. Defaults to WAITING_FOR_JOB.
     """
 
-    def __init__(self, initial_state: LayerState = LayerState.WAITING_FOR_JOB) -> None:
-        self._state = initial_state
+    def __init__(self) -> None:
+        self._state = LayerState.WAITING_FOR_DATA
         self._version = 0
         self._plotter: Plotter | None = None
         self._error_message: str | None = None
@@ -122,27 +119,16 @@ class LayerStateMachine:
         """
         Transition to WAITING_FOR_DATA when a job starts.
 
-        Valid from: WAITING_FOR_JOB, WAITING_FOR_DATA, STOPPED, ERROR, READY.
-
-        When called from WAITING_FOR_DATA (workflow restarted before data
-        arrived), state doesn't change but version still increments because
-        the plotter is replaced and UI needs to rebuild with the new one.
+        Valid from any state. When called from WAITING_FOR_DATA (workflow
+        restarted before data arrived), state doesn't change but version
+        still increments because the plotter is replaced and UI needs to
+        rebuild with the new one.
 
         Parameters
         ----------
         plotter:
             The plotter instance for this job.
         """
-        valid_from = {
-            LayerState.WAITING_FOR_JOB,
-            LayerState.WAITING_FOR_DATA,  # Allow replacing plotter while waiting
-            LayerState.STOPPED,
-            LayerState.ERROR,
-            LayerState.READY,
-        }
-        if self._state not in valid_from:
-            return
-
         self._state = LayerState.WAITING_FOR_DATA
         self._error_message = None
         self._version += 1
@@ -153,10 +139,11 @@ class LayerStateMachine:
         Transition to READY when data arrives.
 
         Valid from: WAITING_FOR_DATA.
-        No-op if already in READY state (data continues to arrive after first update).
+        No-op from READY (data continues to arrive after first update) and
+        from STOPPED (a layer bound to a stopped workflow's retained data
+        renders it but stays STOPPED).
         """
-        if self._state == LayerState.READY:
-            # Already ready - subsequent data arrivals are expected, no-op
+        if self._state in {LayerState.READY, LayerState.STOPPED}:
             return
 
         if self._state != LayerState.WAITING_FOR_DATA:
@@ -272,9 +259,10 @@ class PlotDataService:
     Manages plot layer state using explicit state machines.
 
     PlotOrchestrator controls layer lifecycle through state machine transitions:
-    - job_started(): Called when a workflow job starts with a plotter
+    - job_started(): Called at layer setup and when a run-state poll observes
+      a new generation (with a fresh plotter)
     - data_arrived(): Called when first data arrives for a layer
-    - job_stopped(): Called when a workflow job stops
+    - job_stopped(): Called when a run-state poll observes the workflow stopped
     - error_occurred(): Called when an error occurs
 
     Each transition increments the layer's version counter. UI components poll
@@ -303,22 +291,6 @@ class PlotDataService:
         """
         with self._lock:
             return self._layers.get(layer_id)
-
-    def layer_added(self, layer_id: LayerId) -> None:
-        """
-        Register a layer in WAITING_FOR_JOB state.
-
-        Called when a dynamic layer is added to the grid but before any
-        workflow job has started for it.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to register.
-        """
-        with self._lock:
-            if layer_id not in self._layers:
-                self._layers[layer_id] = LayerStateMachine()
 
     def job_started(self, layer_id: LayerId, plotter: Any) -> None:
         """
