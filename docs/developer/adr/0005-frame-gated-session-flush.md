@@ -1,6 +1,6 @@
 # ADR 0005: Frame-gated per-session plot flush
 
-- Status: accepted (amended 2026-07-02, see bottom)
+- Status: accepted (amended 2026-07-02 and 2026-07-06, see bottom)
 - Deciders: Simon
 - Date: 2026-06-25
 
@@ -72,10 +72,12 @@ of the frame just shown) and otherwise on a slow stall cadence
 ## Alternatives considered
 
 - **Push from the ingestion thread** (event-driven `pipe.send`, or
-  `doc.add_next_tick_callback` onto each captured session document). Rejected: it
-  reintroduces the cross-thread session mutation the polling architecture exists
-  to avoid. `pn.state.execute` does not help -- it targets the *current* session
-  context, useless from the ingestion thread.
+  `doc.add_next_tick_callback` carrying the payload onto each captured session
+  document). Rejected: it reintroduces the cross-thread session mutation the
+  polling architecture exists to avoid. `pn.state.execute` does not help -- it
+  targets the *current* session context, useless from the ingestion thread.
+  This rejection covers *data-carrying* push; see the 2026-07-06 amendment for
+  the data-free wake-up case.
 - **Naively lower the fixed poll period.** Rejected: each pass stays batched, but
   computes finishing in different sub-windows flush on different ticks, so
   multi-plot updates stagger.
@@ -211,3 +213,32 @@ Consequences for the guarantees above:
   data than a delivery would have carried. This is what makes a future
   min-frame-interval throttle in `flush_frames` a policy choice rather than a
   correctness question.
+
+## Amendment (2026-07-06): scope of the `add_next_tick_callback` rejection
+
+The *Alternatives considered* rejection above reads as a blanket ban on
+`doc.add_next_tick_callback` from the ingestion thread. It is not. What that
+rejection encodes is **data-carrying push and direct cross-thread mutation of
+session-bound objects**, plus `pn.state.execute`, which genuinely cannot
+resolve a session context off the session IOLoop (Panel #5488).
+
+A **data-free wake-up** is permitted: the ingestion thread may, after
+`flush_frames` commits a grid, schedule a no-argument tick on a registered
+session document. The invariant this ADR exists to protect is untouched --
+every session-bound mutation still happens inside the tick, on that session's
+IOLoop, in document context. Only the *trigger* moves from clock to event.
+
+Verified on panel 1.9.3 / bokeh 3.9.1: a background-thread
+`doc.add_next_tick_callback(tick)` runs the tick in the correct session
+context (`pn.state.curdoc` resolves; `pn.io.hold()` + `doc.models.freeze()`
+behave normally) across concurrent sessions, and scheduling into a destroyed
+document raises catchably, so stale registrations unregister lazily.
+
+Because the tick body is the existing generation-gated pass -- idempotent, and
+a no-op when nothing advanced -- a lost or duplicated wake costs nothing. That
+makes the periodic callback a safety net rather than the detection clock, so
+it can drop to ~1--2 s for the things that genuinely need a clock (heartbeat,
+notifications, freshness-pill stall aging), retiring the 100 ms tick's
+per-tick `hold`+`freeze` recompute and layer scan. Sequencing and the
+`WakeupHub` design live in #1046; the delivery model this follows from is
+ADR 0007.
