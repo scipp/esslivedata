@@ -6,13 +6,20 @@
 
 ## Context
 
-The dashboard runs on three kinds of threads: the shared ingestion thread
+The dashboard runs on two kinds of threads: the shared ingestion thread
 (`DashboardServices._update_loop`, draining Kafka and driving orchestrator
-updates at ~50 ms), each session's Tornado/Bokeh IOLoop (UI callbacks and the
-100 ms session poll, under that session's document lock), and the polling
-thread paths that run layer activation. Session-bound objects (`Pipe`,
-`DynamicMap`, Bokeh documents) may only be mutated on their own session's
-IOLoop — a hard constraint established in ADR 0005.
+updates at ~50 ms), and each session's Tornado/Bokeh IOLoop (UI callbacks and
+the 100 ms session poll, under that session's document lock). Layer activation
+runs on the latter — the poll pass calls `LayerStateMachine.set_active`, so
+activation flushes and Kafka-delta builds enter the same gate from opposite
+threads. Session-bound objects (`Pipe`, `DynamicMap`, Bokeh documents) may only
+be mutated on their own session's IOLoop — a hard constraint established in
+ADR 0005.
+
+One path crosses that boundary by design: the stale-session reaper runs on the
+ingestion thread (`SessionRegistry.cleanup_stale_sessions`), so
+`SessionUpdater` cleanup handlers execute off their own session's IOLoop and
+must be safe there.
 
 Historically, state changes propagated between these threads by two competing
 mechanisms:
