@@ -5,7 +5,7 @@ import uuid
 import pydantic
 import pytest
 
-from ess.livedata.dashboard.plot_data_service import PlotDataService
+from ess.livedata.dashboard.plot_data_service import LayerState, PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     DataSourceConfig,
@@ -48,6 +48,9 @@ class FakePlotter:
         self._initialized_data = None
         self._cached_state = None
         self.compute_calls: list[dict] = []
+        # Invoked at the start of compute(); lets tests simulate concurrent
+        # events (plotter swap, layer removal) landing mid-build.
+        self.on_compute = None
 
     def initialize_from_data(self, data):
         self._initialized_data = data
@@ -57,6 +60,8 @@ class FakePlotter:
         return FakePresenter(self)
 
     def compute(self, data, **kwargs):
+        if self.on_compute is not None:
+            self.on_compute()
         self.compute_calls.append({'data': data, **kwargs})
         result = FakePlot()
         self._cached_state = result
@@ -165,8 +170,9 @@ class FakePlottingController:
     subscription logic), but returns fake plots for easy assertion.
     """
 
-    def __init__(self, stream_manager):
+    def __init__(self, stream_manager, extractor_factory=None):
         self._stream_manager = stream_manager
+        self._extractor_factory = extractor_factory
         self._should_raise = False
         self._exception_to_raise = None
         self._plot_object = FakePlot()
@@ -228,9 +234,17 @@ class FakePlottingController:
         )
 
         # Use real StreamManager for subscription (avoids duplicating logic)
+        extractors = None
+        if self._extractor_factory is not None:
+            extractors = {
+                key: self._extractor_factory()
+                for keys in keys_by_role.values()
+                for key in keys
+            }
         return self._stream_manager.make_stream(
             keys_by_role,
             on_update=on_update,
+            extractors=extractors,
         )
 
     def create_plotter(
@@ -1198,6 +1212,133 @@ class TestErrorHandling:
         # Should still be able to add more grids
         grid_id = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         assert plot_orchestrator.get_grid(grid_id) is not None
+
+
+def feed_result_data(data_service, config, workflow_id, job_number):
+    """Populate DataService with data for all of a plot config's sources."""
+    import scipp as sc
+
+    from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+    for source_name in config.source_names:
+        result_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name=source_name, job_number=job_number),
+            output_name=config.view_name,
+        )
+        data_service[result_key] = sc.scalar(1.0)
+
+
+class TestBuildRobustness:
+    """Pull-and-build vs. bad extractors and concurrent swaps/removals."""
+
+    def test_raising_extractor_marks_layer_error_and_flush_survives(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        fake_stream_manager,
+    ):
+        """A raising extractor must transition the layer to ERROR, not
+        propagate out of flush_frames (which would kill the update thread)."""
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
+        # Subclassing keeps the buffer type the scalar test data fits into.
+        class RaisingExtractor(LatestValueExtractor):
+            def extract(self, data):
+                raise RuntimeError("extractor boom")
+
+        controller = FakePlottingController(
+            stream_manager=fake_stream_manager,
+            extractor_factory=RaisingExtractor,
+        )
+        plot_data_service = PlotDataService()
+        orchestrator = PlotOrchestrator(
+            plotting_controller=controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+        )
+        grid_id = orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        config = make_plot_config(workflow_id)
+        cell_id = add_cell_with_layer(orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+        layer_id = orchestrator.get_cell(cell_id).layers[0].layer_id
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(fake_data_service, config, workflow_id, job_ids[0].job_number)
+
+        orchestrator.flush_frames()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state is LayerState.ERROR
+        assert "extractor boom" in state.error_message
+
+    def test_stale_build_does_not_mark_swapped_plotter_ready(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        """A build whose plotter is replaced mid-compute (job restart on the
+        UI thread) must not transition the replacement: it has no cached
+        state, so READY would render an empty plot."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(
+            fake_data_service, plot_cell[1], workflow_id, job_ids[0].job_number
+        )
+
+        state = plot_data_service.get(layer_id)
+        old_plotter = fake_plotting_controller.created_plotters[0]
+        new_plotter = FakePlotter()
+        old_plotter.on_compute = lambda: state.job_started(new_plotter)
+
+        plot_orchestrator.flush_frames()
+
+        assert old_plotter.compute_calls  # the stale build did run
+        assert state.plotter is new_plotter
+        assert state.state is LayerState.WAITING_FOR_DATA
+
+    def test_layer_removed_during_activation_build_is_tolerated(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        """Removing the layer while its 0→1 activation build runs (UI thread
+        racing the polling thread) must not raise out of activate_layer."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_cell(grid_id, plot_cell[0])
+        layer_id = plot_orchestrator.add_layer(cell_id, plot_cell[1])
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(
+            fake_data_service, plot_cell[1], workflow_id, job_ids[0].job_number
+        )
+        plot_orchestrator.flush_frames()  # no viewer yet: dirty marks dropped
+
+        plotter = fake_plotting_controller.created_plotters[0]
+        plotter.on_compute = lambda: plot_orchestrator.remove_layer(layer_id)
+
+        token = _Viewer()
+        plot_orchestrator.activate_layer(layer_id, token, True)
+
+        assert plotter.compute_calls  # the build ran and triggered the removal
+        assert plot_data_service.get(layer_id) is None
 
 
 class TestCleanupAndResourceManagement:

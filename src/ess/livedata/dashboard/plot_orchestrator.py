@@ -1095,51 +1095,95 @@ class PlotOrchestrator:
 
     def _refresh_layer(self, layer_id: LayerId) -> None:
         """Rebuild a layer from current DataService content, committing its grid."""
-        if self._pull_and_build(layer_id):
-            self._frame_clock.commit(self._grid_of_layer(layer_id))
+        if not self._pull_and_build(layer_id):
+            return
+        try:
+            grid_id = self._grid_of_layer(layer_id)
+        except KeyError:
+            # The UI thread removed the layer while we were building; a layer
+            # without a cell has nothing to commit.
+            return
+        self._frame_clock.commit(grid_id)
 
     def _pull_and_build(self, layer_id: LayerId) -> bool:
         """Pull a layer's data through its extractors and rebuild its plot.
 
-        Returns True if a build ran (also on a failed build, which transitions
-        the layer to ERROR and thus still warrants a frame commit), False if
-        the layer is gone or its data is not ready.
+        Returns True if a build ran (also on a failed pull or build, which
+        transitions the layer to ERROR and thus still warrants a frame
+        commit), False if the layer is gone or its data is not ready.
         """
         if layer_id not in self._layer_to_cell:
             return False
         subscriber = self._data_subscriptions.get(layer_id)
         if subscriber is None:
             return False
-        assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
+        state = self._plot_data_service.get(layer_id)
+        if state is None or state.plotter is None:
+            return False
+        # Capture version before plotter: ``job_started`` bumps the version
+        # before swapping the plotter, so reading in this order guarantees a
+        # concurrent swap — which also replaces the subscription this pull
+        # goes through — is caught by the version check in ``_compute_layer``.
+        version = state.version
+        plotter = state.plotter
+        try:
+            assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception('Failed to extract data for layer_id=%s', layer_id)
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.error_occurred(layer_id, error_msg)
+            return True
         if assembled is None:
             return False
-        return self._build_layer(layer_id, assembled)
+        return self._compute_layer(layer_id, plotter, version, assembled)
 
     def _build_layer(
         self,
         layer_id: LayerId,
         data: dict[str, dict[ResultKey, Any]],
     ) -> bool:
+        """Run the layer's current plotter on ``data`` (setup-time entry point)."""
+        state = self._plot_data_service.get(layer_id)
+        if state is None or state.plotter is None:
+            return False
+        return self._compute_layer(layer_id, state.plotter, state.version, data)
+
+    def _compute_layer(
+        self,
+        layer_id: LayerId,
+        plotter: Any,
+        version: int,
+        data: dict[str, dict[ResultKey, Any]],
+    ) -> bool:
         """Run ``plotter.compute`` and transition the layer to READY or ERROR.
+
+        ``plotter`` and ``version`` are the caller's pre-pull capture. If the
+        layer's version moved on by compute end, the plotter was swapped (job
+        restart on the UI thread) and both transitions are skipped: the stale
+        result must neither flip the new plotter READY nor mark it ERROR. The
+        replacement subscription re-marked the layer dirty, so the next flush
+        rebuilds it consistently.
 
         Thread-agnostic: runs on whatever thread the caller is on — the bg
         ingestion thread when entered via ``flush_frames``, the polling thread
         when entered via ``activate_layer``, the UI thread for setup-time
         static-overlay builds.
         """
-        state = self._plot_data_service.get(layer_id)
-        if state is None or state.plotter is None:
-            return False
         try:
-            state.plotter.compute(
-                data, title_resolver=self._layer_resolvers.get(layer_id)
-            )
-            self._plot_data_service.data_arrived(layer_id)
+            plotter.compute(data, title_resolver=self._layer_resolvers.get(layer_id))
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to compute state for layer_id=%s', layer_id)
-            self._plot_data_service.error_occurred(layer_id, error_msg)
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.error_occurred(layer_id, error_msg)
         return True
+
+    def _layer_version(self, layer_id: LayerId) -> int | None:
+        state = self._plot_data_service.get(layer_id)
+        return None if state is None else state.version
 
     def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
