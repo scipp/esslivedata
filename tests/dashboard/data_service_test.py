@@ -1554,3 +1554,58 @@ def test_buffering_continues_after_registration():
         service["key1"] = make_test_data(i, time=float(i))
     snapshot = service.snapshot(subscriber)
     assert snapshot["key1"].sizes["time"] == 3
+
+
+class TestUnregisterExtractorSymmetry:
+    """Unregistering drops a subscriber's extractors from buffer retention.
+
+    Without this symmetry, extractor lists (and the retention they pin) grow
+    without bound over repeated register/unregister cycles on a long-lived key.
+    """
+
+    @staticmethod
+    def _history_subscriber() -> SimpleTestSubscriber:
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+
+        subscriber = SimpleTestSubscriber({"key1"})
+        subscriber._extractors = {"key1": FullHistoryExtractor()}
+        return subscriber
+
+    def test_history_preserved_across_unregister_reregister_cycle(self):
+        """A plot-edit style unregister/re-register must not wipe history."""
+        service = DataService[str, int]()
+        sub1 = self._history_subscriber()
+        service.register_subscriber(sub1)
+        for i in range(3):
+            service["key1"] = make_test_data(i, time=float(i))
+
+        service.unregister_subscriber(sub1)
+        sub2 = self._history_subscriber()
+        service.register_subscriber(sub2)
+
+        snapshot = service.snapshot(sub2)
+        assert snapshot["key1"].sizes["time"] == 3
+
+    def test_unregister_releases_retention_requirement(self):
+        """A departed subscriber's timespan no longer pins the buffer."""
+        from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
+
+        service = DataService[str, int]()
+        latest = SimpleTestSubscriber({"key1"})
+        service.register_subscriber(latest)
+        service["key1"] = make_test_data(0, time=0.0)
+
+        for _ in range(20):
+            history = self._history_subscriber()
+            service.register_subscriber(history)
+            assert service._buffer_manager["key1"].get_required_timespan() == float(
+                "inf"
+            )
+            service.unregister_subscriber(history)
+            # Retention shrinks to the surviving LatestValueExtractor; the
+            # buffer stays temporal (sticky-upward). Extractor count is the
+            # leak observable, unreachable through the public API.
+            buffer = service._buffer_manager["key1"]
+            assert buffer.get_required_timespan() == 0.0
+            assert isinstance(buffer, TemporalBuffer)
+            assert len(service._buffer_manager._states["key1"].extractors) == 1
