@@ -11,7 +11,7 @@ import holoviews as hv
 import numpy as np
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
@@ -37,7 +37,7 @@ class SlicerState:
     scale across all slices.
     """
 
-    data: dict[ResultKey, sc.DataArray]
+    data: dict[DataKey, sc.DataArray]
     clim: tuple[float, float] | None = None
 
 
@@ -302,7 +302,7 @@ class SlicerPlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
-    def compute(self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs) -> None:
+    def compute(self, data: dict[str, dict[DataKey, sc.DataArray]], **kwargs) -> None:
         """
         Prepare 3D data for slicing with pre-computed color bounds.
 
@@ -345,7 +345,7 @@ class SlicerPlotter(Plotter):
         self._set_cached_state(SlicerState(data=prepared_data, clim=clim))
 
     def _compute_global_clim(
-        self, data: dict[ResultKey, sc.DataArray]
+        self, data: dict[DataKey, sc.DataArray]
     ) -> tuple[float, float] | None:
         """Compute global color limits from all 3D data for consistent color scale."""
         use_log_scale = self._scale_opts.color_scale == PlotScale.log

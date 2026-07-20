@@ -5,15 +5,15 @@
 These plotters create interactive BoxEdit/PolyDraw elements that allow users
 to draw ROIs visually. Edits are published to Kafka for backend processing.
 
-These plotters subscribe to the ROI readback output stream for job_id context.
-The readback data itself is not used for display - only the ResultKey is needed
+These plotters subscribe to the ROI readback output stream for source context.
+The readback data itself is not used for display - only the DataKey is needed
 to identify where to publish ROI updates.
 
 Architecture
 ------------
 ROI request plotters follow the two-stage compute/present pattern:
 
-1. compute(): Extracts data-dependent info (ResultKey, coordinate units) and
+1. compute(): Extracts data-dependent info (DataKey, coordinate units) and
    forwards the raw data. Called once when data arrives.
 
 2. create_presenter(): Creates a presenter with HoloViews config and an edit
@@ -305,7 +305,7 @@ class PolygonConverter:
 
 
 if TYPE_CHECKING:
-    from ess.livedata.config.workflow_spec import ResultKey
+    from ess.livedata.config.workflow_spec import DataKey
 
 # TypeVars for generic base class
 ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
@@ -550,7 +550,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self._initial_rois: dict[int, ROIType] = self._parse_initial_geometry()
 
         # Data-dependent state (set during compute())
-        self._data_key: ResultKey | None = None
+        self._data_key: DataKey | None = None
         self._x_unit: str | None = None
         self._y_unit: str | None = None
 
@@ -591,12 +591,12 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         """Create a presenter for this plotter."""
 
     def compute(
-        self, data: dict[str, dict[ResultKey, sc.DataArray]], **kwargs
-    ) -> dict[ResultKey, sc.DataArray]:
+        self, data: dict[str, dict[DataKey, sc.DataArray]], **kwargs
+    ) -> dict[DataKey, sc.DataArray]:
         """
         Extract data-dependent info and forward data to presenter.
 
-        Stores the ResultKey and coordinate units from the ROI readback data.
+        Stores the DataKey and coordinate units from the ROI readback data.
         These are used by the edit handler callback created in create_presenter().
 
         Parameters
@@ -683,12 +683,17 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             logger.warning("%s geometry not configured", self._geometry_type())
             return
 
-        self._roi_publisher.publish(self._data_key.job_id, rois, geometry)
+        self._roi_publisher.publish(
+            workflow_id=self._data_key.workflow_id,
+            source_name=self._data_key.source_name,
+            rois=rois,
+            geometry=geometry,
+        )
         logger.info(
-            "Published %d %s ROI(s) for job %s",
+            "Published %d %s ROI(s) for source %s",
             len(rois),
             self._geometry_type(),
-            self._data_key.job_id,
+            self._data_key.source_name,
         )
 
 

@@ -8,7 +8,7 @@ from typing import TypeVar
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    ResultKey,
+    DataKey,
     WorkflowSpec,
 )
 
@@ -174,7 +174,7 @@ class PlottingController:
 
     def setup_pipeline(
         self,
-        keys_by_role: dict[str, list[ResultKey]],
+        keys_by_role: dict[str, list[DataKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_update: Callable[[], None],
@@ -189,7 +189,7 @@ class PlottingController:
         Parameters
         ----------
         keys_by_role
-            ResultKeys grouped by role (built by LayerSubscription).
+            DataKeys grouped by role (built by LayerSubscription).
             E.g., {"primary": [...], "x_axis": [...]}
         plot_name
             Name of the plotter to use.
@@ -304,10 +304,10 @@ def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
 
 
 def create_extractors_from_params(
-    keys: list[ResultKey],
+    keys: list[DataKey],
     window: TimeWindowParams | None,
     spec: PlotterSpec | None = None,
-) -> dict[ResultKey, UpdateExtractor]:
+) -> dict[DataKey, UpdateExtractor]:
     """
     Create extractors based on plotter spec and window configuration.
 
@@ -335,7 +335,7 @@ def create_extractors_from_params(
     # No fixed requirement - check if window params provided.
     # `since_start` and window mode with duration==0 both reduce to taking the
     # most recent value of the subscribed stream (stream choice is encoded in
-    # the ResultKey). Only window mode with duration>0 needs aggregation.
+    # the DataKey). Only window mode with duration>0 needs aggregation.
     if (
         window is not None
         and window.mode is TimeWindowMode.window

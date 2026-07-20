@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import uuid
 from enum import IntEnum
 
 import holoviews as hv
@@ -13,7 +12,7 @@ import pytest
 import scipp as sc
 from bokeh.models import HoverTool
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.flatten_plotter import (
     FlattenAxisConfig,
     FlattenParams,
@@ -56,10 +55,10 @@ hv.extension('bokeh')
 
 
 @pytest.fixture
-def data_key() -> ResultKey:
-    return ResultKey(
+def data_key() -> DataKey:
+    return DataKey(
         workflow_id=WorkflowId(instrument='inst', namespace='ns', name='wf', version=1),
-        job_id=JobId(source_name='src', job_number=uuid.uuid4()),
+        source_name='src',
         output_name='out',
     )
 

@@ -6,7 +6,7 @@ import holoviews as hv
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
     PRIMARY,
     X_AXIS,
@@ -32,11 +32,11 @@ def _make_line_renderer() -> LinePlotter:
     return LinePlotter(scale_opts=PlotScaleParams(), mode='histogram')
 
 
-def _make_result_key(source_name: str) -> ResultKey:
-    """Create a ResultKey for testing with the given source name."""
-    return ResultKey(
+def _make_result_key(source_name: str) -> DataKey:
+    """Create a DataKey for testing with the given source name."""
+    return DataKey(
         workflow_id=WorkflowId(instrument='test', name='test', version=1),
-        job_id=JobId(source_name=source_name, job_number=1),
+        source_name=source_name,
         output_name='result',
     )
 

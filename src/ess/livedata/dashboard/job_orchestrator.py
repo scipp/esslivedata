@@ -33,7 +33,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
-from .active_job_registry import ActiveJobRegistry
+from .active_job_registry import ActiveJobRegistry, Generation
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
@@ -79,6 +79,13 @@ class JobSet(BaseModel):
             JobId(source_name=source_name, job_number=self.job_number)
             for source_name in self.jobs
         ]
+
+
+def _generation_of(job_set: JobSet | None) -> Generation | None:
+    """Registry-facing view of a JobSet: its job_number and config."""
+    if job_set is None:
+        return None
+    return Generation(job_number=job_set.job_number, config=job_set.jobs)
 
 
 class StoppedReason(StrEnum):
@@ -243,7 +250,6 @@ class JobOrchestrator:
                 if current_data := config_data.get('current_job'):
                     try:
                         state.current = JobSet.model_validate(current_data)
-                        self._active_job_registry.restore(state.current.job_number)
                     except (KeyError, ValueError, TypeError) as e:
                         logger.warning(
                             'Failed to restore active job for workflow %s: %s',
@@ -260,6 +266,13 @@ class JobOrchestrator:
                             workflow_id,
                             e,
                         )
+
+                if state.current is not None or state.previous is not None:
+                    self._active_job_registry.restore(
+                        workflow_id,
+                        current=_generation_of(state.current),
+                        last=_generation_of(state.previous),
+                    )
 
             self._workflows[workflow_id] = state
 
@@ -403,14 +416,6 @@ class JobOrchestrator:
                 for job_id in state.current.job_ids()
             )
             logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
-            # The outgoing job becomes the new state.previous. Buffered data
-            # for it is retained so layers created while the workflow is
-            # stopped can still display the last known state. The job that was
-            # previously kept as state.previous is dropped here, so its
-            # buffered data is no longer reachable and is cleaned up.
-            self._deactivate_previous_job(state)
-            if state.previous is not None:
-                self._active_job_registry.cleanup(state.previous.job_number)
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -438,6 +443,30 @@ class JobOrchestrator:
             message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
         )
 
+        # Set as current JobSet
+        state.current = job_set
+        state.stopped_reason = None
+
+        # Flip the generation, clear the workflow's buffers, and notify
+        # subscribers atomically under the ingestion guard, *before* sending
+        # the commands: new-generation data cannot exist on the wire before
+        # the flip, and when Orchestrator.update() next runs, the generation
+        # filter and the DataService subscribers are consistent. The clear
+        # gives the new generation a blank slate — a windowed extractor can
+        # never aggregate across a parameter change — and applies equally to
+        # a byte-identical recommit (uniform semantics, matching the fresh
+        # keys that per-commit job_numbers used to provide).
+        with self._active_job_registry.ingestion_guard():
+            self._active_job_registry.begin_generation(
+                workflow_id, job_set.job_number, config=job_set.jobs
+            )
+            self._notify_workflow_available(workflow_id, job_set.job_number)
+
+        # A send failure swallowed by the sink (#1037 finding 7) leaves the
+        # generation flipped and buffers cleared with no job to fill them:
+        # a blank plot until pending-command expiry surfaces it. This is
+        # behavior parity with the pre-stable-keys ordering, which also
+        # deactivated the old job before sending.
         self._command_service.send_batch(commands)
 
         logger.info(
@@ -446,19 +475,6 @@ class JobOrchestrator:
             job_set.job_number,
             list(state.staged_jobs.keys()),
         )
-
-        # Set as current JobSet
-        state.current = job_set
-        state.stopped_reason = None
-
-        # Activate the new job number under the ingestion guard, then notify
-        # subscribers. This ensures that when Orchestrator.update() next runs,
-        # both the active-set membership and the DataService subscribers are
-        # consistent: forward() won't accept data for the new job until the
-        # subscriber (with the right extractors) is registered.
-        with self._active_job_registry.ingestion_guard():
-            self._active_job_registry.activate(job_set.job_number)
-            self._notify_workflow_available(workflow_id, job_set.job_number)
 
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
@@ -473,18 +489,6 @@ class JobOrchestrator:
     def active_job_registry(self) -> ActiveJobRegistry:
         """Registry shared with Orchestrator for thread-safe data flow."""
         return self._active_job_registry
-
-    def _deactivate_previous_job(self, state: WorkflowState) -> None:
-        """Deactivate the current job (which is becoming state.previous).
-
-        Removes the job from the active set so that late results published
-        before the backend processes the stop command are discarded. Buffered
-        data is retained so the just-stopped job can still feed plots; it is
-        cleaned up by the caller once state.previous is overwritten.
-        """
-        if state.current is None:
-            return
-        self._active_job_registry.deactivate(state.current.job_number)
 
     def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
         """Persist full workflow state (config + active jobs) to config store.
@@ -812,10 +816,10 @@ class JobOrchestrator:
     ) -> None:
         """Clear active job state, persist, and notify subscribers.
 
-        The just-stopped job becomes state.previous and its buffered data is
-        retained so that plots created while the workflow is stopped can
-        still display its last results. The prior state.previous (if any) is
-        dropped here and its buffered data is cleaned up.
+        The just-stopped job becomes state.previous. Its buffered data stays
+        under the workflow's stable keys — nothing is evicted on stop — so
+        plots created while the workflow is stopped still display its last
+        results; the next commit's generation flip clears them.
         """
         state = self._workflows[workflow_id]
         job_number = state.current.job_number if state.current else None
@@ -823,9 +827,7 @@ class JobOrchestrator:
         if state.current is not None:
             for job_id in state.current.job_ids():
                 self._job_states.pop(job_id, None)
-            self._active_job_registry.deactivate(state.current.job_number)
-            if state.previous is not None:
-                self._active_job_registry.cleanup(state.previous.job_number)
+            self._active_job_registry.deactivate(workflow_id)
             state.previous = state.current
             state.current = None
         state.stopped_reason = reason

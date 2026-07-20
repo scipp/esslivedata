@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
 
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey
+from ess.livedata.config.workflow_spec import DataKey, JobNumber
 
 if TYPE_CHECKING:
     from ess.livedata.dashboard.job_orchestrator import SubscriptionId
@@ -29,11 +29,11 @@ class SubscriptionReady:
     """Data provided when all workflows are ready.
 
     The keys_by_role dict maps role names (e.g., "primary", "x_axis") to lists
-    of ResultKeys for that role. This structure is preserved through the data
+    of DataKeys for that role. This structure is preserved through the data
     pipeline, allowing plotters to receive pre-structured data.
     """
 
-    keys_by_role: dict[str, list[ResultKey]] = field(default_factory=dict)
+    keys_by_role: dict[str, list[DataKey]] = field(default_factory=dict)
 
 
 class LayerSubscription:
@@ -156,18 +156,19 @@ class LayerSubscription:
             self._propagated_stop_job_numbers.add(job_number)
             self._on_stopped(job_number)
 
-    def _build_keys_by_role(self) -> dict[str, list[ResultKey]]:
-        """Build ResultKeys grouped by role.
+    def _build_keys_by_role(self) -> dict[str, list[DataKey]]:
+        """Build stable DataKeys grouped by role.
 
-        ``DataSourceConfig.view_name`` is expected to already carry the
-        resolved backend pydantic field name (see
+        Keys carry no job_number — job_numbers gate readiness and stop
+        deduplication only. ``DataSourceConfig.view_name`` is expected to
+        already carry the resolved backend pydantic field name (see
         ``_build_resolved_data_sources`` in ``plot_orchestrator``).
         """
         return {
             role: [
-                ResultKey(
+                DataKey(
                     workflow_id=ds.workflow_id,
-                    job_id=JobId(source_name=sn, job_number=self._job_numbers[role]),
+                    source_name=sn,
                     output_name=ds.view_name,
                 )
                 for sn in ds.source_names

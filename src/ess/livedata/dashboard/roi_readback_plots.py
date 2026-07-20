@@ -19,7 +19,7 @@ from ess.livedata.config.models import (
     PolygonROI,
     RectangleROI,
 )
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .plots import Plotter
 
@@ -82,7 +82,7 @@ class RectanglesReadbackPlotter(Plotter):
         return cls(params)
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs
     ) -> hv.Rectangles:
         """
         Create rectangles from ROI readback DataArray.
@@ -191,7 +191,7 @@ class PolygonsReadbackPlotter(Plotter):
         return cls(params)
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs
     ) -> hv.Polygons:
         """
         Create polygons from ROI readback DataArray.

@@ -12,22 +12,21 @@ don't require a live Bokeh document.
 from __future__ import annotations
 
 import gc
-import uuid
 import weakref
 from typing import Any
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard import cell_autoscale
 from ess.livedata.dashboard.cell_autoscale import CellAutoscaleController
 from ess.livedata.dashboard.range_hook import Axis
 
 
-def _key(source: str = 'src', output: str = 'out') -> ResultKey:
-    return ResultKey(
+def _key(source: str = 'src', output: str = 'out') -> DataKey:
+    return DataKey(
         workflow_id=WorkflowId(instrument='test', name='test', version=1),
-        job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+        source_name=source,
         output_name=output,
     )
 
@@ -42,7 +41,7 @@ class _FakePlotter:
     def __init__(
         self,
         axes: frozenset[Axis],
-        targets_by_key: dict[ResultKey, dict[Axis, tuple[float, float]]] | None = None,
+        targets_by_key: dict[DataKey, dict[Axis, tuple[float, float]]] | None = None,
     ) -> None:
         self.autoscale_axes = axes
         self._targets = targets_by_key or {}

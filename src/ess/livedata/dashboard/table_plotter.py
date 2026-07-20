@@ -13,7 +13,7 @@ import scipp as sc
 from bokeh.models import NumberFormatter, ScientificFormatter
 from holoviews.plotting.bokeh.tabular import TablePlot
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParamsTable, TableNotation
 from .plots import Plotter, TitleResolver
@@ -88,7 +88,7 @@ class TablePlotter(Plotter):
 
     def _build_result(
         self,
-        data: dict[ResultKey, sc.DataArray],
+        data: dict[DataKey, sc.DataArray],
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
@@ -116,7 +116,7 @@ class TablePlotter(Plotter):
                 raise ValueError(f"Expected 0D data, got {da.ndim}D")
             output_name = data_key.output_name or 'values'
             label = resolver.get_axis_label(data_key.output_name) or output_name
-            rows.append(resolver.source(data_key.job_id.source_name))
+            rows.append(resolver.source(data_key.source_name))
             units.append('' if da.unit is None else str(da.unit))
             value = float(da.value)
             if self._notation is TableNotation.decimal and self._precision < 0:

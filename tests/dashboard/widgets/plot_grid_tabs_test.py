@@ -706,8 +706,7 @@ class TestComposeTableLayer:
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import (
-            JobId,
-            ResultKey,
+            DataKey,
             WorkflowId,
         )
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -734,9 +733,9 @@ class TestComposeTableLayer:
         layer = Layer(layer_id=LayerId(uuid.uuid4()), config=config)
 
         plotter = TablePlotter.from_params(PlotParamsTable())
-        key = ResultKey(
+        key = DataKey(
             workflow_id=wf,
-            job_id=JobId(source_name='bank0', job_number=uuid.uuid4()),
+            source_name='bank0',
             output_name=output,
         )
         plotter.compute({PRIMARY: {key: sc.DataArray(sc.scalar(1.0, unit='counts'))}})
