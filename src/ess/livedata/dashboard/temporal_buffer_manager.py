@@ -135,7 +135,13 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         state.extractors.append(extractor)
         self._reconfigure_buffer_if_needed(key, state)
 
-    def set_extractors(self, key: K, extractors: Sequence[UpdateExtractor]) -> None:
+    def set_extractors(
+        self,
+        key: K,
+        extractors: Sequence[UpdateExtractor],
+        *,
+        allow_downgrade: bool = True,
+    ) -> None:
         """
         Replace all extractors for an existing buffer.
 
@@ -144,22 +150,27 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         - Temporal→Single: Last time slice is copied to the new buffer
         - Other transitions: Data is discarded
 
-        Useful for reconfiguring buffers when subscribers change, e.g., when
-        a subscriber is removed and we need to downgrade from Temporal to
-        SingleValue buffer.
-
         Parameters
         ----------
         key:
             Key identifying the buffer to update.
         extractors:
             New sequence of extractors that will use this buffer.
+        allow_downgrade:
+            If False, the Temporal→Single transition is skipped: buffer type
+            is sticky-upward. Use on subscriber removal, where a transient
+            survivors-empty (or latest-only) state must not collapse buffered
+            history to a single slice — an unregister/re-register cycle on the
+            same key (e.g. a plot reconfiguration) would otherwise wipe
+            timeseries history that the backend never resends.
         """
         state = self._states[key]
         state.extractors = list(extractors)
-        self._reconfigure_buffer_if_needed(key, state)
+        self._reconfigure_buffer_if_needed(key, state, allow_downgrade=allow_downgrade)
 
-    def _reconfigure_buffer_if_needed(self, key: K, state: _BufferState) -> None:
+    def _reconfigure_buffer_if_needed(
+        self, key: K, state: _BufferState, *, allow_downgrade: bool = True
+    ) -> None:
         """
         Check if buffer type needs to change and handle migration.
 
@@ -169,10 +180,17 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             Key identifying the buffer.
         state:
             Buffer state to reconfigure.
+        allow_downgrade:
+            If False, keep a TemporalBuffer even when the extractors no
+            longer require one (see :py:meth:`set_extractors`).
         """
         # Check if we need to switch buffer type
         new_buffer = self._create_buffer_for_extractors(state.extractors)
-        if not isinstance(new_buffer, type(state.buffer)):
+        if not allow_downgrade and isinstance(new_buffer, SingleValueBuffer):
+            # Sticky-upward: keep the current buffer (and its history); a
+            # downgrade would keep only the last time slice.
+            pass
+        elif not isinstance(new_buffer, type(state.buffer)):
             # Handle data migration for Single->Temporal transition
             if isinstance(state.buffer, SingleValueBuffer) and isinstance(
                 new_buffer, TemporalBuffer
@@ -277,7 +295,9 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         extractors:
             Sequence of extractors to gather requirements from.
         """
-        # Compute maximum required timespan
+        # With no extractors, previous requirements are retained: shrinking to
+        # zero would let an append trim history during a transient
+        # unregister/re-register cycle (e.g. a plot reconfiguration).
         if extractors:
             max_timespan = max(e.get_required_timespan() for e in extractors)
             buffer.set_required_timespan(max_timespan)

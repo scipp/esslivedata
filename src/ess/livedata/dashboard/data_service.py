@@ -263,6 +263,16 @@ class DataService(MutableMapping[K, V]):
         """
         Unregister a subscriber, stopping it from receiving updates.
 
+        Drops the subscriber's extractors from buffer retention: each affected
+        buffer is reconfigured to the surviving subscribers' requirements, so
+        retention cannot ratchet up over repeated register/unregister cycles.
+        Buffer type never downgrades here (sticky-upward, see
+        :py:meth:`TemporalBufferManager.set_extractors`), so buffered history
+        survives an unregister/re-register cycle on the same key. The cycle is
+        not atomic, though: if a surviving subscriber needs a shorter timespan,
+        an append landing between unregister and re-register may trim history
+        to that shorter window.
+
         Parameters
         ----------
         subscriber:
@@ -276,9 +286,14 @@ class DataService(MutableMapping[K, V]):
         with self._lock:
             try:
                 self._subscribers.remove(subscriber)
-                return True
             except ValueError:
                 return False
+            for key in subscriber.keys:
+                if key in self._buffer_manager:
+                    self._buffer_manager.set_extractors(
+                        key, self._get_extractors(key), allow_downgrade=False
+                    )
+            return True
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """

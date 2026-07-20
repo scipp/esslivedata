@@ -357,3 +357,51 @@ class TestTemporalBufferManagerWithRealData:
         assert result is not None
         assert 'time' in result.dims
         assert result.sizes['time'] == 3
+
+
+def _timed(value: float, time: float) -> sc.DataArray:
+    return sc.DataArray(
+        sc.scalar(value, unit='counts'),
+        coords={'time': sc.scalar(time, unit='s')},
+    )
+
+
+class TestSetExtractorsWithoutDowngrade:
+    """Sticky-upward buffer type on subscriber removal (allow_downgrade=False)."""
+
+    def test_keeps_temporal_buffer_and_history(self):
+        manager = TemporalBufferManager()
+        manager.create_buffer('test', [FullHistoryExtractor()])
+        for i in range(3):
+            manager.update_buffer('test', _timed(float(i), float(i)))
+
+        manager.set_extractors('test', [LatestValueExtractor()], allow_downgrade=False)
+
+        assert isinstance(manager['test'], TemporalBuffer)
+        result = manager.get_buffered_data('test')
+        assert result is not None
+        assert result.sizes['time'] == 3
+
+    def test_empty_extractors_keep_buffer_type_and_requirements(self):
+        manager = TemporalBufferManager()
+        manager.create_buffer(
+            'test', [WindowAggregatingExtractor(window_duration_seconds=60.0)]
+        )
+        manager.update_buffer('test', _timed(1.0, 0.0))
+
+        manager.set_extractors('test', [], allow_downgrade=False)
+
+        assert isinstance(manager['test'], TemporalBuffer)
+        assert manager['test'].get_required_timespan() == 60.0
+        assert manager.get_buffered_data('test') is not None
+
+    def test_timespan_shrinks_to_surviving_extractors(self):
+        manager = TemporalBufferManager()
+        window = WindowAggregatingExtractor(window_duration_seconds=60.0)
+        manager.create_buffer('test', [FullHistoryExtractor(), window])
+        assert manager['test'].get_required_timespan() == float('inf')
+
+        manager.set_extractors('test', [window], allow_downgrade=False)
+
+        assert isinstance(manager['test'], TemporalBuffer)
+        assert manager['test'].get_required_timespan() == 60.0
