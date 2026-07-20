@@ -174,7 +174,8 @@ class TestLayerSubscriptionSingleSource:
         ready = ready_invocations[0]
         all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
         assert len(all_keys) == 2
-        assert all(key.job_id.job_number == job_number for key in all_keys)
+        # Keys are stable DataKeys; job numbers only gate readiness.
+        assert all(hasattr(key, 'source_name') for key in all_keys)
 
     def test_on_ready_fires_when_workflow_starts_later(
         self, workflow_id, job_number, fake_job_orchestrator
@@ -235,13 +236,12 @@ class TestLayerSubscriptionSingleSource:
         all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
         assert len(all_keys) == 2
 
-        # Verify keys are correct
-        key_source_names = {key.job_id.source_name for key in all_keys}
+        # Verify keys are correct (now DataKey without job_number)
+        key_source_names = {key.source_name for key in all_keys}
         assert key_source_names == {'detector1', 'detector2'}
 
         for key in all_keys:
             assert key.workflow_id == workflow_id
-            assert key.job_id.job_number == job_number
             assert key.output_name == 'result'
 
     def test_keys_by_role_contains_primary_keys(
@@ -275,13 +275,12 @@ class TestLayerSubscriptionSingleSource:
         primary_keys = ready.keys_by_role[PRIMARY]
         assert len(primary_keys) == 2
 
-        # Verify keys are correct
-        key_source_names = {key.job_id.source_name for key in primary_keys}
+        # Verify keys are correct (now DataKey without job_number)
+        key_source_names = {key.source_name for key in primary_keys}
         assert key_source_names == {'detector1', 'detector2'}
 
         for key in primary_keys:
             assert key.workflow_id == workflow_id
-            assert key.job_id.job_number == job_number
             assert key.output_name == 'result'
 
     def test_on_stopped_propagates(
@@ -472,16 +471,16 @@ class TestLayerSubscriptionMultiSource:
         assert PRIMARY in ready.keys_by_role
         assert X_AXIS in ready.keys_by_role
 
-        # Check primary keys
+        # Check primary keys (now DataKey without job_number)
         primary_keys = ready.keys_by_role[PRIMARY]
         assert len(primary_keys) == 2
-        primary_source_names = {key.job_id.source_name for key in primary_keys}
+        primary_source_names = {key.source_name for key in primary_keys}
         assert primary_source_names == {'det1', 'det2'}
 
         # Check x_axis keys
         x_axis_keys = ready.keys_by_role[X_AXIS]
         assert len(x_axis_keys) == 1
-        assert x_axis_keys[0].job_id.source_name == 'temp'
+        assert x_axis_keys[0].source_name == 'temp'
         assert x_axis_keys[0].workflow_id == workflow_id_2
 
     def test_on_stopped_fires_for_any_workflow(
@@ -571,11 +570,11 @@ class TestLayerSubscriptionMultiSource:
 
         # on_ready should fire again with new keys
         assert len(ready_invocations) == 2
-        # Verify the new ready has the new job_number
+        # Verify the new ready has stable keys for det1.
         new_ready = ready_invocations[1]
         all_keys = [k for keys in new_ready.keys_by_role.values() for k in keys]
-        det_key = next(k for k in all_keys if k.job_id.source_name == 'det1')
-        assert det_key.job_id.job_number == new_job_number
+        det_key = next(k for k in all_keys if k.source_name == 'det1')
+        assert det_key is not None
 
     def test_on_ready_fires_again_after_stop_and_restart(
         self,
@@ -667,9 +666,9 @@ class TestLayerSubscriptionDuplicateWorkflows:
         all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
         assert len(all_keys) == 2
 
-        # Verify keys have different source_names
-        source_names = {key.job_id.source_name for key in all_keys}
+        # Verify keys have different source_names (now DataKey without job_number)
+        source_names = {key.source_name for key in all_keys}
         assert source_names == {'det1', 'det2'}
 
-        # Both keys should have same job_number
-        assert all(key.job_id.job_number == job_number for key in all_keys)
+        # All keys should share the same workflow_id
+        assert all(key.workflow_id == workflow_id for key in all_keys)

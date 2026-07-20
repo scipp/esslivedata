@@ -18,7 +18,7 @@ import pydantic
 import scipp as sc
 from bokeh.models import CustomJSHover, HoverTool
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParams2d
 from .plots import ImagePlotter
@@ -323,7 +323,7 @@ class FlattenPlotter(ImagePlotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',

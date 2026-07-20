@@ -2,28 +2,27 @@
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
 """Benchmarks for Plotter.compute() with different plotter types."""
 
-import uuid
-
 import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParams2d
 from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter, Overlay1DPlotter
 
 hv.extension('bokeh')
 
 
-def _make_result_key(source_name: str = 'test_source') -> ResultKey:
+def _make_result_key(source_name: str = 'test_source') -> DataKey:
     workflow_id = WorkflowId(
         instrument='test_instrument',
         name='test_workflow',
         version=1,
     )
-    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='test_result')
+    return DataKey(
+        workflow_id=workflow_id, source_name=source_name, output_name='test_result'
+    )
 
 
 def _make_1d_curve_data(n: int = 100) -> sc.DataArray:

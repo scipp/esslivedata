@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Iterator, Mapping, MutableMapping
+from collections.abc import Hashable, Iterable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
@@ -115,6 +115,7 @@ class DataService(MutableMapping[K, V]):
         self._buffer_manager = TemporalBufferManager()
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[DataServiceSubscriber[K]] = []
+        self._stamps: dict[K, Any] = {}
         self._pending_updates: set[K] = set()
         self._local = threading.local()
         self._lock = threading.RLock()
@@ -333,19 +334,84 @@ class DataService(MutableMapping[K, V]):
 
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
+        self.set_item(key, value)
+
+    def set_item(self, key: K, value: V, *, stamp: Any = None) -> None:
+        """Set a value, storing it in a buffer, with a provenance stamp.
+
+        The stamp identifies the generation the value belongs to (e.g. the
+        wire-level job_number). It is stored per key — one generation per
+        buffer is an invariant the ingest filter and :py:meth:`clear_keys`
+        maintain together — and returned by :py:meth:`snapshot_with_stamps`.
+
+        Parameters
+        ----------
+        key:
+            The key to store the value under.
+        value:
+            The value to store.
+        stamp:
+            Opaque generation marker recorded for the key; ``None`` clears it.
+        """
         with self._lock:
             if key not in self._buffer_manager:
                 extractors = self._get_extractors(key)
                 self._buffer_manager.create_buffer(key, extractors)
             self._buffer_manager.update_buffer(key, value)
+            self._stamps[key] = stamp
             self._pending_updates.add(key)
         if not self._in_transaction:
             self._notify()
+
+    def clear_keys(self, keys: Iterable[K]) -> None:
+        """Clear the buffered data (and stamps) for the given keys.
+
+        Buffers are emptied in place under a single lock hold: a concurrent
+        pull observes either all keys cleared or none, so one extraction can
+        never mix generations or see a partial clear. Extractor registrations,
+        buffer type, and retention requirements survive — only data is
+        dropped. Subscribers are notified after the lock is released.
+
+        Parameters
+        ----------
+        keys:
+            The keys whose buffers to clear. Keys without a buffer are
+            ignored.
+        """
+        with self._lock:
+            for key in keys:
+                if key in self._buffer_manager:
+                    self._buffer_manager[key].clear()
+                    self._stamps.pop(key, None)
+                    self._pending_updates.add(key)
+        if not self._in_transaction:
+            self._notify()
+
+    def snapshot_with_stamps(
+        self, subscriber: DataServiceSubscriber[K]
+    ) -> tuple[dict[K, Any], dict[K, Any]]:
+        """Extract current data and generation stamps under one lock hold.
+
+        Like :py:meth:`snapshot`, but pairs each extracted key with the stamp
+        recorded at ingest, atomically: a clear or generation flip cannot
+        straddle the data/stamp reads.
+
+        Returns
+        -------
+        :
+            ``(data, stamps)`` where ``stamps`` holds an entry for every key
+            in ``data``.
+        """
+        with self._lock:
+            data = self._build_subscriber_data(subscriber)
+            stamps = {key: self._stamps.get(key) for key in data}
+        return data, stamps
 
     def __delitem__(self, key: K) -> None:
         """Delete a key and its buffer."""
         with self._lock:
             self._buffer_manager.delete_buffer(key)
+            self._stamps.pop(key, None)
             self._pending_updates.add(key)
         if not self._in_transaction:
             self._notify()

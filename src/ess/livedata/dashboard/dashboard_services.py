@@ -15,7 +15,7 @@ from confluent_kafka import KafkaException
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
@@ -191,18 +191,20 @@ class DashboardServices:
         self.command_service = CommandService(sink=transport_resources.command_sink)
 
         # da00 of backend services converted to scipp.DataArray
-        ScippDataService = DataService[ResultKey, sc.DataArray]
+        ScippDataService = DataService[DataKey, sc.DataArray]
         self.data_service = ScippDataService()
         self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
 
-        # Create ROI publisher for publishing ROI updates to Kafka
-        roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
+        # Create ROI publisher for publishing ROI updates to Kafka. Its
+        # job-number resolver is injected in _setup_workflow_management once
+        # the JobOrchestrator exists.
+        self._roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             stream_manager=self.stream_manager,
-            roi_publisher=roi_publisher,
+            roi_publisher=self._roi_publisher,
         )
 
         # Orchestrator will be wired to job_orchestrator after workflow setup
@@ -248,6 +250,9 @@ class DashboardServices:
             notification_queue=self.notification_queue,
         )
         self.job_service.on_status_updated = self.job_orchestrator.on_job_status_updated
+        self._roi_publisher.set_job_number_resolver(
+            self.job_orchestrator.get_active_job_number
+        )
 
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,

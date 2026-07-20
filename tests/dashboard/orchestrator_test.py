@@ -15,7 +15,8 @@ from ess.livedata.core.message import (
     StreamKind,
 )
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
-from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
+from ess.livedata.dashboard.extractors import LatestValueExtractor
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.orchestrator import Orchestrator
 from ess.livedata.dashboard.service_registry import ServiceRegistry
@@ -45,10 +46,16 @@ class FakeJobOrchestrator:
 
 
 class PermissiveJobRegistry:
-    """Accepts every job number; used where filtering is orthogonal to the test."""
+    """Accepts every generation; used where filtering is orthogonal to the test."""
 
-    def is_active(self, job_number: uuid.UUID) -> bool:
+    def is_current(self, workflow_id: WorkflowId, job_number: uuid.UUID) -> bool:
         return True
+
+    def is_known_job(self, job_number: uuid.UUID) -> bool:
+        return True
+
+    def record_stale(self, workflow_id: WorkflowId, job_number: uuid.UUID) -> None:
+        pass
 
     @contextmanager
     def ingestion_guard(self):
@@ -154,8 +161,8 @@ class TestOrchestrator:
 
         orchestrator.update()
 
-        assert result_key in data_service
-        assert sc.identical(data_service[result_key], data)
+        assert result_key.data_key in data_service
+        assert sc.identical(data_service[result_key.data_key], data)
 
     def test_update_with_multiple_messages(self) -> None:
         source = FakeMessageSource()
@@ -196,10 +203,10 @@ class TestOrchestrator:
 
         orchestrator.update()
 
-        assert result_key1 in data_service
-        assert result_key2 in data_service
-        assert sc.identical(data_service[result_key1], data1)
-        assert sc.identical(data_service[result_key2], data2)
+        assert result_key1.data_key in data_service
+        assert result_key2.data_key in data_service
+        assert sc.identical(data_service[result_key1.data_key], data1)
+        assert sc.identical(data_service[result_key2.data_key], data2)
 
     def test_update_isolates_poisoned_message_from_rest_of_batch(self) -> None:
         source = FakeMessageSource()
@@ -226,8 +233,8 @@ class TestOrchestrator:
 
         orchestrator.update()
 
-        assert good_key in data_service
-        assert sc.identical(data_service[good_key], good_data)
+        assert good_key.data_key in data_service
+        assert sc.identical(data_service[good_key.data_key], good_data)
 
     def test_update_overwrites_existing_data(self) -> None:
         source = FakeMessageSource()
@@ -255,12 +262,12 @@ class TestOrchestrator:
         # Add initial data
         source.add_message(result_key.model_dump_json(), original_data)
         orchestrator.update()
-        assert sc.identical(data_service[result_key], original_data)
+        assert sc.identical(data_service[result_key.data_key], original_data)
 
         # Overwrite with new data
         source.add_message(result_key.model_dump_json(), new_data)
         orchestrator.update()
-        assert sc.identical(data_service[result_key], new_data)
+        assert sc.identical(data_service[result_key.data_key], new_data)
 
     def test_update_with_output_name(self) -> None:
         source = FakeMessageSource()
@@ -287,8 +294,8 @@ class TestOrchestrator:
 
         orchestrator.update()
 
-        assert result_key in data_service
-        assert sc.identical(data_service[result_key], data)
+        assert result_key.data_key in data_service
+        assert sc.identical(data_service[result_key.data_key], data)
 
     def test_forward_with_valid_result_key(self) -> None:
         source = FakeMessageSource()
@@ -314,8 +321,8 @@ class TestOrchestrator:
 
         orchestrator.forward(_data_stream_id(result_key), data)
 
-        assert result_key in data_service
-        assert sc.identical(data_service[result_key], data)
+        assert result_key.data_key in data_service
+        assert sc.identical(data_service[result_key.data_key], data)
 
     def test_forward_with_invalid_json(self) -> None:
         source = FakeMessageSource()
@@ -373,9 +380,9 @@ class TestOrchestrator:
         orchestrator.forward(_data_stream_id(result_key2), float_data)
         orchestrator.forward(_data_stream_id(result_key3), string_data)
 
-        assert sc.identical(data_service[result_key1], int_data)
-        assert sc.identical(data_service[result_key2], float_data)
-        assert sc.identical(data_service[result_key3], string_data)
+        assert sc.identical(data_service[result_key1.data_key], int_data)
+        assert sc.identical(data_service[result_key2.data_key], float_data)
+        assert sc.identical(data_service[result_key3.data_key], string_data)
 
     def test_transaction_mechanism(self) -> None:
         """Test that updates are batched in transactions."""
@@ -415,7 +422,7 @@ class TestOrchestrator:
         orchestrator.update()
 
         assert transaction_started
-        assert result_key in data_service
+        assert result_key.data_key in data_service
 
 
 class TestOrchestratorAcknowledgementProcessing:
@@ -553,79 +560,128 @@ class TestOrchestratorServiceStatusRouting:
         assert len(job_service.job_statuses) == 1
 
 
-class TestOrchestratorJobFiltering:
-    """Test that data from inactive or unknown jobs is filtered out."""
+class TestOrchestratorGenerationFiltering:
+    """Data is admitted only for the workflow's current generation."""
 
-    def _make_orchestrator(self, active_job_numbers):
+    _workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+
+    def _make_orchestrator(self, current: dict[WorkflowId, uuid.UUID] | None = None):
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
         registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
-        for jn in active_job_numbers:
-            registry.restore(jn)
+        for workflow_id, job_number in (current or {}).items():
+            registry.begin_generation(workflow_id, job_number, config={})
         orchestrator = _make_orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
             active_job_registry=registry,
         )
-        return orchestrator, data_service, job_service
+        return orchestrator, data_service, job_service, registry
 
-    def test_accepts_data_for_active_job(self) -> None:
-        job_number = make_job_number()
-        orchestrator, data_service, _ = self._make_orchestrator([job_number])
-
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
-        job_id = JobId(source_name="det1", job_number=job_number)
-        result_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name="result"
+    def _result_key(self, job_number: uuid.UUID) -> ResultKey:
+        return ResultKey(
+            workflow_id=self._workflow_id,
+            job_id=JobId(source_name="det1", job_number=job_number),
+            output_name="result",
         )
+
+    def _forward_data(self, orchestrator, job_number: uuid.UUID) -> ResultKey:
+        result_key = self._result_key(job_number)
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
         orchestrator.forward(_data_stream_id(result_key), data)
+        return result_key
 
-        assert result_key in data_service
-
-    def test_discards_data_for_inactive_job(self) -> None:
-        active_number = make_job_number()
-        inactive_number = make_job_number()
-        orchestrator, data_service, _ = self._make_orchestrator([active_number])
-
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
-        job_id = JobId(source_name="det1", job_number=inactive_number)
-        result_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name="result"
-        )
-        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
-        orchestrator.forward(_data_stream_id(result_key), data)
-
-        assert result_key not in data_service
-
-    def test_accepts_job_status_for_active_job(self) -> None:
-        from ess.livedata.core.job import JobState, JobStatus
-
+    def test_accepts_data_for_current_generation(self) -> None:
         job_number = make_job_number()
-        orchestrator, _, job_service = self._make_orchestrator([job_number])
-
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
-        job_id = JobId(source_name="det1", job_number=job_number)
-        status = JobStatus(
-            job_id=job_id, workflow_id=workflow_id, state=JobState.active
+        orchestrator, data_service, _, _ = self._make_orchestrator(
+            {self._workflow_id: job_number}
         )
-        orchestrator.forward(STATUS_STREAM_ID, status)
 
-        assert len(job_service.job_statuses) == 1
+        result_key = self._forward_data(orchestrator, job_number)
 
-    def test_discards_job_status_for_inactive_job(self) -> None:
+        assert result_key.data_key in data_service
+
+    def test_records_generation_stamp_at_ingest(self) -> None:
+        job_number = make_job_number()
+        orchestrator, data_service, _, _ = self._make_orchestrator(
+            {self._workflow_id: job_number}
+        )
+
+        result_key = self._forward_data(orchestrator, job_number)
+
+        class OneKeySubscriber(DataServiceSubscriber):
+            @property
+            def extractors(self):
+                return {result_key.data_key: LatestValueExtractor()}
+
+            def on_updated(self, updated_keys) -> None:
+                pass
+
+        subscriber = OneKeySubscriber()
+        data_service.register_subscriber(subscriber)
+        _, stamps = data_service.snapshot_with_stamps(subscriber)
+        assert stamps == {result_key.data_key: job_number}
+
+    def test_discards_data_from_replaced_generation(self) -> None:
+        old_number = make_job_number()
+        orchestrator, data_service, _, registry = self._make_orchestrator(
+            {self._workflow_id: old_number}
+        )
+        registry.begin_generation(self._workflow_id, make_job_number(), config={})
+
+        result_key = self._forward_data(orchestrator, old_number)
+
+        assert result_key.data_key not in data_service
+
+    def test_discards_data_for_unknown_generation(self) -> None:
+        orchestrator, data_service, _, _ = self._make_orchestrator(
+            {self._workflow_id: make_job_number()}
+        )
+
+        result_key = self._forward_data(orchestrator, make_job_number())
+
+        assert result_key.data_key not in data_service
+
+    def test_discards_data_for_workflow_without_generation(self) -> None:
+        orchestrator, data_service, _, _ = self._make_orchestrator()
+
+        result_key = self._forward_data(orchestrator, make_job_number())
+
+        assert result_key.data_key not in data_service
+
+    def test_accepts_job_status_for_current_and_last_generation(self) -> None:
         from ess.livedata.core.job import JobState, JobStatus
 
-        active_number = make_job_number()
-        inactive_number = make_job_number()
-        orchestrator, _, job_service = self._make_orchestrator([active_number])
+        old_number = make_job_number()
+        new_number = make_job_number()
+        orchestrator, _, job_service, registry = self._make_orchestrator(
+            {self._workflow_id: old_number}
+        )
+        registry.begin_generation(self._workflow_id, new_number, config={})
 
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
-        job_id = JobId(source_name="det1", job_number=inactive_number)
+        for job_number in (old_number, new_number):
+            status = JobStatus(
+                job_id=JobId(source_name="det1", job_number=job_number),
+                workflow_id=self._workflow_id,
+                state=JobState.active,
+            )
+            orchestrator.forward(STATUS_STREAM_ID, status)
+
+        assert len(job_service.job_statuses) == 2
+
+    def test_discards_job_status_for_unknown_job(self) -> None:
+        from ess.livedata.core.job import JobState, JobStatus
+
+        orchestrator, _, job_service, _ = self._make_orchestrator(
+            {self._workflow_id: make_job_number()}
+        )
+
         status = JobStatus(
-            job_id=job_id, workflow_id=workflow_id, state=JobState.active
+            job_id=JobId(source_name="det1", job_number=make_job_number()),
+            workflow_id=self._workflow_id,
+            state=JobState.active,
         )
         orchestrator.forward(STATUS_STREAM_ID, status)
 
@@ -646,11 +702,13 @@ class TestOrchestratorJobFiltering:
         registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
         job_number = make_job_number()
 
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+
         class ActivatingJobOrchestrator:
             def process_acknowledgement(
                 self, message_id: str, response: str, error_message: str | None = None
             ) -> None:
-                registry.activate(job_number)
+                registry.begin_generation(workflow_id, job_number, config={})
 
         orchestrator = _make_orchestrator(
             message_source=source,
@@ -660,7 +718,6 @@ class TestOrchestratorJobFiltering:
             active_job_registry=registry,
         )
 
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
         result_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name="det1", job_number=job_number),
@@ -676,7 +733,7 @@ class TestOrchestratorJobFiltering:
 
         orchestrator.update()
 
-        assert result_key in data_service
+        assert result_key.data_key in data_service
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

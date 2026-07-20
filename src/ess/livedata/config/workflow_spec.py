@@ -277,6 +277,33 @@ class ResultKey(BaseModel, frozen=True):
         default='result', description="Name of the workflow output"
     )
 
+    @property
+    def data_key(self) -> DataKey:
+        """Stable dashboard key for this result, stripping the job_number."""
+        return DataKey(
+            workflow_id=self.workflow_id,
+            source_name=self.job_id.source_name,
+            output_name=self.output_name,
+        )
+
+
+class DataKey(BaseModel, frozen=True):
+    """Stable identity of one workflow output stream.
+
+    Unlike :py:class:`ResultKey` — the wire key, which embeds the per-commit
+    ``job_number`` — this triple is stable across restarts of a workflow. It is
+    the same identity used for stable extraction by NICOS device contracts
+    (ADR 0006). The dashboard's data plane is keyed by ``DataKey``;
+    ``job_number`` is consumed at the ingest filter as a generation token and
+    recorded as a provenance stamp.
+    """
+
+    workflow_id: WorkflowId = Field(description="Workflow ID")
+    source_name: str = Field(description="Name of the source")
+    output_name: str = Field(
+        default='result', description="Name of the workflow output"
+    )
+
 
 class WorkflowSpec(BaseModel):
     """

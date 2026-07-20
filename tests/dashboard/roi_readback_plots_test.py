@@ -2,14 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for ROI readback plotters."""
 
-import uuid
-
 import holoviews as hv
 import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.plotter_registry import DataRequirements, plotter_registry
 from ess.livedata.dashboard.roi_readback_plots import (
     PolygonsReadbackParams,
@@ -22,16 +20,15 @@ hv.extension('bokeh')
 
 
 @pytest.fixture
-def result_key() -> ResultKey:
+def result_key() -> DataKey:
     workflow_id = WorkflowId(
         instrument='test_instrument',
         name='test_workflow',
         version=1,
     )
-    job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-    return ResultKey(
+    return DataKey(
         workflow_id=workflow_id,
-        job_id=job_id,
+        source_name='test_source',
         output_name='roi_rectangle',
     )
 
@@ -84,7 +81,7 @@ def polygon_data_array(polygon_rois: dict[int, PolygonROI]) -> sc.DataArray:
 
 class TestRectanglesReadbackPlotter:
     def test_plot_creates_rectangles_element(
-        self, rectangle_data_array: sc.DataArray, result_key: ResultKey
+        self, rectangle_data_array: sc.DataArray, result_key: DataKey
     ):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
@@ -94,7 +91,7 @@ class TestRectanglesReadbackPlotter:
         assert isinstance(result, hv.Rectangles)
 
     def test_plot_contains_correct_number_of_rectangles(
-        self, rectangle_data_array: sc.DataArray, result_key: ResultKey
+        self, rectangle_data_array: sc.DataArray, result_key: DataKey
     ):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
@@ -105,7 +102,7 @@ class TestRectanglesReadbackPlotter:
         assert len(result.data) == 2
 
     def test_plot_assigns_colors_by_index(
-        self, rectangle_data_array: sc.DataArray, result_key: ResultKey
+        self, rectangle_data_array: sc.DataArray, result_key: DataKey
     ):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
@@ -120,7 +117,7 @@ class TestRectanglesReadbackPlotter:
         # Second rectangle (index 2) should have color[2]
         assert rect_data[1][4] == colors[2]
 
-    def test_plot_with_empty_data_returns_empty_rectangles(self, result_key: ResultKey):
+    def test_plot_with_empty_data_returns_empty_rectangles(self, result_key: DataKey):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
         empty_data = RectangleROI.to_concatenated_data_array({})
@@ -134,7 +131,7 @@ class TestRectanglesReadbackPlotter:
         self,
         rectangle_data_array: sc.DataArray,
         rectangle_rois: dict[int, RectangleROI],
-        result_key: ResultKey,
+        result_key: DataKey,
     ):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
@@ -151,7 +148,7 @@ class TestRectanglesReadbackPlotter:
         assert rect_0[3] == roi_0.y.max
 
     def test_plot_applies_style_params(
-        self, rectangle_data_array: sc.DataArray, result_key: ResultKey
+        self, rectangle_data_array: sc.DataArray, result_key: DataKey
     ):
         from ess.livedata.dashboard.roi_readback_plots import ROIReadbackStyle
 
@@ -168,7 +165,7 @@ class TestRectanglesReadbackPlotter:
         assert opts.get('line_width') == 3.0
 
     def test_renders_to_bokeh(
-        self, rectangle_data_array: sc.DataArray, result_key: ResultKey
+        self, rectangle_data_array: sc.DataArray, result_key: DataKey
     ):
         params = RectanglesReadbackParams()
         plotter = RectanglesReadbackPlotter.from_params(params)
@@ -181,7 +178,7 @@ class TestRectanglesReadbackPlotter:
 
 class TestPolygonsReadbackPlotter:
     def test_plot_creates_polygons_element(
-        self, polygon_data_array: sc.DataArray, result_key: ResultKey
+        self, polygon_data_array: sc.DataArray, result_key: DataKey
     ):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)
@@ -191,7 +188,7 @@ class TestPolygonsReadbackPlotter:
         assert isinstance(result, hv.Polygons)
 
     def test_plot_contains_correct_number_of_polygons(
-        self, polygon_data_array: sc.DataArray, result_key: ResultKey
+        self, polygon_data_array: sc.DataArray, result_key: DataKey
     ):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)
@@ -202,7 +199,7 @@ class TestPolygonsReadbackPlotter:
         assert len(result.data) == 2
 
     def test_plot_assigns_colors_by_index(
-        self, polygon_data_array: sc.DataArray, result_key: ResultKey
+        self, polygon_data_array: sc.DataArray, result_key: DataKey
     ):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)
@@ -217,7 +214,7 @@ class TestPolygonsReadbackPlotter:
         # Second polygon (index 6) should have color[6]
         assert poly_data[1]['color'] == colors[6]
 
-    def test_plot_with_empty_data_returns_empty_polygons(self, result_key: ResultKey):
+    def test_plot_with_empty_data_returns_empty_polygons(self, result_key: DataKey):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)
         empty_data = PolygonROI.to_concatenated_data_array({})
@@ -231,7 +228,7 @@ class TestPolygonsReadbackPlotter:
         self,
         polygon_data_array: sc.DataArray,
         polygon_rois: dict[int, PolygonROI],
-        result_key: ResultKey,
+        result_key: DataKey,
     ):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)
@@ -246,7 +243,7 @@ class TestPolygonsReadbackPlotter:
         assert list(poly_0['y']) == [float(v) for v in roi_4.y]
 
     def test_renders_to_bokeh(
-        self, polygon_data_array: sc.DataArray, result_key: ResultKey
+        self, polygon_data_array: sc.DataArray, result_key: DataKey
     ):
         params = PolygonsReadbackParams()
         plotter = PolygonsReadbackPlotter.from_params(params)

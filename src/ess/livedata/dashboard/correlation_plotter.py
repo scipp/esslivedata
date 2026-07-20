@@ -6,9 +6,9 @@ This module contains the plotter implementations for correlation histograms,
 along with simplified parameter models used by the PlotConfigModal wizard.
 
 Correlation histograms receive pre-structured data from DataSubscriber:
-- "primary": dict[ResultKey, DataArray] - data to histogram (may have multiple sources)
-- "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
-- "y_axis": dict[ResultKey, DataArray] - y-axis correlation values (2D only)
+- "primary": dict[DataKey, DataArray] - data to histogram (may have multiple sources)
+- "x_axis": dict[DataKey, DataArray] - x-axis correlation values
+- "y_axis": dict[DataKey, DataArray] - y-axis correlation values (2D only)
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 import pydantic
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import (
@@ -173,7 +173,7 @@ class CorrelationHistogramPlotter:
     """Base plotter for correlation histograms with arbitrary number of axes.
 
     Receives role-grouped data from DataSubscriber:
-    - "primary": dict[ResultKey, DataArray] - data to histogram
+    - "primary": dict[DataKey, DataArray] - data to histogram
     - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
     """
 
@@ -210,7 +210,7 @@ class CorrelationHistogramPlotter:
         title_resolver
             Resolves source/output names to display titles.
         """
-        histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
+        histogram_data: dict[DataKey, sc.DataArray] = data.get(PRIMARY, {})
         if not histogram_data:
             raise ValueError(
                 "Correlation histogram requires at least one data source to histogram."
@@ -231,7 +231,7 @@ class CorrelationHistogramPlotter:
         # Build bin spec
         bin_spec = {axis.name: axis.bins for axis in self._axes}
 
-        histograms: dict[ResultKey, sc.DataArray] = {}
+        histograms: dict[DataKey, sc.DataArray] = {}
         for key, source_data in histogram_data.items():
             dependent = source_data.copy(deep=False)
             data_max_time = dependent.coords['time'].max()
@@ -276,11 +276,11 @@ class CorrelationHistogramPlotter:
         """
         return self._renderer.autoscale_axes
 
-    def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
+    def get_range_targets(self, data_key: DataKey) -> RangeTargets | None:
         """Delegate per-axis target lookup to the inner renderer."""
         return self._renderer.get_range_targets(data_key)
 
-    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
+    def iter_range_targets(self) -> Iterator[tuple[DataKey, RangeTargets]]:
         """Delegate per-key target iteration to the inner renderer."""
         return self._renderer.iter_range_targets()
 

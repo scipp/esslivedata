@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Thread-safe registry of active job numbers.
+"""Thread-safe registry of the current generation per workflow.
 
 Mediates between the background ingestion thread (Orchestrator.update)
 and the UI thread (JobOrchestrator.commit_workflow / stop_workflow).
@@ -10,12 +10,14 @@ All lock acquisition is internal — callers never see the lock.
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from ess.livedata.config.workflow_spec import JobNumber, ResultKey
+from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 if TYPE_CHECKING:
     from .data_service import DataService
@@ -24,109 +26,187 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class Generation:
+    """One commit of a workflow: its wire-level job_number and its config.
+
+    The config is retained so data stamped with this generation can be
+    resolved back to the parameters it was computed with (provenance).
+    """
+
+    job_number: JobNumber
+    config: Mapping[str, Any]
+
+
+@dataclass
+class _GenerationRecord:
+    """Current and last generation of one workflow.
+
+    ``last`` exists for provenance of a stopped workflow's retained data and
+    for recognizing status heartbeats of a just-replaced job; only ``current``
+    admits data.
+    """
+
+    current: Generation | None = None
+    last: Generation | None = None
+    stale_count: int = 0
+    logged_stale: set[JobNumber] = field(default_factory=set)
+
+
 class ActiveJobRegistry:
-    """Thread-safe registry tracking which job numbers are currently active.
+    """Thread-safe registry tracking the current generation per workflow.
 
     Owns the synchronization between the background ingestion thread and the
     UI thread. The ingestion thread holds ``ingestion_guard()`` while
-    processing messages; the UI thread calls ``activate`` / ``deactivate``
-    when starting or stopping jobs.
+    processing messages; the UI thread calls ``begin_generation`` /
+    ``deactivate`` when committing or stopping workflows.
 
     Data lifecycle
     --------------
-    Active-set membership and buffered-data eviction are intentionally
-    decoupled into two methods:
-
-    - :py:meth:`deactivate` removes a job from the active set, causing
-      ``Orchestrator.forward`` to filter out any further results published
-      for that job. This happens as soon as a job stops, so late messages
-      are dropped immediately.
-    - :py:meth:`cleanup` deletes the buffered data for a job. Callers defer
-      this so a just-stopped job's data stays available to plots that may
-      be created or reconfigured while the workflow is stopped (see
-      :py:meth:`LayerSubscription.start`'s previous-job fallback).
-
-    :py:class:`JobOrchestrator` invokes ``cleanup`` only when a job leaves
-    ``state.previous`` — i.e. when a newer stop or commit replaces it.
-    Stopping a workflow does **not** by itself call ``cleanup``.
+    The dashboard's data plane is keyed by stable ``DataKey``s, so buffered
+    data is not evicted when a job stops — a stopped workflow's last data
+    stays displayed under its keys. The one eviction point is
+    :py:meth:`begin_generation` (called only from ``commit_workflow``): the
+    workflow's buffers are cleared so the new generation starts blank and a
+    windowed extractor can never aggregate across a parameter change.
     """
 
     def __init__(self, *, data_service: DataService, job_service: JobService) -> None:
         self._lock = threading.RLock()
-        self._active: set[JobNumber] = set()
+        self._generations: dict[WorkflowId, _GenerationRecord] = {}
         self._data_service = data_service
         self._job_service = job_service
-
-    def is_active(self, job_number: JobNumber) -> bool:
-        """Check if a job number belongs to an active job."""
-        return job_number in self._active
 
     @contextmanager
     def ingestion_guard(self):
         """Hold while processing a batch of messages.
 
-        Prevents concurrent ``deactivate`` / ``cleanup`` from modifying the
-        active set or deleting DataService buffers mid-iteration.
+        Prevents a concurrent generation flip from clearing DataService
+        buffers mid-batch: post-flip, buffers hold only current-generation
+        data (a batch admitted before the flip is cleared by it; a batch
+        after it fails the ``is_current`` filter).
         """
         with self._lock:
             yield
 
-    def activate(self, job_number: JobNumber) -> None:
-        """Add a job number to the active set."""
+    def is_current(self, workflow_id: WorkflowId, job_number: JobNumber) -> bool:
+        """Check whether a wire job_number is the workflow's current generation."""
         with self._lock:
-            self._active.add(job_number)
+            record = self._generations.get(workflow_id)
+            return (
+                record is not None
+                and record.current is not None
+                and record.current.job_number == job_number
+            )
 
-    def deactivate(self, job_number: JobNumber) -> None:
-        """Remove a job number from the active set.
+    def is_known_job(self, job_number: JobNumber) -> bool:
+        """Check whether a job_number is any workflow's current or last generation.
 
-        Does not delete buffered data — call :py:meth:`cleanup` separately
-        when the job's data is no longer needed. Serialized against
-        ``ingestion_guard`` so the ingest filter sees a consistent view.
+        Used to filter ``JobStatus`` heartbeats, which keep job-number
+        semantics: a just-stopped or just-replaced job may still report its
+        final states.
         """
         with self._lock:
-            self._active.discard(job_number)
+            return any(
+                gen is not None and gen.job_number == job_number
+                for record in self._generations.values()
+                for gen in (record.current, record.last)
+            )
 
-    def restore(self, job_number: JobNumber) -> None:
-        """Add a job number without acquiring the lock.
+    def begin_generation(
+        self, workflow_id: WorkflowId, job_number: JobNumber, config: Mapping[str, Any]
+    ) -> None:
+        """Flip a workflow to a new generation and clear its buffered data.
+
+        This is the commit flip: the previous current generation rotates into
+        ``last`` (its retained config still resolvable for provenance), the
+        generation that drops off the two-entry window has its job-status
+        entries pruned, and the workflow's DataService buffers are cleared —
+        atomically with respect to ingest (callers hold ``ingestion_guard``)
+        and to pulls (the clear holds the DataService lock across all keys).
+        This is the only place buffers are cleared.
+        """
+        with self._lock:
+            record = self._generations.setdefault(workflow_id, _GenerationRecord())
+            dropped = record.last
+            record.last = record.current
+            record.current = Generation(job_number=job_number, config=config)
+            keys = [k for k in self._data_service if k.workflow_id == workflow_id]
+            self._data_service.clear_keys(keys)
+            if dropped is not None:
+                self._job_service.remove_jobs_by_number(dropped.job_number)
+            logger.info(
+                "Began new generation",
+                workflow_id=str(workflow_id),
+                job_number=str(job_number),
+                data_keys_cleared=len(keys),
+                stale_messages_dropped=record.stale_count,
+            )
+            record.stale_count = 0
+            record.logged_stale.clear()
+
+    def deactivate(self, workflow_id: WorkflowId) -> None:
+        """Clear the workflow's current generation (rotating it into ``last``).
+
+        Stops admitting data for the workflow without touching its buffers:
+        the stopped generation's data stays displayed under its stable keys
+        until the next :py:meth:`begin_generation` clears it. Serialized
+        against ``ingestion_guard`` so the ingest filter sees a consistent
+        view.
+        """
+        with self._lock:
+            record = self._generations.get(workflow_id)
+            if record is None or record.current is None:
+                return
+            dropped = record.last
+            record.last = record.current
+            record.current = None
+            if dropped is not None:
+                self._job_service.remove_jobs_by_number(dropped.job_number)
+
+    def restore(
+        self,
+        workflow_id: WorkflowId,
+        *,
+        current: Generation | None,
+        last: Generation | None = None,
+    ) -> None:
+        """Restore persisted generations without acquiring the lock.
 
         Used during initialization when no other threads are running.
         """
-        self._active.add(job_number)
+        self._generations[workflow_id] = _GenerationRecord(current=current, last=last)
 
-    def cleanup(self, job_number: JobNumber) -> None:
-        """Remove buffered data and status tracking for a job number.
+    def resolve_config(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> Mapping[str, Any] | None:
+        """Resolve a generation stamp to the config it was committed with.
 
-        Independent of active-set membership: callers may retain buffered
-        data after deactivation so that newly created plots can bind to a
-        recently stopped job's results. See the class docstring for the
-        data lifecycle that governs when callers should run this.
-
-        Deletes are batched inside a DataService transaction, which holds
-        the DataService lock for its duration: a concurrent pull observes
-        either all keys or none, and subscribers get a single coalesced
-        notification. Without this, a multi-source plot pulling mid-eviction
-        could rebuild with only a subset of its sources still present.
-
-        With today's orchestration there is no live subscriber bound to a
-        job's keys at the moment its data is cleaned up (subscribers
-        rebind to the new job before the old data is dropped), so the
-        transaction is currently defensive. Keeping the guarantee here
-        prevents the bug from resurfacing if a future caller — e.g. a UI
-        action that explicitly evicts a job — runs cleanup while plots
-        are still subscribed.
+        Covers the current and last generation; older stamps (no longer
+        resolvable) return None.
         """
         with self._lock:
-            keys_to_remove = [
-                key
-                for key in self._data_service
-                if isinstance(key, ResultKey) and key.job_id.job_number == job_number
-            ]
-            with self._data_service.transaction():
-                for key in keys_to_remove:
-                    del self._data_service[key]
-            self._job_service.remove_jobs_by_number(job_number)
-            logger.info(
-                "Cleaned up job data",
-                job_number=str(job_number),
-                data_keys_removed=len(keys_to_remove),
-            )
+            record = self._generations.get(workflow_id)
+            if record is None:
+                return None
+            for gen in (record.current, record.last):
+                if gen is not None and gen.job_number == job_number:
+                    return gen.config
+            return None
+
+    def record_stale(self, workflow_id: WorkflowId, job_number: JobNumber) -> None:
+        """Count a dropped data message from a non-current generation.
+
+        Logs once per distinct stale job_number; the accumulated count is
+        emitted with the next generation flip.
+        """
+        with self._lock:
+            record = self._generations.setdefault(workflow_id, _GenerationRecord())
+            record.stale_count += 1
+            if job_number not in record.logged_stale:
+                record.logged_stale.add(job_number)
+                logger.info(
+                    "Dropping data from non-current generation",
+                    workflow_id=str(workflow_id),
+                    job_number=str(job_number),
+                )

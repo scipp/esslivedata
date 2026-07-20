@@ -5,7 +5,7 @@ Data subscription and assembly for streaming plot updates.
 
 This module provides the core data flow components:
 - DataSubscriber: Watches DataService keys, assembles pulled data by role
-- Output is always role-grouped: dict[role, dict[ResultKey, data]]
+- Output is always role-grouped: dict[role, dict[DataKey, data]]
 """
 
 from __future__ import annotations
@@ -13,19 +13,19 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.dashboard.data_service import DataServiceSubscriber
 from ess.livedata.dashboard.extractors import UpdateExtractor
 
 
-class DataSubscriber(DataServiceSubscriber[ResultKey]):
+class DataSubscriber(DataServiceSubscriber[DataKey]):
     """Subscriber that reports key updates and assembles pulled data by role.
 
     Update notifications carry no data; ``on_update`` just signals that the
     consumer should schedule a pull. The pull applies this subscriber's
     extractors via ``DataService.snapshot`` and is grouped with
     :py:meth:`assemble`, whose output shape is always
-    ``dict[role, dict[ResultKey, data]]``. Consumers that care about a single
+    ``dict[role, dict[DataKey, data]]``. Consumers that care about a single
     role (e.g. standard plotters using ``primary``) extract it explicitly.
 
     The ready_condition is built internally: requires at least one key from each role.
@@ -33,8 +33,8 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
 
     def __init__(
         self,
-        keys_by_role: dict[str, list[ResultKey]],
-        extractors: Mapping[ResultKey, UpdateExtractor],
+        keys_by_role: dict[str, list[DataKey]],
+        extractors: Mapping[DataKey, UpdateExtractor],
         on_update: Callable[[], None],
     ) -> None:
         """
@@ -43,7 +43,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         Parameters
         ----------
         keys_by_role
-            Dict mapping role names to lists of ResultKeys. For standard plots,
+            Dict mapping role names to lists of DataKeys. For standard plots,
             this is {"primary": [keys...]}. For correlation plots, includes
             additional roles like "x_axis", "y_axis".
         extractors
@@ -67,22 +67,22 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         super().__init__()
 
     @property
-    def keys(self) -> set[ResultKey]:
+    def keys(self) -> set[DataKey]:
         """Return all keys this subscriber depends on."""
         return self._all_keys
 
     @property
-    def extractors(self) -> Mapping[ResultKey, UpdateExtractor]:
+    def extractors(self) -> Mapping[DataKey, UpdateExtractor]:
         """Return extractors for obtaining data views."""
         return self._extractors
 
-    def _is_ready(self, available_keys: set[ResultKey]) -> bool:
+    def _is_ready(self, available_keys: set[DataKey]) -> bool:
         """Check if we have at least one key from each role."""
         return all(bool(available_keys & ks) for ks in self._key_sets_by_role)
 
     def assemble(
-        self, store: dict[ResultKey, Any]
-    ) -> dict[str, dict[ResultKey, Any]] | None:
+        self, store: dict[DataKey, Any]
+    ) -> dict[str, dict[DataKey, Any]] | None:
         """
         Group this subscriber's keys from ``store`` by role.
 
@@ -92,17 +92,17 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         data = {key: store[key] for key in self._all_keys if key in store}
         if not data or not self._is_ready(set(data.keys())):
             return None
-        result: dict[str, dict[ResultKey, Any]] = {}
+        result: dict[str, dict[DataKey, Any]] = {}
         for role, role_keys in self._keys_by_role.items():
             sorted_keys = sorted(
                 role_keys,
-                key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name),
+                key=lambda k: (str(k.workflow_id), k.source_name, k.output_name),
             )
             role_data = {k: data[k] for k in sorted_keys if k in data}
             if role_data:
                 result[role] = role_data
         return result
 
-    def on_updated(self, updated_keys: set[ResultKey]) -> None:
+    def on_updated(self, updated_keys: set[DataKey]) -> None:
         """Signal the consumer that a pull is due (see ``on_update`` in init)."""
         self._on_update()

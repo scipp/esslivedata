@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
-from ..config.workflow_spec import JobNumber, ResultKey
+from ..config.workflow_spec import ResultKey
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -62,11 +62,10 @@ class Orchestrator:
         if not messages:
             return
 
-        # The ingestion guard serializes message processing against active-set
-        # mutations and DataService cleanup in ActiveJobRegistry.deactivate()
-        # (called from the UI thread). Without this, the background thread
-        # could iterate or write to DataService while the UI thread deletes
-        # buffers, causing dict-iteration crashes or orphaned buffers.
+        # The ingestion guard serializes message processing against generation
+        # flips in ActiveJobRegistry.begin_generation() (called from the UI
+        # thread at commit). Without this, a flip could clear DataService
+        # buffers mid-batch, leaving a mix of old- and new-generation data.
         #
         # Control messages (status, command acks) never touch DataService, so
         # they are handled outside the transaction: the transaction holds the
@@ -107,9 +106,10 @@ class Orchestrator:
         """
         Forward data to the appropriate data service based on the stream name.
 
-        Data and job status messages are filtered by active job number via the
-        :class:`ActiveJobRegistry`. Messages from unknown or stopped jobs are
-        silently discarded.
+        Data messages are admitted only if their wire job_number is the
+        workflow's current generation (:class:`ActiveJobRegistry`); stale or
+        unknown generations are counted and dropped. Job status messages are
+        admitted for current and last generations.
 
         Parameters
         ----------
@@ -122,20 +122,27 @@ class Orchestrator:
             if isinstance(value, ServiceStatus):
                 self._service_registry.status_updated(value)
             elif isinstance(value, JobStatus):
-                if self._is_active_job(value.job_id.job_number):
+                if self._active_job_registry.is_known_job(value.job_id.job_number):
                     self._job_service.status_updated(value)
             else:
                 self._logger.warning("Unknown status type: %s", type(value))
         elif stream_id == RESPONSES_STREAM_ID:
             self._process_response(value)
         else:
+            # The wire key carries the per-commit job_number; the dashboard's
+            # data plane is keyed by the stable DataKey. The job_number is
+            # consumed here as a generation filter and recorded as the
+            # provenance stamp — it never enters the data plane.
             result_key = ResultKey.model_validate_json(stream_id.name)
-            if self._is_active_job(result_key.job_id.job_number):
-                self._data_service[result_key] = value
-
-    def _is_active_job(self, job_number: JobNumber) -> bool:
-        """Check if a job_number belongs to an active job."""
-        return self._active_job_registry.is_active(job_number)
+            job_number = result_key.job_id.job_number
+            if self._active_job_registry.is_current(result_key.workflow_id, job_number):
+                self._data_service.set_item(
+                    result_key.data_key, value, stamp=job_number
+                )
+            else:
+                self._active_job_registry.record_stale(
+                    result_key.workflow_id, job_number
+                )
 
     def _process_response(self, ack: CommandAcknowledgement) -> None:
         """Process a command acknowledgement from the backend."""

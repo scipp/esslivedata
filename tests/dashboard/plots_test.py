@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
-import uuid
 import warnings
 
 import holoviews as hv
@@ -11,7 +10,7 @@ import scipp as sc
 from bokeh.models import GlyphRenderer, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
@@ -58,14 +57,15 @@ def coordinates_2d():
 
 @pytest.fixture
 def data_key():
-    """Create a test ResultKey."""
+    """Create a test DataKey."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
         name='test_workflow',
         version=1,
     )
-    job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='test_result')
+    return DataKey(
+        workflow_id=workflow_id, source_name='test_source', output_name='test_result'
+    )
 
 
 @pytest.fixture(params=['linear', 'log'])
@@ -714,9 +714,9 @@ class TestLinePlotter:
             ),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
         )
-        data_key2 = ResultKey(
+        data_key2 = DataKey(
             workflow_id=data_key.workflow_id,
-            job_id=JobId(source_name='other_source', job_number=uuid.uuid4()),
+            source_name='other_source',
             output_name=data_key.output_name,
         )
         plotter.compute({'primary': {data_key: data, data_key2: data}})
@@ -1141,15 +1141,14 @@ class TestPlotterLabelChanges:
 
     @pytest.fixture
     def data_key_with_output_name(self):
-        """Create a test ResultKey with output_name."""
+        """Create a test DataKey with output_name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_0'
         )
 
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
@@ -1188,28 +1187,26 @@ class TestPlotterOverlayMode:
 
     @pytest.fixture
     def data_key_1(self):
-        """Create first test ResultKey."""
+        """Create first test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_0'
         )
 
     @pytest.fixture
     def data_key_2(self):
-        """Create second test ResultKey."""
+        """Create second test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_1'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_1'
         )
 
     def test_overlay_mode_with_single_item(self, simple_data_1, data_key_1):
@@ -1386,7 +1383,7 @@ class TestBarsPlotter:
         """Test that the bar is labeled with source_name when no title resolver."""
         result = bars_plotter.plot(scalar_data, data_key)
         bar_data = result.data
-        assert data_key.job_id.source_name in bar_data['source'].iloc[0]
+        assert data_key.source_name in bar_data['source'].iloc[0]
 
     def test_plot_uses_source_display_name_when_provided(
         self, bars_plotter, scalar_data, data_key
@@ -1405,9 +1402,8 @@ class TestBarsPlotter:
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        data_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_sum'
+        data_key = DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_sum'
         )
 
         result = bars_plotter.plot(scalar_data, data_key)
@@ -1459,14 +1455,14 @@ class TestBarsPlotter:
             name='test',
             version=1,
         )
-        key1 = ResultKey(
+        key1 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            source_name='source1',
             output_name='counts',
         )
-        key2 = ResultKey(
+        key2 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            source_name='source2',
             output_name='counts',
         )
 
@@ -1498,11 +1494,11 @@ class TestTablePlotter:
         return TablePlotter.from_params(PlotParamsTable())
 
     @staticmethod
-    def _key(source: str, output: str) -> ResultKey:
+    def _key(source: str, output: str) -> DataKey:
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
-        return ResultKey(
+        return DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+            source_name=source,
             output_name=output,
         )
 
@@ -2149,15 +2145,16 @@ class TestLagIndicator:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     def test_time_info_shown_when_coords_present(self, data_key):
@@ -2211,9 +2208,9 @@ class TestLagIndicator:
 
         now_ns = time.time_ns()
         # Source 1: data from 2s to 1s ago
-        data_key1 = ResultKey(
+        data_key1 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            source_name='source1',
             output_name='result',
         )
         data1 = sc.DataArray(
@@ -2226,9 +2223,9 @@ class TestLagIndicator:
         )
 
         # Source 2: data from 6s to 5s ago (older, should determine the lag)
-        data_key2 = ResultKey(
+        data_key2 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            source_name='source2',
             output_name='result',
         )
         data2 = sc.DataArray(
@@ -2353,15 +2350,16 @@ class TestTwoStageArchitecture:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     def test_create_presenter_returns_presenter(self, simple_data, data_key):
@@ -2454,15 +2452,14 @@ class TestSaveFilenameHookOnDynamicMap:
     """
 
     @staticmethod
-    def _make_key(source_name: str) -> ResultKey:
+    def _make_key(source_name: str) -> DataKey:
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id, source_name=source_name, output_name='test_result'
         )
 
     @staticmethod
@@ -2684,15 +2681,16 @@ class TestRateNormalizationIntegration:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     @pytest.fixture

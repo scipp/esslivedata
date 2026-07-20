@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+
 import uuid
 
 import pydantic
@@ -221,7 +222,7 @@ class FakePlottingController:
 
         # Extract source_names and output_name from primary keys for assertions
         primary_keys = keys_by_role.get(PRIMARY, [])
-        source_names = [key.job_id.source_name for key in primary_keys]
+        source_names = [key.source_name for key in primary_keys]
         output_name = primary_keys[0].output_name if primary_keys else None
 
         # Record the call for assertions
@@ -674,8 +675,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         _ = add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
         # Commit workflow - plotter is created eagerly (before data arrives)
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Plotter should be created eagerly when job is ready
         assert fake_plotting_controller.call_count() == 1
@@ -686,13 +686,13 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Simulate data arrival by populating DataService
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         # Add data for ALL sources (plot requires both source1 and source2)
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -717,18 +717,17 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         _ = add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for ALL sources
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -770,21 +769,17 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         add_cell_with_layer(plot_orchestrator, grid_id, geometry_2, config_2)
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for both cells
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for config in [config_1, config_2]:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(
-                    source_name=config.source_names[0],
-                    job_number=job_number,
-                ),
+                source_name=config.source_names[0],
                 output_name=config.view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -854,19 +849,16 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator.update_layer_config(layer_id, new_config)
 
         # Commit new workflow
-        job_ids = commit_workflow_for_test(
-            job_orchestrator, workflow_id_2, workflow_spec_2
-        )
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id_2, workflow_spec_2)
 
         # Simulate data arrival for new workflow
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
-        result_key = ResultKey(
+        result_key = DataKey(
             workflow_id=workflow_id_2,
-            job_id=JobId(source_name='new_source', job_number=job_number),
+            source_name='new_source',
             output_name='new_output',
         )
         fake_data_service[result_key] = sc.scalar(1.0)
@@ -957,18 +949,17 @@ class TestLifecycleEventNotifications:
         assert call_kwargs['cell_id'] == cell_id
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for ALL sources
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -1214,16 +1205,16 @@ class TestErrorHandling:
         assert plot_orchestrator.get_grid(grid_id) is not None
 
 
-def feed_result_data(data_service, config, workflow_id, job_number):
+def feed_result_data(data_service, config, workflow_id):
     """Populate DataService with data for all of a plot config's sources."""
     import scipp as sc
 
-    from ess.livedata.config.workflow_spec import JobId, ResultKey
+    from ess.livedata.config.workflow_spec import DataKey
 
     for source_name in config.source_names:
-        result_key = ResultKey(
+        result_key = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name=source_name, job_number=job_number),
+            source_name=source_name,
             output_name=config.view_name,
         )
         data_service[result_key] = sc.scalar(1.0)
@@ -1265,8 +1256,8 @@ class TestBuildRobustness:
         config = make_plot_config(workflow_id)
         cell_id = add_cell_with_layer(orchestrator, grid_id, DEFAULT_GEOMETRY, config)
         layer_id = orchestrator.get_cell(cell_id).layers[0].layer_id
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        feed_result_data(fake_data_service, config, workflow_id, job_ids[0].job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(fake_data_service, config, workflow_id)
 
         orchestrator.flush_frames()
 
@@ -1293,10 +1284,8 @@ class TestBuildRobustness:
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
         layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        feed_result_data(
-            fake_data_service, plot_cell[1], workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(fake_data_service, plot_cell[1], workflow_id)
 
         state = plot_data_service.get(layer_id)
         old_plotter = fake_plotting_controller.created_plotters[0]
@@ -1325,10 +1314,8 @@ class TestBuildRobustness:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_cell(grid_id, plot_cell[0])
         layer_id = plot_orchestrator.add_layer(cell_id, plot_cell[1])
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        feed_result_data(
-            fake_data_service, plot_cell[1], workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        feed_result_data(fake_data_service, plot_cell[1], workflow_id)
         plot_orchestrator.flush_frames()  # no viewer yet: dirty marks dropped
 
         plotter = fake_plotting_controller.created_plotters[0]
@@ -1457,18 +1444,17 @@ class TestCellRetrieval:
         layer_id = cell.layers[0].layer_id
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for ALL sources
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -1566,18 +1552,17 @@ class TestCellRetrieval:
             cell_ids.append(cell_id)
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for all cells
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for i in range(3):
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=f'source_{i}', job_number=job_number),
+                source_name=f'source_{i}',
                 output_name=f'output_{i}',
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -1625,18 +1610,17 @@ class TestCellRetrieval:
         config = cell.layers[0].config
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number1 = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for ALL sources
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in config.source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number1),
+                source_name=source_name,
                 output_name=config.view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -1658,9 +1642,9 @@ class TestCellRetrieval:
         plot_orchestrator.update_layer_config(layer_id, new_config)
 
         # Simulate data arrival for new config
-        result_key2 = ResultKey(
+        result_key2 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='new_source', job_number=job_number1),
+            source_name='new_source',
             output_name='new_output',
         )
         fake_data_service[result_key2] = sc.scalar(2.0)
@@ -1691,18 +1675,17 @@ class TestCellRetrieval:
         layer_id = cell.layers[0].layer_id
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for ALL sources
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -1797,17 +1780,16 @@ class TestSourceNameFiltering:
         add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
 
         # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Simulate data arrival for source_A only
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
-        result_key_A = ResultKey(
+        result_key_A = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source_A', job_number=job_number),
+            source_name='source_A',
             output_name='test_output',
         )
         fake_data_service[result_key_A] = sc.scalar(1.0)
@@ -1822,9 +1804,9 @@ class TestSourceNameFiltering:
 
         # When source_B arrives, the DynamicMap will automatically update
         # (no new create_plot call needed - the existing plot subscribes to updates)
-        result_key_B = ResultKey(
+        result_key_B = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source_B', job_number=job_number),
+            source_name='source_B',
             output_name='test_output',
         )
         fake_data_service[result_key_B] = sc.scalar(2.0)
@@ -1848,17 +1830,16 @@ class TestSourceNameFiltering:
         running and has data for the plot's source_names.
         """
         # Commit workflow FIRST
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Add data for source_A
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
-        result_key_A = ResultKey(
+        result_key_A = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source_A', job_number=job_number),
+            source_name='source_A',
             output_name='test_output',
         )
         fake_data_service[result_key_A] = sc.scalar(1.0)
@@ -2075,21 +2056,15 @@ class TestPlotAfterWorkflowStopped:
     buffered data from the previous job and ends up in the STOPPED state
     with a cached plot."""
 
-    def _add_data(
-        self,
-        fake_data_service,
-        workflow_id,
-        config,
-        job_number,
-    ):
+    def _add_data(self, fake_data_service, workflow_id, config):
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in config.source_names:
-            key = ResultKey(
+            key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=config.view_name,
             )
             fake_data_service[key] = sc.scalar(1.0)
@@ -2106,10 +2081,8 @@ class TestPlotAfterWorkflowStopped:
     ):
         from ess.livedata.dashboard.plot_data_service import LayerState
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._add_data(
-            fake_data_service, workflow_id, plot_cell[1], job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._add_data(fake_data_service, workflow_id, plot_cell[1])
         job_orchestrator.stop_workflow(workflow_id)
 
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
@@ -2142,10 +2115,8 @@ class TestPlotAfterWorkflowStopped:
         )
         original_layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._add_data(
-            fake_data_service, workflow_id, plot_cell[1], job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._add_data(fake_data_service, workflow_id, plot_cell[1])
         job_orchestrator.stop_workflow(workflow_id)
 
         plot_orchestrator.update_layer_config(original_layer_id, plot_cell[1])
@@ -2203,11 +2174,10 @@ class TestTitleResolver:
         """
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         # Commit workflow first so it is already running
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
 
@@ -2233,9 +2203,9 @@ class TestTitleResolver:
 
         # Simulate data arrival for both layers
         for output_name in ('output_a', 'output_b'):
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name='monitor_0', job_number=job_number),
+                source_name='monitor_0',
                 output_name=output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -2735,10 +2705,9 @@ class TestDeliveryPausedForHiddenLayers:
     ):
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
         config = make_plot_config(
@@ -2748,9 +2717,9 @@ class TestDeliveryPausedForHiddenLayers:
         layer_id = plot_orchestrator.add_layer(cell_id, config)
         # No viewer token acquired: the layer sits on a hidden tab.
 
-        key = ResultKey(
+        key = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='monitor_0', job_number=job_number),
+            source_name='monitor_0',
             output_name='output_a',
         )
         fake_data_service[key] = sc.scalar(1.0)
@@ -2795,15 +2764,15 @@ class TestFrameGeneration:
             frame_clock=frame_clock,
         )
 
-    def _feed_data(self, fake_data_service, plot_cell, workflow_id, job_number):
+    def _feed_data(self, fake_data_service, plot_cell, workflow_id):
         import scipp as sc
 
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
+            result_key = DataKey(
                 workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
+                source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
@@ -2831,10 +2800,8 @@ class TestFrameGeneration:
         grid_id = orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         add_cell_with_layer(orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._feed_data(
-            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(fake_data_service, plot_cell, workflow_id)
 
         # Data arrival buckets the build; the generation only advances when the
         # ingestion loop flushes the drained burst.
@@ -2869,10 +2836,8 @@ class TestFrameGeneration:
         add_cell_with_layer(orchestrator, grid_a, plot_cell[0], plot_cell[1])
         add_cell_with_layer(orchestrator, grid_b, plot_cell[0], plot_cell[1])
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._feed_data(
-            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(fake_data_service, plot_cell, workflow_id)
 
         assert orchestrator.frame_generation(grid_a) == 0
         assert orchestrator.frame_generation(grid_b) == 0
@@ -2906,10 +2871,8 @@ class TestFrameGeneration:
         cell_id = orchestrator.add_cell(grid_id, plot_cell[0])
         orchestrator.add_layer(cell_id, plot_cell[1])
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._feed_data(
-            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(fake_data_service, plot_cell, workflow_id)
 
         orchestrator.flush_frames()
         assert orchestrator.frame_generation(grid_id) == 0
@@ -2948,10 +2911,8 @@ class TestFrameGeneration:
         cell_b = orchestrator.add_cell(grid_b, plot_cell[0])
         orchestrator.add_layer(cell_b, plot_cell[1])
 
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        self._feed_data(
-            fake_data_service, plot_cell, workflow_id, job_ids[0].job_number
-        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        self._feed_data(fake_data_service, plot_cell, workflow_id)
         orchestrator.flush_frames()
 
         assert orchestrator.frame_generation(grid_a) == 1

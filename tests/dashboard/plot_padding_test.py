@@ -6,7 +6,6 @@ cases and ``Plotter.compute`` cleanup on mid-loop exceptions.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import holoviews as hv
@@ -14,7 +13,7 @@ import numpy as np
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.plot_params import PlotParams1d, PlotScale
 from ess.livedata.dashboard.plots import (
@@ -28,10 +27,10 @@ from ess.livedata.dashboard.plots import (
 hv.extension('bokeh')
 
 
-def _key(source: str = 'src', output: str = 'out') -> ResultKey:
-    return ResultKey(
+def _key(source: str = 'src', output: str = 'out') -> DataKey:
+    return DataKey(
         workflow_id=WorkflowId(instrument='test', name='test', version=1),
-        job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+        source_name=source,
         output_name=output,
     )
 
@@ -195,7 +194,7 @@ class _RaisingPlotter(Plotter):
         self._call_count = 0
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs: Any
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs: Any
     ) -> hv.Element:
         self._call_count += 1
         # Always populate targets so we can assert cleanup happens.

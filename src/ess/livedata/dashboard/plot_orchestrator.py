@@ -26,8 +26,8 @@ import structlog
 
 from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
+    DataKey,
     JobNumber,
-    ResultKey,
     StreamRole,
     WorkflowId,
     WorkflowSpec,
@@ -123,7 +123,7 @@ class DataSourceConfig:
     """Configuration for a single data source in a plot layer.
 
     This defines how to connect a layer to a workflow's user-facing output
-    view. The backend pydantic field name (used in ``ResultKey``) is
+    view. The backend pydantic field name (used in ``DataKey``) is
     resolved at subscription time from the view name plus the current
     window mode.
     """
@@ -310,7 +310,7 @@ def _build_resolved_data_sources(
     """Build a copy of ``config.data_sources`` with view names resolved to fields.
 
     The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``ResultKey.output_name``).
+    ``view_name`` (which is then used as ``DataKey.output_name``).
     """
     resolved: dict[str, DataSourceConfig] = {}
     for slot, ds in config.data_sources.items():
@@ -980,7 +980,7 @@ class PlotOrchestrator:
         When all non-static layers in the same cell share the same primary view,
         the view title is already shown on the Y-axis and is stripped from the
         legend label to reduce redundancy. The resolver maps backend pydantic
-        field names (which appear in ``ResultKey.output_name``) back to their
+        field names (which appear in ``DataKey.output_name``) back to their
         owning view's title so legends and axes show user-facing titles.
         """
         from .plots import TitleResolver, _identity
@@ -1150,7 +1150,7 @@ class PlotOrchestrator:
         layer_id: LayerId,
         plotter: Any,
         version: int,
-        data: dict[str, dict[ResultKey, Any]],
+        data: dict[str, dict[DataKey, Any]],
     ) -> None:
         """Run ``plotter.compute`` and transition the layer to READY or ERROR.
 

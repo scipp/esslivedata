@@ -11,15 +11,13 @@ matches the axes actually populated.
 
 from __future__ import annotations
 
-import uuid
-
 import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
 from holoviews.core.util import range_pad
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
     PRIMARY,
     X_AXIS,
@@ -51,10 +49,10 @@ from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 hv.extension('bokeh')
 
 
-def _key(source: str = 'src', output: str = 'out') -> ResultKey:
-    return ResultKey(
+def _key(source: str = 'src', output: str = 'out') -> DataKey:
+    return DataKey(
         workflow_id=WorkflowId(instrument='test', name='test', version=1),
-        job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+        source_name=source,
         output_name=output,
     )
 
@@ -358,14 +356,14 @@ class TestCorrelationHistogramRangeTargets:
     def test_1d_targets_delegated_to_renderer(self):
         params = CorrelationHistogram1dParams(bins=Bin1dParams(x_bins=4))
         plotter = CorrelationHistogram1dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        axis_key = ResultKey(
+        axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
         data = {
@@ -392,19 +390,19 @@ class TestCorrelationHistogramRangeTargets:
             bins=Bin2dParams(x_bins=4, y_bins=4),
         )
         plotter = CorrelationHistogram2dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        x_axis_key = ResultKey(
+        x_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
-        y_axis_key = ResultKey(
+        y_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='temperature', job_number=uuid.uuid4()),
+            source_name='temperature',
             output_name='result',
         )
         data = {
@@ -434,14 +432,14 @@ class TestCorrelationHistogramRangeTargets:
     def test_1d_iter_range_targets_delegated_to_renderer(self):
         params = CorrelationHistogram1dParams(bins=Bin1dParams(x_bins=4))
         plotter = CorrelationHistogram1dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        axis_key = ResultKey(
+        axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
         data = {
@@ -470,19 +468,19 @@ class TestCorrelationHistogramRangeTargets:
             bins=Bin2dParams(x_bins=4, y_bins=4),
         )
         plotter = CorrelationHistogram2dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        x_axis_key = ResultKey(
+        x_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
-        y_axis_key = ResultKey(
+        y_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='temperature', job_number=uuid.uuid4()),
+            source_name='temperature',
             output_name='result',
         )
         data = {

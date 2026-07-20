@@ -13,8 +13,8 @@ import pydantic
 import structlog
 
 from ess.livedata.config.workflow_spec import (
+    DataKey,
     JobId,
-    ResultKey,
     WorkflowId,
     WorkflowSpec,
 )
@@ -54,7 +54,7 @@ class WorkflowController:
         *,
         job_orchestrator: JobOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        data_service: DataService[ResultKey, object] | None = None,
+        data_service: DataService[DataKey, object] | None = None,
         instrument_config: Instrument | None = None,
     ) -> None:
         """

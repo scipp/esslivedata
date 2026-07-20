@@ -16,7 +16,7 @@ from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
@@ -43,7 +43,7 @@ from .time_utils import format_time_ns_local
 from .timeseries_downsample import downsample_timeseries
 
 
-def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
+def _latest_time_ns(primary: dict[DataKey, sc.DataArray]) -> int | None:
     """Latest time-coord value across the primary dict, as int64 nanoseconds.
 
     Caller is the timeseries plotter, so each DataArray has a non-empty
@@ -486,7 +486,7 @@ class Plotter:
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
         self._time_bounds: TimeBounds | None = None
-        self._range_targets: dict[ResultKey, RangeTargets] = {}
+        self._range_targets: dict[DataKey, RangeTargets] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
@@ -655,7 +655,7 @@ class Plotter:
 
     def compute(
         self,
-        data: dict[str, dict[ResultKey, sc.DataArray]],
+        data: dict[str, dict[DataKey, sc.DataArray]],
         *,
         title_resolver: TitleResolver | None = None,
         **kwargs,
@@ -698,7 +698,7 @@ class Plotter:
 
     def _build_result(
         self,
-        data: dict[ResultKey, sc.DataArray],
+        data: dict[DataKey, sc.DataArray],
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
@@ -724,10 +724,10 @@ class Plotter:
         plots: list[hv.Element] = []
         for plot_index, (data_key, da) in enumerate(data.items()):
             label = resolver.get_legend_label(
-                data_key.job_id.source_name, data_key.output_name
+                data_key.source_name, data_key.output_name
             )
             output_display_name = resolver.get_axis_label(data_key.output_name)
-            source_display_name = resolver.source(data_key.job_id.source_name)
+            source_display_name = resolver.source(data_key.source_name)
             plot_element = self.plot(
                 da,
                 data_key,
@@ -807,7 +807,7 @@ class Plotter:
         """Check if state has been computed."""
         return self._cached_state is not None
 
-    def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
+    def get_range_targets(self, data_key: DataKey) -> RangeTargets | None:
         """Per-axis ``(lo, hi)`` targets computed at the last ``compute()``.
 
         Returns ``None`` when no targets have been computed for ``data_key``
@@ -816,7 +816,7 @@ class Plotter:
         """
         return self._range_targets.get(data_key)
 
-    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
+    def iter_range_targets(self) -> Iterator[tuple[DataKey, RangeTargets]]:
         """Iterate ``(data_key, targets)`` pairs computed at the last ``compute()``.
 
         Empty when no ``compute()`` has happened yet or when the plotter's
@@ -841,7 +841,7 @@ class Plotter:
         ]
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs
     ) -> Any:
         """Create a plot from the given data.
 
@@ -1017,7 +1017,7 @@ class LinePlotter(Plotter):
 
     def compute(
         self,
-        data: dict[str, dict[ResultKey, sc.DataArray]],
+        data: dict[str, dict[DataKey, sc.DataArray]],
         *,
         title_resolver: TitleResolver | None = None,
         **kwargs,
@@ -1089,7 +1089,7 @@ class LinePlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',
@@ -1210,7 +1210,7 @@ class ImagePlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',
@@ -1300,7 +1300,7 @@ class BarsPlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         source_display_name: str = '',
@@ -1311,7 +1311,7 @@ class BarsPlotter(Plotter):
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        bar_label = source_display_name or data_key.job_id.source_name
+        bar_label = source_display_name or data_key.source_name
         value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
         vdim_label = output_display_name or data_key.output_name or 'values'
@@ -1422,7 +1422,7 @@ class Overlay1DPlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',

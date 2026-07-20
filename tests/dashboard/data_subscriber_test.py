@@ -4,11 +4,9 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_subscriber import DataSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 
@@ -25,12 +23,12 @@ def workflow_id() -> WorkflowId:
 
 @pytest.fixture
 def make_result_key(workflow_id):
-    """Factory for creating ResultKeys."""
+    """Factory for creating DataKeys."""
 
-    def _make(source_name: str, output_name: str = 'result') -> ResultKey:
-        return ResultKey(
+    def _make(source_name: str, output_name: str = 'result') -> DataKey:
+        return DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
+            source_name=source_name,
             output_name=output_name,
         )
 
@@ -118,11 +116,12 @@ class TestDataSubscriberSingleRole:
     def test_keys_sorted_deterministically(self, workflow_id):
         """Test that keys are sorted deterministically in output."""
         # Create keys with specific ordering
-        job_a = JobId(source_name='a_detector', job_number=uuid.uuid4())
-        job_b = JobId(source_name='b_detector', job_number=uuid.uuid4())
-
-        key_a = ResultKey(workflow_id=workflow_id, job_id=job_a, output_name='result')
-        key_b = ResultKey(workflow_id=workflow_id, job_id=job_b, output_name='result')
+        key_a = DataKey(
+            workflow_id=workflow_id, source_name='a_detector', output_name='result'
+        )
+        key_b = DataKey(
+            workflow_id=workflow_id, source_name='b_detector', output_name='result'
+        )
 
         keys_by_role = {'primary': [key_b, key_a]}  # Intentionally unordered
         extractors = {k: LatestValueExtractor() for k in [key_a, key_b]}
@@ -137,15 +136,15 @@ class TestDataSubscriberSingleRole:
 
         result_keys = list(data['primary'].keys())
         # Should be sorted alphabetically by source_name
-        assert result_keys[0].job_id.source_name == 'a_detector'
-        assert result_keys[1].job_id.source_name == 'b_detector'
+        assert result_keys[0].source_name == 'a_detector'
+        assert result_keys[1].source_name == 'b_detector'
 
 
 class TestDataSubscriberMultiRole:
     """Test DataSubscriber with multiple roles (correlation plots)."""
 
     def test_multi_role_assembles_grouped_dict(self, make_result_key):
-        """Multiple roles output dict[str, dict[ResultKey, data]]."""
+        """Multiple roles output dict[str, dict[DataKey, data]]."""
         primary_key = make_result_key('detector')
         x_axis_key = make_result_key('position')
         keys_by_role = {'primary': [primary_key], 'x_axis': [x_axis_key]}

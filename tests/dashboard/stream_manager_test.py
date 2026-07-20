@@ -4,13 +4,11 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 import scipp as sc
 from scipp.testing import assert_identical
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -36,11 +34,11 @@ def workflow_id() -> WorkflowId:
     return WorkflowId(instrument="test", name="wf", version=1)
 
 
-def make_key(workflow_id: WorkflowId, source_name: str = "source") -> ResultKey:
-    """Helper to create ResultKeys."""
-    return ResultKey(
+def make_key(workflow_id: WorkflowId, source_name: str = "source") -> DataKey:
+    """Helper to create DataKeys."""
+    return DataKey(
         workflow_id=workflow_id,
-        job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
+        source_name=source_name,
     )
 
 
@@ -248,7 +246,7 @@ class TestStreamManagerMultiRole:
     def test_multi_role_assembles_grouped_output(
         self, data_service, sample_data, workflow_id
     ):
-        """Multiple roles output grouped dict[str, dict[ResultKey, data]]."""
+        """Multiple roles output grouped dict[str, dict[DataKey, data]]."""
         manager = StreamManager(data_service=data_service)
         updates: list[None] = []
 

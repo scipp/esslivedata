@@ -1609,3 +1609,59 @@ class TestUnregisterExtractorSymmetry:
             assert buffer.get_required_timespan() == 0.0
             assert isinstance(buffer, TemporalBuffer)
             assert len(service._buffer_manager._states["key1"].extractors) == 1
+
+
+class TestClearKeysAndStamps:
+    """Generation-clear and provenance stamps (#1042 slice i)."""
+
+    def test_clear_keys_empties_buffers_and_notifies(self):
+        service = DataService[str, int]()
+        subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
+        service.register_subscriber(subscriber)
+        service["key1"] = make_test_data(1)
+        service["key2"] = make_test_data(2)
+        service["other"] = make_test_data(3)
+
+        service.clear_keys(["key1", "key2", "missing"])
+
+        snapshot = service.snapshot(subscriber)
+        assert snapshot == {}
+        assert service["other"].value == 3
+        assert get_pipe().notifications[-1] == {"key1", "key2"}
+
+    def test_clear_keys_preserves_subscriber_registration(self):
+        """Data arriving after a clear reaches the still-registered subscriber."""
+        service = DataService[str, int]()
+        subscriber, _get_pipe = create_test_subscriber({"key1"})
+        service.register_subscriber(subscriber)
+        service["key1"] = make_test_data(1)
+        service.clear_keys(["key1"])
+
+        service["key1"] = make_test_data(42)
+
+        assert service.snapshot(subscriber)["key1"].value == 42
+
+    def test_stamps_follow_data_lifecycle(self):
+        service = DataService[str, int]()
+        subscriber, _ = create_test_subscriber({"key1", "key2"})
+        service.register_subscriber(subscriber)
+        service.set_item("key1", make_test_data(1), stamp="gen-a")
+        service.set_item("key2", make_test_data(2), stamp="gen-b")
+
+        data, stamps = service.snapshot_with_stamps(subscriber)
+        assert stamps == {"key1": "gen-a", "key2": "gen-b"}
+        assert data["key1"].value == 1
+
+        service.clear_keys(["key1"])
+        service.set_item("key1", make_test_data(3), stamp="gen-c")
+        _, stamps = service.snapshot_with_stamps(subscriber)
+        assert stamps == {"key1": "gen-c", "key2": "gen-b"}
+
+    def test_plain_setitem_records_no_stamp(self):
+        service = DataService[str, int]()
+        subscriber, _ = create_test_subscriber({"key1"})
+        service.register_subscriber(subscriber)
+        service["key1"] = make_test_data(1)
+
+        _, stamps = service.snapshot_with_stamps(subscriber)
+        assert stamps == {"key1": None}

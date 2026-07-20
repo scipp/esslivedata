@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import uuid
 
 import holoviews as hv
 import pydantic
@@ -672,13 +671,13 @@ class TestCreateExtractorsFromParams:
     """Verify the new ``since_start`` window mode uses LatestValueExtractor."""
 
     def _make_keys(self) -> list:
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.config.workflow_spec import DataKey
 
         wf_id = WorkflowId(instrument='test', name='wf', version=1)
         return [
-            ResultKey(
+            DataKey(
                 workflow_id=wf_id,
-                job_id=JobId(source_name='src', job_number=uuid.UUID(int=0)),
+                source_name='src',
                 output_name='current',
             )
         ]
