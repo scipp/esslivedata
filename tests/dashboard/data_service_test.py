@@ -1263,9 +1263,9 @@ class TestThreadSafety:
 
     The background ingestion thread mutates buffers via ``transaction`` /
     ``__setitem__`` while the UI thread (re)configures plots via
-    ``register_subscriber`` / ``unregister_subscriber``. A single lock
-    serializes the internal state, and ``trigger`` runs outside the lock on
-    data copied out of the buffers.
+    ``register_subscriber`` / ``unregister_subscriber``. A single
+    transaction-scoped lock serializes the internal state, and ``on_updated``
+    runs outside the lock.
     """
 
     def test_getitem_returns_data_detached_from_buffer(self):
@@ -1390,11 +1390,12 @@ class TestThreadSafety:
         assert not errors, f"concurrent access raised: {errors[0]!r}"
         assert service["key1"].value >= 0
 
-    def test_transaction_on_another_thread_does_not_defer_notification(self):
-        """Transaction depth is thread-local.
+    def test_write_blocked_by_transaction_notifies_once_it_commits(self):
+        """The lock is transaction-scoped, the notify deferral thread-local.
 
-        A transaction held open on one thread must not suppress notifications
-        for updates made on another thread.
+        A write on another thread blocks until an open transaction commits;
+        once through, it notifies immediately — the foreign transaction must
+        not defer it.
         """
         service = DataService[str, int]()
         triggered: list[int] = []
@@ -1428,11 +1429,66 @@ class TestThreadSafety:
         holder.start()
         assert in_transaction.wait(timeout=5)
 
-        service["key1"] = make_test_data(42, time=1.0)
-        assert triggered == [42]
+        write_done = threading.Event()
+
+        def write() -> None:
+            service["key1"] = make_test_data(42, time=1.0)
+            write_done.set()
+
+        writer = threading.Thread(target=write)
+        writer.start()
+        assert not write_done.wait(timeout=0.2), (
+            "write completed while a transaction was open on another thread"
+        )
 
         release.set()
+        assert write_done.wait(timeout=5), "write never unblocked"
+        writer.join(timeout=5)
         holder.join(timeout=5)
+        assert triggered == [42]
+
+    def test_snapshot_does_not_observe_partial_transaction(self):
+        """A pull sees either none or all of a transaction's writes.
+
+        A snapshot racing an open transaction must block until the
+        transaction commits, not return a state where only some of its
+        writes are visible.
+        """
+        service = DataService[str, int]()
+        subscriber, _ = create_test_subscriber({"key1", "key2"})
+        service.register_subscriber(subscriber)
+
+        first_written = threading.Event()
+        release = threading.Event()
+
+        def transact() -> None:
+            with service.transaction():
+                service["key1"] = make_test_data(1, time=1.0)
+                first_written.set()
+                release.wait(timeout=5)
+                service["key2"] = make_test_data(2, time=2.0)
+
+        writer = threading.Thread(target=transact)
+        writer.start()
+        assert first_written.wait(timeout=5)
+
+        result = {}
+        snapshot_done = threading.Event()
+
+        def snapshot() -> None:
+            result.update(service.snapshot(subscriber))
+            snapshot_done.set()
+
+        reader = threading.Thread(target=snapshot)
+        reader.start()
+        assert not snapshot_done.wait(timeout=0.2), "snapshot completed mid-transaction"
+
+        release.set()
+        assert snapshot_done.wait(timeout=5), "snapshot never unblocked"
+        reader.join(timeout=5)
+        writer.join(timeout=5)
+        assert result["key1"].value == 1
+        assert result["key2"].value == 2
 
     def test_notification_failure_does_not_wedge_transactions(self):
         """An exception escaping notification at transaction exit must not

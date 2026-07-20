@@ -84,8 +84,8 @@ class DataService(MutableMapping[K, V]):
     Consumers pull extracted data on their own schedule via
     :py:meth:`snapshot`, which applies the subscriber's extractors and copies
     the result out of the buffers. Every pull observes the buffer state at
-    pull time, so coalescing, deferring, or dropping notifications never
-    delivers stale data.
+    pull time — never a partially applied transaction — so coalescing,
+    deferring, or dropping notifications never delivers stale data.
 
     Thread safety
     -------------
@@ -93,10 +93,11 @@ class DataService(MutableMapping[K, V]):
     ``transaction`` / ``__setitem__``) and the UI thread (via
     ``register_subscriber`` / ``unregister_subscriber``). A single ``RLock``
     serializes all access to the internal state (buffer manager, subscriber
-    list, pending updates). Transaction depth is thread-local: a transaction
-    defers notifications only for updates made on its own thread, so
-    concurrent transactions on different threads flush independently and
-    cannot suppress each other's root notify.
+    list, pending updates). The lock is transaction-scoped: ``transaction``
+    holds it from entry to exit, so transactions are atomic to readers and
+    mutually exclusive across threads. Transaction depth is thread-local: it
+    defers notifications only for updates made on its own thread, so a write
+    on another thread (once it acquires the lock) still notifies immediately.
 
     The lock is **never** held while calling ``subscriber.on_updated``, so no
     lock a subscriber callback takes can deadlock against this one. Extracted
@@ -120,10 +121,17 @@ class DataService(MutableMapping[K, V]):
 
     @contextmanager
     def transaction(self):
-        """Context manager for batching multiple updates."""
+        """Context manager for batching multiple updates.
+
+        Holds the lock for the whole transaction: readers and pulls observe
+        either none or all of its updates, and transactions on other threads
+        are serialized against it. Notifications run after the lock is
+        released.
+        """
         self._local.transaction_depth = self._transaction_depth + 1
         try:
-            yield
+            with self._lock:
+                yield
         finally:
             # Stay in transaction until notifications are done. This ensures that
             # subscribers that make further updates during their notification do not

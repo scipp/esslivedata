@@ -200,7 +200,10 @@ Consequences for the guarantees above:
 - The frame a grid's layers repaint from is now *the buffer state at flush
   time* rather than *the drained burst's payload*. Layers of one grid are
   pulled back-to-back on the ingestion thread with no writes in between, so
-  intra-grid coherence is unchanged.
+  intra-grid coherence is unchanged. The `DataService` lock is
+  transaction-scoped, so a pull from any thread (including the 0→1
+  activation rebuild on the polling thread, and flushes racing a UI-thread
+  cleanup eviction) observes either none or all of a transaction's writes.
 - A logical frame that splits across bursts now heals at the next flush by
   construction (the pull sees whatever has arrived), rather than by a
   one-tick stagger of stashed payloads.

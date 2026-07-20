@@ -101,12 +101,11 @@ class ActiveJobRegistry:
         recently stopped job's results. See the class docstring for the
         data lifecycle that governs when callers should run this.
 
-        Deletes are batched inside a DataService transaction so subscribers
-        observe a single atomic eviction rather than a sequence of partial
-        states. Without batching, a multi-source subscriber would receive
-        an intermediate trigger with only the not-yet-deleted keys present,
-        causing plots to re-render with a subset of their sources before
-        the final empty notification arrives.
+        Deletes are batched inside a DataService transaction, which holds
+        the DataService lock for its duration: a concurrent pull observes
+        either all keys or none, and subscribers get a single coalesced
+        notification. Without this, a multi-source plot pulling mid-eviction
+        could rebuild with only a subset of its sources still present.
 
         With today's orchestration there is no live subscriber bound to a
         job's keys at the moment its data is cleaned up (subscribers

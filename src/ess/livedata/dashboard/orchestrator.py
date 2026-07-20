@@ -12,6 +12,7 @@ from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
+    Message,
     MessageSource,
     StreamId,
 )
@@ -67,24 +68,40 @@ class Orchestrator:
         # could iterate or write to DataService while the UI thread deletes
         # buffers, causing dict-iteration crashes or orphaned buffers.
         #
-        # Batch all updates in a transaction to avoid repeated UI updates. Reason:
+        # Control messages (status, command acks) never touch DataService, so
+        # they are handled outside the transaction: the transaction holds the
+        # DataService lock for its duration, and JobService/ServiceRegistry
+        # callbacks must not run under it. Handling them first also lets an
+        # ack that activates a job admit the same batch's data for that job
+        # instead of dropping it at the active filter.
+        #
+        # Data updates are batched in a transaction so a pull observes the
+        # whole batch atomically and subscribers get one notification per
+        # batch. Reason:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
+        control_streams = (STATUS_STREAM_ID, RESPONSES_STREAM_ID)
         with self._active_job_registry.ingestion_guard():
+            self._forward_messages([m for m in messages if m.stream in control_streams])
             with self._data_service.transaction():
-                for message in messages:
-                    # Isolate per-message failures: a single poisoned stream (e.g.
-                    # corrupt payload, or data whose shape no longer fits its buffer)
-                    # must not abort the loop and drop every message sorted after it,
-                    # which would repeat on every polling cycle. Log and continue.
-                    try:
-                        self.forward(stream_id=message.stream, value=message.value)
-                    except Exception:
-                        self._logger.exception(
-                            "Failed to forward message from stream %s; skipping",
-                            message.stream,
-                        )
+                self._forward_messages(
+                    [m for m in messages if m.stream not in control_streams]
+                )
+
+    def _forward_messages(self, messages: list[Message[Any]]) -> None:
+        for message in messages:
+            # Isolate per-message failures: a single poisoned stream (e.g.
+            # corrupt payload, or data whose shape no longer fits its buffer)
+            # must not abort the loop and drop every message sorted after it,
+            # which would repeat on every polling cycle. Log and continue.
+            try:
+                self.forward(stream_id=message.stream, value=message.value)
+            except Exception:
+                self._logger.exception(
+                    "Failed to forward message from stream %s; skipping",
+                    message.stream,
+                )
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
