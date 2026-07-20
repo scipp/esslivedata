@@ -4,7 +4,7 @@
 Data subscription and assembly for streaming plot updates.
 
 This module provides the core data flow components:
-- DataSubscriber: Connects to DataService, assembles data, invokes callback
+- DataSubscriber: Watches DataService keys, assembles pulled data by role
 - Output is always role-grouped: dict[role, dict[ResultKey, data]]
 """
 
@@ -19,11 +19,14 @@ from ess.livedata.dashboard.extractors import UpdateExtractor
 
 
 class DataSubscriber(DataServiceSubscriber[ResultKey]):
-    """Subscriber that groups data by role and invokes a callback.
+    """Subscriber that reports key updates and assembles pulled data by role.
 
-    Output shape is always ``dict[role, dict[ResultKey, data]]``. Consumers
-    that care about a single role (e.g. standard plotters using ``primary``)
-    extract it explicitly.
+    Update notifications carry no data; ``on_update`` just signals that the
+    consumer should schedule a pull. The pull applies this subscriber's
+    extractors via ``DataService.snapshot`` and is grouped with
+    :py:meth:`assemble`, whose output shape is always
+    ``dict[role, dict[ResultKey, data]]``. Consumers that care about a single
+    role (e.g. standard plotters using ``primary``) extract it explicitly.
 
     The ready_condition is built internally: requires at least one key from each role.
     """
@@ -32,8 +35,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         self,
         keys_by_role: dict[str, list[ResultKey]],
         extractors: Mapping[ResultKey, UpdateExtractor],
-        on_data: Callable[[dict[str, dict[ResultKey, Any]]], None],
-        is_active: Callable[[], bool] | None = None,
+        on_update: Callable[[], None],
     ) -> None:
         """
         Initialize the subscriber.
@@ -46,14 +48,11 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
             additional roles like "x_axis", "y_axis".
         extractors
             Mapping from keys to their UpdateExtractor instances.
-        on_data
-            Callback invoked on every data update with the grouped data.
-            Called when at least one key from each role has data.
-        is_active
-            Optional callable consulted by DataService before each delivery;
-            returning False pauses delivery (buffering continues). None means
-            always active. The caller owns refreshing the consumer when the
-            gate reopens (see ``DataService.snapshot``).
+        on_update
+            Callback invoked when any of this subscriber's keys changed.
+            Must be cheap (it runs on the ingestion thread per update batch);
+            the consumer pulls data later via ``DataService.snapshot`` +
+            :py:meth:`assemble`.
         """
         self._keys_by_role = keys_by_role
         self._all_keys = {key for keys in keys_by_role.values() for key in keys}
@@ -62,8 +61,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
         self._key_sets_by_role = [set(keys) for keys in keys_by_role.values()]
 
         self._extractors = extractors
-        self._on_data = on_data
-        self._is_active = is_active
+        self._on_update = on_update
 
         # Initialize parent class to cache keys
         super().__init__()
@@ -77,11 +75,6 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
     def extractors(self) -> Mapping[ResultKey, UpdateExtractor]:
         """Return extractors for obtaining data views."""
         return self._extractors
-
-    @property
-    def active(self) -> bool:
-        """Whether delivery is currently wanted (see ``is_active`` in init)."""
-        return self._is_active is None or self._is_active()
 
     def _is_ready(self, available_keys: set[ResultKey]) -> bool:
         """Check if we have at least one key from each role."""
@@ -110,8 +103,6 @@ class DataSubscriber(DataServiceSubscriber[ResultKey]):
                 result[role] = role_data
         return result
 
-    def trigger(self, store: dict[ResultKey, Any]) -> None:
-        """Trigger the subscriber with the current data store."""
-        assembled = self.assemble(store)
-        if assembled is not None:
-            self._on_data(assembled)
+    def on_updated(self, updated_keys: set[ResultKey]) -> None:
+        """Signal the consumer that a pull is due (see ``on_update`` in init)."""
+        self._on_update()
