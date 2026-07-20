@@ -19,6 +19,12 @@ python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
 - Tests in `tests/` mirror `src/ess/livedata/` structure, files follow `*_test.py`
 - All unit tests run without Kafka -- use fakes from `fakes.py`
 - `pytest` uses `--import-mode=importlib`
+- Robustness harnesses: `tests/helpers/hostile_wire.py` is the corpus of
+  malformed/insane wire payloads consumed by the adapter- and service-level
+  robustness tests (add new corruption modes there). Known holes are strict
+  `xfail`s referencing their issue; fixing the issue flips them loudly.
+- `pytest -m browser` runs local Playwright UI tests (fake backend, e.g. the
+  multi-session smoke test); excluded from the default run and CI.
 
 ```sh
 python -m pytest                      # fast tests only (~25s)
