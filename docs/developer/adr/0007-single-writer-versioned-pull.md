@@ -1,6 +1,6 @@
 # ADR 0007: Single-writer state with versioned pull as the dashboard concurrency model
 
-- Status: proposed
+- Status: accepted
 - Deciders: Simon
 - Date: 2026-07-05
 
