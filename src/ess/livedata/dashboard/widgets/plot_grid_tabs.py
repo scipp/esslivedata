@@ -280,13 +280,35 @@ class PlotGridTabs:
                 cell=cell,
             )
 
+    def _tabbed_grid_ids(self) -> list[GridId]:
+        """GridIds that currently have a tab, in tab order.
+
+        Disabled grids keep a widget in ``_grid_widgets`` (preserving state
+        across re-enable) but have no tab. Positional lookups between a Bokeh
+        tab index and a GridId must go through this list, never through
+        ``_grid_widgets`` directly, or a disabled grid preceding an enabled one
+        skews the mapping. Membership is read from the live tabs -- the grid
+        panels actually appended -- so it stays correct even mid-removal, when
+        the orchestrator has already dropped the grid being removed.
+        """
+        panel_to_grid = {
+            id(grid.panel): grid_id for grid_id, grid in self._grid_widgets.items()
+        }
+        tabbed: list[GridId] = []
+        for tab in self._tabs[self._static_tabs_count :]:
+            grid_id = panel_to_grid.get(id(tab))
+            if grid_id is not None:
+                tabbed.append(grid_id)
+        return tabbed
+
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab."""
         if grid_id not in self._grid_widgets:
             return
 
-        tab_index = list(self._grid_widgets.keys()).index(grid_id)
-        self._tabs.pop(self._static_tabs_count + tab_index)
+        tabbed = self._tabbed_grid_ids()
+        if grid_id in tabbed:
+            self._tabs.pop(self._static_tabs_count + tabbed.index(grid_id))
         del self._grid_widgets[grid_id]
 
     def _get_active_grid_id(self) -> GridId | None:
@@ -304,9 +326,9 @@ class PlotGridTabs:
         if self._current_modal is not None:
             return None
         grid_idx = self._tabs.active - self._static_tabs_count
-        grid_keys = list(self._grid_widgets.keys())
-        if 0 <= grid_idx < len(grid_keys):
-            return grid_keys[grid_idx]
+        tabbed = self._tabbed_grid_ids()
+        if 0 <= grid_idx < len(tabbed):
+            return tabbed[grid_idx]
         return None
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
@@ -317,9 +339,9 @@ class PlotGridTabs:
         """
         self._reconcile_grid_tabs()
 
-        if grid_id in self._grid_widgets:
-            tab_index = list(self._grid_widgets.keys()).index(grid_id)
-            self._tabs.active = self._static_tabs_count + tab_index
+        tabbed = self._tabbed_grid_ids()
+        if grid_id in tabbed:
+            self._tabs.active = self._static_tabs_count + tabbed.index(grid_id)
 
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""

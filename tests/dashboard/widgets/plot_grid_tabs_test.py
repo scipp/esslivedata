@@ -865,3 +865,70 @@ class TestDisabledGridTabs:
         static = plot_grid_tabs._static_tabs_count
         grid_titles = plot_grid_tabs.tabs._names[static:]
         assert grid_titles == ['Beta', 'Alpha']
+
+    def test_active_grid_id_resolves_correctly_with_first_grid_disabled(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Active tab maps to the right grid when the first grid is disabled.
+
+        A disabled grid preceding enabled ones must not skew the tab->grid
+        mapping: it has no tab, so the first visible grid tab is the first
+        *enabled* grid, not the first entry in ``_grid_widgets``.
+        """
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
+
+        plot_orchestrator.set_grid_enabled(id_a, enabled=False)
+
+        static = plot_grid_tabs._static_tabs_count
+        # Two visible grid tabs: B then C.
+        assert plot_grid_tabs.tabs._names[static:] == ['B', 'C']
+
+        plot_grid_tabs.tabs.active = static
+        assert plot_grid_tabs._get_active_grid_id() == id_b
+
+        plot_grid_tabs.tabs.active = static + 1
+        assert plot_grid_tabs._get_active_grid_id() == id_c
+
+    def test_active_grid_id_resolves_correctly_with_middle_grid_disabled(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Active tab maps to the right grid when a middle grid is disabled."""
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        id_b = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
+
+        plot_orchestrator.set_grid_enabled(id_b, enabled=False)
+
+        static = plot_grid_tabs._static_tabs_count
+        assert plot_grid_tabs.tabs._names[static:] == ['A', 'C']
+
+        plot_grid_tabs.tabs.active = static
+        assert plot_grid_tabs._get_active_grid_id() == id_a
+
+        plot_grid_tabs.tabs.active = static + 1
+        assert plot_grid_tabs._get_active_grid_id() == id_c
+
+    def test_removing_grid_after_disabled_grid_removes_right_tab(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Removing an enabled grid preceded by a disabled one pops its tab.
+
+        With the first grid disabled, the positional tab index of a later grid
+        differs from its index in ``_grid_widgets``; removal must pop the tab
+        that actually belongs to the removed grid.
+        """
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
+
+        plot_orchestrator.set_grid_enabled(id_a, enabled=False)
+
+        static = plot_grid_tabs._static_tabs_count
+        assert plot_grid_tabs.tabs._names[static:] == ['B', 'C']
+
+        plot_orchestrator.remove_grid(id_c)
+
+        # C's tab is gone; B remains.
+        assert plot_grid_tabs.tabs._names[static:] == ['B']
