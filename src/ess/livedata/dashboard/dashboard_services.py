@@ -149,6 +149,10 @@ class DashboardServices:
             try:
                 self.orchestrator.update()
                 self.session_registry.cleanup_stale_sessions()
+                # Run-state poll before the flush: a commit observed here
+                # resets the affected layers' presentation, so the same pass's
+                # flush cannot re-show a frame from the cleared generation.
+                self.plot_orchestrator.sync_job_states()
                 # The burst is drained once update() returns; now rebuild the
                 # dirty viewed layers and commit each grid's frame as it
                 # finishes. No-op unless a visible layer was recomputed, so

@@ -338,11 +338,14 @@ def add_cell_with_layer(orchestrator, grid_id, geometry, config):
 
 
 @pytest.fixture
-def fake_data_service():
-    """Create a real DataService for testing."""
-    from ess.livedata.dashboard.data_service import DataService
+def fake_data_service(data_service):
+    """The DataService shared with the ActiveJobRegistry (conftest).
 
-    return DataService()
+    Sharing matters: a commit's generation flip clears the workflow's
+    buffers in this instance, exactly as in production where the plot
+    pipelines and the registry operate on the same DataService.
+    """
+    return data_service
 
 
 @pytest.fixture
@@ -789,7 +792,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         calls = fake_plotting_controller.get_calls()
         assert {c['plot_name'] for c in calls} == {'plot1', 'plot2'}
 
-    def test_cell_removed_before_workflow_commit_no_plot_created(
+    def test_removed_cell_layer_not_reset_by_commit(
         self,
         plot_orchestrator,
         plot_cell,
@@ -798,22 +801,23 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         job_orchestrator,
         fake_plotting_controller,
     ):
-        """Cell removed before workflow commit should not create plot."""
+        """A removed layer is no longer tracked: a commit does not touch it."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
+        # Plotter is created unconditionally at add-layer time
+        assert fake_plotting_controller.call_count() == 1
 
-        # Remove cell before workflow commits
         plot_orchestrator.remove_cell(cell_id)
 
-        # Commit workflow - should not create plot
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
 
-        # Verify no plot was created
-        assert fake_plotting_controller.call_count() == 0
+        # No presentation reset for the removed layer
+        assert fake_plotting_controller.call_count() == 1
 
-    def test_update_config_resubscribes_and_new_workflow_commit_creates_plot(
+    def test_update_config_rebinds_layer_to_new_workflow(
         self,
         plot_orchestrator,
         plot_cell,
@@ -824,11 +828,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         fake_plotting_controller,
         fake_data_service,
     ):
-        """
-        Update config resubscribes to new workflow and creates plot.
-
-        When config is updated with new workflow, the new commit creates plot.
-        """
+        """Updating the config re-creates the pipeline against the new
+        workflow's keys, so its data drives the layer."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
@@ -847,9 +848,15 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             params=FakePlotParams(),
         )
         plot_orchestrator.update_layer_config(layer_id, new_config)
+        calls = fake_plotting_controller.get_calls()
+        assert calls[-1]['plot_name'] == 'new_plot'
 
-        # Commit new workflow
         commit_workflow_for_test(job_orchestrator, workflow_id_2, workflow_spec_2)
+        plot_orchestrator.sync_job_states()
+
+        new_layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        viewer = _Viewer()
+        plot_orchestrator.activate_layer(new_layer_id, viewer, True)
 
         # Simulate data arrival for new workflow
         import scipp as sc
@@ -862,11 +869,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             output_name='new_output',
         )
         fake_data_service[result_key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
 
-        # Verify plot was created for new workflow
-        assert fake_plotting_controller.call_count() == 1
-        calls = fake_plotting_controller.get_calls()
-        assert calls[0]['plot_name'] == 'new_plot'
+        plotter = fake_plotting_controller.created_plotters[-1]
+        assert plotter.compute_calls
 
 
 class TestLifecycleEventNotifications:
@@ -992,11 +998,12 @@ class TestLifecycleEventNotifications:
         cell = call_kwargs['cell']
         layer_id = cell.layers[0].layer_id
 
-        # Configure controller to raise exception on create_plotter
+        # Configure controller to raise on the plotter re-creation that a
+        # commit's presentation reset triggers
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
 
-        # Commit workflow - this triggers eager plotter creation which will fail
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
 
         # Only 1 call - initial cell creation
         # Error state changes are now detected via polling, not callbacks
@@ -1137,8 +1144,9 @@ class TestErrorHandling:
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        # Commit workflow - this triggers eager plotter creation which will fail
+        # Commit + poll: the presentation reset re-creates the plotter, failing
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
 
         # Only 1 call - initial cell creation
         # Error state changes are now detected via polling, not callbacks
@@ -1331,7 +1339,7 @@ class TestBuildRobustness:
 class TestCleanupAndResourceManagement:
     """Tests for cleanup and resource management."""
 
-    def test_remove_grid_with_multiple_cells_all_unsubscribed(
+    def test_remove_grid_with_multiple_cells_untracks_all_layers(
         self,
         plot_orchestrator,
         workflow_id,
@@ -1339,7 +1347,7 @@ class TestCleanupAndResourceManagement:
         job_orchestrator,
         fake_plotting_controller,
     ):
-        """Remove grid with cells unsubscribes all, so commit creates no plots."""
+        """Removing a grid untracks every layer: a commit resets none of them."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         for i in range(3):
@@ -1352,12 +1360,14 @@ class TestCleanupAndResourceManagement:
                 params=FakePlotParams(),
             )
             add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
+        assert fake_plotting_controller.call_count() == 3
 
         plot_orchestrator.remove_grid(grid_id)
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
 
         assert plot_orchestrator.get_grid(grid_id) is None
-        assert fake_plotting_controller.call_count() == 0
+        assert fake_plotting_controller.call_count() == 3
 
     def test_shutdown_all_grids_removed(self, plot_orchestrator):
         """Shutdown should remove all grids."""
@@ -1388,7 +1398,7 @@ class TestCleanupAndResourceManagement:
 class TestEdgeCasesAndComplexScenarios:
     """Tests for edge cases and complex scenarios."""
 
-    def test_remove_grid_with_cells_that_have_pending_plot_creation(
+    def test_remove_grid_layer_not_reset_by_commit(
         self,
         plot_orchestrator,
         plot_cell,
@@ -1397,15 +1407,17 @@ class TestEdgeCasesAndComplexScenarios:
         job_orchestrator,
         fake_plotting_controller,
     ):
-        """Remove grid with pending plots unsubscribes, so commit creates no plots."""
+        """Removing a grid untracks its layers: a commit does not touch them."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
+        assert fake_plotting_controller.call_count() == 1
 
         plot_orchestrator.remove_grid(grid_id)
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
 
         assert plot_orchestrator.get_grid(grid_id) is None
-        assert fake_plotting_controller.call_count() == 0
+        assert fake_plotting_controller.call_count() == 1
 
 
 class TestCellRetrieval:
@@ -2133,7 +2145,7 @@ class TestPlotAfterWorkflowStopped:
         assert state.state == LayerState.STOPPED
         assert state.plotter.has_cached_state()
 
-    def test_new_layer_with_no_previous_job_stays_waiting(
+    def test_new_layer_with_workflow_never_run_is_stopped_without_plot(
         self,
         plot_orchestrator,
         plot_cell,
@@ -2149,7 +2161,8 @@ class TestPlotAfterWorkflowStopped:
 
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.state == LayerState.WAITING_FOR_JOB
+        assert state.state == LayerState.STOPPED
+        assert not state.has_displayable_plot()
 
 
 class TestTitleResolver:
@@ -2917,3 +2930,304 @@ class TestFrameGeneration:
 
         assert orchestrator.frame_generation(grid_a) == 1
         assert orchestrator.frame_generation(grid_b) == 0
+
+
+class TestSyncJobStates:
+    """sync_job_states drives layer lifecycle from polled workflow run-state.
+
+    A commit observed by the poll resets the layer presentation (the commit
+    cleared the workflow's buffers, so the old frame must not linger); a stop
+    freezes the layer with the last frame retained.
+    """
+
+    def _ready_layer(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+    ):
+        """Commit, add a viewed layer, deliver data: layer ends up READY."""
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import DataKey
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        config = make_plot_config(workflow_id, source_names=['source1'])
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        key = DataKey(
+            workflow_id=workflow_id,
+            source_name='source1',
+            output_name=config.view_name,
+        )
+        fake_data_service[key] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
+        return layer_id, key
+
+    def test_recommit_resets_presentation_to_blank(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+        plot_data_service,
+    ):
+        layer_id, _ = self._ready_layer(
+            plot_orchestrator,
+            job_orchestrator,
+            workflow_id,
+            workflow_spec,
+            fake_data_service,
+        )
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.READY
+        old_plotter = state.plotter
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+        # The commit cleared the buffers; the flush must not resurrect the
+        # previous generation's frame on the fresh plotter.
+        plot_orchestrator.flush_frames()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.WAITING_FOR_DATA
+        assert state.plotter is not old_plotter
+        assert not state.plotter.has_cached_state()
+
+    def test_reset_preserves_data_pipeline(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+        plot_data_service,
+    ):
+        import scipp as sc
+
+        layer_id, key = self._ready_layer(
+            plot_orchestrator,
+            job_orchestrator,
+            workflow_id,
+            workflow_spec,
+            fake_data_service,
+        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+
+        fake_data_service[key] = sc.scalar(2.0)
+        plot_orchestrator.flush_frames()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.READY
+        assert state.plotter.compute_calls
+
+    def test_stop_freezes_layer_with_retained_frame(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+        plot_data_service,
+    ):
+        layer_id, _ = self._ready_layer(
+            plot_orchestrator,
+            job_orchestrator,
+            workflow_id,
+            workflow_spec,
+            fake_data_service,
+        )
+        old_plotter = plot_data_service.get(layer_id).plotter
+
+        job_orchestrator.stop_workflow(workflow_id)
+        plot_orchestrator.sync_job_states()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.STOPPED
+        assert state.plotter is old_plotter
+        assert state.has_displayable_plot()
+
+    def test_sync_without_run_state_change_is_noop(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+        plot_data_service,
+        fake_plotting_controller,
+    ):
+        layer_id, _ = self._ready_layer(
+            plot_orchestrator,
+            job_orchestrator,
+            workflow_id,
+            workflow_spec,
+            fake_data_service,
+        )
+        version = plot_data_service.get(layer_id).version
+        plotter_count = len(fake_plotting_controller.created_plotters)
+
+        plot_orchestrator.sync_job_states()
+        plot_orchestrator.sync_job_states()
+
+        assert plot_data_service.get(layer_id).version == version
+        assert len(fake_plotting_controller.created_plotters) == plotter_count
+
+    def test_restart_after_stop_resets_presentation(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+        plot_data_service,
+    ):
+        layer_id, _ = self._ready_layer(
+            plot_orchestrator,
+            job_orchestrator,
+            workflow_id,
+            workflow_spec,
+            fake_data_service,
+        )
+        job_orchestrator.stop_workflow(workflow_id)
+        plot_orchestrator.sync_job_states()
+        stopped_plotter = plot_data_service.get(layer_id).plotter
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+        plot_orchestrator.flush_frames()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.WAITING_FOR_DATA
+        assert state.plotter is not stopped_plotter
+        assert not state.plotter.has_cached_state()
+
+    def test_failed_setup_layer_keeps_error_state_on_commit(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        plot_data_service,
+        fake_plotting_controller,
+    ):
+        """A layer whose setup failed has no data subscription: a commit must
+        not reset its presentation, which would hide the ERROR behind a
+        permanently blank WAITING_FOR_DATA."""
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        config = make_plot_config(workflow_id, source_names=['source1'])
+        fake_plotting_controller.configure_to_raise(ValueError('boom'))
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        assert plot_data_service.get(layer_id).state == LayerState.ERROR
+        fake_plotting_controller.reset()
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+
+        assert plot_data_service.get(layer_id).state == LayerState.ERROR
+        assert not fake_plotting_controller.created_plotters
+
+
+class TestSyncJobStatesMultiWorkflow:
+    """Run-state gating for layers fed by several workflows (correlations)."""
+
+    @pytest.fixture
+    def two_workflow_layer(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        workflow_id_2,
+        workflow_spec_2,
+    ):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        commit_workflow_for_test(job_orchestrator, workflow_id_2, workflow_spec_2)
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=workflow_id,
+                    source_names=['source1'],
+                    view_name='out_primary',
+                ),
+                'x_axis': DataSourceConfig(
+                    workflow_id=workflow_id_2,
+                    source_names=['source_a'],
+                    view_name='out_x',
+                ),
+            },
+            plot_name='test_plot',
+            params=FakePlotParams(param1='value1'),
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config
+        )
+        return plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+    def test_any_workflow_stop_freezes_layer_once(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_id_2,
+        plot_data_service,
+        two_workflow_layer,
+    ):
+        layer_id = two_workflow_layer
+
+        job_orchestrator.stop_workflow(workflow_id_2)
+        plot_orchestrator.sync_job_states()
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.STOPPED
+        version = state.version
+
+        # Second stop must not produce another transition
+        job_orchestrator.stop_workflow(workflow_id)
+        plot_orchestrator.sync_job_states()
+        assert plot_data_service.get(layer_id).version == version
+
+    def test_reset_only_when_all_workflows_running(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        workflow_id_2,
+        workflow_spec_2,
+        plot_data_service,
+        fake_plotting_controller,
+        two_workflow_layer,
+    ):
+        layer_id = two_workflow_layer
+        job_orchestrator.stop_workflow(workflow_id)
+        job_orchestrator.stop_workflow(workflow_id_2)
+        plot_orchestrator.sync_job_states()
+        assert plot_data_service.get(layer_id).state == LayerState.STOPPED
+        plotter_count = len(fake_plotting_controller.created_plotters)
+
+        # One of two workflows restarting is not enough
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.STOPPED
+        assert len(fake_plotting_controller.created_plotters) == plotter_count
+
+        # Both running: presentation resets
+        commit_workflow_for_test(job_orchestrator, workflow_id_2, workflow_spec_2)
+        plot_orchestrator.sync_job_states()
+        state = plot_data_service.get(layer_id)
+        assert state.state == LayerState.WAITING_FOR_DATA
+        assert len(fake_plotting_controller.created_plotters) == plotter_count + 1

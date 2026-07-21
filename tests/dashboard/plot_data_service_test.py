@@ -36,11 +36,11 @@ class FakePlotter:
 class TestLayerStateMachineVersionInvariant:
     """Test version invariant: plotter change always increments version."""
 
-    def test_job_started_increments_version_from_waiting_for_job(self):
-        """Version increments when job_started called from WAITING_FOR_JOB."""
+    def test_job_started_increments_version_from_initial_state(self):
+        """Version increments when job_started called on a fresh machine."""
         state = LayerStateMachine()
         assert state.version == 0
-        assert state.state == LayerState.WAITING_FOR_JOB
+        assert state.state == LayerState.WAITING_FOR_DATA
 
         plotter = FakePlotter()
         state.job_started(plotter)

@@ -181,9 +181,9 @@ class TestPlotDataService:
 class TestLayerStateMachine:
     """Tests for the LayerStateMachine state transitions."""
 
-    def test_initial_state_is_waiting_for_job(self):
+    def test_initial_state_is_waiting_for_data(self):
         machine = LayerStateMachine()
-        assert machine.state == LayerState.WAITING_FOR_JOB
+        assert machine.state == LayerState.WAITING_FOR_DATA
         assert machine.version == 0
         assert machine.plotter is None
         assert machine.error_message is None
@@ -293,13 +293,24 @@ class TestLayerStateMachine:
         assert machine.state == LayerState.READY
         assert machine.version == version_before  # No version increment
 
-    def test_invalid_job_stopped_from_waiting_for_job_is_ignored(self):
+    def test_invalid_job_stopped_when_already_stopped_is_ignored(self):
         machine = LayerStateMachine()
+        machine.job_stopped()
         version_before = machine.version
 
-        machine.job_stopped()  # Invalid: no job started
+        machine.job_stopped()  # Invalid: already stopped
 
-        assert machine.state == LayerState.WAITING_FOR_JOB
+        assert machine.state == LayerState.STOPPED
+        assert machine.version == version_before
+
+    def test_data_arrived_while_stopped_is_silent_noop(self):
+        machine = LayerStateMachine()
+        machine.job_stopped()
+        version_before = machine.version
+
+        machine.data_arrived()  # Retained data rendered while stopped
+
+        assert machine.state == LayerState.STOPPED
         assert machine.version == version_before
 
     def test_has_displayable_plot_ready_with_data(self):

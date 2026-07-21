@@ -189,7 +189,7 @@ class PlottingController:
         Parameters
         ----------
         keys_by_role
-            DataKeys grouped by role (built by LayerSubscription).
+            DataKeys grouped by role, derived from the plot config.
             E.g., {"primary": [...], "x_axis": [...]}
         plot_name
             Name of the plotter to use.

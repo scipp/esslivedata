@@ -443,11 +443,9 @@ class CellWidget:
                     description = f"{description}\n\nError: {state.error_message}"
                 case LayerState.STOPPED:
                     stopped = True
-                    description = f"{description}\n\nStatus: Workflow ended"
+                    description = f"{description}\n\nStatus: Workflow not running"
                 case LayerState.WAITING_FOR_DATA:
                     description = f"{description}\n\nStatus: Waiting for data..."
-                case LayerState.WAITING_FOR_JOB:
-                    description = f"{description}\n\nStatus: Waiting for workflow"
                 case LayerState.READY:
                     pass  # No extra description for ready state
 
@@ -499,13 +497,10 @@ class CellWidget:
                     status = f"Error: {extract_error_summary(error_text)}"
                     text_color = StatusColors.ERROR
                 case LayerState.STOPPED:
-                    status = "Workflow ended"
+                    status = "Workflow not running"
                     text_color = Colors.TEXT
                 case LayerState.WAITING_FOR_DATA:
                     status = "Waiting for data..."
-                    text_color = Colors.TEXT_MUTED
-                case LayerState.WAITING_FOR_JOB:
-                    status = "Waiting for workflow..."
                     text_color = Colors.TEXT_MUTED
                 case LayerState.READY:
                     # Defensive: READY should have displayable plot and not
