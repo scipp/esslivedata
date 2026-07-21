@@ -152,6 +152,10 @@ class DashboardServices:
                 # a silently dropped send surfaces as an error toast rather than a
                 # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
                 self.job_orchestrator.expire_pending_commands()
+                # Compare desired run-state against observed heartbeats and
+                # re-issue stops while they contradict (ADR 0008). Also prunes
+                # observed statuses whose heartbeat aged out.
+                self.job_orchestrator.reconcile_observed_jobs()
                 self.session_registry.cleanup_stale_sessions()
                 # Run-state poll before the flush: a commit observed here
                 # resets the affected layers' presentation, so the same pass's
@@ -253,11 +257,11 @@ class DashboardServices:
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
             active_job_registry=active_job_registry,
+            job_service=self.job_service,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
         )
-        self.job_service.on_status_updated = self.job_orchestrator.on_job_status_updated
         self._roi_publisher.set_job_number_resolver(
             self.job_orchestrator.get_active_job_number
         )

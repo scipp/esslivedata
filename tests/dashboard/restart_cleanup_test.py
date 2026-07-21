@@ -93,6 +93,7 @@ def _make_system(*workflow_specs):
         command_service=CommandService(sink=fake_sink),
         workflow_registry=registry,
         active_job_registry=active_job_registry,
+        job_service=job_service,
     )
 
     orchestrator = Orchestrator(
@@ -226,9 +227,11 @@ class TestRestartCleanup:
 
         assert len(job_service.job_statuses) == 1
 
-    def test_status_for_generation_beyond_window_is_rejected(self, workflow_spec):
+    def test_status_beyond_window_is_observed_but_not_adopted(self, workflow_spec):
         """Two recommits push the first generation out of the (current, last)
-        window; its heartbeats are no longer recognized."""
+        window. Its heartbeats are still observed (ADR 0008) — the job is an
+        orphan for reconciliation to stop — but they do not displace the
+        committed current generation."""
         orchestrator, job_orchestrator, _, job_service = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
@@ -236,14 +239,18 @@ class TestRestartCleanup:
         oldest_job_id = job_ids[0]
 
         job_orchestrator.commit_workflow(workflow_id)
-        job_orchestrator.commit_workflow(workflow_id)
+        job_ids_3 = job_orchestrator.commit_workflow(workflow_id)
 
         status = JobStatus(
             job_id=oldest_job_id, workflow_id=workflow_id, state=JobState.active
         )
         orchestrator.forward(STATUS_STREAM_ID, status)
 
-        assert len(job_service.job_statuses) == 0
+        assert len(job_service.job_statuses) == 1
+        assert (
+            job_orchestrator.get_active_job_number(workflow_id)
+            == job_ids_3[0].job_number
+        )
 
     def test_other_workflow_data_survives_recommit(
         self, workflow_spec, workflow_spec_2

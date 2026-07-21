@@ -32,11 +32,13 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.timestamp import Timestamp
 
-from .active_job_registry import ActiveJobRegistry, Generation
+from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
+from .job_service import JobService
 from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
 from .pending_command_tracker import PendingCommandTracker
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
@@ -54,6 +56,13 @@ SourceName = str
 # heartbeat-staleness constants in job_service.py, which answer a different
 # question about backend liveness.
 PENDING_COMMAND_TIMEOUT_SECONDS = 30.0
+
+# While a job's observed heartbeats contradict the desired state (stopped or
+# superseded), reconciliation re-issues the stop command, rate-bounded per
+# job_number so the backend gets time to act on the previous stop — including
+# the normal case where the just-sent stop of a commit or stop_workflow has
+# simply not been processed yet.
+STOP_REISSUE_INTERVAL_SECONDS = 30.0
 
 
 class JobConfig(BaseModel):
@@ -87,11 +96,11 @@ class JobSet(BaseModel):
         ]
 
 
-def _generation_of(job_set: JobSet | None) -> Generation | None:
-    """Registry-facing view of a JobSet: its job_number and config."""
-    if job_set is None:
-        return None
-    return Generation(job_number=job_set.job_number, config=job_set.jobs)
+def _starts_later(candidate: Timestamp | None, incumbent: Timestamp | None) -> bool:
+    """Whether a candidate start time beats the incumbent (None is earliest)."""
+    if candidate is None:
+        return False
+    return incumbent is None or candidate > incumbent
 
 
 class StoppedReason(StrEnum):
@@ -103,12 +112,22 @@ class StoppedReason(StrEnum):
 
 @dataclass
 class WorkflowState:
-    """State for an active workflow, including transitions."""
+    """State for an active workflow, including transitions.
+
+    ``current`` is the desired run-state: the JobSet the user committed (or
+    that was adopted from observation). Whether the backend actually runs it
+    is observed via heartbeats; the two are compared by reconciliation.
+    """
 
     current: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
     version: int = 0
     stopped_reason: StoppedReason | None = None
+    # Set when ``current`` was adopted from heartbeat observation without a
+    # persisted record: params are unknown (degraded provenance), and a later
+    # observed start_time may replace the adopted job. Cleared on commit/stop.
+    adopted_without_record: bool = False
+    adopted_start_time: Timestamp | None = None
 
 
 class JobOrchestrator:
@@ -120,6 +139,7 @@ class JobOrchestrator:
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         active_job_registry: ActiveJobRegistry,
+        job_service: JobService,
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
@@ -137,6 +157,10 @@ class JobOrchestrator:
         active_job_registry
             Thread-safe registry for tracking active job numbers and
             cleaning up data on deactivation.
+        job_service
+            Holder of observed job statuses (heartbeats). The orchestrator
+            subscribes to its updates for adoption and reads it during
+            reconciliation.
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
@@ -153,9 +177,11 @@ class JobOrchestrator:
         self._command_service = command_service
         self._workflow_registry = workflow_registry
         self._active_job_registry = active_job_registry
+        self._job_service = job_service
         self._config_store = config_store
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
+        self._clock = clock
 
         # Command acknowledgement tracking
         self._pending_commands = PendingCommandTracker(clock=clock)
@@ -163,6 +189,9 @@ class JobOrchestrator:
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
         self._job_states: dict[JobId, JobState] = {}
+        # When the last stop was issued per job_number, bounding re-issues
+        # during reconciliation.
+        self._stop_issued_at: dict[JobNumber, float] = {}
 
         # Transaction state for batching staging operations
         self._transaction_workflow: WorkflowId | None = None
@@ -176,6 +205,8 @@ class JobOrchestrator:
 
         # Load persisted configs
         self._load_configs_from_store()
+
+        job_service.on_status_updated = self.on_job_status_updated
 
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
@@ -237,7 +268,12 @@ class JobOrchestrator:
                     len(spec.source_names),
                 )
 
-            # Restore active job state if present
+            # The persisted current_job is the generation→config record: it
+            # restores the desired run-state (the workflow shows as pending
+            # until its job is observed) and labels the observed job with the
+            # committed params. It does not touch ActiveJobRegistry — only a
+            # heartbeat observation establishes the generation that admits
+            # data (ADR 0008).
             if config_data:
                 if current_data := config_data.get('current_job'):
                     try:
@@ -248,11 +284,6 @@ class JobOrchestrator:
                             workflow_id,
                             e,
                         )
-
-                if state.current is not None:
-                    self._active_job_registry.restore(
-                        workflow_id, current=_generation_of(state.current)
-                    )
 
             self._workflows[workflow_id] = state
 
@@ -377,21 +408,29 @@ class JobOrchestrator:
         # Prepare all commands (stop old jobs + start new workflow) in single batch
         commands = []
 
-        # Stop old jobs if any
-        if state.current is not None:
+        # Stop the desired predecessor and any observed job of this workflow
+        # still heartbeating (e.g. an orphan whose stop was lost): the new
+        # commit supersedes them all.
+        old_job_ids = dict.fromkeys(
+            (state.current.job_ids() if state.current is not None else [])
+            + self._observed_running_job_ids(workflow_id)
+        )
+        if old_job_ids:
             logger.info(
-                'Workflow %s already has active jobs, stopping: %s',
+                'Workflow %s has %d old job(s), stopping before start',
                 workflow_id,
-                state.current.job_number,
+                len(old_job_ids),
             )
             # Fire-and-forget: each stop gets an auto-generated message_id the
             # dashboard does not register, so the owning worker's ack is dropped.
             # Reusing the start's message_id would inflate its tracked ack count.
             commands.extend(
                 JobCommand(job_id=job_id, action=JobAction.stop)
-                for job_id in state.current.job_ids()
+                for job_id in old_job_ids
             )
-            logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
+            now = self._clock()
+            for job_id in old_job_ids:
+                self._stop_issued_at[job_id.job_number] = now
 
         # Send workflow configs to all staged sources
         # Note: Currently all jobs use same params, but aux_source_names may
@@ -421,6 +460,8 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
         state.stopped_reason = None
+        state.adopted_without_record = False
+        state.adopted_start_time = None
 
         # Flip the generation, clear the workflow's buffers, and notify
         # subscribers atomically under the ingestion guard, *before* sending
@@ -489,8 +530,10 @@ class JobOrchestrator:
                 }
             }
 
-        # Add active job state
-        if state.current is not None:
+        # The generation→config record. Not written for a job adopted without
+        # a record — its params are unknown and the record must not lie; after
+        # a restart such a job is simply re-adopted from observation.
+        if state.current is not None and not state.adopted_without_record:
             config_dict['current_job'] = state.current.model_dump(mode='json')
 
         # Persist if we have something to save
@@ -740,7 +783,10 @@ class JobOrchestrator:
         Stop all jobs for a workflow.
 
         Sends stop commands to the backend and clears the local active job state.
-        The workflow configuration remains staged for future restarts.
+        Covers both the desired JobSet and any observed job of the workflow
+        still heartbeating outside it. The workflow configuration remains
+        staged for future restarts. If a stop is lost, reconciliation
+        re-issues it while heartbeats keep arriving.
 
         Parameters
         ----------
@@ -752,8 +798,38 @@ class JobOrchestrator:
         :
             True if jobs were stopped, False if no active jobs.
         """
-        if not self._send_job_commands(workflow_id, JobAction.stop):
+        state = self._workflows[workflow_id]
+        desired = state.current
+        observed_extra = [
+            job_id
+            for job_id in self._observed_running_job_ids(workflow_id)
+            if desired is None or job_id.job_number != desired.job_number
+        ]
+        if desired is None and not observed_extra:
+            logger.debug('No active jobs for workflow %s to stop', workflow_id)
             return False
+
+        if desired is not None:
+            self._send_job_commands(workflow_id, JobAction.stop)
+            self._stop_issued_at[desired.job_number] = self._clock()
+        if observed_extra:
+            # Fire-and-forget, like reconciliation's re-issued stops: these
+            # jobs are outside the desired set, so there is no per-source ack
+            # count to track for user feedback.
+            logger.info(
+                'Stopping %d observed job(s) of workflow %s outside the desired set',
+                len(observed_extra),
+                workflow_id,
+            )
+            self._command_service.send_batch(
+                [
+                    JobCommand(job_id=job_id, action=JobAction.stop)
+                    for job_id in observed_extra
+                ]
+            )
+            now = self._clock()
+            for job_id in observed_extra:
+                self._stop_issued_at[job_id.job_number] = now
 
         # Remove from active set immediately, before the backend has processed
         # the stop command. This means any final results the backend publishes
@@ -781,6 +857,8 @@ class JobOrchestrator:
             self._active_job_registry.deactivate(workflow_id)
             state.current = None
         state.stopped_reason = reason
+        state.adopted_without_record = False
+        state.adopted_start_time = None
 
         self._persist_state_to_store(workflow_id)
         self._notify_workflow_stopped(workflow_id)
@@ -788,14 +866,21 @@ class JobOrchestrator:
     def on_job_status_updated(self, job_status: JobStatus) -> None:
         """React to a job status update from ``JobService``.
 
-        When a backend worker shuts down, it sends a final heartbeat marking
-        all jobs as stopped. This tracks the latest state per job and checks
-        whether all jobs in the workflow have reported stopped, deactivating
-        the workflow if so.
+        Two responsibilities:
+
+        - Adoption (ADR 0008): a non-stopped status for a known workflow is
+          the observation that a job runs as that workflow's generation.
+        - Backend shutdown: a worker's final heartbeat marks its jobs
+          stopped; once all jobs of the desired set reported stopped, the
+          workflow is deactivated.
         """
         workflow_id = job_status.workflow_id
         state = self._workflows.get(workflow_id)
-        if state is None or state.current is None:
+        if state is None:
+            return
+        if job_status.state != JobState.stopped:
+            self._adopt_observed_job(workflow_id, state, job_status)
+        if state.current is None:
             return
         job_ids = list(state.current.job_ids())
         if job_status.job_id not in job_ids:
@@ -811,6 +896,142 @@ class JobOrchestrator:
                 workflow_id,
             )
             self._deactivate_workflow(workflow_id, StoppedReason.backend_shutdown)
+
+    def _adopt_observed_job(
+        self, workflow_id: WorkflowId, state: WorkflowState, job_status: JobStatus
+    ) -> None:
+        """Derive the workflow's current generation from an observed running job.
+
+        Cases (ADR 0008):
+
+        - The observed job matches the desired JobSet but the registry has no
+          generation for it (dashboard restart): re-attach, labelled by the
+          persisted record.
+        - The observed job is entirely unknown (record miss: crash between
+          send and persist, store loss): adopt as running-with-unknown-config;
+          among several record-less jobs the latest start time wins.
+        - The observed job is a current/last generation or is superseded by a
+          committed JobSet: nothing to adopt — reconciliation re-issues its
+          stop if it keeps running.
+        """
+        job_number = job_status.job_id.job_number
+        source_name = job_status.job_id.source_name
+        if state.current is not None and state.current.job_number == job_number:
+            if not self._active_job_registry.is_current(workflow_id, job_number):
+                with self._active_job_registry.ingestion_guard():
+                    self._active_job_registry.begin_generation(
+                        workflow_id, job_number, config=state.current.jobs
+                    )
+                logger.info(
+                    'Adopted running job from heartbeat observation: '
+                    'workflow %s, job_number %s',
+                    workflow_id,
+                    job_number,
+                )
+            elif state.adopted_without_record and source_name not in state.current.jobs:
+                # Another source of the adopted job surfaces: extend the
+                # JobSet so stop/status cover it. Params stay unknown.
+                state.current.jobs[source_name] = JobConfig(
+                    params={}, aux_source_names={}
+                )
+                state.version += 1
+            return
+        if self._active_job_registry.is_known_generation(workflow_id, job_number):
+            # A just-replaced or just-stopped generation reporting late
+            # states; if it keeps running, reconciliation stops it.
+            return
+        if state.current is not None and not state.adopted_without_record:
+            # Superseded by a committed JobSet; reconciliation stops it.
+            return
+        if state.current is not None and not _starts_later(
+            job_status.start_time, state.adopted_start_time
+        ):
+            # Among record-less jobs the latest start time wins; this one
+            # loses and reconciliation stops it.
+            return
+        state.current = JobSet(
+            job_number=job_number,
+            jobs={source_name: JobConfig(params={}, aux_source_names={})},
+        )
+        state.adopted_without_record = True
+        state.adopted_start_time = job_status.start_time
+        state.stopped_reason = None
+        with self._active_job_registry.ingestion_guard():
+            self._active_job_registry.begin_generation(
+                workflow_id, job_number, config=None
+            )
+        state.version += 1
+        logger.warning(
+            'Adopted running job with unknown config: workflow %s, job_number %s',
+            workflow_id,
+            job_number,
+        )
+
+    def _observed_running_job_ids(self, workflow_id: WorkflowId) -> list[JobId]:
+        """Job ids of the workflow with a fresh, non-stopped observed status."""
+        return [
+            job_id
+            for job_id, status in self._job_service.job_statuses.items()
+            if status.workflow_id == workflow_id
+            and status.state != JobState.stopped
+            and not self._job_service.is_status_stale(job_id)
+        ]
+
+    def is_known_workflow(self, workflow_id: WorkflowId) -> bool:
+        """Whether this workflow is managed here (heartbeat admit filter)."""
+        return workflow_id in self._workflows
+
+    def reconcile_observed_jobs(self) -> None:
+        """Re-issue stops while observed run-state contradicts desired state.
+
+        Desired "stopped" (or superseded) with fresh non-stopped heartbeats
+        re-issues the stop, rate-bounded per job_number and logged: lost
+        sends, lost ACKs, and orphans all collapse into this one recovery
+        path (ADR 0008). Desired "running" with no heartbeats needs no action
+        here — it surfaces through the PENDING display and pending-command
+        expiry.
+        """
+        self._job_service.prune_stale()
+        now = self._clock()
+        to_stop: list[JobId] = []
+        fresh_numbers: set[JobNumber] = set()
+        for job_id, status in self._job_service.job_statuses.items():
+            if status.state == JobState.stopped:
+                continue
+            if self._job_service.is_status_stale(job_id):
+                continue
+            fresh_numbers.add(job_id.job_number)
+            state = self._workflows.get(status.workflow_id)
+            if state is None:
+                continue
+            if (
+                state.current is not None
+                and state.current.job_number == job_id.job_number
+            ):
+                continue
+            issued = self._stop_issued_at.get(job_id.job_number)
+            if issued is not None and now - issued < STOP_REISSUE_INTERVAL_SECONDS:
+                continue
+            to_stop.append(job_id)
+        # Drop ledger entries no longer backed by fresh observations so the
+        # dict does not grow with every job_number ever stopped.
+        self._stop_issued_at = {
+            number: t
+            for number, t in self._stop_issued_at.items()
+            if number in fresh_numbers or now - t < STOP_REISSUE_INTERVAL_SECONDS
+        }
+        if not to_stop:
+            return
+        for job_id in to_stop:
+            self._stop_issued_at[job_id.job_number] = now
+        logger.warning(
+            'Re-issuing stop for %d job(s) observed running against desired state: %s',
+            len(to_stop),
+            [str(job_id) for job_id in to_stop],
+        )
+        self._command_service.send_batch(
+            [JobCommand(job_id=job_id, action=JobAction.stop) for job_id in to_stop]
+        )
 
     def reset_workflow(self, workflow_id: WorkflowId) -> bool:
         """

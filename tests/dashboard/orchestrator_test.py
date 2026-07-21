@@ -33,10 +33,15 @@ def make_service_registry() -> ServiceRegistry:
 
 
 class FakeJobOrchestrator:
-    """Fake job orchestrator that records processed acknowledgements."""
+    """Fake job orchestrator that records processed acknowledgements.
 
-    def __init__(self):
+    Admits heartbeats for all workflows unless ``known_workflows`` restricts
+    the set.
+    """
+
+    def __init__(self, known_workflows: set[WorkflowId] | None = None):
         self.acknowledgements: list[tuple[str, str, str | None]] = []
+        self._known_workflows = known_workflows
 
     def process_acknowledgement(
         self, message_id: str, response: str, error_message: str | None = None
@@ -44,14 +49,14 @@ class FakeJobOrchestrator:
         """Record the processed acknowledgement."""
         self.acknowledgements.append((message_id, response, error_message))
 
+    def is_known_workflow(self, workflow_id: WorkflowId) -> bool:
+        return self._known_workflows is None or workflow_id in self._known_workflows
+
 
 class PermissiveJobRegistry:
     """Accepts every generation; used where filtering is orthogonal to the test."""
 
     def is_current(self, workflow_id: WorkflowId, job_number: uuid.UUID) -> bool:
-        return True
-
-    def is_known_job(self, job_number: uuid.UUID) -> bool:
         return True
 
     def record_stale(self, workflow_id: WorkflowId, job_number: uuid.UUID) -> None:
@@ -651,7 +656,9 @@ class TestOrchestratorGenerationFiltering:
 
         assert result_key.data_key not in data_service
 
-    def test_accepts_job_status_for_current_and_last_generation(self) -> None:
+    def test_accepts_job_status_for_any_generation_of_known_workflow(self) -> None:
+        """Heartbeats are the observation feed for adoption (ADR 0008): they
+        are admitted per known workflow, regardless of job_number."""
         from ess.livedata.core.job import JobState, JobStatus
 
         old_number = make_job_number()
@@ -661,7 +668,7 @@ class TestOrchestratorGenerationFiltering:
         )
         registry.begin_generation(self._workflow_id, new_number, config={})
 
-        for job_number in (old_number, new_number):
+        for job_number in (old_number, new_number, make_job_number()):
             status = JobStatus(
                 job_id=JobId(source_name="det1", job_number=job_number),
                 workflow_id=self._workflow_id,
@@ -669,13 +676,18 @@ class TestOrchestratorGenerationFiltering:
             )
             orchestrator.forward(STATUS_STREAM_ID, status)
 
-        assert len(job_service.job_statuses) == 2
+        assert len(job_service.job_statuses) == 3
 
-    def test_discards_job_status_for_unknown_job(self) -> None:
+    def test_discards_job_status_for_unknown_workflow(self) -> None:
         from ess.livedata.core.job import JobState, JobStatus
 
-        orchestrator, _, job_service, _ = self._make_orchestrator(
-            {self._workflow_id: make_job_number()}
+        source = FakeMessageSource()
+        job_service = JobService()
+        orchestrator = _make_orchestrator(
+            message_source=source,
+            data_service=DataService(),
+            job_service=job_service,
+            job_orchestrator=FakeJobOrchestrator(known_workflows=set()),
         )
 
         status = JobStatus(

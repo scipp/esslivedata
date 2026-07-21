@@ -76,6 +76,21 @@ class JobService:
 
         return age_ns > self._heartbeat_timeout_ns
 
+    def prune_stale(self) -> None:
+        """Drop statuses whose heartbeat aged past the staleness window.
+
+        A job that stopped heartbeating (worker gone, job long stopped) is no
+        longer observed; keeping its last status would otherwise accumulate
+        entries forever now that heartbeats are admitted per workflow rather
+        than per known job_number. A revived job re-adds itself with its next
+        heartbeat.
+        """
+        stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
+        for jid in stale:
+            logger.debug("Pruning stale job status %s", jid)
+            self._job_statuses.pop(jid, None)
+            self._job_status_timestamps.pop(jid, None)
+
     def remove_jobs_by_number(self, job_number: UUID) -> None:
         """Remove all jobs matching a given job number.
 

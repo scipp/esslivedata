@@ -3,6 +3,7 @@
 """Integration tests for job state persistence in JobOrchestrator."""
 
 from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
@@ -16,8 +17,9 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
     This test verifies:
     1. Starting a workflow creates an active job with a job_number
     2. The active job state (job_number, jobs) is persisted to config store
-    3. Creating a new backend with the same config store restores the active job
-    4. Subscribers are notified of the restored active job
+    3. Creating a new backend with the same config store restores the
+       desired state (job_number, configs) — but data admission awaits a
+       heartbeat observation, which adopts the running job (ADR 0008)
     """
     workflow_id = WorkflowId(
         instrument='dummy',
@@ -77,6 +79,15 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
 
         # Verify params were also restored correctly
         assert restored_active['monitor1'].params == custom_params.model_dump()
+
+        # The record alone does not admit data; the first heartbeat for the
+        # recorded job adopts it as the current generation
+        registry = backend2.job_orchestrator.active_job_registry
+        assert not registry.is_current(workflow_id, original_job_number)
+        backend2.job_service.status_updated(
+            JobStatus(job_id=job_ids[0], workflow_id=workflow_id, state=JobState.active)
+        )
+        assert registry.is_current(workflow_id, original_job_number)
 
 
 def test_recommit_persists_only_current_job(tmp_path) -> None:

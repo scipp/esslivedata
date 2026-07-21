@@ -222,6 +222,7 @@ def make_orchestrator(
         ),
         workflow_registry=registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
+        job_service=js,
         config_store=config_store,
         notification_queue=notification_queue,
         clock=clock,

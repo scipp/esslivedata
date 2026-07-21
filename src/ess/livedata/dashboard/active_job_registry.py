@@ -31,11 +31,14 @@ class Generation:
     """One commit of a workflow: its wire-level job_number and its config.
 
     The config is retained so data stamped with this generation can be
-    resolved back to the parameters it was computed with (provenance).
+    resolved back to the parameters it was computed with (provenance). It is
+    ``None`` for a generation adopted from heartbeat observation without a
+    persisted record: the job runs and its data is admitted, but its
+    parameters are unknown.
     """
 
     job_number: JobNumber
-    config: Mapping[str, Any]
+    config: Mapping[str, Any] | None
 
 
 @dataclass
@@ -66,9 +69,10 @@ class ActiveJobRegistry:
     The dashboard's data plane is keyed by stable ``DataKey``s, so buffered
     data is not evicted when a job stops — a stopped workflow's last data
     stays displayed under its keys. The one eviction point is
-    :py:meth:`begin_generation` (called only from ``commit_workflow``): the
-    workflow's buffers are cleared so the new generation starts blank and a
-    windowed extractor can never aggregate across a parameter change.
+    :py:meth:`begin_generation` (called from ``commit_workflow`` and from
+    heartbeat adoption): the workflow's buffers are cleared so the new
+    generation starts blank and a windowed extractor can never aggregate
+    across a parameter change.
     """
 
     def __init__(self, *, data_service: DataService, job_service: JobService) -> None:
@@ -99,26 +103,35 @@ class ActiveJobRegistry:
                 and record.current.job_number == job_number
             )
 
-    def is_known_job(self, job_number: JobNumber) -> bool:
-        """Check whether a job_number is any workflow's current or last generation.
+    def is_known_generation(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> bool:
+        """Check whether a job_number is the workflow's current or last generation.
 
-        Used to filter ``JobStatus`` heartbeats, which keep job-number
-        semantics: a just-stopped or just-replaced job may still report its
-        final states.
+        Membership in the two-entry window, independent of whether the
+        generation's config is known: a just-stopped or just-replaced job is
+        known here even though it no longer admits data, so heartbeat adoption
+        does not mistake it for a new job.
         """
         with self._lock:
+            record = self._generations.get(workflow_id)
+            if record is None:
+                return False
             return any(
                 gen is not None and gen.job_number == job_number
-                for record in self._generations.values()
                 for gen in (record.current, record.last)
             )
 
     def begin_generation(
-        self, workflow_id: WorkflowId, job_number: JobNumber, config: Mapping[str, Any]
+        self,
+        workflow_id: WorkflowId,
+        job_number: JobNumber,
+        config: Mapping[str, Any] | None,
     ) -> None:
         """Flip a workflow to a new generation and clear its buffered data.
 
-        This is the commit flip: the previous current generation rotates into
+        Called at commit and on heartbeat adoption (``config`` is None when
+        adopting a job without a record): the previous current generation rotates into
         ``last`` (its retained config still resolvable for provenance), the
         generation that drops off the two-entry window has its job-status
         entries pruned, and the workflow's DataService buffers are cleared —
@@ -163,16 +176,6 @@ class ActiveJobRegistry:
             record.current = None
             if dropped is not None:
                 self._job_service.remove_jobs_by_number(dropped.job_number)
-
-    def restore(self, workflow_id: WorkflowId, *, current: Generation) -> None:
-        """Restore the persisted current generation without acquiring the lock.
-
-        Used during initialization when no other threads are running. Only
-        ``current`` survives a dashboard restart: a stopped backend job no
-        longer heartbeats, so there is nothing a restored ``last`` generation
-        would admit.
-        """
-        self._generations[workflow_id] = _GenerationRecord(current=current)
 
     def resolve_config(
         self, workflow_id: WorkflowId, job_number: JobNumber
