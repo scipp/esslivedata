@@ -3109,6 +3109,34 @@ class TestSyncJobStates:
         assert state.plotter is not stopped_plotter
         assert not state.plotter.has_cached_state()
 
+    def test_failed_setup_layer_keeps_error_state_on_commit(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        plot_data_service,
+        fake_plotting_controller,
+    ):
+        """A layer whose setup failed has no data subscription: a commit must
+        not reset its presentation, which would hide the ERROR behind a
+        permanently blank WAITING_FOR_DATA."""
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        config = make_plot_config(workflow_id, source_names=['source1'])
+        fake_plotting_controller.configure_to_raise(ValueError('boom'))
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        assert plot_data_service.get(layer_id).state == LayerState.ERROR
+        fake_plotting_controller.reset()
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        plot_orchestrator.sync_job_states()
+
+        assert plot_data_service.get(layer_id).state == LayerState.ERROR
+        assert not fake_plotting_controller.created_plotters
+
 
 class TestSyncJobStatesMultiWorkflow:
     """Run-state gating for layers fed by several workflows (correlations)."""

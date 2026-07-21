@@ -1307,6 +1307,11 @@ class PlotOrchestrator:
         explicit choice. The data pipeline is untouched: extractors and keys
         are generation-independent.
         """
+        if layer_id not in self._data_subscriptions:
+            # Setup failed for this layer: without a data subscription no data
+            # can ever arrive, so a fresh plotter would drive the layer to a
+            # permanently blank WAITING_FOR_DATA and hide the ERROR state.
+            return
         try:
             config = self.get_layer_config(layer_id)
         except KeyError:
