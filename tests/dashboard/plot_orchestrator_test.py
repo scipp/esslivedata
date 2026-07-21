@@ -2935,9 +2935,9 @@ class TestFrameGeneration:
 class TestSyncJobStates:
     """sync_job_states drives layer lifecycle from polled workflow run-state.
 
-    Pins the replacements for the deleted subscription callbacks: a commit
-    observed by the poll resets the layer presentation (clear-at-commit,
-    #1042 A3), a stop freezes it with the last frame retained.
+    A commit observed by the poll resets the layer presentation
+    (clear-at-commit, #1042 A3); a stop freezes it with the last frame
+    retained.
     """
 
     def _ready_layer(
