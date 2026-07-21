@@ -979,6 +979,28 @@ class TestSlicerPlotter:
         assert isinstance(result, hv.Image | hv.QuadMesh)
         assert result.data['values'].shape == (40, 10)
 
+    def test_flatten_outer_dims_keeps_genuine_2d_coordinate(self, slicer_presenter):
+        """Flattening should keep a real 2D coordinate spanning the flattened
+        dims, using it for the flattened axis instead of synthesized integer
+        indices.
+        """
+        z = sc.arange('z', 5, dtype='float64', unit='s')
+        x = sc.arange('x', 10, dtype='float64', unit='m')
+        y_2d = sc.array(
+            dims=['z', 'y'],
+            values=np.arange(40, dtype='float64').reshape(5, 8) * 2.5 + 100.0,
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts'),
+            coords={'x': x, 'z': z, 'y': y_2d},
+        )
+
+        result = slicer_presenter._flatten_outer_dims(data, keep_dim='x')
+
+        assert 'y' in result.dims
+        np.testing.assert_allclose(result.coords['y'].values, y_2d.values.flatten())
+
     def test_compute_log_scale_masks_zeros(self, data_3d, data_key):
         """Test that log scale masks zeros in compute()."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())

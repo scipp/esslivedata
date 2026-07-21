@@ -250,7 +250,7 @@ class SlicerPresenter(PresenterBase):
         # the relevant coords.
         if (
             coord := data.coords.get(flatten_dims[1])
-        ) is not None and coord.dims == flatten_dims:
+        ) is not None and coord.dims == tuple(flatten_dims):
             flat_dim = flatten_dims[1]
         else:
             flat_dim = '/'.join(flatten_dims)
