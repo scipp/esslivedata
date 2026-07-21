@@ -12,10 +12,12 @@ class FakeSessionUpdater:
 
     def __init__(self, *, raise_on_cleanup: bool = False):
         self.cleanup_called = False
+        self.deferred_document_teardown: bool | None = None
         self._raise_on_cleanup = raise_on_cleanup
 
-    def cleanup(self) -> None:
+    def cleanup(self, *, defer_document_teardown: bool = False) -> None:
         self.cleanup_called = True
+        self.deferred_document_teardown = defer_document_teardown
         if self._raise_on_cleanup:
             raise ValueError("Cleanup error")
 
@@ -124,6 +126,9 @@ class TestSessionRegistry:
         registry.cleanup_stale_sessions()
 
         assert updater.cleanup_called
+        # #955: reaper runs off the session's IOLoop, so document-mutating
+        # teardown must be deferred onto the IOLoop.
+        assert updater.deferred_document_teardown is True
 
     def test_unregister_calls_updater_cleanup(self):
         registry = SessionRegistry()
@@ -134,6 +139,8 @@ class TestSessionRegistry:
         registry.unregister(session_id)
 
         assert updater.cleanup_called
+        # Clean disconnect runs on the session's IOLoop, so teardown runs inline.
+        assert updater.deferred_document_teardown is False
 
     def test_cleanup_error_does_not_stop_other_cleanups(self):
         registry = SessionRegistry(stale_timeout_seconds=0.01)

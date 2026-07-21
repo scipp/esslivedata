@@ -10,8 +10,9 @@ shared services in the correct session context.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
+from typing import TYPE_CHECKING
 
 import panel as pn
 import structlog
@@ -20,6 +21,9 @@ from .notification_queue import NotificationEvent, NotificationQueue
 from .notifications import show_notification
 from .session_registry import SessionId, SessionRegistry
 from .widgets.heartbeat_widget import HeartbeatWidget
+
+if TYPE_CHECKING:
+    from bokeh.document import Document
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +53,11 @@ class SessionUpdater:
         Registry for session heartbeats and tracking.
     notification_queue:
         Shared queue for notifications.
+    document:
+        The session's Bokeh document, used to marshal document-mutating
+        teardown onto the session's IOLoop when :meth:`cleanup` runs off it
+        (the stale-session reaper). ``None`` in non-session contexts (tests),
+        where teardown runs inline.
     """
 
     def __init__(
@@ -58,15 +67,20 @@ class SessionUpdater:
         session_registry: SessionRegistry,
         notification_queue: NotificationQueue,
         username: str | None = None,
+        document: Document | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
         self._notification_queue = notification_queue
+        self._document = document
 
         # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
         self._custom_handlers: list[Callable[[], None]] = []
-        # Handlers run once when the session is torn down (see cleanup).
+        # Tier-2 teardown: sever shared state. Safe on any thread; run inline.
         self._cleanup_handlers: list[Callable[[], None]] = []
+        # Tier-1 teardown: mutate Bokeh document state. Must run on the
+        # session's IOLoop (marshalled via the document on the reaper path).
+        self._document_teardown_handlers: list[Callable[[], None]] = []
         self._periodic_callback: pn.io.PeriodicCallback | None = None
 
         # Browser heartbeat mechanism using ReactiveHTML.
@@ -118,14 +132,17 @@ class SessionUpdater:
 
     def register_cleanup_handler(self, handler: Callable[[], None]) -> None:
         """
-        Register a handler to run once when the session is torn down.
+        Register a tier-2 teardown handler that severs shared state.
 
-        Use this for releasing per-session resources (e.g. a Kafka producer).
-        Handlers run from :meth:`cleanup`, which fires both on clean browser
-        disconnect (``on_session_destroyed``) and via the heartbeat-based stale
-        session reaper, so resources are released even when Panel's
-        ``on_session_destroyed`` does not fire. Handlers may be invoked from a
-        background thread and must be safe to call there.
+        Use this for releasing per-session resources held in shared state (e.g.
+        a Kafka producer, orchestrator viewer/interest tokens, lifecycle
+        subscriptions). Handlers run inline from :meth:`cleanup`, which fires
+        both on clean browser disconnect (``on_session_destroyed``) and via the
+        heartbeat-based stale-session reaper, so resources are released even
+        when Panel's ``on_session_destroyed`` does not fire. The reaper runs on
+        a background thread, so handlers must be safe to call there and must not
+        mutate Bokeh document state (use :meth:`register_document_teardown_handler`
+        for that).
 
         Parameters
         ----------
@@ -133,6 +150,24 @@ class SessionUpdater:
             Callback to invoke on session teardown.
         """
         self._cleanup_handlers.append(handler)
+
+    def register_document_teardown_handler(self, handler: Callable[[], None]) -> None:
+        """
+        Register a tier-1 teardown handler that mutates Bokeh document state.
+
+        Use this for disposing session-bound widgets (e.g. breaking Bokeh-tool
+        reference cycles). Bokeh document state may only be mutated on the
+        session's IOLoop, so on the stale-session reaper path these handlers are
+        scheduled onto that IOLoop via the session document rather than run on
+        the calling thread. They may therefore never run if the session's
+        document is already gone; tier-2 handlers must not depend on them.
+
+        Parameters
+        ----------
+        handler:
+            Callback to invoke on session teardown, on the session's IOLoop.
+        """
+        self._document_teardown_handlers.append(handler)
 
     def periodic_update(self) -> None:
         """
@@ -192,25 +227,71 @@ class SessionUpdater:
         for event in notifications:
             show_notification(event)
 
-    def cleanup(self) -> None:
-        """Clean up session resources."""
+    def cleanup(self, *, defer_document_teardown: bool = False) -> None:
+        """
+        Tear down the session in two tiers.
+
+        Tier 2 (shared-state severing) runs inline and is safe on any thread:
+        the notification-queue slot is released and cleanup handlers
+        (:meth:`register_cleanup_handler`) run. This is the leak fix and does
+        not depend on tier 1.
+
+        Tier 1 (Bokeh document mutation) stops the periodic callback and runs
+        the document-teardown handlers (:meth:`register_document_teardown_handler`).
+        Document state may only be mutated on the owning session's IOLoop, so on
+        the stale-session reaper path (``defer_document_teardown=True``) it is
+        scheduled via the captured document's ``add_next_tick_callback`` instead
+        of running on the calling thread. Scheduling into an already-destroyed
+        document is tolerated: tier 2 has already severed everything.
+
+        Parameters
+        ----------
+        defer_document_teardown:
+            Schedule tier 1 onto the session's IOLoop instead of running it
+            inline. Set by the background stale-session reaper, which is not on
+            the session's IOLoop; the clean ``on_session_destroyed`` path runs
+            on the IOLoop and leaves this ``False``.
+        """
+        # Tier 2: sever shared state. Safe on any thread.
+        self._notification_queue.unregister_session(self._session_id)
+        self._run_handlers(self._cleanup_handlers)
+        self._cleanup_handlers.clear()
+
+        # Tier 1: Bokeh document mutation. Must run on the session's IOLoop.
+        if defer_document_teardown and self._document is not None:
+            try:
+                self._document.add_next_tick_callback(self._document_teardown)
+            except Exception:
+                logger.debug(
+                    "Skipping deferred document teardown for session %s: "
+                    "document already gone",
+                    self._session_id,
+                )
+        else:
+            self._document_teardown()
+
+        logger.debug("SessionUpdater cleaned up for session %s", self._session_id)
+
+    def _document_teardown(self) -> None:
+        """Stop the periodic callback and dispose document-bound widgets.
+
+        Mutates Bokeh document state, so it must run on the session's IOLoop.
+        """
         if self._periodic_callback is not None:
             self._periodic_callback.stop()
+        self._run_handlers(self._document_teardown_handlers)
+        self._document_teardown_handlers.clear()
+        self._custom_handlers.clear()
 
-        self._notification_queue.unregister_session(self._session_id)
-
-        for handler in self._cleanup_handlers:
+    def _run_handlers(self, handlers: Iterable[Callable[[], None]]) -> None:
+        """Run teardown handlers, logging and swallowing any exception."""
+        for handler in handlers:
             try:
                 handler()
             except Exception:
                 logger.exception(
-                    "Error in cleanup handler for session %s", self._session_id
+                    "Error in teardown handler for session %s", self._session_id
                 )
-        self._cleanup_handlers.clear()
-
-        self._custom_handlers.clear()
-
-        logger.debug("SessionUpdater cleaned up for session %s", self._session_id)
 
     def _check_browser_heartbeat(self) -> None:
         """
