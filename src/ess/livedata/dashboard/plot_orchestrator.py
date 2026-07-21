@@ -1302,10 +1302,9 @@ class PlotOrchestrator:
         buffers; without a reset the layer would keep showing the previous
         generation's last frame. Replacing the plotter drives the layer to
         WAITING_FOR_DATA (blank until new data arrives) and deliberately
-        resets plotter-internal accumulation such as autoscale ranges —
-        previously an accident of the per-commit pipeline rebuild, now an
-        explicit choice. The data pipeline is untouched: extractors and keys
-        are generation-independent.
+        resets plotter-internal accumulation such as autoscale ranges. The
+        data pipeline is untouched: extractors and keys are
+        generation-independent.
         """
         if layer_id not in self._data_subscriptions:
             # Setup failed for this layer: without a data subscription no data

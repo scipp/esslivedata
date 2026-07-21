@@ -2935,9 +2935,9 @@ class TestFrameGeneration:
 class TestSyncJobStates:
     """sync_job_states drives layer lifecycle from polled workflow run-state.
 
-    A commit observed by the poll resets the layer presentation
-    (clear-at-commit, #1042 A3); a stop freezes it with the last frame
-    retained.
+    A commit observed by the poll resets the layer presentation (the commit
+    cleared the workflow's buffers, so the old frame must not linger); a stop
+    freezes the layer with the last frame retained.
     """
 
     def _ready_layer(
