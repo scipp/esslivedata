@@ -140,6 +140,25 @@ class TestInMemoryConfigStore:
             )
             assert str(wf_id) in store
 
+    def test_lru_eviction_refreshes_on_update(self):
+        """Test that updating a key marks it as recently used, not just inserted."""
+        store = InMemoryConfigStore(max_configs=3)
+
+        store['A'] = {'params': {'value': 'a1'}}
+        store['B'] = {'params': {'value': 'b'}}
+        store['C'] = {'params': {'value': 'c'}}
+
+        # A is touched again, so it becomes the most recently used entry.
+        store['A'] = {'params': {'value': 'a2'}}
+
+        # Exceeding max_configs evicts the single least recently used key.
+        store['D'] = {'params': {'value': 'd'}}
+
+        assert store['A'] == {'params': {'value': 'a2'}}
+        assert 'B' not in store
+        assert 'C' in store
+        assert 'D' in store
+
     def test_no_max_configs(self):
         """Test store without max_configs limit."""
         store = InMemoryConfigStore(max_configs=None)
@@ -294,6 +313,25 @@ class TestFileBackedConfigStore:
                 version=1,
             )
             assert str(wf_id) in store
+
+    def test_lru_eviction_refreshes_on_update(self, temp_config_file):
+        """Test that updating a key marks it as recently used, not just inserted."""
+        store = FileBackedConfigStore(temp_config_file, max_configs=3)
+
+        store['A'] = {'params': {'value': 'a1'}}
+        store['B'] = {'params': {'value': 'b'}}
+        store['C'] = {'params': {'value': 'c'}}
+
+        # A is touched again, so it becomes the most recently used entry.
+        store['A'] = {'params': {'value': 'a2'}}
+
+        # Exceeding max_configs evicts the single least recently used key.
+        store['D'] = {'params': {'value': 'd'}}
+
+        assert store['A'] == {'params': {'value': 'a2'}}
+        assert 'B' not in store
+        assert 'C' in store
+        assert 'D' in store
 
     def test_corrupted_file_handling(
         self, temp_config_file, workflow_id_1, config_value_1

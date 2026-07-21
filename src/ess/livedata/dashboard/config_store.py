@@ -88,6 +88,9 @@ class InMemoryConfigStore(UserDict[str, dict[str, Any]]):
         if not isinstance(key, str):
             raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
+            # Drop any existing entry first so re-insertion below moves the key
+            # to the end, keeping insertion order aligned with recency of use.
+            self.data.pop(key, None)
             super().__setitem__(key, value)
 
             # Automatic LRU eviction if limit exceeded
@@ -155,6 +158,9 @@ class FileBackedConfigStore(UserDict[str, dict[str, Any]]):
         if not isinstance(key, str):
             raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
+            # Drop any existing entry first so re-insertion below moves the key
+            # to the end, keeping insertion order aligned with recency of use.
+            self.data.pop(key, None)
             super().__setitem__(key, value)
 
             # Automatic LRU eviction if limit exceeded
