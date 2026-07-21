@@ -1,19 +1,30 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""HoloViews hook that enforces frame aspect ratios on Bokeh plots.
+"""HoloViews sizing opts that enforce frame aspect ratios on Bokeh plots.
 
 HoloViews' aspect options (``aspect="square"``, ``data_aspect``, etc.) do not
 produce correctly shaped data areas (frames) when plots use ``responsive=True``
 inside Panel containers.  This is an upstream bug spanning Bokeh, HoloViews,
 and Panel.
 
-The workaround uses HoloViews *hooks* that:
+The workaround, assembled by :func:`make_frame_aspect_opts`, has two
+cooperating parts:
 
-1. Switch the Bokeh figure to ``stretch_width`` or ``stretch_height``
-   (chosen by the user via :class:`StretchMode`) so it fills the container
-   along one axis.
-2. Attach a ``CustomJS`` callback that adjusts the *other* dimension so the
-   frame has the correct shape.
+1. Sizing opts: ``responsive=True`` plus a fixed cross dimension (an initial
+   ``height`` for :attr:`StretchMode.width`, ``width`` for
+   :attr:`StretchMode.height`).  HoloViews derives ``stretch_width`` (resp.
+   ``stretch_height``) from this combination, so the figure fills the
+   container along one axis.  Expressing the sizing mode through opts rather
+   than writing it to the figure is essential: HoloViews recomputes plot
+   properties from the opts whenever they change (``ElementPlot's
+   _update_plot``), which would overwrite figure-level writes.
+2. A hook attaching a ``CustomJS`` callback that adjusts the cross dimension
+   in the browser so the frame has the correct shape.  HoloViews runs hooks
+   from ``update_frame`` (i.e. on every data update), not only from
+   ``initialize_plot``, so the hook tags the figure and only acts once per
+   figure: repeated attaching would leak a callback set per update, and
+   re-seeding the cross dimension would collapse the figure to the seed size
+   for one layout frame per update.
 
 Two hook variants exist:
 
@@ -32,6 +43,14 @@ from collections.abc import Callable
 from typing import Any
 
 from .plot_params import PlotAspect, PlotAspectType, StretchMode
+
+# Initial size of the JS-adjusted cross dimension.  Serves double duty: its
+# presence makes HoloViews compute a stretched sizing mode (see module
+# docstring), and it sizes the figure until the CustomJS first fires.
+_INITIAL_CROSS_SIZE_PX = 400
+
+# Marks figures whose CustomJS callback is already attached.
+_HOOK_APPLIED_TAG = 'ess-livedata-frame-aspect'
 
 # ---------------------------------------------------------------------------
 # Fixed frame ratio JS (square, aspect=N) — no range reading needed
@@ -120,12 +139,9 @@ def _make_hook(
         from bokeh.models import CustomJS
 
         fig = plot.handles['plot']
-        if fill_width:
-            fig.sizing_mode = "stretch_width"
-            fig.height = 400
-        else:
-            fig.sizing_mode = "stretch_height"
-            fig.width = 400
+        if _HOOK_APPLIED_TAG in fig.tags:
+            return
+        fig.tags.append(_HOOK_APPLIED_TAG)
 
         callback = CustomJS(
             args={"fig": fig, **js_args},
@@ -198,14 +214,14 @@ def make_data_aspect_hook(
     )
 
 
-def make_frame_aspect_hook_from_config(
-    aspect: PlotAspect,
-) -> Callable[[Any, Any], None] | None:
-    """Create a frame-aspect hook if the config requires one.
+def make_frame_aspect_opts(aspect: PlotAspect) -> dict[str, Any]:
+    """Create the HoloViews sizing opts enforcing the configured aspect.
 
-    Returns ``None`` for ``free`` (no aspect constraint).
-    Returns a fixed-ratio hook for ``square`` and ``aspect``, or a
-    data-aspect hook for ``equal`` and ``data_aspect``.
+    Returns plain ``{'responsive': True}`` for ``free`` (no aspect
+    constraint).  Otherwise adds the initial cross dimension (from which
+    HoloViews derives the stretched sizing mode) and a hook — a fixed-ratio
+    hook for ``square`` and ``aspect``, or a data-aspect hook for ``equal``
+    and ``data_aspect`` — that adjusts the cross dimension in the browser.
 
     Parameters
     ----------
@@ -215,16 +231,18 @@ def make_frame_aspect_hook_from_config(
     Returns
     -------
     :
-        A hook function, or None if no hook is needed.
+        Opts dict suitable for any Bokeh-backed HoloViews element type.
     """
     match aspect.aspect_type:
         case PlotAspectType.square:
-            return make_fixed_frame_ratio_hook(1.0, aspect.stretch_mode)
+            hook = make_fixed_frame_ratio_hook(1.0, aspect.stretch_mode)
         case PlotAspectType.aspect:
-            return make_fixed_frame_ratio_hook(aspect.ratio, aspect.stretch_mode)
+            hook = make_fixed_frame_ratio_hook(aspect.ratio, aspect.stretch_mode)
         case PlotAspectType.equal:
-            return make_data_aspect_hook(1.0, aspect.stretch_mode)
+            hook = make_data_aspect_hook(1.0, aspect.stretch_mode)
         case PlotAspectType.data_aspect:
-            return make_data_aspect_hook(aspect.ratio, aspect.stretch_mode)
+            hook = make_data_aspect_hook(aspect.ratio, aspect.stretch_mode)
         case _:
-            return None
+            return {'responsive': True}
+    cross = 'height' if aspect.stretch_mode == StretchMode.width else 'width'
+    return {'responsive': True, cross: _INITIAL_CROSS_SIZE_PX, 'hooks': [hook]}
