@@ -11,8 +11,9 @@ Coordinates workflow execution across multiple sources, handling:
 
 from __future__ import annotations
 
+import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
@@ -46,6 +47,13 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 SourceName = str
+
+# A command acknowledgement is a fast round-trip, so a pending command that has
+# not been acknowledged within this window is treated as lost (e.g. its send was
+# silently dropped by the sink). Deliberately shorter than the 60s
+# heartbeat-staleness constants in job_service.py, which answer a different
+# question about backend liveness.
+PENDING_COMMAND_TIMEOUT_SECONDS = 30.0
 
 
 class JobConfig(BaseModel):
@@ -115,6 +123,7 @@ class JobOrchestrator:
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -137,6 +146,9 @@ class JobOrchestrator:
             Optional queue for multi-session notifications. When provided,
             command success/error notifications are pushed here instead of
             using direct callbacks.
+        clock
+            Callable returning the current time in seconds, used for command
+            expiry. Injectable to allow deterministic testing without real waits.
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
@@ -146,7 +158,7 @@ class JobOrchestrator:
         self._notification_queue = notification_queue
 
         # Command acknowledgement tracking
-        self._pending_commands = PendingCommandTracker()
+        self._pending_commands = PendingCommandTracker(clock=clock)
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
@@ -1069,4 +1081,34 @@ class JobOrchestrator:
                 result.error_count,
                 total,
                 combined_errors,
+            )
+
+    def expire_pending_commands(self) -> None:
+        """
+        Expire commands that were never acknowledged by the backend.
+
+        A command whose acknowledgement never arrives (e.g. because its send was
+        silently dropped by the sink) would otherwise leave the tracker entry
+        alive forever, with no feedback to the user. Expired commands are logged
+        and surfaced as an error notification. The workflow state and status
+        badge are left untouched.
+        """
+        expired = self._pending_commands.expire_stale(PENDING_COMMAND_TIMEOUT_SECONDS)
+        for cmd in expired:
+            spec = self._workflow_registry.get(cmd.workflow_id)
+            title = spec.title if spec else str(cmd.workflow_id)
+            logger.warning(
+                'No response from backend for %s command on workflow %s; '
+                'expired after %.0fs',
+                cmd.action,
+                title,
+                PENDING_COMMAND_TIMEOUT_SECONDS,
+            )
+            self._notify_command_error(
+                cmd.workflow_id,
+                cmd.action,
+                cmd.expected_count,
+                cmd.expected_count,
+                f"no response from backend "
+                f"(timed out after {PENDING_COMMAND_TIMEOUT_SECONDS:.0f}s)",
             )

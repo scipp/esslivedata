@@ -148,6 +148,10 @@ class DashboardServices:
             start = time.monotonic()
             try:
                 self.orchestrator.update()
+                # Expire pending commands whose acknowledgement never arrived, so
+                # a silently dropped send surfaces as an error toast rather than a
+                # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
+                self.job_orchestrator.expire_pending_commands()
                 self.session_registry.cleanup_stale_sessions()
                 # Run-state poll before the flush: a commit observed here
                 # resets the affected layers' presentation, so the same pass's
