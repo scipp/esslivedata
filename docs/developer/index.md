@@ -12,6 +12,7 @@ maxdepth: 2
 ---
 
 getting-started
+glossary
 coding-conventions
 dependency-management
 design/backend-service-architecture

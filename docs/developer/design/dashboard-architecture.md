@@ -147,7 +147,7 @@ sequenceDiagram
 
 The `Orchestrator` (see `dashboard/orchestrator.py`) is the message pump. It consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. Status messages and command acknowledgements are routed to `JobOrchestrator`.
 
-`DataService` (see `dashboard/data_service.py`) is a dict-like store keyed by `ResultKey`. Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.
+`DataService` (see `dashboard/data_service.py`) is a dict-like store keyed by `DataKey` (the job-number-stripped form of `ResultKey`). Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.
 
 ## Workflow Lifecycle
 
