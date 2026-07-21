@@ -106,13 +106,11 @@ class CellPropertiesModal:
         self.modal.open = True
 
     def _build(self) -> pn.Modal:
-        self._add_layer_button = pn.widgets.Button(
-            name='Add layer…', button_type='default'
-        )
+        self._add_layer_button = pn.widgets.Button(label='Add layer…', color='default')
         self._add_layer_button.on_click(lambda _: self._on_add())
-        save_button = pn.widgets.Button(name='Save', button_type='primary')
+        save_button = pn.widgets.Button(label='Save', color='primary')
         save_button.on_click(lambda _: self._finish(save=True))
-        cancel_button = pn.widgets.Button(name='Cancel')
+        cancel_button = pn.widgets.Button(label='Cancel')
         cancel_button.on_click(lambda _: self._finish(save=False))
 
         modal = pn.Modal(
@@ -141,7 +139,11 @@ class CellPropertiesModal:
         return modal
 
     def _persist_title(self) -> None:
-        new_title = (self._text.value_input or '').strip() or None
+        # ``value`` (not ``value_input``) reflects the field's current displayed
+        # content: it is set from the constructor's pre-fill and, unlike
+        # ``value_input``, syncs on blur even without a keystroke -- which is
+        # what happens as focus leaves the field when Save/Add layer is clicked.
+        new_title = (self._text.value or '').strip() or None
         self._orchestrator.set_cell_title(self._cell_id, new_title)
 
     def _close(self) -> None:
