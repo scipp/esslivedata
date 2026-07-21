@@ -27,6 +27,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..format_utils import extract_error_summary
+from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellId,
@@ -585,8 +586,8 @@ class CellWidget:
 
         Ensures session components exist when data is available. Sets a
         descriptive SaveTool filename on the result so that browser "Save"
-        downloads get a meaningful name, and builds the cell's autoscale
-        controller as a side effect.
+        downloads get a meaningful name, suspends hover while an ROI edit tool
+        is active, and builds the cell's autoscale controller as a side effect.
 
         Returns
         -------
@@ -646,7 +647,7 @@ class CellWidget:
         if non_overlayable:
             return result
 
-        hooks: list = []
+        hooks: list = [make_hover_suspend_hook()]
         filename = build_save_filename_from_cell(
             self._cell,
             self._deps.workflow_registry,
@@ -662,7 +663,4 @@ class CellWidget:
         if controller is not None:
             self._autoscale_controller = controller
             hooks.append(controller.make_hook())
-        if hooks:
-            result = result.opts(hooks=hooks)
-
-        return result
+        return result.opts(hooks=hooks)
