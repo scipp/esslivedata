@@ -1020,7 +1020,7 @@ class TestJobOrchestratorStop:
             params={"threshold": 50.0, "mode": "custom"},
             aux_source_names={},
         )
-        job_ids = orchestrator.commit_workflow(workflow_id)
+        orchestrator.commit_workflow(workflow_id)
 
         # Verify active job is in config store
         assert 'current_job' in config_store[str(workflow_id)]
@@ -1028,14 +1028,10 @@ class TestJobOrchestratorStop:
         # Stop the workflow
         orchestrator.stop_workflow(workflow_id)
 
-        # Verify current_job is removed from config store
+        # Verify current_job is removed from config store; the stopped job
+        # itself is not persisted (retention does not survive a restart)
         assert 'current_job' not in config_store[str(workflow_id)]
-
-        # Verify previous_job is in config store
-        assert 'previous_job' in config_store[str(workflow_id)]
-        assert config_store[str(workflow_id)]['previous_job']['job_number'] == str(
-            job_ids[0].job_number
-        )
+        assert 'previous_job' not in config_store[str(workflow_id)]
 
     def test_stop_workflow_allows_immediate_restart(
         self,

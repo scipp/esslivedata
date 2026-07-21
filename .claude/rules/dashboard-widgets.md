@@ -84,7 +84,7 @@ python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
 Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
 launch so plots render with no interaction. Regenerate a fixture by configuring via the
 UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
-`current_job`/`previous_job` keys, keep `jobs`) and `plot_configs.yaml` from the config
+`current_job` key, keep `jobs`) and `plot_configs.yaml` from the config
 dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
 
 **Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
