@@ -35,7 +35,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **StreamKind** — enum of stream categories (`core/message.py`):
   `monitor_counts`, `monitor_events`, `detector_events`, `area_detector`, `log`,
   `device`, the `livedata_*` topics, `run_control`, `unknown`.
-- **StreamMapping** / **StreamLUT** — the boundary lookup
+- **StreamMapping** — the boundary lookup
   `(topic, source_name) → stream name` (`kafka/stream_mapping.py`).
 - **Synthesized stream** — a stream emitted in-process (`topic is None`), never
   read from Kafka, e.g. a chopper cascade or merged device stream (ADR 0001).
@@ -119,7 +119,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   Kafka implementations in `kafka/source.py` and `kafka/sink.py`.
 - **MessageAdapter** — converts wire payloads to domain messages
   (`kafka/message_adapter.py`); `KafkaAdapter` maps `(topic, source_name)` to
-  `StreamId`. `RoutingAdapterBuilder` wires per-topic adapter chains.
+  `StreamId`.
 - **MessageBatch / MessageBatcher** — a time-windowed batch of messages and the
   strategies producing them (`core/message_batcher.py`).
 - **Accumulator** — protocol accumulating data over time
@@ -130,23 +130,18 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   turning raw stream data into workflow input. Created by a
   **PreprocessorFactory** (`core/handler.py`); the concrete factories are the
   `*HandlerFactory` classes in `handlers/` (naming predates the
-  preprocessor terminology).
-- **MessagePreprocessor** — owns the per-StreamId accumulators inside the
-  OrchestratingProcessor and produces `WorkflowData` from a batch.
+  preprocessor terminology). The similarly named `MessagePreprocessor` is
+  internal OrchestratingProcessor wiring that owns the accumulators.
 
 ### Job management
 
 - **JobManager** — owns all job records; schedules, activates, gates, and
   finishes jobs, fans data out, gathers results and statuses
   (`core/job_manager.py`).
-- **JobFactory** — builds a Job from a WorkflowConfig, resolving aux and context
-  streams; rejects workflows belonging to another instrument or service.
-- **JobManagerAdapter** — translates command messages into JobManager calls and
-  wraps outcomes in acknowledgements (`core/job_manager_adapter.py`).
 - **Command** — wire type of the `livedata_commands` topic: discriminated union
   `WorkflowConfig | JobCommand` (`core/job_manager.py`). Dispatched by
   `ConfigProcessor` (`handlers/config_handler.py`).
-- **JobCommand / JobAction** — control message for a running job:
+- **JobCommand** — control message for a running job:
   `pause`/`resume`/`reset`/`stop` (pause/resume unimplemented).
 - **JobSchedule** — optional start/end times (raw-data timestamps) governing
   activation and finish.
@@ -194,10 +189,10 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 ### Job and workflow lifecycle
 
 - **JobOrchestrator** — owns the two-phase workflow lifecycle
-  (stage → commit → stop), job-number generation, and acknowledgement handling
+  (stage → commit → stop): a commit mints one job number, starts the set of
+  per-source jobs sharing it, publishes the commands, and tracks
+  acknowledgements until confirmed or timed out
   (`dashboard/job_orchestrator.py`).
-- **WorkflowState / JobSet / JobConfig** — desired run-state of a workflow, the
-  set of per-source jobs sharing one job number, and per-source configuration.
 - **JobService** — read model of the latest `JobStatus` per JobId, with
   heartbeat staleness detection (`dashboard/job_service.py`).
 - **ActiveJobRegistry** — thread-safe record of each workflow's current
@@ -205,8 +200,6 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`dashboard/active_job_registry.py`).
 - **WorkflowController** — thin interface between widgets and JobOrchestrator
   (`dashboard/workflow_controller.py`).
-- **CommandService / PendingCommandTracker** — publishes commands to the backend
-  and tracks them until acknowledged or timed out.
 - **Adoption** — deriving the currently-running generation from live heartbeats
   instead of persisted job identity (ADR 0008).
 - **ServiceRegistry** — backend worker health derived from heartbeats
@@ -235,9 +228,6 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   (`dashboard/plots.py`).
 - **Figure** — the rendered HoloViews/Bokeh object placed in the document.
   Reserved for the rendered artifact; not a synonym for plotter or layer.
-- **PlottingController** — plot-creation mechanics: finds compatible plotters
-  for a data shape, wires stream pipelines, builds plotters
-  (`dashboard/plotting_controller.py`).
 - **PlotDataService / LayerState** — per-layer shared state machine
   (`WAITING_FOR_DATA`/`READY`/`STOPPED`/`ERROR`) with version counters, read by
   per-session pollers (`dashboard/plot_data_service.py`).
@@ -249,12 +239,11 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Session** — one browser connection (one Bokeh document). Tracked by
   **SessionRegistry** with heartbeat-based stale cleanup.
 - **SessionUpdater** — per-session ~1 Hz driver on the session's IOLoop:
-  polls the NotificationQueue and runs update handlers inside a batched
+  polls its notification queue and runs update handlers inside a batched
   (`pn.io.hold` + `doc.models.freeze`) session context
   (`dashboard/session_updater.py`).
 - **SessionLayer** — per-session render state for one layer: presenter, pipe,
   and DynamicMap (`dashboard/session_layer.py`).
-- **NotificationQueue** — cursor-based per-session notification fan-out.
 - **Single-writer versioned pull** — the dashboard concurrency model: one writer
   mutates shared state and bumps a version; sessions poll the version and pull
   snapshots on their own IOLoop (ADR 0007).
