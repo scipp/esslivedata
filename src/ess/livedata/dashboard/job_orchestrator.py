@@ -1004,9 +1004,24 @@ class JobOrchestrator:
         Desired "stopped" (or superseded) with fresh non-stopped heartbeats
         re-issues the stop, rate-bounded per job_number and logged: lost
         sends, lost ACKs, and orphans all collapse into this one recovery
-        path (ADR 0008). Desired "running" with no heartbeats needs no action
-        here — it surfaces through the PENDING display and pending-command
-        expiry.
+        path (ADR 0008).
+
+        Deliberately asymmetric: starts are never re-issued. A stop re-issue
+        acts on positive evidence (heartbeats prove the job exists and the
+        stop has not taken effect) and a redundant stop is free. A start
+        re-issue would act on absence of evidence — "desired running, no
+        heartbeats" conflates a lost send (re-issue correct), a slow or down
+        backend (the original command sits durably in the commands topic;
+        re-issue duplicates), delayed heartbeats from a healthy job (re-issue
+        destructive: ``JobManager.schedule_job`` overwrites the running job,
+        wiping its accumulated data), and a crashed job (re-issue is silent
+        auto-restart — supervision policy, and a crash loop if the params
+        crash the job deterministically). That divergence instead surfaces
+        through the PENDING display and pending-command expiry; recommit is
+        the explicit, safe re-issue. If lost starts turn out to be common in
+        the field, the fix is an idempotent backend start (no-op when the
+        job_id is already active), after which reconciliation could converge
+        in both directions.
         """
         self._job_service.prune_stale()
         now = self._clock()
