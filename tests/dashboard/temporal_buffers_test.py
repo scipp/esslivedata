@@ -49,6 +49,20 @@ def make_single_slice(x_values, time_value, time_unit='s'):
     )
 
 
+def make_single_slice_datetime(x_values, time_value, time_unit='s'):
+    """Create a single time slice DataArray with a datetime64 time coord.
+
+    ``time_value`` is an integer offset from scipp's epoch, in ``time_unit``.
+    """
+    return sc.DataArray(
+        sc.array(dims=['x'], values=x_values, unit='counts'),
+        coords={
+            'x': sc.arange('x', len(x_values), unit='m'),
+            'time': sc.datetime(time_value, unit=time_unit),
+        },
+    )
+
+
 def make_thick_slice(x_size, time_values, time_unit='s'):
     """Create a thick slice DataArray with multiple time points."""
     n_times = len(time_values)
@@ -349,6 +363,38 @@ class TestTemporalBuffer:
 
         result = buffer.get()
         assert result.coords['time'].values[0] >= 98 * ns_per_s
+
+    def test_timespan_trimming_with_datetime64_time_coords(self):
+        """Test trimming works when time coordinates are datetime64.
+
+        Regression test for https://github.com/scipp/esslivedata/issues/1069
+        where the cutoff computation subtracted a float64 timespan from a
+        datetime64 time coordinate, raising DTypeError. Once the trim path
+        first ran, every subsequent add() failed the same way, permanently
+        freezing the buffer.
+        """
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(5.0)  # 5 seconds
+        buffer.set_max_memory(100)  # Small to trigger trimming
+
+        # Add data at t=0s
+        buffer.add(make_single_slice_datetime([1.0, 2.0], 0))
+        initial_capacity = buffer._data_buffer.max_capacity
+
+        # Fill buffer to capacity
+        for t in range(1, initial_capacity):
+            buffer.add(make_single_slice_datetime([float(t)] * 2, t))
+
+        # Add data at t=10s. Should trigger trimming and keep t >= 5s.
+        buffer.add(make_single_slice_datetime([10.0, 10.0], 10))
+
+        result = buffer.get()
+        assert result.coords['time'].values[0] >= sc.datetime(5, unit='s').value
+
+        # A subsequent add() must keep working, not fail permanently.
+        buffer.add(make_single_slice_datetime([11.0, 11.0], 11))
+        result = buffer.get()
+        assert result.coords['time'].values[-1] == sc.datetime(11, unit='s').value
 
     def test_timespan_zero_trims_all_old_data_on_overflow(self):
         """Test that timespan=0.0 trims all data to make room for new data."""

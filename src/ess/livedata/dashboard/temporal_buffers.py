@@ -440,6 +440,9 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         timespan = sc.to_unit(
             sc.scalar(self._required_timespan, unit='s'), latest_time.unit
         )
+        # datetime64 arithmetic requires int64, not float64
+        if latest_time.dtype == sc.DType.datetime64:
+            timespan = timespan.astype('int64')
         cutoff = latest_time - timespan
 
         # Find first index to keep
