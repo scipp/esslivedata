@@ -261,7 +261,6 @@ class DashboardServices:
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
-            data_service=self.data_service,
             instrument_config=self.instrument_config,
         )
 

@@ -13,14 +13,12 @@ import pydantic
 import structlog
 
 from ess.livedata.config.workflow_spec import (
-    DataKey,
     JobId,
     WorkflowId,
     WorkflowSpec,
 )
 
 from .configuration_adapter import ConfigurationState
-from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
@@ -54,7 +52,6 @@ class WorkflowController:
         *,
         job_orchestrator: JobOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        data_service: DataService[DataKey, object] | None = None,
         instrument_config: Instrument | None = None,
     ) -> None:
         """
@@ -66,8 +63,6 @@ class WorkflowController:
             Shared job orchestrator for workflow lifecycle management.
         workflow_registry
             Registry of available workflows and their specifications.
-        data_service
-            Optional data service for cleaning up workflow data keys.
         instrument_config
             Optional instrument configuration for source metadata lookup.
         """
@@ -76,7 +71,6 @@ class WorkflowController:
 
         # Extend registry with correlation histogram specs if controller provided
         self._workflow_registry = dict(workflow_registry)
-        self._data_service = data_service
 
     def start_workflow(
         self,

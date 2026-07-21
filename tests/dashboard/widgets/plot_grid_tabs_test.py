@@ -62,19 +62,6 @@ def plot_orchestrator(
 
 
 @pytest.fixture
-def workflow_controller(job_orchestrator, workflow_registry, data_service):
-    """Create a WorkflowController for testing."""
-    from ess.livedata.dashboard.workflow_controller import WorkflowController
-
-    return WorkflowController(
-        job_orchestrator=job_orchestrator,
-        workflow_registry=workflow_registry,
-        data_service=data_service,
-        correlation_histogram_controller=None,
-    )
-
-
-@pytest.fixture
 def workflow_status_widget(job_orchestrator, job_service):
     """Create a WorkflowStatusListWidget for testing."""
     return WorkflowStatusListWidget(
