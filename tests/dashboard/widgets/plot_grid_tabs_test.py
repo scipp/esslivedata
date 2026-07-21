@@ -107,6 +107,17 @@ def plot_grid_tabs(
     )
 
 
+def _tick(*widgets: PlotGridTabs) -> None:
+    """Drive one poll cycle for each widget.
+
+    Under polling, tab/cell reconciliation happens on the session's periodic
+    callback rather than on a push from the orchestrator, so tests must poll
+    explicitly after mutating shared state.
+    """
+    for widget in widgets:
+        widget._poll_for_plot_updates()
+
+
 class TestPlotGridTabsInitialization:
     """Tests for PlotGridTabs initialization."""
 
@@ -146,43 +157,59 @@ class TestPlotGridTabsInitialization:
         # Should have 4 tabs: Workflows + Manage + 2 grids
         assert len(widget.tabs) == 4
 
-    def test_subscribes_to_lifecycle_events(self, plot_orchestrator, plot_grid_tabs):
-        """Test that widget subscribes to orchestrator lifecycle events."""
-        # Verify subscription by adding a grid and checking it appears
+    def test_new_grid_appears_on_poll(self, plot_orchestrator, plot_grid_tabs):
+        """A grid added after construction appears as a tab on the next poll."""
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
+        _tick(plot_grid_tabs)
 
         # Should now have 3 tabs: Workflows + Manage + New Grid
         assert len(plot_grid_tabs.tabs) == 3
 
 
 class TestGridTabManagement:
-    """Tests for adding and removing grid tabs."""
+    """Tests for adding and removing grid tabs (driven by polling)."""
 
-    def test_on_grid_created_adds_tab(self, plot_orchestrator, plot_grid_tabs):
-        """Test that creating a grid adds a new tab."""
+    def test_add_grid_adds_tab_on_poll(self, plot_orchestrator, plot_grid_tabs):
+        """Test that creating a grid adds a new tab after a poll."""
         initial_count = len(plot_grid_tabs.tabs)
 
         plot_orchestrator.add_grid(title='Test Grid', nrows=4, ncols=4)
+        _tick(plot_grid_tabs)
 
         # Should have one more tab
         assert len(plot_grid_tabs.tabs) == initial_count + 1
 
-    def test_on_grid_created_switches_to_new_tab(
+    def test_grid_created_directly_does_not_switch_tab(
         self, plot_orchestrator, plot_grid_tabs
     ):
-        """Test that creating a grid auto-switches to that tab."""
-        plot_orchestrator.add_grid(title='Auto Switch', nrows=3, ncols=3)
+        """A grid created directly on the orchestrator (no local flag) appears
+        but does not steal focus -- the "other session" view."""
+        plot_orchestrator.add_grid(title='Other Session Grid', nrows=3, ncols=3)
+        _tick(plot_grid_tabs)
 
-        # Active tab should be newly created grid
-        # (Workflows=0, Manage=1, grid=2)
+        # Tab exists but active is unchanged (still Workflows at index 0).
+        assert len(plot_grid_tabs.tabs) == 3
+        assert plot_grid_tabs.tabs.active == 0
+
+    def test_local_grid_creation_switches_to_new_tab(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """A grid created via this session's manager focuses its tab on poll."""
+        plot_grid_tabs._grid_manager._on_add_grid(None)
+        _tick(plot_grid_tabs)
+
+        # Active tab should be the newly created grid (Workflows=0, Manage=1,
+        # grid=2).
         assert plot_grid_tabs.tabs.active == 2
 
-    def test_on_grid_removed_removes_tab(self, plot_orchestrator, plot_grid_tabs):
-        """Test that removing a grid removes its tab."""
+    def test_remove_grid_removes_tab_on_poll(self, plot_orchestrator, plot_grid_tabs):
+        """Test that removing a grid removes its tab after a poll."""
         grid_id = plot_orchestrator.add_grid(title='To Remove', nrows=3, ncols=3)
+        _tick(plot_grid_tabs)
         assert len(plot_grid_tabs.tabs) == 3  # Workflows + Manage + Grid
 
         plot_orchestrator.remove_grid(grid_id)
+        _tick(plot_grid_tabs)
 
         # Should only have two static tabs left (Workflows + Manage)
         assert len(plot_grid_tabs.tabs) == 2
@@ -192,12 +219,43 @@ class TestGridTabManagement:
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
         grid_id_2 = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         plot_orchestrator.add_grid(title='Grid 3', nrows=4, ncols=4)
+        _tick(plot_grid_tabs)
 
         # Remove middle grid
         plot_orchestrator.remove_grid(grid_id_2)
+        _tick(plot_grid_tabs)
 
         # Should have Workflows + Manage + 2 remaining grids
         assert len(plot_grid_tabs.tabs) == 4
+
+    def _make_widget(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        job_service,
+        job_orchestrator,
+        plot_data_service,
+        session_id,
+    ):
+        registry = SessionRegistry()
+        session_updater = SessionUpdater(
+            session_id=SessionId(session_id),
+            session_registry=registry,
+            notification_queue=NotificationQueue(),
+        )
+        workflow_status_widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+        )
+        return PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
+        )
 
     def test_multiple_widget_instances_stay_synchronized(
         self,
@@ -208,50 +266,29 @@ class TestGridTabManagement:
         job_orchestrator,
         plot_data_service,
     ):
-        """Test that multiple widgets sharing same orchestrator stay in sync."""
-        # Create separate session updaters for each widget (simulating different
-        # sessions)
-        registry = SessionRegistry()
-        session_updater1 = SessionUpdater(
-            session_id=SessionId('session-1'),
-            session_registry=registry,
-            notification_queue=NotificationQueue(),
+        """Two widgets sharing an orchestrator both reconcile on their polls."""
+        widget1 = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            job_service,
+            job_orchestrator,
+            plot_data_service,
+            'session-1',
         )
-        session_updater2 = SessionUpdater(
-            session_id=SessionId('session-2'),
-            session_registry=registry,
-            notification_queue=NotificationQueue(),
-        )
-
-        # Create separate workflow status widgets for each instance
-        workflow_status_widget1 = WorkflowStatusListWidget(
-            orchestrator=job_orchestrator,
-            job_service=job_service,
-        )
-        workflow_status_widget2 = WorkflowStatusListWidget(
-            orchestrator=job_orchestrator,
-            job_service=job_service,
-        )
-
-        widget1 = PlotGridTabs(
-            plot_orchestrator=plot_orchestrator,
-            workflow_registry=workflow_registry,
-            plotting_controller=plotting_controller,
-            workflow_status_widget=workflow_status_widget1,
-            plot_data_service=plot_data_service,
-            session_updater=session_updater1,
-        )
-        widget2 = PlotGridTabs(
-            plot_orchestrator=plot_orchestrator,
-            workflow_registry=workflow_registry,
-            plotting_controller=plotting_controller,
-            workflow_status_widget=workflow_status_widget2,
-            plot_data_service=plot_data_service,
-            session_updater=session_updater2,
+        widget2 = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            job_service,
+            job_orchestrator,
+            plot_data_service,
+            'session-2',
         )
 
         # Add grid via orchestrator
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
+        _tick(widget1, widget2)
 
         # Both widgets should have the new tab
         assert len(widget1.tabs) == 3  # Workflows + Manage + Shared Grid
@@ -259,10 +296,91 @@ class TestGridTabManagement:
 
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
+        _tick(widget1, widget2)
 
         # Both widgets should reflect removal
         assert len(widget1.tabs) == 2  # Workflows + Manage
         assert len(widget2.tabs) == 2
+
+    def test_local_creation_focuses_only_creating_session(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        job_service,
+        job_orchestrator,
+        plot_data_service,
+    ):
+        """Headline cross-session regression: a grid created via session A's
+        local manager path focuses the tab in A only; B gains the tab but its
+        active tab is unchanged. On the pre-change push code this failed because
+        ``_on_grid_created`` set ``tabs.active`` in every session."""
+        widget_a = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            job_service,
+            job_orchestrator,
+            plot_data_service,
+            'session-a',
+        )
+        widget_b = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            job_service,
+            job_orchestrator,
+            plot_data_service,
+            'session-b',
+        )
+        assert widget_a.tabs.active == 0
+        assert widget_b.tabs.active == 0
+
+        # A creates a grid through its own manager (local path sets A's pending
+        # focus); B never learns it was local.
+        widget_a._grid_manager._on_add_grid(None)
+        _tick(widget_a, widget_b)
+
+        # Both gained the tab.
+        assert len(widget_a.tabs) == 3
+        assert len(widget_b.tabs) == 3
+        # A focused the new grid; B's active tab is unchanged.
+        assert widget_a.tabs.active == 2
+        assert widget_b.tabs.active == 0
+
+    def test_replace_grid_keeps_position_without_stealing_focus(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        job_service,
+        job_orchestrator,
+        plot_data_service,
+    ):
+        """replace_grid keeps the tab position; a non-creating session viewing
+        the replaced grid stays on that position and is not thrown elsewhere."""
+        widget_b = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            job_service,
+            job_orchestrator,
+            plot_data_service,
+            'session-b',
+        )
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _tick(widget_b)
+        # B views the grid tab (index 2: Workflows, Manage, G).
+        widget_b.tabs.active = 2
+
+        # Another session replaces the grid; B carries no local focus flag.
+        plot_orchestrator.replace_grid(grid_id, 'G2', nrows=3, ncols=3)
+        _tick(widget_b)
+
+        static = widget_b._static_tabs_count
+        assert widget_b.tabs._names[static:] == ['G2']
+        # Same position; focus not stolen to a static tab.
+        assert widget_b.tabs.active == 2
 
 
 class TestManageTab:
@@ -274,27 +392,53 @@ class TestManageTab:
         """Test that adding grids doesn't remove or duplicate the Manage tab."""
         initial_count = len(plot_grid_tabs.tabs)
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
         # Should have exactly one more tab
         assert len(plot_grid_tabs.tabs) == initial_count + 1
 
         plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
+        _tick(plot_grid_tabs)
         # Should have exactly one more tab again
         assert len(plot_grid_tabs.tabs) == initial_count + 2
+
+
+def _register_active_layer(plot_orchestrator, plot_data_service, plot_grid_tabs):
+    """Register a layer with an active viewer token held by the session.
+
+    Returns the layer id. Used to assert tier-2 sever releases the token.
+    """
+    from uuid import uuid4
+
+    from ess.livedata.dashboard.plot_data_service import LayerId
+    from ess.livedata.dashboard.session_layer import SessionLayer
+
+    layer_id = LayerId(uuid4())
+    plot_data_service.job_started(layer_id, object())
+    state = plot_data_service.get(layer_id)
+    session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+    plot_grid_tabs._session_layers[layer_id] = session_layer
+    plot_orchestrator.activate_layer(layer_id, session_layer, True)
+    return layer_id
 
 
 class TestShutdown:
     """Tests for widget shutdown and cleanup."""
 
-    def test_sever_unsubscribes_from_lifecycle(self, plot_orchestrator, plot_grid_tabs):
-        """Test that tier-2 sever unsubscribes from orchestrator lifecycle."""
+    def test_sever_releases_viewer_tokens(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        """Tier-2 sever releases the session's viewer/interest tokens and drops
+        its session-layer records. There is no lifecycle subscription to sever:
+        topology changes stop being observed once polling stops."""
+        layer_id = _register_active_layer(
+            plot_orchestrator, plot_data_service, plot_grid_tabs
+        )
+        assert plot_data_service.get(layer_id).has_viewers
+
         plot_grid_tabs.sever()
 
-        # Adding a grid should not affect the widget anymore
-        initial_count = len(plot_grid_tabs.tabs)
-        plot_orchestrator.add_grid(title='After Shutdown', nrows=3, ncols=3)
-
-        # Tab count should not change
-        assert len(plot_grid_tabs.tabs) == initial_count
+        assert not plot_data_service.get(layer_id).has_viewers
+        assert plot_grid_tabs._session_layers == {}
 
     def test_sever_is_idempotent(self, plot_grid_tabs):
         """Test that tier-2 sever can be called multiple times."""
@@ -357,7 +501,7 @@ class TestReaperTeardown:
         )
         return widget, callback
 
-    def test_reaper_severs_lifecycle_without_touching_document(
+    def test_reaper_severs_shared_state_without_touching_document(
         self,
         plot_orchestrator,
         workflow_registry,
@@ -376,15 +520,18 @@ class TestReaperTeardown:
             registry,
             document,
         )
+        # Hold an active viewer token so we can observe tier-2 release it.
+        layer_id = _register_active_layer(plot_orchestrator, plot_data_service, widget)
+        assert plot_data_service.get(layer_id).has_viewers
 
         cleaned = registry.cleanup_stale_sessions()
 
         assert SessionId('stale-session') in cleaned
-        # Tier 2 ran inline on the reaper thread: lifecycle severed, so a new
-        # grid does not add a tab to this session's widget.
-        initial_count = len(widget.tabs)
-        plot_orchestrator.add_grid(title='After Reaper', nrows=2, ncols=2)
-        assert len(widget.tabs) == initial_count
+        # Tier 2 ran inline on the reaper thread: the session's viewer token was
+        # released and its session-layer records cleared. There is no lifecycle
+        # subscription to sever under polling.
+        assert not plot_data_service.get(layer_id).has_viewers
+        assert widget._session_layers == {}
         # Tier 1 was NOT run on the reaper thread: the periodic callback is not
         # stopped here, it is scheduled onto the session's IOLoop instead.
         assert not callback.stopped
@@ -881,9 +1028,11 @@ class TestDisabledGridTabs:
     def test_disabling_grid_removes_tab(self, plot_orchestrator, plot_grid_tabs):
         """Disabling a grid removes its tab."""
         grid_id = plot_orchestrator.add_grid(title='Will Hide', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
         tabs_before = len(plot_grid_tabs.tabs)
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
 
         assert len(plot_grid_tabs.tabs) == tabs_before - 1
 
@@ -891,9 +1040,11 @@ class TestDisabledGridTabs:
         """Re-enabling a disabled grid adds its tab back."""
         grid_id = plot_orchestrator.add_grid(title='Toggle', nrows=2, ncols=2)
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
         tabs_after_disable = len(plot_grid_tabs.tabs)
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+        _tick(plot_grid_tabs)
 
         assert len(plot_grid_tabs.tabs) == tabs_after_disable + 1
 
@@ -922,8 +1073,10 @@ class TestDisabledGridTabs:
     def test_rename_updates_tab_title(self, plot_orchestrator, plot_grid_tabs):
         """Renaming a grid updates the corresponding tab title."""
         grid_id = plot_orchestrator.add_grid(title='Old Name', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
 
         plot_orchestrator.rename_grid(grid_id, 'New Name')
+        _tick(plot_grid_tabs)
 
         assert 'New Name' in plot_grid_tabs.tabs._names
         assert 'Old Name' not in plot_grid_tabs.tabs._names
@@ -934,6 +1087,7 @@ class TestDisabledGridTabs:
         id_b = plot_orchestrator.add_grid(title='Beta', nrows=2, ncols=2)
 
         plot_orchestrator.move_grid(id_b, -1)
+        _tick(plot_grid_tabs)
 
         static = plot_grid_tabs._static_tabs_count
         grid_titles = plot_grid_tabs.tabs._names[static:]
@@ -953,6 +1107,7 @@ class TestDisabledGridTabs:
         id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
 
         plot_orchestrator.set_grid_enabled(id_a, enabled=False)
+        _tick(plot_grid_tabs)
 
         static = plot_grid_tabs._static_tabs_count
         # Two visible grid tabs: B then C.
@@ -973,6 +1128,7 @@ class TestDisabledGridTabs:
         id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
 
         plot_orchestrator.set_grid_enabled(id_b, enabled=False)
+        _tick(plot_grid_tabs)
 
         static = plot_grid_tabs._static_tabs_count
         assert plot_grid_tabs.tabs._names[static:] == ['A', 'C']
@@ -997,11 +1153,143 @@ class TestDisabledGridTabs:
         id_c = plot_orchestrator.add_grid(title='C', nrows=2, ncols=2)
 
         plot_orchestrator.set_grid_enabled(id_a, enabled=False)
+        _tick(plot_grid_tabs)
 
         static = plot_grid_tabs._static_tabs_count
         assert plot_grid_tabs.tabs._names[static:] == ['B', 'C']
 
         plot_orchestrator.remove_grid(id_c)
+        _tick(plot_grid_tabs)
 
         # C's tab is gone; B remains.
         assert plot_grid_tabs.tabs._names[static:] == ['B']
+
+
+def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'):
+    """Add a cell with a single static (no-workflow) vlines layer.
+
+    Static overlays compute from params alone, so they let cell-reconcile tests
+    run without workflow data.
+    """
+    from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.data_roles import PRIMARY
+    from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
+    from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=WorkflowId(instrument='test', name='wf', version=1),
+                source_names=[],
+                view_name='guides',
+            )
+        },
+        plot_name='vlines',
+        params=VLinesParams(geometry=LinesCoordinates(positions=positions)),
+    )
+    cell_id = plot_orchestrator.add_cell(grid_id, geometry)
+    plot_orchestrator.add_layer(cell_id, config)
+    return cell_id
+
+
+class TestCellReconcile:
+    """Poll-driven cell reconcile (replaces the former push cell callbacks)."""
+
+    _GEO = None  # set in setup
+
+    @staticmethod
+    def _geometry():
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        return CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    def test_new_cell_built_on_poll(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+
+        assert cell_id not in plot_grid_tabs._cells
+        _tick(plot_grid_tabs)
+        assert cell_id in plot_grid_tabs._cells
+
+    def test_remove_last_layer_removes_and_disposes_cell(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        assert cell_id in plot_grid_tabs._cells
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        # Removing the only layer removes the whole cell from topology.
+        plot_orchestrator.remove_layer(layer_id)
+        _tick(plot_grid_tabs)
+
+        assert cell_id not in plot_grid_tabs._cells
+        assert cell_id not in plot_grid_tabs._cell_grid
+        assert cell_id not in plot_grid_tabs._cell_signatures
+
+    def test_set_cell_title_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        widget_before = plot_grid_tabs._cells[cell_id]
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+
+        # Signature changed (user_title) -> the cell widget was rebuilt.
+        assert plot_grid_tabs._cells[cell_id] is not widget_before
+
+    def test_disabling_grid_does_not_dispose_cell(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Disabling a grid must not dispose its cells: the grid still exists in
+        topology (only hidden), so the removal sweep keeps the cell widget even
+        though the poll loop skips disabled grids. Re-enabling restores it."""
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        widget = plot_grid_tabs._cells[cell_id]
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
+
+        # Same instance: preserved across disable, not swept/disposed.
+        assert plot_grid_tabs._cells.get(cell_id) is widget
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+        _tick(plot_grid_tabs)
+        # Still present after re-enable (rebuilt from a fresh session layer).
+        assert cell_id in plot_grid_tabs._cells
+
+    def test_update_layer_config_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        widget_before = plot_grid_tabs._cells[cell_id]
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        from ess.livedata.config.workflow_spec import WorkflowId
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+
+        new_config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=WorkflowId(instrument='test', name='wf', version=1),
+                    source_names=[],
+                    view_name='guides',
+                )
+            },
+            plot_name='vlines',
+            params=VLinesParams(geometry=LinesCoordinates(positions='30, 40')),
+        )
+        plot_orchestrator.update_layer_config(layer_id, new_config)
+        _tick(plot_grid_tabs)
+
+        # Reconfigure mints a fresh LayerId -> signature changed -> rebuilt.
+        assert plot_grid_tabs._cells[cell_id] is not widget_before

@@ -4,7 +4,8 @@
 PlotGridTabs - Tabbed interface for managing multiple plot grids.
 
 Provides a Panel Tabs widget that displays multiple PlotGrid instances,
-synchronized with PlotOrchestrator via lifecycle subscriptions.
+kept in sync with PlotOrchestrator by polling its topology version on each
+session's own periodic tick (see ``PlotOrchestrator`` "Threading").
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from ..plot_orchestrator import (
     PlotConfig,
     PlotGridConfig,
     PlotOrchestrator,
-    SubscriptionId,
 )
 from ..plots import TimeBounds
 from ..session_layer import SessionLayer
@@ -81,8 +81,9 @@ class PlotGridTabs:
 
     Displays static tabs for Workflows and Manage Plots,
     followed by one tab per plot grid.
-    Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
-    multiple linked instances.
+    Each instance polls the orchestrator's topology version on its own periodic
+    tick and reconciles tabs and cells independently, so cross-session changes
+    are picked up under this session's document lock rather than pushed.
 
     Parameters
     ----------
@@ -132,6 +133,18 @@ class PlotGridTabs:
         # updated in place by the poll loop (freshness pill, layer time labels).
         # Rebuilt on cell/layer changes; disposed when the cell goes away.
         self._cells: dict[CellId, CellWidget] = {}
+
+        # Topology-version polling state. ``_last_topology_version`` gates the
+        # tab reconcile; ``_cell_signatures`` detects per-cell composition
+        # changes (layer add/remove/reconfigure, title) each tick;
+        # ``_cell_grid`` records which grid each built cell lives in, so a cell
+        # that vanished from topology can still be removed from its grid widget.
+        self._last_topology_version: int | None = None
+        self._cell_signatures: dict[CellId, tuple] = {}
+        self._cell_grid: dict[CellId, GridId] = {}
+        # Set by the local grid-creation callback; the creating session's next
+        # poll focuses this grid's tab. Never shared across sessions.
+        self._pending_focus_grid_id: GridId | None = None
 
         # Gate state for coalescing plot-data flushes (see _poll_for_plot_updates).
         # The data push runs only when a new data-burst frame is ready or the
@@ -212,17 +225,6 @@ class PlotGridTabs:
             sizing_mode='stretch_both',
         )
 
-        # Subscribe to lifecycle events
-        self._subscription_id: SubscriptionId | None = (
-            self._orchestrator.subscribe_to_lifecycle(
-                on_grid_created=self._on_grid_created,
-                on_grid_removed=self._on_grid_removed,
-                on_grid_updated=self._on_grid_updated,
-                on_cell_updated=self._on_cell_updated,
-                on_cell_removed=self._on_cell_removed,
-            )
-        )
-
         # Add Workflows tab (always first)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
@@ -230,20 +232,24 @@ class PlotGridTabs:
         if system_status_widget is not None:
             self._tabs.append(('System Status', system_status_widget.panel()))
 
-        # Add Manage tab
+        # Add Manage tab. The manager reports locally-initiated grid creations
+        # so this session (only) focuses the new tab on its next poll; other
+        # sessions merely gain the tab.
         self._grid_manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
+            on_local_grid_created=self._on_local_grid_created,
         )
         self._tabs.append(('Manage Plots', self._grid_manager.panel))
 
         # Store static tabs count for use as offset in grid tab index calculations
         self._static_tabs_count = len(self._tabs)
 
-        # Initialize from existing grids (skip disabled ones)
-        for grid_id, grid_config in self._orchestrator.get_all_grids().items():
-            if grid_config.enabled:
-                self._add_grid_tab(grid_id, grid_config)
+        # Build grid tabs from current topology and record the version so the
+        # first poll does not rebuild everything again (cells are populated on
+        # the first poll). Mirrors WorkflowStatusWidget's init-to-current pattern.
+        self._reconcile_topology()
+        self._last_topology_version = self._orchestrator.topology_version()
 
         # Register handler for periodic polling
         session_updater.register_custom_handler(self._poll_for_plot_updates)
@@ -277,17 +283,9 @@ class PlotGridTabs:
         # Append grid directly to tabs (Manage tab is always first at index 0)
         # NOTE: Do NOT wrap each grid with modal_container here. The modal
         # container is shared across all tabs and lives at the top level
-        # (wrapping the entire Tabs widget).
+        # (wrapping the entire Tabs widget). Cells are populated by the poll's
+        # cell reconcile, not here.
         self._tabs.append((grid_config.title, plot_grid.panel))
-
-        # Populate with existing cells (important for late subscribers / new sessions)
-        for cell_id, cell in grid_config.cells.items():
-            # Notify about cell config - widget will query PlotDataService for state
-            self._on_cell_updated(
-                grid_id=grid_id,
-                cell_id=cell_id,
-                cell=cell,
-            )
 
     def _tabbed_grid_ids(self) -> list[GridId]:
         """GridIds that currently have a tab, in tab order.
@@ -310,16 +308,6 @@ class PlotGridTabs:
                 tabbed.append(grid_id)
         return tabbed
 
-    def _remove_grid_tab(self, grid_id: GridId) -> None:
-        """Remove a grid tab."""
-        if grid_id not in self._grid_widgets:
-            return
-
-        tabbed = self._tabbed_grid_ids()
-        if grid_id in tabbed:
-            self._tabs.pop(self._static_tabs_count + tabbed.index(grid_id))
-        del self._grid_widgets[grid_id]
-
     def _get_active_grid_id(self) -> GridId | None:
         """Return the GridId of the currently visible grid tab, or None.
 
@@ -340,28 +328,58 @@ class PlotGridTabs:
             return tabbed[grid_idx]
         return None
 
-    def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Handle grid creation from orchestrator.
+    def _on_local_grid_created(self, grid_id: GridId) -> None:
+        """Record a grid this session just created so its tab is focused.
 
-        Uses full reconciliation to insert the tab at the correct position
-        (e.g., when ``replace_grid`` inserts a new grid at a middle position).
+        Called by ``PlotGridManager`` on the three local creation paths. The
+        creating session's next poll activates the new grid's tab; other
+        sessions gain the tab without a focus change. This is the only mechanism
+        that moves ``tabs.active`` on grid creation -- there is no shared focus
+        signal.
         """
+        self._pending_focus_grid_id = grid_id
+
+    def _reconcile_topology(self) -> None:
+        """Rebuild grid tabs to match orchestrator topology, preserving focus.
+
+        Runs on this session's thread (constructor or poll). Captures the
+        active tab by identity first (bypassing ``_get_active_grid_id``'s modal
+        guard, which would misreport "no active grid" while a modal is open),
+        rebuilds all grid tabs, then restores the active tab by identity. A
+        pending local-creation focus overrides the restore. Cells are
+        reconciled separately by the poll loop.
+        """
+        # Capture the active tab by identity before the rebuild reorders tabs.
+        active_before = self._tabs.active
+        static_active = active_before < self._static_tabs_count
+        active_grid_id: GridId | None = None
+        if not static_active:
+            tabbed = self._tabbed_grid_ids()
+            idx = active_before - self._static_tabs_count
+            if 0 <= idx < len(tabbed):
+                active_grid_id = tabbed[idx]
+
         self._reconcile_grid_tabs()
 
-        tabbed = self._tabbed_grid_ids()
-        if grid_id in tabbed:
-            self._tabs.active = self._static_tabs_count + tabbed.index(grid_id)
+        # Restore the active tab by identity.
+        if static_active:
+            self._tabs.active = active_before
+        elif active_grid_id is not None:
+            tabbed = self._tabbed_grid_ids()
+            if active_grid_id in tabbed:
+                self._tabs.active = self._static_tabs_count + tabbed.index(
+                    active_grid_id
+                )
+            # else: the active grid was removed; leave Bokeh's clamped value.
 
-    def _on_grid_removed(self, grid_id: GridId) -> None:
-        """Handle grid removal from orchestrator."""
-        self._remove_grid_tab(grid_id)
-
-    def _on_grid_updated(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Handle grid rename, reorder, or enable/disable from orchestrator.
-
-        Reconciles the current tab state against the orchestrator's grid list.
-        """
-        self._reconcile_grid_tabs()
+        # A locally-created grid overrides the restore and focuses its tab.
+        if self._pending_focus_grid_id is not None:
+            tabbed = self._tabbed_grid_ids()
+            if self._pending_focus_grid_id in tabbed:
+                self._tabs.active = self._static_tabs_count + tabbed.index(
+                    self._pending_focus_grid_id
+                )
+                self._pending_focus_grid_id = None
 
     def _reconcile_grid_tabs(self) -> None:
         """Rebuild grid tabs to match orchestrator state (order, titles, enabled)."""
@@ -532,93 +550,21 @@ class PlotGridTabs:
         self._modal_container.append(modal.modal)
         modal.show()
 
-    def _on_cell_updated(
-        self,
-        *,
-        grid_id: GridId,
-        cell_id: CellId,
-        cell: PlotCell,
-    ) -> None:
+    @staticmethod
+    def _cell_signature(cell: PlotCell) -> tuple:
+        """Composition fingerprint of a cell: geometry, title, and layer ids.
+
+        Changes when a layer is added, removed, or reconfigured
+        (``update_layer_config`` mints a fresh ``LayerId``) or the user title
+        changes -- exactly the transitions that require rebuilding the cell
+        widget. Plotter swaps within a layer keep the same ``LayerId`` and are
+        picked up by the per-layer ``state.version`` path instead.
         """
-        Handle cell update from orchestrator.
-
-        Creates a cell widget with per-layer toolbars and either a placeholder
-        or the composed plot, then inserts it into the grid.
-
-        This is called when cell configuration changes (layer added/removed/updated).
-        Layer runtime state (error, stopped, data) is queried from PlotDataService.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell being updated.
-        cell
-            Plot cell configuration with all layers.
-        """
-        plot_grid = self._grid_widgets.get(grid_id)
-        if plot_grid is None:
-            return
-
-        # Build the cell widget. Composing its plot creates fresh session
-        # components: when config changes, update_layer_config() creates a new
-        # layer_id; the old one is orphaned and cleaned up by update_pipes(),
-        # and new layer_ids have no cache, so components are created naturally.
-        #
-        # Note: SessionLayer.create() already records state.version in
-        # last_seen_version, so _poll_for_plot_updates won't trigger
-        # redundant rebuilds.
-        cell_widget = self._build_cell(cell_id, cell)
-        view = cell_widget.view
-
-        # Defer insertion for plots to allow Panel to update layout sizing.
-        # A layer's plot is created synchronously at add-layer time, so the
-        # HoloViews pane can initialize with collapsed/default size before the
-        # grid container is properly sized, resulting in "glitched" rendering.
-        # Deferring to the next event loop iteration allows Panel to process
-        # layout updates first.
-        if cell_widget.has_plot:
-            pn.state.execute(
-                lambda g=cell.geometry: plot_grid.insert_widget_at(g, view)
-            )
-        else:
-            # Status widgets can be inserted immediately
-            plot_grid.insert_widget_at(cell.geometry, view)
-
-    def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
-        """
-        Handle cell removal from orchestrator.
-
-        Removes the widget from the grid at the specified position.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing the cell.
-        geometry
-            Cell geometry of the removed cell.
-        """
-        plot_grid = self._grid_widgets.get(grid_id)
-        if plot_grid is None:
-            return
-
-        # Remove widget at explicit position
-        plot_grid.remove_widget_at(geometry)
-
-        # Drop the cell widget for the removed cell, disposing its autoscale
-        # controller. The geometry → cell_id mapping isn't tracked here, so we
-        # sweep widgets whose CellId no longer matches any active cell.
-        active_cell_ids: set[CellId] = set()
-        for grid_config in (
-            self._orchestrator.peek_grid(gid) for gid in self._grid_widgets
-        ):
-            if grid_config is None:
-                continue
-            active_cell_ids.update(grid_config.cells.keys())
-        for cid in list(self._cells):
-            if cid not in active_cell_ids:
-                self._cells.pop(cid).dispose()
+        return (
+            cell.geometry,
+            cell.user_title,
+            tuple(layer.layer_id for layer in cell.layers),
+        )
 
     def _build_cell(self, cell_id: CellId, cell: PlotCell) -> CellWidget:
         """Build (or rebuild) the session widget for a cell.
@@ -639,23 +585,31 @@ class PlotGridTabs:
 
     def _poll_for_plot_updates(self) -> None:
         """
-        Poll PlotDataService for updates and set up new layers.
+        Reconcile topology and push plot-data updates for this session.
 
-        Called from SessionUpdater's periodic callback. Single pass over all
-        orchestrator layers to:
-        - Push data updates to existing session pipes (active tab only)
-        - Detect version changes requiring cell rebuilds
-        - Create/update session layers as needed
+        Called from SessionUpdater's periodic callback (inside hold+freeze).
+        First, on a topology-version change, rebuilds grid tabs and refreshes
+        the manager. Then a single pass over all orchestrator cells:
+        - Detects cell composition changes via signatures (layer add/remove/
+          reconfigure, title) and per-layer ``state.version`` changes (plotter
+          swaps), rebuilding affected cells.
+        - Sweeps cells that vanished from topology, removing and disposing them.
+        - Creates/updates session layers and pushes data to the active tab.
 
         Only layers on the currently visible grid tab call ``update_pipe()``,
         since ``dynamic=True`` on Tabs means hidden tabs have no materialized
         Bokeh models. Skipped layers keep their dirty flag set; on tab switch
-        the next poll cycle sends the latest cached state.
-
-        Version-based change detection replaces callback-based updates for state
-        changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
-        acceptable for config UI updates.
+        the next poll cycle sends the latest cached state. Polling at ~100ms
+        intervals is acceptable for config UI updates.
         """
+        # Reconcile grid tabs only when the shared topology changed. Runs on
+        # this session's thread and document lock, not pushed cross-session.
+        version = self._orchestrator.topology_version()
+        if version != self._last_topology_version:
+            self._last_topology_version = version
+            self._reconcile_topology()
+            self._grid_manager.on_topology_changed()
+
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
@@ -686,6 +640,23 @@ class PlotGridTabs:
             is_active = grid_id == active_grid_id
 
             for cell_id, cell in grid_config.cells.items():
+                # A cell always has >=1 layer while it exists in topology (the
+                # last layer's removal removes the cell); skip the transient
+                # empty state defensively.
+                if not cell.layers:
+                    continue
+
+                # Detect composition changes (layer add/remove/reconfigure,
+                # title). Plotter swaps keep the layer ids and are handled by
+                # the per-layer version path below.
+                signature = self._cell_signature(cell)
+                if cell_id not in self._cells or signature != self._cell_signatures.get(
+                    cell_id
+                ):
+                    cells_to_rebuild[cell_id] = (cell, plot_grid)
+                    self._cell_signatures[cell_id] = signature
+                    self._cell_grid[cell_id] = grid_id
+
                 for layer in cell.layers:
                     layer_id = layer.layer_id
                     seen_layer_ids.add(layer_id)
@@ -747,15 +718,38 @@ class PlotGridTabs:
                 )
                 del self._session_layers[layer_id]
 
+        # Sweep cells that vanished from topology (cell or grid removed). A cell
+        # on a merely disabled grid still exists in topology and is kept so its
+        # widget (and state) survives a re-enable, even though the poll loop
+        # above skips disabled grids. Remove the widget from its grid (if the
+        # grid still exists) and dispose it.
+        for cell_id in list(self._cells):
+            grid_id = self._cell_grid.get(cell_id)
+            grid_config = (
+                self._orchestrator.peek_grid(grid_id) if grid_id is not None else None
+            )
+            if grid_config is not None and cell_id in grid_config.cells:
+                continue
+            cell_widget = self._cells.pop(cell_id)
+            self._cell_grid.pop(cell_id, None)
+            self._cell_signatures.pop(cell_id, None)
+            plot_grid = self._grid_widgets.get(grid_id) if grid_id is not None else None
+            if plot_grid is not None:
+                plot_grid.remove_widget_at(cell_widget.geometry)
+            cell_widget.dispose()
+
         # Rebuild affected cells.
         # Defer insertion to allow Bokeh to process any pending model updates
         # from pipe.send() calls above. Without deferral, widget removal can
         # race with DynamicMap updates, causing KeyError when Panel tries to
-        # access removed models.
+        # access removed models. The guard skips the insert if the cell was
+        # removed before the deferred callback runs.
         for cell_id, (cell, plot_grid) in cells_to_rebuild.items():
             view = self._build_cell(cell_id, cell).view
             pn.state.execute(
-                lambda g=cell.geometry, w=view, pg=plot_grid: pg.insert_widget_at(g, w)
+                lambda g=cell.geometry, w=view, pg=plot_grid, cid=cell_id: (
+                    pg.insert_widget_at(g, w) if cid in self._cells else None
+                )
             )
             # Bump versions only after successful rebuild — if the rebuild
             # raised, the version stays stale so the next poll retries.
@@ -798,20 +792,19 @@ class PlotGridTabs:
     def sever(self) -> None:
         """Release shared orchestrator state held by this session (tier 2).
 
-        Unsubscribes from lifecycle events and releases the session's
-        viewer/interest tokens so hidden layers stop computing. Touches only
-        shared orchestrator state, not the Bokeh document, so it is safe to call
-        from the background stale-session reaper thread and must run there
-        regardless of whether tier-1 teardown (:meth:`dispose_widgets`) ever
-        runs. Idempotent.
+        Releases the session's viewer/interest tokens so hidden layers stop
+        computing. Touches only shared orchestrator state, not the Bokeh
+        document, so it is safe to call from the background stale-session reaper
+        thread and must run there regardless of whether tier-1 teardown
+        (:meth:`dispose_widgets`) ever runs. Idempotent.
+
+        There is no lifecycle subscription to unsubscribe: topology changes are
+        observed by polling, which stops when the session's periodic callback
+        stops.
         """
-        if self._subscription_id is not None:
-            self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
-            self._subscription_id = None
         for layer_id, session_layer in list(self._session_layers.items()):
             self._orchestrator.activate_layer(layer_id, session_layer, False)
         self._session_layers.clear()
-        self._grid_manager.shutdown()
 
     def dispose_widgets(self) -> None:
         """Dispose session-bound widgets (tier 1).

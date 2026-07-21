@@ -202,9 +202,9 @@ class TestPollHandlesLayoutPlotters:
         """First poll with a Layout plotter creates a session layer with components."""
         plotter = FakePlotter(cached_state=_make_layout())
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
+        # First poll adds the grid tab and builds the cell/session layer.
         plot_grid_tabs._poll_for_plot_updates()
 
         session_layer = plot_grid_tabs._session_layers.get(layer_id)
@@ -220,7 +220,6 @@ class TestPollHandlesLayoutPlotters:
         """
         plotter = FakePlotter(cached_state=_make_layout())
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         plot_grid_tabs._poll_for_plot_updates()
@@ -276,9 +275,12 @@ class TestFreshnessIndicator:
         )
         plotter = FakePlotter(cached_state=_make_layout(), time_bounds=bounds)
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
+        # First poll adds the tab and builds the cell; activate then poll again
+        # so the freshness pane fills for the now-active grid.
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         plot_grid_tabs._poll_for_plot_updates()
 
         panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
@@ -316,7 +318,6 @@ class TestFreshnessIndicator:
             max_end=Timestamp.from_ns(now_ns - int(1e9)),
         )
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
         cell_id = CellId(uuid4())
         l1, l2 = LayerId(uuid4()), LayerId(uuid4())
@@ -348,6 +349,10 @@ class TestFreshnessIndicator:
             )
             plot_data_service.data_arrived(lid)
 
+        # First poll adds the tab and builds the cell; activate then poll again
+        # so the per-layer time panes fill for the now-active grid.
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         plot_grid_tabs._poll_for_plot_updates()
 
         cell_widget = plot_grid_tabs._cells[cell_id]

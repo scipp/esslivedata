@@ -86,52 +86,32 @@ class TestPlotGridManagerInitialization:
 class TestMultipleManagers:
     """Tests for multiple manager instances (multi-user scenario)."""
 
-    def test_multiple_managers_stay_synchronized(
+    def test_managers_refresh_grid_list_on_topology_change(
         self, plot_orchestrator, workflow_registry
     ):
-        """Test that multiple managers sharing same orchestrator stay in sync."""
-        # Create managers which register as callbacks with orchestrator
-        _manager1 = PlotGridManager(
+        """Each manager rebuilds its grid list when its owner reports a topology
+        change (the owning PlotGridTabs polls and calls on_topology_changed)."""
+        manager1 = PlotGridManager(
             orchestrator=plot_orchestrator, workflow_registry=workflow_registry
         )
-        _manager2 = PlotGridManager(
+        manager2 = PlotGridManager(
             orchestrator=plot_orchestrator, workflow_registry=workflow_registry
         )
 
-        # Add grid via orchestrator
-        grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
+        manager1.on_topology_changed()
+        manager2.on_topology_changed()
 
-        # Both managers should react - verify via orchestrator
-        assert len(plot_orchestrator.get_all_grids()) == 1
-        assert grid_id in plot_orchestrator.get_all_grids()
+        # Both managers show one grid row.
+        assert len(manager1._grid_list.objects) == 1
+        assert len(manager2._grid_list.objects) == 1
 
-        # Remove grid via orchestrator
-        plot_orchestrator.remove_grid(grid_id)
+        plot_orchestrator.remove_grid(next(iter(plot_orchestrator.get_all_grids())))
+        manager1.on_topology_changed()
+        manager2.on_topology_changed()
 
-        # Both managers should reflect removal - verify via orchestrator
-        assert len(plot_orchestrator.get_all_grids()) == 0
-
-
-class TestShutdown:
-    """Tests for manager shutdown and cleanup."""
-
-    def test_shutdown_unsubscribes_from_lifecycle(
-        self, plot_orchestrator, grid_manager
-    ):
-        """Test that shutdown unsubscribes from orchestrator lifecycle."""
-        # Shutdown the manager
-        grid_manager.shutdown()
-
-        # Adding a grid should not cause errors even though manager is shut down
-        plot_orchestrator.add_grid(title='After Shutdown', nrows=3, ncols=3)
-
-        # Verify grid was added to orchestrator (manager is just unsubscribed)
-        assert len(plot_orchestrator.get_all_grids()) == 1
-
-    def test_shutdown_can_be_called_multiple_times(self, grid_manager):
-        """Test that shutdown is idempotent."""
-        grid_manager.shutdown()
-        grid_manager.shutdown()  # Should not raise
+        assert len(manager1._grid_list.objects) == 0
+        assert len(manager2._grid_list.objects) == 0
 
 
 class TestSanitizeFilename:
@@ -436,23 +416,18 @@ cells:
         assert grid_manager._nrows_input.value == 3
         assert grid_manager._ncols_input.value == 3
 
-    def test_upload_triggers_lifecycle_on_add(
+    def test_upload_then_add_reports_local_grid_creation(
         self, plot_orchestrator, workflow_registry
     ):
-        """Test that Add Grid after upload triggers lifecycle callback."""
+        """Add Grid after upload creates the grid and reports it as a local
+        creation (so the owning session can focus the new tab)."""
         from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
 
-        created_grids = []
-
-        # Subscribe to lifecycle events
-        plot_orchestrator.subscribe_to_lifecycle(
-            on_grid_created=lambda grid_id, config: created_grids.append(
-                (grid_id, config)
-            ),
-        )
-
+        created_local: list = []
         manager = PlotGridManager(
-            orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+            orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            on_local_grid_created=created_local.append,
         )
 
         # Switch to Upload mode
@@ -465,15 +440,17 @@ cells:
 
         manager._on_file_uploaded(FakeEvent())
 
-        # No callback yet - grid not created
-        assert len(created_grids) == 0
+        # No grid yet.
+        assert len(created_local) == 0
+        assert len(plot_orchestrator.get_all_grids()) == 0
 
-        # Now click Add Grid
+        # Now click Add Grid.
         manager._on_add_grid(None)
 
-        # Lifecycle callback should have been called
-        assert len(created_grids) == 1
-        assert created_grids[0][1].title == 'Sync Test'
+        assert len(created_local) == 1
+        grids = plot_orchestrator.get_all_grids()
+        assert created_local[0] in grids
+        assert grids[created_local[0]].title == 'Sync Test'
 
     def test_upload_none_value_is_ignored(self, grid_manager, plot_orchestrator):
         """Test that None value (cleared file input) is ignored."""
@@ -990,7 +967,10 @@ class TestEditMode:
         grid_manager._enter_edit_mode(grid_id)
         assert grid_manager._editing_grid_id is not None
 
+        # Another session removes the edited grid; the owning tabs widget polls
+        # and notifies the manager, which exits edit mode.
         plot_orchestrator.remove_grid(grid_id)
+        grid_manager.on_topology_changed()
 
         assert grid_manager._editing_grid_id is None
         assert grid_manager._editing_cells is None

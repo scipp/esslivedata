@@ -12,7 +12,6 @@ from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
     GridId,
     PlotConfig,
-    PlotGridConfig,
     PlotOrchestrator,
 )
 from ess.livedata.dashboard.plots import PresenterBase
@@ -88,69 +87,6 @@ class FakePresenter(PresenterBase):
         import holoviews as hv
 
         return hv.DynamicMap(self._plotter, streams=[pipe], cache_size=1)
-
-
-class CallbackCapture:
-    """Captures callback invocations for testing."""
-
-    def __init__(self, side_effect: BaseException | None = None):
-        """Initialize callback capture.
-
-        Parameters
-        ----------
-        side_effect:
-            Optional exception to raise when called.
-        """
-        self._calls: list[tuple] = []
-        self._side_effect = side_effect
-
-    def __call__(self, *args, **kwargs) -> None:
-        """Record call and optionally raise exception."""
-        self._calls.append((args, kwargs))
-        if self._side_effect is not None:
-            raise self._side_effect
-
-    @property
-    def call_count(self) -> int:
-        """Return the number of calls."""
-        return len(self._calls)
-
-    @property
-    def call_args(self) -> tuple:
-        """Return the arguments of the last call.
-
-        Returns a tuple of (args, kwargs) tuples for Mock-like compatibility.
-        """
-        if not self._calls:
-            raise AssertionError("No calls recorded")
-        args, kwargs = self._calls[-1]
-        # Return in Mock-compatible format: call_args[0] gets positional args
-        return (args, kwargs)
-
-    def assert_called_once(self) -> None:
-        """Assert that callback was called exactly once."""
-        assert self.call_count == 1, f"Expected 1 call, got {self.call_count}"
-
-    def assert_called_once_with(self, *args, **kwargs) -> None:
-        """Assert that callback was called once with specific arguments."""
-        self.assert_called_once()
-        last_args, last_kwargs = self._calls[-1]
-        assert last_args == args, f"Expected args {args}, got {last_args}"
-        assert last_kwargs == kwargs, f"Expected kwargs {kwargs}, got {last_kwargs}"
-
-    def assert_called_with(self, *args, **kwargs) -> None:
-        """Assert that callback was called with specific arguments."""
-        if not any(
-            call_args == args and call_kwargs == kwargs
-            for call_args, call_kwargs in self._calls
-        ):
-            raise AssertionError(
-                f"Not called with args {args}, kwargs {kwargs}. Calls: {self._calls}"
-            )
-
-    def assert_not_called(self) -> None:
-        """Assert that callback was not called."""
-        assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
 
 class FakePipe:
@@ -875,248 +811,178 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         assert plotter.compute_calls
 
 
-class TestLifecycleEventNotifications:
-    """Tests for lifecycle event notifications."""
+class TestTopologyVersion:
+    """The topology version bumps on every grid/cell/layer change, and only on
+    those -- sessions poll it to reconcile their widgets (replaces the former
+    push-based lifecycle notifications)."""
 
-    def test_on_grid_created_called_with_correct_grid_id_and_config(
-        self, plot_orchestrator
-    ):
-        """on_grid_created called with correct grid_id and config."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
+    def test_add_grid_bumps_version(self, plot_orchestrator):
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=4)
+        assert plot_orchestrator.topology_version() > before
 
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=4)
-
-        callback.assert_called_once()
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert isinstance(call_args[1], PlotGridConfig)
-        assert call_args[1].title == 'Test Grid'
-        assert call_args[1].nrows == 3
-        assert call_args[1].ncols == 4
-
-    def test_on_grid_removed_called_when_grid_removed(self, plot_orchestrator):
-        """on_grid_removed called when grid removed."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_removed=callback)
-
+    def test_remove_grid_bumps_version(self, plot_orchestrator):
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        before = plot_orchestrator.topology_version()
         plot_orchestrator.remove_grid(grid_id)
+        assert plot_orchestrator.topology_version() > before
 
-        callback.assert_called_once_with(grid_id)
+    def test_rename_grid_bumps_version(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Old', nrows=3, ncols=3)
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.rename_grid(grid_id, 'New')
+        assert plot_orchestrator.topology_version() > before
 
-    def test_on_cell_updated_called_when_cell_added_no_plot_yet(
-        self, plot_orchestrator, plot_cell
-    ):
-        """on_cell_updated called when cell added (no plot yet)."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+    def test_move_grid_bumps_version(self, plot_orchestrator):
+        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.move_grid(id_a, 1)
+        assert plot_orchestrator.topology_version() > before
 
+    def test_set_grid_enabled_bumps_version(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        assert plot_orchestrator.topology_version() > before
+
+    def test_replace_grid_bumps_version(self, plot_orchestrator):
+        grid_id = plot_orchestrator.add_grid(title='X', nrows=2, ncols=2)
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.replace_grid(grid_id, 'Y', nrows=3, ncols=3)
+        assert plot_orchestrator.topology_version() > before
+
+    def test_add_cell_and_layer_bump_version(self, plot_orchestrator, plot_cell):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        before = plot_orchestrator.topology_version()
+        add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
+        assert plot_orchestrator.topology_version() > before
+
+    def test_remove_cell_bumps_version(self, plot_orchestrator, plot_cell):
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.remove_cell(cell_id)
+        assert plot_orchestrator.topology_version() > before
 
-        callback.assert_called_once()
-        call_kwargs = callback.call_args[1]
-        assert call_kwargs['grid_id'] == grid_id
-        assert call_kwargs['cell_id'] == cell_id
-        # Verify cell has correct geometry and layer config
-        cell = call_kwargs['cell']
-        assert cell.geometry == plot_cell[0]
-        assert len(cell.layers) == 1
-        assert cell.layers[0].config == plot_cell[1]
-        # Callback now has simplified signature (just config, no state)
-        assert set(call_kwargs.keys()) == {'grid_id', 'cell_id', 'cell'}
+    def test_remove_layer_bumps_version(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.remove_layer(layer_id)
+        assert plot_orchestrator.topology_version() > before
 
-    def test_on_cell_updated_called_when_cell_added_not_on_data_arrival(
+    def test_update_layer_config_bumps_version(
+        self, plot_orchestrator, plot_cell, workflow_id
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.update_layer_config(
+            layer_id,
+            make_plot_config(
+                workflow_id,
+                source_names=['new_source'],
+                output_name='new_output',
+                plot_name='new_plot',
+                params=FakePlotParams(),
+            ),
+        )
+        assert plot_orchestrator.topology_version() > before
+
+    def test_set_cell_title_bumps_version(
+        self, plot_orchestrator, plot_cell, workflow_id
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        assert plot_orchestrator.topology_version() > before
+
+    def test_flush_frames_does_not_bump_version(
         self,
         plot_orchestrator,
         plot_cell,
         workflow_id,
         workflow_spec,
         job_orchestrator,
-        fake_plotting_controller,
         fake_data_service,
     ):
-        """on_cell_updated called only when cell added, not on data arrival."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
-
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = add_cell_with_layer(
-            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
-        )
-
-        # Should have been called once when cell was added
-        assert callback.call_count == 1
-        call_kwargs = callback.call_args[1]
-        assert call_kwargs['grid_id'] == grid_id
-        assert call_kwargs['cell_id'] == cell_id
-
-        # Commit workflow
-        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-
-        # Simulate data arrival for ALL sources
+        """Pure data flow (commit + data arrival + flush) must not bump the
+        topology version: it is not a topology change."""
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import DataKey
 
-        for source_name in plot_cell[1].source_names:
-            result_key = DataKey(
-                workflow_id=workflow_id,
-                source_name=source_name,
-                output_name=plot_cell[1].view_name,
-            )
-            fake_data_service[result_key] = sc.scalar(1.0)
-
-        # Still only called once (no notification on workflow commit or data arrival)
-        # Sessions poll PlotDataService directly instead
-        assert callback.call_count == 1
-
-    def test_on_cell_updated_called_when_plot_fails_with_error_message(
-        self,
-        plot_orchestrator,
-        plot_cell,
-        workflow_id,
-        workflow_spec,
-        job_orchestrator,
-        fake_plotting_controller,
-        fake_data_service,
-        plot_data_service,
-    ):
-        """on_cell_updated called when plot creation fails (with error message)."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
-
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
-        # Should have been called once when cell was added
-        assert callback.call_count == 1
-        call_kwargs = callback.call_args[1]
-        cell = call_kwargs['cell']
-        layer_id = cell.layers[0].layer_id
-
-        # Configure controller to raise on the plotter re-creation that a
-        # commit's presentation reset triggers
-        fake_plotting_controller.configure_to_raise(ValueError('Test error'))
-
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        after_setup = plot_orchestrator.topology_version()
+
+        for source_name in plot_cell[1].source_names:
+            fake_data_service[
+                DataKey(
+                    workflow_id=workflow_id,
+                    source_name=source_name,
+                    output_name=plot_cell[1].view_name,
+                )
+            ] = sc.scalar(1.0)
         plot_orchestrator.sync_job_states()
+        plot_orchestrator.flush_frames()
 
-        # Only 1 call - initial cell creation
-        # Error state changes are now detected via polling, not callbacks
-        assert callback.call_count == 1
+        assert plot_orchestrator.topology_version() == after_setup
 
-        # Error is stored in PlotDataService for polling-based detection
-        state = plot_data_service.get(layer_id)
-        assert state is not None
-        assert state.error_message is not None
-        assert 'Test error' in state.error_message
 
-    def test_on_cell_updated_called_when_layer_config_updated_no_plot_yet(
-        self, plot_orchestrator, plot_cell, workflow_id
-    ):
-        """on_cell_updated called when layer config updated (no plot yet)."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+class TestTopologyReadPathsTolerateConcurrentRemoval:
+    """The update-thread read paths must not raise when the IOLoop thread
+    removed the layer they hold a handle to (Hazard 1). Deletes are leaf-first
+    and the reads tolerate the resulting KeyError; this exercises that
+    deterministically without threads."""
 
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+    def _setup_layer(self, plot_orchestrator, workflow_id):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = add_cell_with_layer(
-            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
         )
+        return plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
-        # Get layer_id for the cell
-        grid = plot_orchestrator.get_grid(grid_id)
-        layer_id = grid.cells[cell_id].layers[0].layer_id
-
-        # Update config
-        new_config = make_plot_config(
-            workflow_id,
-            source_names=['new_source'],
-            output_name='new_output',
-            plot_name='new_plot',
-            params=FakePlotParams(),
-        )
-        plot_orchestrator.update_layer_config(layer_id, new_config)
-
-        # Should have been called twice (add + update)
-        assert callback.call_count == 2
-        # Callback now has simplified signature (just config, no state)
-        call_kwargs = callback.call_args[1]
-        assert set(call_kwargs.keys()) == {'grid_id', 'cell_id', 'cell'}
-
-    def test_on_cell_removed_called_when_cell_removed(
-        self, plot_orchestrator, plot_cell
+    def test_mark_layer_dirty_after_removal_does_not_raise(
+        self, plot_orchestrator, workflow_id
     ):
-        """on_cell_removed called when cell removed."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_removed=callback)
+        layer_id = self._setup_layer(plot_orchestrator, workflow_id)
+        plot_orchestrator.remove_layer(layer_id)
+        # No cell mapping remains; the mark is silently dropped.
+        plot_orchestrator._mark_layer_dirty(layer_id)
 
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = add_cell_with_layer(
-            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
-        )
-        plot_orchestrator.remove_cell(cell_id)
-
-        callback.assert_called_once()
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        # Verify the removed cell's geometry matches
-        assert call_args[1] == plot_cell[0]
-
-    def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
-        """Multiple subscribers all receive notifications."""
-        callback_1 = CallbackCapture()
-        callback_2 = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_1)
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_2)
-
-        plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-
-        callback_1.assert_called_once()
-        callback_2.assert_called_once()
-
-    def test_unsubscribe_prevents_further_notifications(self, plot_orchestrator):
-        """Unsubscribe prevents further notifications."""
-        callback = CallbackCapture()
-        subscription_id = plot_orchestrator.subscribe_to_lifecycle(
-            on_grid_created=callback
-        )
-
-        plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
-        assert callback.call_count == 1
-
-        # Unsubscribe
-        plot_orchestrator.unsubscribe_from_lifecycle(subscription_id)
-
-        plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
-        # Should still be 1 (not called for Grid 2)
-        assert callback.call_count == 1
-
-    def test_late_subscriber_does_not_receive_events_for_existing_grids(
-        self, plot_orchestrator
+    def test_pull_and_build_after_removal_returns_false(
+        self, plot_orchestrator, workflow_id
     ):
-        """Late subscriber doesn't receive events for existing grids."""
-        # Add grid before subscribing
-        plot_orchestrator.add_grid(title='Existing Grid', nrows=3, ncols=3)
+        layer_id = self._setup_layer(plot_orchestrator, workflow_id)
+        plot_orchestrator.remove_layer(layer_id)
+        assert plot_orchestrator._pull_and_build(layer_id) is False
 
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
-
-        # Should not have been called for existing grid
-        callback.assert_not_called()
-
-        # Should be called for new grids
-        plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
-        callback.assert_called_once()
+    def test_reset_layer_presentation_after_removal_does_not_raise(
+        self, plot_orchestrator, workflow_id
+    ):
+        layer_id = self._setup_layer(plot_orchestrator, workflow_id)
+        plot_orchestrator.remove_layer(layer_id)
+        plot_orchestrator._reset_layer_presentation(layer_id)
 
 
 class TestErrorHandling:
     """Tests for error handling."""
 
-    def test_plotting_controller_raises_exception_calls_on_cell_updated_with_error(
+    def test_plotting_controller_raises_exception_stores_error_in_plot_data_service(
         self,
         plot_orchestrator,
         plot_cell,
@@ -1128,35 +994,24 @@ class TestErrorHandling:
         plot_data_service,
     ):
         """PlottingController exception stores error in PlotDataService."""
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
-
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
-        # Should have been called once when cell was added
-        assert callback.call_count == 1
-        cell = plot_orchestrator.get_cell(cell_id)
-        layer_id = cell.layers[0].layer_id
+        # Configure controller to raise on the plotter re-creation that a
+        # commit's presentation reset triggers.
+        fake_plotting_controller.configure_to_raise(ValueError('Test error'))
 
-        fake_plotting_controller.configure_to_raise(
-            RuntimeError('Plot creation failed')
-        )
-        # Commit + poll: the presentation reset re-creates the plotter, failing
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
         plot_orchestrator.sync_job_states()
-
-        # Only 1 call - initial cell creation
-        # Error state changes are now detected via polling, not callbacks
-        assert callback.call_count == 1
 
         # Error is stored in PlotDataService for polling-based detection
         state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error_message is not None
-        assert 'Plot creation failed' in state.error_message
+        assert 'Test error' in state.error_message
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,
@@ -1181,35 +1036,6 @@ class TestErrorHandling:
         # Orchestrator should still be usable
         fake_plotting_controller.reset()
         plot_orchestrator.remove_cell(cell_id)
-        assert plot_orchestrator.get_grid(grid_id) is not None
-
-    def test_lifecycle_callback_raises_exception_other_callbacks_still_invoked(
-        self, plot_orchestrator
-    ):
-        """Lifecycle callback raises exception but other callbacks still invoked."""
-        failing_callback = CallbackCapture(side_effect=RuntimeError('Callback failed'))
-        working_callback = CallbackCapture()
-
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=working_callback)
-
-        plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-
-        # Both should have been called
-        failing_callback.assert_called_once()
-        working_callback.assert_called_once()
-
-    def test_lifecycle_callback_raises_exception_orchestrator_remains_usable(
-        self, plot_orchestrator
-    ):
-        """Lifecycle callback raises exception but orchestrator remains usable."""
-        failing_callback = CallbackCapture(side_effect=RuntimeError('Callback failed'))
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
-
-        plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
-
-        # Should still be able to add more grids
-        grid_id = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         assert plot_orchestrator.get_grid(grid_id) is not None
 
 
@@ -2242,17 +2068,6 @@ class TestRenameGrid:
         grids = plot_orchestrator.get_all_grids()
         assert grids[grid_id].title == 'New Title'
 
-    def test_rename_grid_notifies_subscribers(self, plot_orchestrator):
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
-
-        grid_id = plot_orchestrator.add_grid(title='Old', nrows=3, ncols=3)
-        plot_orchestrator.rename_grid(grid_id, 'New')
-
-        callback.assert_called_once()
-        assert callback.call_args[0][0] == grid_id
-        assert callback.call_args[0][1].title == 'New'
-
     def test_rename_grid_persists(self, plot_orchestrator):
         """Rename triggers persistence (no error from _persist_to_store)."""
         grid_id = plot_orchestrator.add_grid(title='Before', nrows=2, ncols=2)
@@ -2299,16 +2114,12 @@ class TestMoveGrid:
         keys = list(plot_orchestrator.get_all_grids().keys())
         assert keys == [id_a, id_b]
 
-    def test_move_grid_notifies_subscribers(self, plot_orchestrator):
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
-
-        id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
-        plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
-
-        plot_orchestrator.move_grid(id_a, 1)
-
-        callback.assert_called_once()
+    def test_move_grid_missing_id_is_noop(self, plot_orchestrator):
+        """A move for a grid another session removed is a silent no-op."""
+        plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.move_grid(GridId(uuid.uuid4()), 1)
+        assert plot_orchestrator.topology_version() == before
 
 
 class TestSetGridEnabled:
@@ -2328,16 +2139,6 @@ class TestSetGridEnabled:
 
         grids = plot_orchestrator.get_all_grids()
         assert grids[grid_id].enabled is True
-
-    def test_set_grid_enabled_notifies_subscribers(self, plot_orchestrator):
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_grid_updated=callback)
-
-        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
-
-        callback.assert_called_once()
-        assert callback.call_args[0][1].enabled is False
 
     def test_disabled_grid_serialized(self, plot_orchestrator):
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
@@ -2385,21 +2186,6 @@ class TestCellTitle:
         cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY, user_title='X')
         plot_orchestrator.set_cell_title(cell_id, '')
         assert plot_orchestrator.get_cell(cell_id).user_title is None
-
-    def test_set_cell_title_notifies_cell_updated(self, plot_orchestrator, workflow_id):
-        callback = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
-        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
-        cell_id = add_cell_with_layer(
-            plot_orchestrator,
-            grid_id,
-            DEFAULT_GEOMETRY,
-            make_plot_config(workflow_id),
-        )
-        before = callback.call_count
-        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
-        assert callback.call_count == before + 1
-        assert callback.call_args[1]['cell'].user_title == 'Renamed'
 
     def test_user_title_serialized_when_set(self, plot_orchestrator, workflow_id):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2519,23 +2305,12 @@ class TestReplaceGrid:
         assert plot_orchestrator.get_grid(new_id).title == 'B2'
         assert plot_orchestrator.get_grid(new_id).nrows == 4
 
-    def test_replace_fires_removed_then_created(self, plot_orchestrator):
-        removed = CallbackCapture()
-        created = CallbackCapture()
-        plot_orchestrator.subscribe_to_lifecycle(
-            on_grid_removed=removed, on_grid_created=created
-        )
-
+    def test_replace_returns_new_grid_id(self, plot_orchestrator):
         grid_id = plot_orchestrator.add_grid(title='X', nrows=2, ncols=2)
-        # Reset counters after add_grid fires on_grid_created
-        created._calls.clear()
-
         new_id = plot_orchestrator.replace_grid(grid_id, 'Y', nrows=3, ncols=3)
-
-        removed.assert_called_once()
-        assert removed.call_args[0][0] == grid_id
-        created.assert_called_once()
-        assert created.call_args[0][0] == new_id
+        assert new_id != grid_id
+        assert plot_orchestrator.get_grid(grid_id) is None
+        assert plot_orchestrator.get_grid(new_id).title == 'Y'
 
     def test_replace_cleans_up_old_cells(self, plot_orchestrator, plot_cell):
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=3, ncols=3)
