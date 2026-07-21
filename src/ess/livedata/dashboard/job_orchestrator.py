@@ -117,6 +117,11 @@ class WorkflowState:
     ``current`` is the desired run-state: the JobSet the user committed (or
     that was adopted from observation). Whether the backend actually runs it
     is observed via heartbeats; the two are compared by reconciliation.
+
+    All run-state changes go through the transition methods below, which keep
+    ``current``, ``stopped_reason``, the adoption fields, and ``version``
+    consistent. Side effects (commands, generation flips, persistence) are the
+    orchestrator's responsibility and must not migrate here.
     """
 
     current: JobSet | None = None
@@ -128,6 +133,49 @@ class WorkflowState:
     # observed start_time may replace the adopted job. Cleared on commit/stop.
     adopted_without_record: bool = False
     adopted_start_time: Timestamp | None = None
+
+    def commit(self, job_set: JobSet) -> None:
+        """Set a committed JobSet as the desired run-state."""
+        self.current = job_set
+        self.stopped_reason = None
+        self.adopted_without_record = False
+        self.adopted_start_time = None
+        self.version += 1
+
+    def deactivate(self, reason: StoppedReason) -> None:
+        """Clear the desired run-state, recording why it stopped."""
+        self.current = None
+        self.stopped_reason = reason
+        self.adopted_without_record = False
+        self.adopted_start_time = None
+        self.version += 1
+
+    def adopt(
+        self,
+        job_number: JobNumber,
+        start_time: Timestamp | None,
+        source_name: SourceName,
+    ) -> None:
+        """Take an observed record-less job as the desired run-state."""
+        self.current = JobSet(
+            job_number=job_number,
+            jobs={source_name: JobConfig(params={}, aux_source_names={})},
+        )
+        self.adopted_without_record = True
+        self.adopted_start_time = start_time
+        self.stopped_reason = None
+        self.version += 1
+
+    def extend_adopted(self, source_name: SourceName) -> None:
+        """Add a newly observed source to the adopted JobSet."""
+        if self.current is None:
+            msg = "Cannot extend adopted job set: no current job set"
+            raise RuntimeError(msg)
+        if not self.adopted_without_record:
+            msg = "Cannot extend adopted job set: not in adopted_without_record state"
+            raise RuntimeError(msg)
+        self.current.jobs[source_name] = JobConfig(params={}, aux_source_names={})
+        self.version += 1
 
 
 class JobOrchestrator:
@@ -413,7 +461,7 @@ class JobOrchestrator:
         # commit supersedes them all.
         old_job_ids = dict.fromkeys(
             (state.current.job_ids() if state.current is not None else [])
-            + self._observed_running_job_ids(workflow_id)
+            + self._job_service.fresh_running_job_ids(workflow_id)
         )
         if old_job_ids:
             logger.info(
@@ -457,11 +505,7 @@ class JobOrchestrator:
             message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
         )
 
-        # Set as current JobSet
-        state.current = job_set
-        state.stopped_reason = None
-        state.adopted_without_record = False
-        state.adopted_start_time = None
+        state.commit(job_set)
 
         # Flip the generation, clear the workflow's buffers, and notify
         # subscribers atomically under the ingestion guard, *before* sending
@@ -493,9 +537,6 @@ class JobOrchestrator:
 
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
-
-        # Notify widget lifecycle subscribers that workflow was committed
-        self._notify_workflow_committed(workflow_id)
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
@@ -802,7 +843,7 @@ class JobOrchestrator:
         desired = state.current
         observed_extra = [
             job_id
-            for job_id in self._observed_running_job_ids(workflow_id)
+            for job_id in self._job_service.fresh_running_job_ids(workflow_id)
             if desired is None or job_id.job_number != desired.job_number
         ]
         if desired is None and not observed_extra:
@@ -855,13 +896,9 @@ class JobOrchestrator:
             for job_id in state.current.job_ids():
                 self._job_states.pop(job_id, None)
             self._active_job_registry.deactivate(workflow_id)
-            state.current = None
-        state.stopped_reason = reason
-        state.adopted_without_record = False
-        state.adopted_start_time = None
+        state.deactivate(reason)
 
         self._persist_state_to_store(workflow_id)
-        self._notify_workflow_stopped(workflow_id)
 
     def on_job_status_updated(self, job_status: JobStatus) -> None:
         """React to a job status update from ``JobService``.
@@ -931,10 +968,7 @@ class JobOrchestrator:
             elif state.adopted_without_record and source_name not in state.current.jobs:
                 # Another source of the adopted job surfaces: extend the
                 # JobSet so stop/status cover it. Params stay unknown.
-                state.current.jobs[source_name] = JobConfig(
-                    params={}, aux_source_names={}
-                )
-                state.version += 1
+                state.extend_adopted(source_name)
             return
         if self._active_job_registry.is_known_generation(workflow_id, job_number):
             # A just-replaced or just-stopped generation reporting late
@@ -949,33 +983,16 @@ class JobOrchestrator:
             # Among record-less jobs the latest start time wins; this one
             # loses and reconciliation stops it.
             return
-        state.current = JobSet(
-            job_number=job_number,
-            jobs={source_name: JobConfig(params={}, aux_source_names={})},
-        )
-        state.adopted_without_record = True
-        state.adopted_start_time = job_status.start_time
-        state.stopped_reason = None
+        state.adopt(job_number, job_status.start_time, source_name)
         with self._active_job_registry.ingestion_guard():
             self._active_job_registry.begin_generation(
                 workflow_id, job_number, config=None
             )
-        state.version += 1
         logger.warning(
             'Adopted running job with unknown config: workflow %s, job_number %s',
             workflow_id,
             job_number,
         )
-
-    def _observed_running_job_ids(self, workflow_id: WorkflowId) -> list[JobId]:
-        """Job ids of the workflow with a fresh, non-stopped observed status."""
-        return [
-            job_id
-            for job_id, status in self._job_service.job_statuses.items()
-            if status.workflow_id == workflow_id
-            and status.state != JobState.stopped
-            and not self._job_service.is_status_stale(job_id)
-        ]
 
     def is_known_workflow(self, workflow_id: WorkflowId) -> bool:
         """Whether this workflow is managed here (heartbeat admit filter)."""
@@ -1152,14 +1169,6 @@ class JobOrchestrator:
         if self._transaction_workflow is not None:
             return
 
-        self._workflows[workflow_id].version += 1
-
-    def _notify_workflow_committed(self, workflow_id: WorkflowId) -> None:
-        """Increment workflow state version when a workflow is committed."""
-        self._workflows[workflow_id].version += 1
-
-    def _notify_workflow_stopped(self, workflow_id: WorkflowId) -> None:
-        """Increment workflow state version when a workflow is stopped."""
         self._workflows[workflow_id].version += 1
 
     def _notify_command_success(
