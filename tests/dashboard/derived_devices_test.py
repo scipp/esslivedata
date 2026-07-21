@@ -209,12 +209,14 @@ class TestWithRealOrchestrator:
 
     @pytest.fixture
     def orchestrator(self, registry) -> JobOrchestrator:
+        js = JobService()
         return JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
             workflow_registry=registry,
             active_job_registry=ActiveJobRegistry(
-                data_service=DataService(), job_service=JobService()
+                data_service=DataService(), job_service=js
             ),
+            job_service=js,
             config_store=None,
         )
 

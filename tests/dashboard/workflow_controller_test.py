@@ -140,6 +140,7 @@ def workflow_controller(
         command_service=command_service,
         workflow_registry=workflow_registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
+        job_service=js,
         config_store=fake_config_store,
     )
 
@@ -293,6 +294,7 @@ class TestWorkflowController:
             command_service=command_service,
             workflow_registry=registry,
             active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
+            job_service=js,
             config_store=config_store,
         )
 

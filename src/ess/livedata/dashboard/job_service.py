@@ -8,8 +8,8 @@ from uuid import UUID
 
 import structlog
 
-from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.core.job import JobStatus
+from ess.livedata.config.workflow_spec import JobId, WorkflowId
+from ess.livedata.core.job import JobState, JobStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -54,6 +54,20 @@ class JobService:
         if self._on_status_updated is not None:
             self._on_status_updated(job_status)
 
+    def fresh_running_job_ids(self, workflow_id: WorkflowId) -> list[JobId]:
+        """Job ids of the workflow with a fresh, non-stopped observed status.
+
+        Iterates a snapshot: callers run on the UI or update thread while
+        ``status_updated`` inserts from the ingestion thread.
+        """
+        return [
+            job_id
+            for job_id, status in self.job_statuses.items()
+            if status.workflow_id == workflow_id
+            and status.state != JobState.stopped
+            and not self.is_status_stale(job_id)
+        ]
+
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).
 
@@ -75,6 +89,21 @@ class JobService:
         age_ns = current_time - last_update
 
         return age_ns > self._heartbeat_timeout_ns
+
+    def prune_stale(self) -> None:
+        """Drop statuses whose heartbeat aged past the staleness window.
+
+        A job that stopped heartbeating (worker gone, job long stopped) is no
+        longer observed; keeping its last status would otherwise accumulate
+        entries forever now that heartbeats are admitted per workflow rather
+        than per known job_number. A revived job re-adds itself with its next
+        heartbeat.
+        """
+        stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
+        for jid in stale:
+            logger.debug("Pruning stale job status %s", jid)
+            self._job_statuses.pop(jid, None)
+            self._job_status_timestamps.pop(jid, None)
 
     def remove_jobs_by_number(self, job_number: UUID) -> None:
         """Remove all jobs matching a given job number.

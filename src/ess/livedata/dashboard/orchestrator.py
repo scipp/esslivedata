@@ -109,7 +109,10 @@ class Orchestrator:
         Data messages are admitted only if their wire job_number is the
         workflow's current generation (:class:`ActiveJobRegistry`); stale or
         unknown generations are counted and dropped. Job status messages are
-        admitted for current and last generations.
+        admitted for any known workflow: they are the observation feed for
+        job adoption and desired/observed reconciliation (ADR 0008), so
+        unknown job_numbers must reach the orchestrator instead of being
+        filtered here.
 
         Parameters
         ----------
@@ -122,7 +125,7 @@ class Orchestrator:
             if isinstance(value, ServiceStatus):
                 self._service_registry.status_updated(value)
             elif isinstance(value, JobStatus):
-                if self._active_job_registry.is_known_job(value.job_id.job_number):
+                if self._job_orchestrator.is_known_workflow(value.workflow_id):
                     self._job_service.status_updated(value)
             else:
                 self._logger.warning("Unknown status type: %s", type(value))

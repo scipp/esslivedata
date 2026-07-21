@@ -120,9 +120,9 @@ def orchestrator(registry, job_service) -> JobOrchestrator:
         active_job_registry=ActiveJobRegistry(
             data_service=DataService(), job_service=job_service
         ),
+        job_service=job_service,
         config_store=None,
     )
-    job_service.on_status_updated = orch.on_job_status_updated
     return orch
 
 

@@ -6,7 +6,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import DataKey, JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
-from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry, Generation
+from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 from ess.livedata.dashboard.job_service import JobService
@@ -157,16 +157,23 @@ class TestDeactivate:
         registry.deactivate(_workflow_id)  # no exception
 
 
-class TestIsKnownJob:
+class TestIsKnownGeneration:
     def test_current_and_last_are_known(self):
         registry, _ds, _js = _make_registry()
         old, new = uuid.uuid4(), uuid.uuid4()
         registry.begin_generation(_workflow_id, old, config={})
         registry.begin_generation(_workflow_id, new, config={})
 
-        assert registry.is_known_job(new)
-        assert registry.is_known_job(old)
-        assert not registry.is_known_job(uuid.uuid4())
+        assert registry.is_known_generation(_workflow_id, new)
+        assert registry.is_known_generation(_workflow_id, old)
+        assert not registry.is_known_generation(_workflow_id, uuid.uuid4())
+
+    def test_window_is_per_workflow(self):
+        registry, _ds, _js = _make_registry()
+        job_number = uuid.uuid4()
+        registry.begin_generation(_workflow_id, job_number, config={})
+
+        assert not registry.is_known_generation(_other_workflow_id, job_number)
 
     def test_generation_leaving_the_window_is_forgotten(self):
         registry, _ds, _js = _make_registry()
@@ -175,7 +182,15 @@ class TestIsKnownJob:
         for _ in range(2):
             registry.begin_generation(_workflow_id, uuid.uuid4(), config={})
 
-        assert not registry.is_known_job(first)
+        assert not registry.is_known_generation(_workflow_id, first)
+
+    def test_unknown_config_generation_is_known(self):
+        registry, _ds, _js = _make_registry()
+        job_number = uuid.uuid4()
+        registry.begin_generation(_workflow_id, job_number, config=None)
+
+        assert registry.is_known_generation(_workflow_id, job_number)
+        assert registry.resolve_config(_workflow_id, job_number) is None
 
 
 class TestResolveConfig:
@@ -191,20 +206,8 @@ class TestResolveConfig:
         assert registry.resolve_config(_other_workflow_id, new) is None
 
 
-class TestRestore:
-    def test_restored_current_admits_data(self):
-        registry, _ds, _js = _make_registry()
-        job_number = uuid.uuid4()
-
-        registry.restore(
-            _workflow_id,
-            current=Generation(job_number=job_number, config={"a": 1}),
-        )
-
-        assert registry.is_current(_workflow_id, job_number)
-        assert registry.resolve_config(_workflow_id, job_number) == {"a": 1}
-
-    def test_unrestored_workflow_admits_nothing(self):
+class TestUnobservedWorkflow:
+    def test_admits_nothing(self):
         registry, _ds, _js = _make_registry()
 
         assert not registry.is_current(_workflow_id, uuid.uuid4())
