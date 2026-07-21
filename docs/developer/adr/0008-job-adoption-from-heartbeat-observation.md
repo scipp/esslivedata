@@ -1,6 +1,6 @@
 # ADR 0008: Job adoption from heartbeat observation replaces persisted job identity
 
-- Status: proposed
+- Status: accepted
 - Deciders: Simon
 - Date: 2026-07-21
 
