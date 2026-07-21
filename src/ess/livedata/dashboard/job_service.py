@@ -38,8 +38,13 @@ class JobService:
 
     @property
     def job_statuses(self) -> dict[JobId, JobStatus]:
-        """Access to all stored job statuses."""
-        return self._job_statuses
+        """Snapshot of all stored job statuses.
+
+        Returns a copy: ``status_updated`` runs on the ingestion thread, so
+        handing out the live dict would let UI-thread callers iterate it while
+        a heartbeat inserts a new key.
+        """
+        return dict(self._job_statuses)
 
     def status_updated(self, job_status: JobStatus) -> None:
         """Update the stored job status and record timestamp."""
