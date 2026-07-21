@@ -17,7 +17,8 @@ ROI request plotters follow the two-stage compute/present pattern:
    forwards the raw data. Called once when data arrives.
 
 2. create_presenter(): Creates a presenter with HoloViews config and an edit
-   handler callback. The callback captures per-session ROI state in a closure.
+   handler callback. The callback reads and updates the plotter's live ROI
+   state, which is shared across all sessions.
 
 3. Presenter.__init__(): Creates session-bound Pipe, DynamicMap, and edit
    streams. Each browser session gets its own presenter instance.
@@ -31,6 +32,7 @@ comparison, skip logic, publishing) stays in the plotter via the edit callback.
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
@@ -549,6 +551,13 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self._index_offset = self._get_index_offset()
         self._initial_rois: dict[int, ROIType] = self._parse_initial_geometry()
 
+        # Live ROI state shared across all sessions of this plotter. Sessions'
+        # edit handlers read and update this under _roi_lock; new presenters are
+        # seeded from it so a session opened after edits sees the current ROIs.
+        self._current_rois: dict[int, ROIType] = dict(self._initial_rois)
+        self._published_initial = False
+        self._roi_lock = threading.Lock()
+
         # Data-dependent state (set during compute())
         self._data_key: DataKey | None = None
         self._x_unit: str | None = None
@@ -634,54 +643,54 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
 
     def _create_edit_handler(self) -> Callable[[dict], None]:
         """
-        Create a per-session edit handler with closure-captured ROI state.
+        Create an edit handler over the plotter's shared live ROI state.
 
-        The handler parses edit stream data, compares with current state,
-        applies skip logic, and publishes changes. Each session gets its
-        own handler with independent ROI state.
+        The handler parses edit stream data, compares with the shared state,
+        applies skip logic, and publishes changes. All sessions' handlers read
+        and update the same ``_current_rois`` under ``_roi_lock``.
+
+        Also emits the initial ROI set once per plotter lifetime (on the first
+        presenter creation after ``compute()`` has set ``_data_key``), never
+        again on subsequent session/presenter creation.
 
         Returns
         -------
         :
             Callback function for handling edit events.
         """
-        current_rois: dict[int, ROIType] = dict(self._initial_rois)
 
         def handle_edit(stream_data: dict) -> None:
-            nonlocal current_rois
-
             new_rois = self._converter.parse_stream_data(
                 stream_data,
                 x_unit=self._x_unit,
                 y_unit=self._y_unit,
                 index_offset=self._index_offset,
             )
+            with self._roi_lock:
+                # Skip if unchanged
+                if new_rois == self._current_rois:
+                    return
+                # Apply subclass-specific skip logic
+                if self._should_skip_edit(new_rois):
+                    return
+                self._current_rois = new_rois
+                self._publish_rois(new_rois)
 
-            # Skip if unchanged
-            if new_rois == current_rois:
-                return
-
-            # Apply subclass-specific skip logic
-            if self._should_skip_edit(new_rois):
-                return
-
-            current_rois = new_rois
-            self._publish_rois(new_rois)
-
-        # Publish initial state
-        self._publish_rois(current_rois)
+        with self._roi_lock:
+            if not self._published_initial and self._publish_rois(self._current_rois):
+                self._published_initial = True
 
         return handle_edit
 
-    def _publish_rois(self, rois: dict[int, ROIType]) -> None:
-        """Publish ROIs to Kafka."""
+    def _publish_rois(self, rois: dict[int, ROIType]) -> bool:
+        """Publish ROIs to Kafka. Returns True if a message was published."""
         if not self._roi_publisher or not self._data_key:
-            return
+            return False
 
         geometry = self._roi_mapper.geometry_for_type(self._geometry_type())
         if geometry is None:
             logger.warning("%s geometry not configured", self._geometry_type())
-            return
+            return False
 
         self._roi_publisher.publish(
             workflow_id=self._data_key.workflow_id,
@@ -695,6 +704,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             self._geometry_type(),
             self._data_key.source_name,
         )
+        return True
 
 
 class RectanglesRequestPlotter(
@@ -750,9 +760,9 @@ class RectanglesRequestPlotter(
         presenter = RectanglesRequestPresenter(
             plotter=self,
             initial_hv_data=self._converter.to_hv_data(
-                self._initial_rois, index_to_color=None
+                self._current_rois, index_to_color=None
             ),
-            initial_stream_data=self._converter.to_stream_data(self._initial_rois),
+            initial_stream_data=self._converter.to_stream_data(self._current_rois),
             style=self._get_style(),
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
@@ -923,9 +933,9 @@ class PolygonsRequestPlotter(
         presenter = PolygonsRequestPresenter(
             plotter=self,
             initial_hv_data=self._converter.to_hv_data(
-                self._initial_rois, index_to_color=None
+                self._current_rois, index_to_color=None
             ),
-            initial_stream_data=self._converter.to_stream_data(self._initial_rois),
+            initial_stream_data=self._converter.to_stream_data(self._current_rois),
             style=self._get_style(),
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
