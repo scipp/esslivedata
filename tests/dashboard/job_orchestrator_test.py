@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for JobOrchestrator initialization and config management."""
 
+import time
+from collections.abc import Callable
 from enum import StrEnum
 
 import pydantic
@@ -23,8 +25,15 @@ from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+from ess.livedata.dashboard.job_orchestrator import (
+    PENDING_COMMAND_TIMEOUT_SECONDS,
+    JobOrchestrator,
+)
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.notification_queue import (
+    NotificationQueue,
+    NotificationType,
+)
 from ess.livedata.fakes import FakeMessageSink
 
 
@@ -200,6 +209,8 @@ def make_orchestrator(
     fake_sink: FakeMessageSink | None = None,
     data_service: DataService | None = None,
     job_service: JobService | None = None,
+    notification_queue: NotificationQueue | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> JobOrchestrator:
     """Build a JobOrchestrator from one or more WorkflowSpecs for testing."""
     registry = {spec.get_id(): spec for spec in specs}
@@ -212,6 +223,8 @@ def make_orchestrator(
         workflow_registry=registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
         config_store=config_store,
+        notification_queue=notification_queue,
+        clock=clock,
     )
 
 
@@ -1412,3 +1425,92 @@ class TestGetRunningWorkflowSources:
 
         orchestrator.stop_workflow(workflow_id)
         assert workflow_id not in orchestrator.get_running_workflow_sources()
+
+
+class MutableClock:
+    """Manually advanceable clock for deterministic expiry tests."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class TestPendingCommandExpiry:
+    """Test expiry of pending commands whose acknowledgement never arrives."""
+
+    def test_unacknowledged_command_produces_error_notification_after_timeout(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
+        orchestrator.expire_pending_commands()
+
+        errors = [
+            event
+            for event in queue.get_all_events()
+            if event.notification_type is NotificationType.ERROR
+        ]
+        assert len(errors) == 1
+        assert workflow_with_params.title in errors[0].message
+
+    def test_command_not_expired_before_timeout(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS - 1.0)
+        orchestrator.expire_pending_commands()
+
+        assert queue.get_all_events() == []
+
+    def test_expired_command_notified_only_once(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
+        orchestrator.expire_pending_commands()
+        orchestrator.expire_pending_commands()
+
+        errors = [
+            event
+            for event in queue.get_all_events()
+            if event.notification_type is NotificationType.ERROR
+        ]
+        assert len(errors) == 1

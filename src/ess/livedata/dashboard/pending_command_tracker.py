@@ -8,6 +8,7 @@ sent by the frontend, enabling proper error handling and UI feedback.
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -67,8 +68,18 @@ class PendingCommandTracker:
     accumulated until all expected responses are received.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        """
+        Initialize the tracker.
+
+        Parameters
+        ----------
+        clock:
+            Callable returning the current time in seconds. Injectable to allow
+            deterministic testing of command expiry without real waits.
+        """
         self._pending: dict[str, PendingCommand] = {}
+        self._clock = clock
 
     def register(
         self,
@@ -94,7 +105,7 @@ class PendingCommandTracker:
         self._pending[message_id] = PendingCommand(
             workflow_id=workflow_id,
             action=action,
-            timestamp=time.time(),
+            timestamp=self._clock(),
             expected_count=expected_count,
         )
 
@@ -144,6 +155,34 @@ class PendingCommandTracker:
             )
 
         return None
+
+    def expire_stale(self, max_age_seconds: float) -> list[PendingCommand]:
+        """
+        Remove and return commands pending longer than max_age_seconds.
+
+        A command expires when no acknowledgement has arrived within the given
+        age. Expired commands are the recovery signal for sends that were
+        silently dropped by the sink and will therefore never be acknowledged.
+
+        Parameters
+        ----------
+        max_age_seconds:
+            Maximum time in seconds a command may remain pending.
+
+        Returns
+        -------
+        :
+            The expired commands that were removed from tracking.
+        """
+        now = self._clock()
+        # Snapshot: register() may insert concurrently from the UI thread while
+        # this runs on the update thread; iterating the live dict could raise.
+        expired_ids = [
+            message_id
+            for message_id, cmd in list(self._pending.items())
+            if now - cmd.timestamp > max_age_seconds
+        ]
+        return [self._pending.pop(message_id) for message_id in expired_ids]
 
     def __len__(self) -> int:
         """Return number of pending commands."""
