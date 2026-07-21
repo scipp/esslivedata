@@ -20,7 +20,7 @@ from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
-from .frame_aspect import make_frame_aspect_hook_from_config
+from .frame_aspect import make_frame_aspect_opts
 from .plot_params import (
     CombineMode,
     LayoutParams,
@@ -491,19 +491,17 @@ class Plotter:
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
-        # All non-free aspect types are enforced by a JS hook
+        # All non-free aspect types are enforced by sizing opts plus a JS hook
         # (see frame_aspect.py) that adjusts the Bokeh figure dimensions.
         # HoloViews' own aspect/data_aspect opts are not set — they conflict
-        # with responsive mode in Panel containers (upstream bug). The hook is
-        # declared per leaf element type alongside ``responsive`` so it lands on
-        # every figure the plotter produces, whether the datasets are overlaid
-        # (one shared figure) or laid out (one figure per sub-plot). Each layer
-        # carries its own aspect, so an overlay of layers with differing aspects
-        # applies each hook to the shared figure (free aspect contributes none).
-        self._sizing_opts: dict[str, Any] = {'responsive': True}
-        aspect_hook = make_frame_aspect_hook_from_config(aspect_params)
-        if aspect_hook is not None:
-            self._sizing_opts['hooks'] = [aspect_hook]
+        # with responsive mode in Panel containers (upstream bug). The opts are
+        # declared per leaf element type so they land on every figure the
+        # plotter produces, whether the datasets are overlaid (one shared
+        # figure, leaf sizing opts propagate to the OverlayPlot) or laid out
+        # (one figure per sub-plot). Each layer carries its own aspect; on a
+        # shared figure the first layer's hook attaches its callback (the
+        # figure is tagged), later ones are no-ops.
+        self._sizing_opts: dict[str, Any] = make_frame_aspect_opts(aspect_params)
 
     @staticmethod
     def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
