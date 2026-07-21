@@ -169,11 +169,14 @@ class SessionRegistry:
                         now - info.last_heartbeat,
                     )
 
-        # Clean up updaters outside lock to avoid potential deadlocks
+        # Clean up updaters outside lock to avoid potential deadlocks. This runs
+        # on the background update thread, off the sessions' IOLoops, so
+        # document-mutating teardown must be marshalled onto each session's
+        # IOLoop rather than run here (see SessionUpdater.cleanup).
         for session_id, updater in stale_sessions:
             if updater is not None:
                 try:
-                    updater.cleanup()
+                    updater.cleanup(defer_document_teardown=True)
                 except Exception:
                     logger.exception(
                         "Error cleaning up updater for stale session %s", session_id

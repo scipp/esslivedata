@@ -285,12 +285,9 @@ class TestManageTab:
 class TestShutdown:
     """Tests for widget shutdown and cleanup."""
 
-    def test_shutdown_unsubscribes_from_lifecycle(
-        self, plot_orchestrator, plot_grid_tabs
-    ):
-        """Test that shutdown unsubscribes from orchestrator lifecycle."""
-        # Shutdown the widget
-        plot_grid_tabs.shutdown()
+    def test_sever_unsubscribes_from_lifecycle(self, plot_orchestrator, plot_grid_tabs):
+        """Test that tier-2 sever unsubscribes from orchestrator lifecycle."""
+        plot_grid_tabs.sever()
 
         # Adding a grid should not affect the widget anymore
         initial_count = len(plot_grid_tabs.tabs)
@@ -299,10 +296,99 @@ class TestShutdown:
         # Tab count should not change
         assert len(plot_grid_tabs.tabs) == initial_count
 
-    def test_shutdown_can_be_called_multiple_times(self, plot_grid_tabs):
-        """Test that shutdown is idempotent."""
-        plot_grid_tabs.shutdown()
-        plot_grid_tabs.shutdown()  # Should not raise
+    def test_sever_is_idempotent(self, plot_grid_tabs):
+        """Test that tier-2 sever can be called multiple times."""
+        plot_grid_tabs.sever()
+        plot_grid_tabs.sever()  # Should not raise
+
+    def test_dispose_widgets_is_idempotent(self, plot_grid_tabs):
+        """Test that tier-1 dispose_widgets can be called multiple times."""
+        plot_grid_tabs.dispose_widgets()
+        plot_grid_tabs.dispose_widgets()  # Should not raise
+
+
+class _FakeDocument:
+    """Captures next-tick callbacks scheduled by the reaper path."""
+
+    def __init__(self):
+        self.next_tick_callbacks = []
+
+    def add_next_tick_callback(self, callback):
+        self.next_tick_callbacks.append(callback)
+
+
+class _FakeCallback:
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+class TestReaperTeardown:
+    """#955: stale-session reaper severs shared state without touching the
+    Bokeh document on the reaper thread."""
+
+    def _make_widget(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+        registry,
+        document,
+    ):
+        updater = SessionUpdater(
+            session_id=SessionId('stale-session'),
+            session_registry=registry,
+            notification_queue=NotificationQueue(),
+            document=document,
+        )
+        callback = _FakeCallback()
+        updater.set_periodic_callback(callback)
+        widget = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=updater,
+        )
+        return widget, callback
+
+    def test_reaper_severs_lifecycle_without_touching_document(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+    ):
+        registry = SessionRegistry(stale_timeout_seconds=-1.0)
+        document = _FakeDocument()
+        widget, callback = self._make_widget(
+            plot_orchestrator,
+            workflow_registry,
+            plotting_controller,
+            workflow_status_widget,
+            plot_data_service,
+            registry,
+            document,
+        )
+
+        cleaned = registry.cleanup_stale_sessions()
+
+        assert SessionId('stale-session') in cleaned
+        # Tier 2 ran inline on the reaper thread: lifecycle severed, so a new
+        # grid does not add a tab to this session's widget.
+        initial_count = len(widget.tabs)
+        plot_orchestrator.add_grid(title='After Reaper', nrows=2, ncols=2)
+        assert len(widget.tabs) == initial_count
+        # Tier 1 was NOT run on the reaper thread: the periodic callback is not
+        # stopped here, it is scheduled onto the session's IOLoop instead.
+        assert not callback.stopped
+        assert len(document.next_tick_callbacks) == 1
 
 
 class TestOverlayFiltering:

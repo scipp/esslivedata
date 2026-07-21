@@ -181,10 +181,10 @@ class ReductionApp(DashboardBase):
             session_updater=session_updater,
         )
 
-        # Release this session's interest tokens when the browser session ends,
-        # so hidden layers stop computing promptly rather than waiting for the
-        # SessionLayer weakref finalizer to run at some later GC.
-        pn.state.on_session_destroyed(lambda _ctx: plot_grid_tabs.shutdown())
+        # PlotGridTabs registers its own two-tier teardown on the session
+        # updater (see PlotGridTabs.__init__), so it runs on both the clean
+        # disconnect and the stale-session reaper paths, releasing this
+        # session's interest tokens when the browser session ends.
 
         # Register refresh with visibility gate: skip updates when the
         # Workflows tab (index 0) is not the active tab.

@@ -248,6 +248,15 @@ class PlotGridTabs:
         # Register handler for periodic polling
         session_updater.register_custom_handler(self._poll_for_plot_updates)
 
+        # Two-tier teardown, run on both the clean disconnect
+        # (``on_session_destroyed``) and the stale-session reaper paths. Tier 2
+        # (``sever``) releases shared orchestrator state and must run even when
+        # the reaper's IOLoop tick never fires; tier 1 (``dispose_widgets``)
+        # mutates Bokeh document state and is marshalled onto the session's
+        # IOLoop. See issue #955 and ADR 0007.
+        session_updater.register_cleanup_handler(self.sever)
+        session_updater.register_document_teardown_handler(self.dispose_widgets)
+
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
 
@@ -786,18 +795,34 @@ class PlotGridTabs:
             self._last_flushed_generation = generation
         self._last_active_grid_id = active_grid_id
 
-    def shutdown(self) -> None:
-        """Unsubscribe from lifecycle events and clean up session state."""
+    def sever(self) -> None:
+        """Release shared orchestrator state held by this session (tier 2).
+
+        Unsubscribes from lifecycle events and releases the session's
+        viewer/interest tokens so hidden layers stop computing. Touches only
+        shared orchestrator state, not the Bokeh document, so it is safe to call
+        from the background stale-session reaper thread and must run there
+        regardless of whether tier-1 teardown (:meth:`dispose_widgets`) ever
+        runs. Idempotent.
+        """
         if self._subscription_id is not None:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
-        for layer_id, session_layer in self._session_layers.items():
+        for layer_id, session_layer in list(self._session_layers.items()):
             self._orchestrator.activate_layer(layer_id, session_layer, False)
         self._session_layers.clear()
+        self._grid_manager.shutdown()
+
+    def dispose_widgets(self) -> None:
+        """Dispose session-bound widgets (tier 1).
+
+        Disposes cell widgets, breaking Bokeh-tool reference cycles. Mutates
+        Bokeh document state, so it must run on the session's IOLoop.
+        Idempotent.
+        """
         for cell_widget in self._cells.values():
             cell_widget.dispose()
         self._cells.clear()
-        self._grid_manager.shutdown()
 
     @property
     def panel(self) -> pn.Column:

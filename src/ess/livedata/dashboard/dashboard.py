@@ -161,6 +161,7 @@ class DashboardBase(ServiceBase, ABC):
             session_registry=self._services.session_registry,
             notification_queue=self._services.notification_queue,
             username=pn.state.user,
+            document=pn.state.curdoc,
         )
 
     def _start_periodic_callback(

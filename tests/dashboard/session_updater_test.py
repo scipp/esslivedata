@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for SessionUpdater."""
 
+from collections.abc import Callable
+
 from ess.livedata.dashboard.notification_queue import (
     NotificationEvent,
     NotificationQueue,
@@ -11,18 +13,55 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
+class FakeDocument:
+    """Stand-in for a Bokeh document that records scheduled next-tick callbacks.
+
+    The reaper path marshals document-mutating teardown onto the session's
+    IOLoop via ``add_next_tick_callback``. This fake captures those callbacks so
+    a test can assert they were scheduled (not run on the calling thread) and
+    fire them explicitly.
+    """
+
+    def __init__(self, *, raise_on_schedule: bool = False) -> None:
+        self.next_tick_callbacks: list[Callable[[], None]] = []
+        self._raise_on_schedule = raise_on_schedule
+
+    def add_next_tick_callback(self, callback: Callable[[], None]) -> None:
+        if self._raise_on_schedule:
+            raise RuntimeError("document already destroyed")
+        self.next_tick_callbacks.append(callback)
+
+    def run_next_tick_callbacks(self) -> None:
+        callbacks = self.next_tick_callbacks[:]
+        self.next_tick_callbacks.clear()
+        for callback in callbacks:
+            callback()
+
+
+class FakeCallback:
+    """Records whether ``stop`` was called (stands in for a PeriodicCallback)."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 def _make_updater(
     session_id: SessionId,
     registry: SessionRegistry,
     *,
     notification_queue: NotificationQueue | None = None,
     username: str | None = None,
+    document: FakeDocument | None = None,
 ) -> SessionUpdater:
     return SessionUpdater(
         session_id=session_id,
         session_registry=registry,
         notification_queue=notification_queue or NotificationQueue(),
         username=username,
+        document=document,
     )
 
 
@@ -168,19 +207,109 @@ class TestSessionUpdater:
 
         updater = _make_updater(session_id, registry)
 
-        class FakeCallback:
-            def __init__(self):
-                self.stopped = False
-
-            def stop(self):
-                self.stopped = True
-
         callback = FakeCallback()
         updater.set_periodic_callback(callback)
 
         updater.cleanup()
 
         assert callback.stopped
+
+    def test_reaper_does_not_stop_periodic_callback_on_calling_thread(self):
+        # #955: the stale-session reaper runs off the session's IOLoop.
+        # PeriodicCallback.stop() mutates the Bokeh document, so it must be
+        # scheduled onto the IOLoop, not called on the reaper thread.
+        registry = SessionRegistry()
+        document = FakeDocument()
+        updater = _make_updater(SessionId('session-1'), registry, document=document)
+
+        callback = FakeCallback()
+        updater.set_periodic_callback(callback)
+
+        updater.cleanup(defer_document_teardown=True)
+
+        # Not stopped on the calling thread; instead scheduled onto the IOLoop.
+        assert not callback.stopped
+        assert len(document.next_tick_callbacks) == 1
+
+        # The scheduled tick, running on the IOLoop, performs the stop.
+        document.run_next_tick_callbacks()
+        assert callback.stopped
+
+    def test_reaper_severs_tier2_even_when_document_tick_never_runs(self):
+        # #955 leak fix: tier-2 severing (cleanup handlers, notification-queue
+        # release) must happen on the reaper thread regardless of whether the
+        # tier-1 document tick ever runs.
+        registry = SessionRegistry()
+        queue = NotificationQueue()
+        document = FakeDocument()
+        session_id = SessionId('session-1')
+        updater = _make_updater(
+            session_id, registry, notification_queue=queue, document=document
+        )
+
+        tier2: list[int] = []
+        tier1: list[int] = []
+        updater.register_cleanup_handler(lambda: tier2.append(1))
+        updater.register_document_teardown_handler(lambda: tier1.append(1))
+
+        updater.cleanup(defer_document_teardown=True)
+
+        # Deliberately do NOT run the scheduled tick.
+        assert tier2 == [1]
+        assert tier1 == []
+
+        # Notification-queue slot released inline (tier 2).
+        queue.push(NotificationEvent(message='after cleanup'))
+        assert queue.get_new_events(session_id) == []
+
+    def test_document_teardown_handler_runs_when_tick_fires(self):
+        registry = SessionRegistry()
+        document = FakeDocument()
+        updater = _make_updater(SessionId('session-1'), registry, document=document)
+
+        tier1: list[int] = []
+        updater.register_document_teardown_handler(lambda: tier1.append(1))
+
+        updater.cleanup(defer_document_teardown=True)
+        assert tier1 == []
+
+        document.run_next_tick_callbacks()
+        assert tier1 == [1]
+
+    def test_reaper_tolerates_destroyed_document(self):
+        # Scheduling into an already-destroyed document raises; tier 2 has
+        # already severed everything, so tier 1 is moot and must not propagate.
+        registry = SessionRegistry()
+        document = FakeDocument(raise_on_schedule=True)
+        updater = _make_updater(SessionId('session-1'), registry, document=document)
+
+        callback = FakeCallback()
+        updater.set_periodic_callback(callback)
+        tier2: list[int] = []
+        updater.register_cleanup_handler(lambda: tier2.append(1))
+
+        updater.cleanup(defer_document_teardown=True)  # must not raise
+
+        assert tier2 == [1]
+        assert not callback.stopped
+
+    def test_clean_path_runs_document_teardown_inline(self):
+        # The clean on_session_destroyed path runs on the IOLoop, so tier-1
+        # teardown runs inline even with a document present.
+        registry = SessionRegistry()
+        document = FakeDocument()
+        updater = _make_updater(SessionId('session-1'), registry, document=document)
+
+        callback = FakeCallback()
+        updater.set_periodic_callback(callback)
+        tier1: list[int] = []
+        updater.register_document_teardown_handler(lambda: tier1.append(1))
+
+        updater.cleanup()  # defer_document_teardown=False
+
+        assert callback.stopped
+        assert tier1 == [1]
+        assert document.next_tick_callbacks == []
 
     def test_username_forwarded_to_registry(self):
         session_id = SessionId('session-1')
