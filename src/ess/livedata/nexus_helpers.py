@@ -3,6 +3,19 @@
 This module provides functionality to extract Kafka streaming metadata from NeXus/HDF5
 files, including topic, source, and writer_module attributes that indicate how data
 was streamed during acquisition.
+
+Run as ``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``, this
+module is also the codegen entry point for an instrument's f144 stream
+registry: it emits a checked-in ``config/instruments/<inst>/streams_parsed.py``
+containing a NeXus-path-keyed ``PARSED_STREAMS: dict[str, F144Stream]``
+literal. The instrument's hand-edited ``specs.py`` imports that dict and turns
+it into the name-keyed :attr:`~ess.livedata.config.instrument.Instrument.streams`
+registry via :func:`~ess.livedata.config.stream.name_streams`, which assigns
+instrument-facing names, applies renames, and detects merged
+:class:`~ess.livedata.config.stream.Device` streams. Instruments with few
+streams (today: ``dummy``) skip codegen and hand-write the
+``dict[str, F144Stream]`` literal directly. See ADR 0009 for why this runs
+offline at development time rather than parsing NeXus at process startup.
 """
 
 from __future__ import annotations
