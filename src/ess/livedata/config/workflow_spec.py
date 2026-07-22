@@ -107,6 +107,10 @@ class WorkflowGroup(BaseModel, frozen=True):
     Groups bundle related workflows for the dashboard UI. Identity is by
     the ``name`` field; the ``Literal`` constraint locks the set of legal
     categories to prevent ad-hoc construction sneaking in new ones.
+
+    The ``name`` literals double as backend service names, and the coupling is
+    load-bearing: :meth:`Instrument.register_spec` defaults a workflow's
+    service to its group's ``name`` when no explicit ``service`` is given.
     """
 
     name: Literal['data_reduction', 'monitor_data', 'detector_data', 'timeseries']

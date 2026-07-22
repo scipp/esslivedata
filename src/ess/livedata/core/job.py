@@ -258,7 +258,7 @@ class Job:
         *,
         job_id: JobId,
         workflow_id: WorkflowId,
-        processor: Workflow,
+        workflow: Workflow,
         source_names: list[str],
         input_streams: set[str],
         gating_streams: set[str],
@@ -273,7 +273,7 @@ class Job:
             The unique identifier for this job.
         workflow_id:
             The identifier of the workflow this job is running.
-        processor:
+        workflow:
             The Workflow instance that will process data for this job.
         source_names:
             The names of the primary data sources for this job.
@@ -294,7 +294,7 @@ class Job:
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
-        self._processor = processor
+        self._workflow = workflow
         self._start_time: Timestamp | None = None
         self._end_time: Timestamp | None = None
         self._source_names = source_names
@@ -361,7 +361,7 @@ class Job:
             # Primary and aux data are both keyed by canonical stream name, which
             # is exactly how the workflow's dynamic/context keys are keyed (aux
             # roles are resolved at workflow construction). No remapping needed.
-            self._processor.accumulate(
+            self._workflow.accumulate(
                 {**data.primary_data, **data.aux_data},
                 start_time=data.start_time,
                 end_time=data.end_time,
@@ -400,7 +400,7 @@ class Job:
 
     def get(self) -> JobResult:
         try:
-            raw_result = self._processor.finalize()
+            raw_result = self._workflow.finalize()
             none_keys = [str(key) for key, val in raw_result.items() if val is None]
             valid_items = {
                 str(key): val for key, val in raw_result.items() if val is not None
@@ -433,7 +433,7 @@ class Job:
             )
 
     def reset(self) -> None:
-        """Reset the processor for this job."""
-        self._processor.clear()
+        """Reset the workflow for this job."""
+        self._workflow.clear()
         self._start_time = None
         self._end_time = None

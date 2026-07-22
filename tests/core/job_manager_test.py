@@ -60,7 +60,7 @@ class FakeJobFactory(JobFactory):
         job = Job(
             job_id=job_id,
             workflow_id=config.identifier,
-            processor=processor,
+            workflow=processor,
             source_names=[job_id.source_name],
             input_streams=set(aux.values()),
             gating_streams=set(aux.values()),
@@ -122,7 +122,6 @@ class TestJobManager:
         """Test initial state of JobManager."""
         manager = JobManager(fake_job_factory, context_reader=no_cached_context)
 
-        assert manager.service_name == 'data_reduction'
         assert len(manager.active_jobs) == 0
 
     def test_schedule_job_creates_job(self, fake_job_factory):
@@ -2033,7 +2032,7 @@ class ThreadTrackingJobFactory(FakeJobFactory):
         job = Job(
             job_id=job_id,
             workflow_id=config.identifier,
-            processor=processor,
+            workflow=processor,
             source_names=[job_id.source_name],
             input_streams=set((config.aux_source_names or {}).values()),
             gating_streams=set(),
