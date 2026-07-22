@@ -98,7 +98,7 @@ def _fetch_with_pooch(filename: str) -> pathlib.Path:
     import pooch
 
     p = pooch.create(
-        path=pooch.os_cache('beamlime'),
+        path=pooch.os_cache('esslivedata'),
         retry_if_failed=3,
         base_url=_GEOMETRY_RELEASE_URL,
         version='0',
