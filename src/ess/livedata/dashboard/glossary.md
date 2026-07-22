@@ -55,6 +55,14 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Layer** — the atomic plotted unit: a layer id plus `PlotConfig` (plotter
   name, params, data sources keyed by data role). When prose says "a plot",
   it almost always means a layer.
+- **DataSourceConfig** — one data role's configuration within `PlotConfig`:
+  workflow id, source names, and `view_name` (the user-facing `OutputView`
+  name). Persisted verbatim in grid templates and `ConfigStore`.
+- **ResolvedDataSource** — `DataSourceConfig` with `view_name` resolved to the
+  backend pydantic field name (`output_name`) selected by the current window
+  mode, ready to key a `DataKey`. Built by `_build_resolved_data_sources` at
+  layer-setup time; runtime-only, never persisted
+  (`dashboard/plot_orchestrator.py`).
 - **Plotter** — session-shared object producing HoloViews elements from
   subscribed data (`dashboard/plots.py`); subclasses per plot type
   (`LinePlotter`, `ImagePlotter`, `SlicerPlotter`, …). Registered in

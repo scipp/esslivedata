@@ -171,7 +171,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 
 ## One word, several meanings
 
-- **role** — three senses: (1) *data role*: a plot data-source slot —
+- **role** — three senses: (1) *data role*: a plot layer's data-source key —
   `primary`/`x_axis`/`y_axis` (`dashboard/data_roles.py`); (2) *window role*
   (`StreamRole`): the time-window of an output — `since_start`/`per_update`
   (`config/workflow_spec.py`); (3) *aux-input role*: the logical name of an
@@ -185,7 +185,10 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   canonical *stream name* everywhere else (see
   [Identity and keying](#identity-and-keying)).
 - **view** — (1) `OutputView` / `view_name`: user-facing name of a workflow
-  output; (2) the MVC sense: a widget rendering state (e.g. `CellWidget`).
+  output, held by `DataSourceConfig.view_name` and resolved to a backend
+  pydantic field name (`ResolvedDataSource.output_name`, feeding
+  `DataKey.output_name`) at layer-setup time — see `dashboard/glossary.md`;
+  (2) the MVC sense: a widget rendering state (e.g. `CellWidget`).
 - **plot** — informal umbrella over grid/cell/layer/plotter/figure; in precise
   writing name the level, usually *layer*.
 - **frame** — neutron pulse frame (instrument context) vs. the dashboard

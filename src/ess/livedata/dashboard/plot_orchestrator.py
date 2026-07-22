@@ -89,6 +89,21 @@ class DataSourceConfig:
     view_name: str = 'result'
 
 
+@dataclass(frozen=True)
+class ResolvedDataSource:
+    """A data source with its output view resolved to a backend field name.
+
+    Produced by :func:`_build_resolved_data_sources` from a
+    :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
+    field name selected for the current window mode, ready to key a
+    :class:`DataKey`. Runtime-only — never persisted.
+    """
+
+    workflow_id: WorkflowId
+    source_names: list[str]
+    output_name: str
+
+
 @dataclass
 class PlotConfig:
     """Configuration for a single plot layer.
@@ -202,13 +217,13 @@ def resolve_field_name(
     return view.field_for(role) if view is not None else view_name
 
 
-def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
-    """Return the stream role wanted by a data-source slot.
+def _stream_role_for_data_role(role: str, params: pydantic.BaseModel) -> StreamRole:
+    """Return the stream role wanted by a data role.
 
-    The primary slot follows the user-selected window mode; correlation
+    The primary role follows the user-selected window mode; correlation
     axes always want per-update data.
     """
-    if slot != PRIMARY:
+    if role != PRIMARY:
         return 'per_update'
     window = params.time_window if isinstance(params, TimeWindowMixin) else None
     return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
@@ -217,44 +232,45 @@ def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
 def _build_resolved_data_sources(
     config: PlotConfig,
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[str, DataSourceConfig]:
-    """Build a copy of ``config.data_sources`` with view names resolved to fields.
+) -> dict[str, ResolvedDataSource]:
+    """Resolve ``config.data_sources`` view names to backend field names.
 
-    The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``DataKey.output_name``).
+    Falls back to the view name verbatim when the data source's workflow is
+    not in the registry (lets a layer whose workflow has not been seen yet
+    still set up a pipeline, keyed by whatever name it was given).
     """
-    resolved: dict[str, DataSourceConfig] = {}
-    for slot, ds in config.data_sources.items():
+    resolved: dict[str, ResolvedDataSource] = {}
+    for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        if spec is None:
-            resolved[slot] = ds
-            continue
-        field_name = resolve_field_name(
-            spec, ds.view_name, role=_role_for_slot(slot, config.params)
+        output_name = (
+            resolve_field_name(
+                spec, ds.view_name, role=_stream_role_for_data_role(role, config.params)
+            )
+            if spec is not None
+            else ds.view_name
         )
-        resolved[slot] = DataSourceConfig(
+        resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
-            view_name=field_name,
+            output_name=output_name,
         )
     return resolved
 
 
 def _build_keys_by_role(
-    data_sources: dict[str, DataSourceConfig],
+    data_sources: dict[str, ResolvedDataSource],
 ) -> dict[str, list[DataKey]]:
     """Build stable DataKeys grouped by role.
 
     Keys carry no job identity — they are fully determined by the plot
-    config. ``DataSourceConfig.view_name`` is expected to already carry the
-    resolved backend pydantic field name (see ``_build_resolved_data_sources``).
+    config.
     """
     return {
         role: [
             DataKey(
                 workflow_id=ds.workflow_id,
                 source_name=sn,
-                output_name=ds.view_name,
+                output_name=ds.output_name,
             )
             for sn in ds.source_names
         ]
