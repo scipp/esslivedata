@@ -133,7 +133,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Instrument package imports go here
     from ess.dream import DreamPowderWorkflow
     from ess.powder import types as powder_types
-    from ess.livedata.handlers.detector_data_handler import DetectorProjection
+    from ess.livedata.preprocessors.detector_data import DetectorProjection
     # ... rest of factory setup
 ```
 
@@ -161,7 +161,7 @@ def setup_factories(instrument: Instrument) -> None:
 
 **Which imports must be lazy (inside `setup_factories`)**:
 - Any imports from other `ess.*` packages: `ess.dream`, `ess.powder`, `ess.sans`, `ess.loki`, etc.
-- Workflow implementation modules: `ess.livedata.handlers.*` (detector handlers, workflow factories, etc.) as those depend on `ess.reduce`.
+- Workflow implementation modules: `ess.livedata.preprocessors.*` (detector preprocessors, workflow factories, etc.) as those depend on `ess.reduce`.
 - Workflow framework: `sciline`
 - Geometry and data loading: `scippnexus`, etc.
 
@@ -173,7 +173,7 @@ names; the names must also appear in the `monitors=...` argument of the
 `Instrument` constructor and be wired up in the stream mapping (see below).
 
 ```python
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.preprocessors.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
@@ -198,7 +198,7 @@ both the `Instrument` instance and the stream mapping:
 
 ```python
 # specs.py
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.preprocessors.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
@@ -477,7 +477,7 @@ instrument.add_logical_view(
 For detectors with complex 3D geometries, use helper functions to register projections:
 
 ```python
-from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.preprocessors.detector_view_specs import register_detector_view_spec
 
 # Single projection for all detectors
 xy_handle = register_detector_view_spec(
@@ -527,9 +527,9 @@ To provide a geometry file:
 2. Test the output file: load it, verify detector views and workflows produce correct results.
 3. Upload the verified file and get the registry entry:
    ```sh
-   python -m ess.livedata.handlers.upload_geometry geometry-<instrument>-<YYYY-MM-DD>.nxs
+   python -m ess.livedata.preprocessors.upload_geometry geometry-<instrument>-<YYYY-MM-DD>.nxs
    ```
-4. Add the printed registry entry to `_registry` in [detector_data_handler.py](../../src/ess/livedata/handlers/detector_data_handler.py) and commit.
+4. Add the printed registry entry to `_registry` in [detector_data.py](../../src/ess/livedata/preprocessors/detector_data.py) and commit.
 
 Multiple geometry files can exist for an instrument (for different time periods), but only one is active at a time.
 
@@ -551,7 +551,7 @@ __all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
 ```python
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.preprocessors.detector_view_specs import DetectorViewParams
 
 # Create instrument
 instrument = Instrument(
@@ -617,8 +617,8 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
     # Instrument packages and implementation imports go here
     import sciline
-    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.preprocessors.detector_data import DetectorLogicalView
+    from ess.livedata.preprocessors.stream_processor_workflow import StreamProcessorWorkflow
 
     # Configure detector
     instrument.configure_detector(

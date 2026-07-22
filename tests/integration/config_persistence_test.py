@@ -7,8 +7,8 @@ from collections.abc import Generator
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
+from ess.livedata.preprocessors.monitor_workflow_specs import MonitorDataParams
 from tests.integration.backend import DashboardBackend
 
 

@@ -9,12 +9,12 @@ import scipp as sc
 
 from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import (
+from ess.livedata.preprocessors.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.preprocessors.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )

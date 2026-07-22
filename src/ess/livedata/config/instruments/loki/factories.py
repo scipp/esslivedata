@@ -51,13 +51,13 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-    from ess.livedata.handlers.detector_view import (
+    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
+    from ess.livedata.preprocessors.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.handlers.stream_processor_workflow import (
+    from ess.livedata.preprocessors.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
 
@@ -124,7 +124,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+    from ess.livedata.preprocessors.detector_view_specs import DetectorViewParams
 
     @specs.xy_projection_handle.attach_factory()
     def _detector_view_workflow_factory(
@@ -144,8 +144,8 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename=lookup_table_filename,
         )
 
-    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
-    from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
+    from ess.livedata.preprocessors.monitor_workflow import create_monitor_workflow
+    from ess.livedata.preprocessors.monitor_workflow_specs import MonitorDataParams
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):

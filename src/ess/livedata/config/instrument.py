@@ -8,13 +8,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
+    from ess.livedata.preprocessors.detector_view_specs import SpectrumViewSpec
 
 import pydantic
 import scipp as sc
 import scippnexus as snx
 
-from ess.livedata.handlers.workflow_factory import (
+from ess.livedata.preprocessors.workflow_factory import (
     SpecHandle,
     WorkflowFactory,
 )
@@ -150,7 +150,7 @@ class Instrument:
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
-        from ess.livedata.handlers.timeseries_workflow_specs import (
+        from ess.livedata.preprocessors.timeseries_workflow_specs import (
             register_timeseries_workflow_specs,
         )
 
@@ -170,7 +170,7 @@ class Instrument:
         # and per-chopper setpoint context all derive from the chopper list, so
         # registration is auto-wired here and the factory in load_factories.
         if self.choppers:
-            from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+            from ess.livedata.preprocessors.wavelength_lut_workflow_specs import (
                 register_wavelength_lut_workflow_spec,
             )
 
@@ -282,7 +282,7 @@ class Instrument:
         instrument scope.
 
         The result is self-contained data the routing layer hands to
-        :func:`~ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`,
+        :func:`~ess.livedata.preprocessors.dynamic_transforms.wire_dynamic_transforms`,
         so the wiring step needs no access to the instrument's stream topology.
         """
         return [
@@ -329,7 +329,7 @@ class Instrument:
 
     @property
     def nexus_file(self) -> str:
-        from ess.livedata.handlers.detector_data_handler import (
+        from ess.livedata.preprocessors.detector_data import (
             get_nexus_geometry_filename,
         )
 
@@ -536,7 +536,7 @@ class Instrument:
         :
             Handle for the registered spec.
         """
-        from ess.livedata.handlers.detector_view_specs import (
+        from ess.livedata.preprocessors.detector_view_specs import (
             DetectorROIAuxSources,
             make_detector_view_outputs,
             make_detector_view_params,
@@ -667,7 +667,7 @@ class Instrument:
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
         if self._timeseries_workflow_handle is not None:
-            from ess.livedata.handlers.timeseries_handler import (
+            from ess.livedata.preprocessors.timeseries import (
                 TimeseriesStreamProcessor,
             )
 
@@ -676,11 +676,11 @@ class Instrument:
             )
 
         if self._logical_views:
-            from ess.livedata.handlers.detector_view import (
+            from ess.livedata.preprocessors.detector_view import (
                 DetectorViewFactory,
                 InstrumentDetectorSource,
             )
-            from ess.livedata.handlers.detector_view import (
+            from ess.livedata.preprocessors.detector_view import (
                 LogicalViewConfig as ScilineLogicalViewConfig,
             )
 
@@ -699,10 +699,10 @@ class Instrument:
                 handle.attach_factory()(factory.make_workflow)
 
         if self.choppers:
-            from ess.livedata.handlers.detector_data_handler import (
+            from ess.livedata.preprocessors.detector_data import (
                 get_nexus_geometry_filename,
             )
-            from ess.livedata.handlers.wavelength_lut_workflow import (
+            from ess.livedata.preprocessors.wavelength_lut_workflow import (
                 attach_wavelength_lut_factory,
             )
 
@@ -740,7 +740,7 @@ class Instrument:
         dashboard, which imports specs but never calls ``load_factories``, holds
         no factory references.
         """
-        from ess.livedata.handlers.monitor_workflow_specs import (
+        from ess.livedata.preprocessors.monitor_workflow_specs import (
             MonitorDataParamsBase,
             create_monitor_workflow_factory,
         )
@@ -790,7 +790,7 @@ class Instrument:
         """Raise if chain-patch ``(stream_name, workflow_key)`` is not bijective.
 
         Sciline keys identify parameters by class, and
-        :func:`~ess.livedata.handlers.dynamic_transforms.wire_dynamic_transforms`
+        :func:`~ess.livedata.preprocessors.dynamic_transforms.wire_dynamic_transforms`
         dedups bindings by ``stream_name`` with last-write-wins semantics. Both
         directions must therefore be unique:
 

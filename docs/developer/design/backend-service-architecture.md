@@ -103,7 +103,7 @@ Manages lifecycle, signal handling (SIGTERM/SIGINT), background threading, and r
 
 ### Preprocessor Layer
 
-**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `handlers/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueHandler`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
+**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `preprocessors/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueAccumulator`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
 
 ## Job-Based Processing Architecture
 
@@ -113,7 +113,7 @@ All backend services (monitor_data, detector_data, data_reduction, timeseries) u
 sequenceDiagram
     participant S as Service
     participant OP as OrchestratingProcessor
-    participant CP as ConfigProcessor
+    participant CP as CommandDispatcher
     participant MP as MessagePreprocessor
     participant JM as JobManager
     participant Sink as MessageSink
@@ -134,7 +134,7 @@ sequenceDiagram
     OP->>Sink: publish_messages(results + status)
 ```
 
-**ConfigProcessor** (see `handlers/config_handler.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges ConfigProcessor and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
+**CommandDispatcher** (see `core/command_dispatcher.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges CommandDispatcher and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
 
 ## Message Flow in Backend Services
 

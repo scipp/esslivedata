@@ -26,13 +26,15 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
     import sciline
 
-    from ess.livedata.handlers.area_detector_view import AreaDetectorView
-    from ess.livedata.handlers.detector_view import (
+    from ess.livedata.preprocessors.area_detector_view import AreaDetectorView
+    from ess.livedata.preprocessors.detector_view import (
         DetectorViewFactory,
         InstrumentDetectorSource,
         LogicalViewConfig,
     )
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.preprocessors.stream_processor_workflow import (
+        StreamProcessorWorkflow,
+    )
 
     # Configure detector with explicit detector_number
     instrument.configure_detector(

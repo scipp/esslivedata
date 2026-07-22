@@ -45,7 +45,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 ### Workflow and job identity
 
 - **Workflow** — the scientific reduction logic: a protocol with
-  `accumulate`/`finalize`/`clear` (`handlers/workflow_factory.py`), usually
+  `accumulate`/`finalize`/`clear` (`preprocessors/workflow_factory.py`), usually
   wrapping an `ess.reduce.streaming.StreamProcessor`. A workflow *runs as* a Job.
 - **WorkflowId** — `(instrument, name, version)`; string form
   `instrument/name/version` (`config/workflow_spec.py`).
@@ -125,15 +125,15 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **MessageBatch / MessageBatcher** — a time-windowed batch of messages and the
   strategies producing them (`core/message_batcher.py`).
 - **Accumulator** — protocol accumulating data over time
-  (`add`/`get`/`clear`, `core/handler.py`). *Batch* accumulators are consumed on
-  `get()`; *context* accumulators (`is_context = True`) are idempotent and
+  (`add`/`get`/`clear`, `core/preprocessor.py`). *Batch* accumulators are consumed
+  on `get()`; *context* accumulators (`is_context = True`) are idempotent and
   retain state.
 - **Preprocessor** — an Accumulator in its pipeline role: bound to one StreamId,
   turning raw stream data into workflow input. Created by a
-  **PreprocessorFactory** (`core/handler.py`); the concrete factories are the
-  `*HandlerFactory` classes in `handlers/` (naming predates the
-  preprocessor terminology). The similarly named `MessagePreprocessor` is
-  internal OrchestratingProcessor wiring that owns the accumulators.
+  **PreprocessorFactory** (`core/preprocessor.py`); the concrete factories are
+  the `*PreprocessorFactory` classes in `preprocessors/`. The similarly named
+  `MessagePreprocessor` is internal OrchestratingProcessor wiring that owns the
+  accumulators.
 
 ### Job management
 
@@ -142,7 +142,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`core/job_manager.py`).
 - **Command** — wire type of the `livedata_commands` topic: discriminated union
   `WorkflowConfig | JobCommand` (`core/job_manager.py`). Dispatched by
-  `ConfigProcessor` (`handlers/config_handler.py`).
+  `CommandDispatcher` (`core/command_dispatcher.py`).
 - **JobCommand** — control message for a running job:
   `pause`/`resume`/`reset`/`stop` (pause/resume unimplemented).
 - **JobSchedule** — optional start/end times (raw-data timestamps) governing
@@ -200,12 +200,14 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **processor** — the Service-driven `Processor` protocol; *not* a workflow.
   (`ess.reduce.streaming.StreamProcessor` is an upstream class a Workflow may
   wrap.)
-- **handler** — historical name surviving in `handlers/` module and
-  `*HandlerFactory` class names; the concepts are preprocessor factories and
-  accumulators. Avoid "handler" for new names.
+- **handler** — retired as a backend term: preprocessor factories
+  (`*PreprocessorFactory` in `preprocessors/`) and `CommandDispatcher` replace
+  what used to be called handlers. Still the standard word for UI/event
+  callbacks (Panel/Bokeh event handlers, `SessionUpdater` custom/cleanup
+  handlers, signal handlers) — don't reuse it for backend concepts.
 - **config** — spans `WorkflowConfig` (runtime start command), instrument
   configuration (`Instrument`, YAML), dashboard `ConfigStore` (UI persistence),
-  and `ConfigProcessor` (backend command dispatch). Always qualify.
+  and `CommandDispatcher` (backend command dispatch). Always qualify.
 - **state / status** — `JobState` (wire enum) vs `JobPhase` (internal lifecycle)
   vs `ServiceState` (worker lifecycle); `JobStatus`/`ServiceStatus` are the
   heartbeat payloads carrying them.

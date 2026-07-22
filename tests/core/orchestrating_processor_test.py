@@ -14,7 +14,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowOutputsBase,
 )
-from ess.livedata.core.handler import Accumulator
 from ess.livedata.core.job import JobResult
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
@@ -28,12 +27,15 @@ from ess.livedata.core.orchestrating_processor import (
     OrchestratingProcessor,
     _job_result_to_message,
 )
+from ess.livedata.core.preprocessor import Accumulator
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
-from ess.livedata.handlers.accumulators import LogData
-from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
-from ess.livedata.handlers.to_nxlog import ToNXlog
-from ess.livedata.handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
+from ess.livedata.preprocessors.accumulators import LogData
+from ess.livedata.preprocessors.timeseries import LogdataPreprocessorFactory
+from ess.livedata.preprocessors.to_nxlog import ToNXlog
+from ess.livedata.preprocessors.wavelength_lut_workflow_specs import (
+    CHOPPER_CASCADE_SOURCE,
+)
 
 from .job_test import FakeProcessor
 
@@ -322,7 +324,7 @@ class TestEmptyBatchContextReplay:
         processor = OrchestratingProcessor(
             source=FakeMessageSource(batches),
             sink=sink,
-            preprocessor_factory=LogdataHandlerFactory(instrument=instrument),
+            preprocessor_factory=LogdataPreprocessorFactory(instrument=instrument),
             service_name='timeseries',
             message_batcher=NaiveMessageBatcher(),
         )

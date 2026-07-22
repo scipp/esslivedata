@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import scipp as sc
 
-from ess.livedata.handlers.workflow_factory import Workflow
+from ess.livedata.preprocessors.workflow_factory import Workflow
 
 from ..config.workflow_spec import JobId, ResultKey, WorkflowId
 from .timestamp import Timestamp

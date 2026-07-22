@@ -236,9 +236,11 @@ class TestDetectorRatemeter:
         while the cumulative output defers its time bounds to the job layer.
         """
         from ess.livedata.dashboard.plots import _normalize_to_rate
-        from ess.livedata.handlers.accumulation_mode import Cumulative, Current
-        from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
-        from ess.livedata.handlers.stream_processor_workflow import (
+        from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
+        from ess.livedata.preprocessors.accumulators import (
+            make_no_copy_accumulator_pair,
+        )
+        from ess.livedata.preprocessors.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
 

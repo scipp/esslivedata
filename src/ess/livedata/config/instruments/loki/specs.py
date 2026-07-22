@@ -23,10 +23,10 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     WorkflowOutputsBase,
 )
-from ess.livedata.handlers.detector_view_specs import (
+from ess.livedata.preprocessors.detector_view_specs import (
     register_detector_view_spec,
 )
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.preprocessors.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
 )
