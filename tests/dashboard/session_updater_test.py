@@ -57,7 +57,9 @@ def _make_updater(
     username: str | None = None,
     document: FakeDocument | None = None,
     wakeup_hub: WakeupHub | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> SessionUpdater:
+    kwargs = {} if clock is None else {'clock': clock}
     return SessionUpdater(
         session_id=session_id,
         session_registry=registry,
@@ -65,6 +67,7 @@ def _make_updater(
         username=username,
         document=document,
         wakeup_hub=wakeup_hub,
+        **kwargs,
     )
 
 
@@ -154,25 +157,56 @@ class TestSessionUpdater:
         assert calls == []
 
     def test_wake_skips_handler_without_predicate(self):
-        """Handlers with no cheap change signal run on housekeeping ticks only."""
+        """Handlers with no cheap change signal run on full passes only."""
         updater = _make_updater(SessionId('s'), SessionRegistry())
         calls: list[int] = []
         updater.register_custom_handler(lambda: calls.append(1))
 
         updater.wake()
         assert calls == []
-        updater.periodic_update()
+        updater.periodic_update()  # first housekeeping tick is a full pass
         assert calls == [1]
 
-    def test_housekeeping_runs_handler_despite_false_predicate(self):
-        """The housekeeping tick is the safety net: predicates never gate it."""
+    def test_full_pass_runs_handler_despite_false_predicate(self):
+        """The full pass is the safety net: predicates never gate it."""
         updater = _make_updater(SessionId('s'), SessionRegistry())
         calls: list[int] = []
         updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
 
-        updater.periodic_update()
+        updater.periodic_update()  # first housekeeping tick is a full pass
 
         assert calls == [1]
+
+    def test_housekeeping_between_full_passes_is_predicate_gated(self):
+        now = 0.0
+        updater = _make_updater(SessionId('s'), SessionRegistry(), clock=lambda: now)
+        gated: list[int] = []
+        ungated: list[int] = []
+        updater.register_custom_handler(lambda: gated.append(1), has_work=lambda: False)
+        updater.register_custom_handler(lambda: ungated.append(1))
+
+        updater.periodic_update()  # t=0: full pass
+        assert (len(gated), len(ungated)) == (1, 1)
+
+        for _now in (1.0, 2.0, 3.0, 4.0):
+            updater.periodic_update()  # gated: false predicate, no run
+        assert (len(gated), len(ungated)) == (1, 1)
+
+        now = 5.0
+        updater.periodic_update()  # full-pass interval elapsed
+        assert (len(gated), len(ungated)) == (2, 2)
+
+    def test_gated_housekeeping_runs_handler_whose_predicate_fires(self):
+        now = 0.0
+        updater = _make_updater(SessionId('s'), SessionRegistry(), clock=lambda: now)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.periodic_update()  # t=0: full pass
+        now = 1.0
+        updater.periodic_update()  # gated, but predicate fires
+
+        assert calls == [1, 1]
 
     def test_wake_runs_handler_when_predicate_raises(self):
         updater = _make_updater(SessionId('s'), SessionRegistry())

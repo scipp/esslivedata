@@ -632,23 +632,32 @@ class PlotGridTabs:
         self._session_updater.request_tick()
 
     def _has_pending_work(self) -> bool:
-        """Wake-tick gate: True when the next poll pass would do visible work.
+        """Gated-tick gate: True when the next poll pass would do visible work.
 
         Mirrors the gates inside :meth:`_poll_for_plot_updates`: topology
-        reconcile, active-tab frame flush, tab switch. Per-layer plotter swaps
-        (job restarts observed by ``sync_job_states``) and freshness stall
-        aging have no cheap counter; the housekeeping tick runs the full pass
-        unconditionally and picks those up — a restarted job's plot also
-        resets on its first new frame, which does advance the generation.
+        reconcile, active-tab frame flush, tab switch, and freshness-pill
+        stall aging. The stall term is time-based because a stalled stream
+        sends no data and thus no wakes; with healthy data the per-frame
+        flush resets the timer before the stall interval elapses and the term
+        stays False. Per-layer plotter swaps (job restarts observed by
+        ``sync_job_states``) have no cheap counter; the periodic full pass
+        picks those up — a restarted job's plot also resets on its first new
+        frame, which does advance the generation.
         """
         if self._orchestrator.topology_version() != self._last_topology_version:
             return True
         active_grid_id = self._get_active_grid_id()
         if active_grid_id != self._last_active_grid_id:
             return True
-        return (
+        if (
             self._orchestrator.frame_generation(active_grid_id)
             != self._last_flushed_generation
+        ):
+            return True
+        return (
+            time.monotonic() - self._last_freshness_update
+            >= _FRESHNESS_STALL_INTERVAL_S
+            and any(gid == active_grid_id for gid in self._cell_grid.values())
         )
 
     def _poll_for_plot_updates(self) -> None:

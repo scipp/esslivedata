@@ -10,6 +10,7 @@ shared services in the correct session context.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING
@@ -29,6 +30,14 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Cadence of the unconditional full pass within housekeeping ticks. It is the
+# clock for wall-clock-driven displays without a change counter (status
+# staleness at a 60 s threshold, heartbeat readouts) and bounds how long a
+# predicate hole can keep a widget stale. Time-based work on a finer grain
+# (freshness-pill stall aging at 2 s) must be encoded in its handler's
+# ``has_work`` predicate instead.
+_FULL_PASS_INTERVAL_S = 5.0
+
 
 class SessionUpdater:
     """
@@ -47,10 +56,11 @@ class SessionUpdater:
       hold+freeze batch entirely when none does — a wake meant for another
       session's tab costs no model-graph recompute.
     - **Housekeeping ticks** (:meth:`periodic_update`), driven by a slow
-      periodic callback. They run every handler unconditionally, covering
-      wall-clock-driven updates (staleness aging, heartbeat displays) that no
-      version counter can signal, and acting as the catch-up safety net for
-      lost wakes (ADR 0007).
+      periodic callback. They are predicate-gated like wake ticks — so an
+      idle tick costs no batch — except that every ``_FULL_PASS_INTERVAL_S``
+      one runs every handler unconditionally: the clock for wall-clock-driven
+      updates no version counter can signal, and the safety net bounding
+      predicate holes (ADR 0007's degradation to the poll).
 
     Parameters
     ----------
@@ -72,6 +82,9 @@ class SessionUpdater:
         together with ``document``, this session registers for wakes and
         unregisters on cleanup. ``None`` leaves the session purely
         poll-driven.
+    clock:
+        Callable returning monotonic seconds, paces the full-pass interval.
+        Injectable for deterministic tests.
     """
 
     def __init__(
@@ -83,12 +96,16 @@ class SessionUpdater:
         username: str | None = None,
         document: Document | None = None,
         wakeup_hub: WakeupHub | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
         self._notification_queue = notification_queue
         self._document = document
         self._wakeup_hub = wakeup_hub
+        self._clock = clock
+        # -inf so the session's first housekeeping tick is a full pass.
+        self._last_full_pass = float('-inf')
 
         # Custom update handlers with their optional wake-tick work predicates.
         self._custom_handlers: list[
@@ -149,12 +166,14 @@ class SessionUpdater:
         handler:
             Callback to invoke during update ticks.
         has_work:
-            Cheap predicate telling a wake tick whether ``handler`` has
-            pending visible work. Must be a superset signal of the handler's
-            internal change gates for everything that should react promptly to
-            a wake; changes it cannot see (e.g. wall-clock staleness) are
-            picked up by the housekeeping tick. ``None`` means the handler has
-            no cheap change signal and runs on housekeeping ticks only.
+            Cheap predicate telling a gated tick (wake or intermediate
+            housekeeping) whether ``handler`` has pending visible work. Must
+            be a superset signal of the handler's internal change gates for
+            everything that should react faster than the full-pass cadence;
+            include a time term for sub-``_FULL_PASS_INTERVAL_S`` wall-clock
+            work (e.g. freshness stall aging). Anything it misses is bounded
+            by the unconditional full pass. ``None`` means the handler has no
+            cheap change signal and runs on full passes only.
         """
         self._custom_handlers.append((handler, has_work))
 
@@ -207,15 +226,21 @@ class SessionUpdater:
         """
         Housekeeping tick, called from this session's periodic callback.
 
-        Runs every handler unconditionally: the safety net for lost wakes and
-        the clock for wall-clock-driven updates no version counter signals.
+        Predicate-gated like a wake tick, except that every
+        ``_FULL_PASS_INTERVAL_S`` it runs every handler unconditionally: the
+        clock for wall-clock-driven updates no version counter signals, and
+        the bound on how long a predicate hole can keep a widget stale.
 
         Heartbeats are sent to the registry only when we have evidence that
         the browser is still connected (via the browser heartbeat widget).
         """
         # Check if browser has sent a heartbeat (widget value changed)
         self._check_browser_heartbeat()
-        self._tick(housekeeping=True)
+        now = self._clock()
+        full = now - self._last_full_pass >= _FULL_PASS_INTERVAL_S
+        if full:
+            self._last_full_pass = now
+        self._tick(full=full)
 
     def wake(self) -> None:
         """Wake tick, scheduled by the :class:`WakeupHub` on shared changes.
@@ -225,7 +250,7 @@ class SessionUpdater:
         hold+freeze batch, so a wake meant for another session's tab costs no
         model-graph recompute.
         """
-        self._tick(housekeeping=False)
+        self._tick(full=False)
 
     def request_tick(self) -> None:
         """Schedule a wake tick on this session's own IOLoop.
@@ -238,12 +263,12 @@ class SessionUpdater:
         else:
             self.wake()
 
-    def _tick(self, *, housekeeping: bool) -> None:
+    def _tick(self, *, full: bool) -> None:
         notifications = self._poll_notifications()
         handlers = [
             handler
             for handler, has_work in self._custom_handlers
-            if housekeeping or (has_work is not None and self._check_work(has_work))
+            if full or (has_work is not None and self._check_work(has_work))
         ]
         if not notifications and not handlers:
             return
@@ -262,8 +287,8 @@ class SessionUpdater:
         """Evaluate a work predicate; a raising predicate counts as work.
 
         Running the handler on a broken predicate keeps updates flowing (the
-        handler itself is exception-guarded) instead of silently freezing the
-        widget until the next housekeeping tick.
+        handler itself is exception-guarded) instead of silently degrading the
+        widget to the full-pass cadence.
         """
         try:
             return has_work()

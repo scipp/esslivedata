@@ -179,9 +179,11 @@ class DashboardBase(ServiceBase, ABC):
             The period in milliseconds for the housekeeping tick. Latency-
             sensitive updates (plot frames, widget refresh after actions) are
             driven by WakeupHub wake ticks the moment shared state changes;
-            this slow tick only ages wall-clock-driven displays (staleness,
-            heartbeats) and catches up after lost wakes, so its cadence bounds
-            neither display lag nor idle CPU-per-session in the common case.
+            housekeeping ticks are predicate-gated (an idle tick costs no
+            hold+freeze batch) with a periodic unconditional full pass that
+            ages wall-clock-driven displays and bounds predicate holes (see
+            SessionUpdater), so this cadence bounds neither display lag nor
+            idle CPU-per-session in the common case.
         """
         session_id = session_updater.session_id
         session_registry = self._services.session_registry
