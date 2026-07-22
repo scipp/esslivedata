@@ -1262,6 +1262,39 @@ class TestCellReconcile:
         # Still present after re-enable (rebuilt from a fresh session layer).
         assert cell_id in plot_grid_tabs._cells
 
+    def test_cell_edit_does_not_churn_tabs(self, plot_orchestrator, plot_grid_tabs):
+        """Cell-level changes bump the topology version but must not tear down
+        and re-append the Tabs entries -- that would discard the active tab's
+        Bokeh models (flicker) on every layer edit in every session. Grid-level
+        changes still rebuild the tabs."""
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+
+        events: list = []
+        plot_grid_tabs.tabs.param.watch(events.append, 'objects')
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+        assert events == []
+
+        plot_orchestrator.rename_grid(grid_id, 'G2')
+        _tick(plot_grid_tabs)
+        assert events
+
+    def test_reconfigure_vanished_layer_shows_error_not_modal(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """A gear click racing a removal in another session (poll window) must
+        not raise; no modal opens (an error notification is shown instead)."""
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+
+        plot_grid_tabs._on_reconfigure_layer(LayerId(uuid4()))
+
+        assert plot_grid_tabs._current_modal is None
+
     def test_update_layer_config_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())

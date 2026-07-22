@@ -142,6 +142,11 @@ class PlotGridTabs:
         self._last_topology_version: int | None = None
         self._cell_signatures: dict[CellId, tuple] = {}
         self._cell_grid: dict[CellId, GridId] = {}
+        # Tab-level fingerprint of the topology (grid ids, titles, enabled, in
+        # order). Cell/layer changes bump the topology version too, but must
+        # not tear down and re-append the Tabs entries (Bokeh model churn and
+        # flicker on the active tab); the rebuild runs only when this changes.
+        self._tab_composition: tuple[tuple[GridId, str, bool], ...] | None = None
         # Set by the local grid-creation callback; the creating session's next
         # poll focuses this grid's tab. Never shared across sessions.
         self._pending_focus_grid_id: GridId | None = None
@@ -342,49 +347,62 @@ class PlotGridTabs:
     def _reconcile_topology(self) -> None:
         """Rebuild grid tabs to match orchestrator topology, preserving focus.
 
-        Runs on this session's thread (constructor or poll). Captures the
-        active tab by identity first (bypassing ``_get_active_grid_id``'s modal
-        guard, which would misreport "no active grid" while a modal is open),
-        rebuilds all grid tabs, then restores the active tab by identity. A
-        pending local-creation focus overrides the restore. Cells are
-        reconciled separately by the poll loop.
+        Runs on this session's thread (constructor or poll). The tab rebuild
+        runs only when the tab-level composition (grid ids, titles, enabled,
+        order) changed -- cell/layer edits bump the topology version too but
+        must not churn the Tabs models. For a rebuild: captures the active tab
+        by identity first (bypassing ``_get_active_grid_id``'s modal guard,
+        which would misreport "no active grid" while a modal is open), rebuilds
+        all grid tabs, then restores the active tab by identity. A pending
+        local-creation focus overrides the restore. Cells are reconciled
+        separately by the poll loop.
         """
-        # Capture the active tab by identity before the rebuild reorders tabs.
-        active_before = self._tabs.active
-        static_active = active_before < self._static_tabs_count
-        active_grid_id: GridId | None = None
-        if not static_active:
-            tabbed = self._tabbed_grid_ids()
-            idx = active_before - self._static_tabs_count
-            if 0 <= idx < len(tabbed):
-                active_grid_id = tabbed[idx]
+        all_grids = self._orchestrator.get_all_grids()
+        composition = tuple(
+            (grid_id, config.title, config.enabled)
+            for grid_id, config in all_grids.items()
+        )
+        if composition != self._tab_composition:
+            self._tab_composition = composition
 
-        self._reconcile_grid_tabs()
+            # Capture the active tab by identity before the rebuild reorders
+            # tabs.
+            active_before = self._tabs.active
+            static_active = active_before < self._static_tabs_count
+            active_grid_id: GridId | None = None
+            if not static_active:
+                tabbed = self._tabbed_grid_ids()
+                idx = active_before - self._static_tabs_count
+                if 0 <= idx < len(tabbed):
+                    active_grid_id = tabbed[idx]
 
-        # Restore the active tab by identity.
-        if static_active:
-            self._tabs.active = active_before
-        elif active_grid_id is not None:
-            tabbed = self._tabbed_grid_ids()
-            if active_grid_id in tabbed:
-                self._tabs.active = self._static_tabs_count + tabbed.index(
-                    active_grid_id
-                )
-            # else: the active grid was removed; leave Bokeh's clamped value.
+            self._reconcile_grid_tabs(all_grids)
+
+            # Restore the active tab by identity.
+            if static_active:
+                self._tabs.active = active_before
+            elif active_grid_id is not None:
+                tabbed = self._tabbed_grid_ids()
+                if active_grid_id in tabbed:
+                    self._tabs.active = self._static_tabs_count + tabbed.index(
+                        active_grid_id
+                    )
+                # else: the active grid was removed; leave Bokeh's clamped
+                # value.
 
         # A locally-created grid overrides the restore and focuses its tab.
+        # Cleared unconditionally: if the grid vanished again before this poll,
+        # the focus intent is dead.
         if self._pending_focus_grid_id is not None:
             tabbed = self._tabbed_grid_ids()
             if self._pending_focus_grid_id in tabbed:
                 self._tabs.active = self._static_tabs_count + tabbed.index(
                     self._pending_focus_grid_id
                 )
-                self._pending_focus_grid_id = None
+            self._pending_focus_grid_id = None
 
-    def _reconcile_grid_tabs(self) -> None:
+    def _reconcile_grid_tabs(self, all_grids: dict[GridId, PlotGridConfig]) -> None:
         """Rebuild grid tabs to match orchestrator state (order, titles, enabled)."""
-        all_grids = self._orchestrator.get_all_grids()
-
         # Rebuild _grid_widgets in orchestrator order, preserving existing widgets
         old_widgets = self._grid_widgets
         self._grid_widgets = {}
@@ -428,8 +446,13 @@ class PlotGridTabs:
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot configuration."""
-            cell_id = self._orchestrator.add_cell(grid_id, geometry)
-            self._orchestrator.add_layer(cell_id, plot_config)
+            try:
+                cell_id = self._orchestrator.add_cell(grid_id, geometry)
+                self._orchestrator.add_layer(cell_id, plot_config)
+            except KeyError:
+                # The grid vanished while the modal was open (removed or
+                # replaced by another session).
+                show_error('Cannot add plot: the grid was removed.')
 
         self._show_config_modal(on_success=on_success)
 
@@ -450,10 +473,20 @@ class PlotGridTabs:
             """Handle successful layer reconfiguration."""
             try:
                 self._orchestrator.update_layer_config(layer_id, plot_config)
+            except KeyError:
+                # The layer vanished while the modal was open (removed by
+                # another session).
+                show_error('Cannot apply changes: the plot was removed.')
             except ValueError as e:
                 show_error(str(e))
 
-        current_config = self._orchestrator.get_layer_config(layer_id)
+        try:
+            current_config = self._orchestrator.get_layer_config(layer_id)
+        except KeyError:
+            # Gear click raced a removal in another session within the poll
+            # window; the widget disappears on the next poll.
+            show_error('The plot was removed.')
+            return
         self._show_config_modal(on_success=on_success, initial_config=current_config)
 
     def _on_add_layer(self, cell_id: CellId) -> None:
@@ -473,6 +506,10 @@ class PlotGridTabs:
             """Handle successful layer configuration."""
             try:
                 self._orchestrator.add_layer(cell_id, plot_config)
+            except KeyError:
+                # The cell vanished while the modal was open (removed by
+                # another session).
+                show_error('Cannot add layer: the cell was removed.')
             except ValueError as e:
                 show_error(str(e))
 
@@ -610,7 +647,7 @@ class PlotGridTabs:
             self._reconcile_topology()
             self._grid_manager.on_topology_changed()
 
-        cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
+        cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid, GridId]] = {}
         versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
         # Per-cell, per-layer time bounds for active-grid cells, driving the
@@ -653,9 +690,7 @@ class PlotGridTabs:
                 if cell_id not in self._cells or signature != self._cell_signatures.get(
                     cell_id
                 ):
-                    cells_to_rebuild[cell_id] = (cell, plot_grid)
-                    self._cell_signatures[cell_id] = signature
-                    self._cell_grid[cell_id] = grid_id
+                    cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
 
                 for layer in cell.layers:
                     layer_id = layer.layer_id
@@ -687,11 +722,11 @@ class PlotGridTabs:
                         )
                         self._session_layers[layer_id] = session_layer
                         # New layer → rebuild cell
-                        cells_to_rebuild[cell_id] = (cell, plot_grid)
+                        cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
                     else:
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
-                            cells_to_rebuild[cell_id] = (cell, plot_grid)
+                            cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
                             versions_to_apply[layer_id] = state.version
 
                     # Drive the layer compute gate: on 0→1 the orchestrator
@@ -744,15 +779,18 @@ class PlotGridTabs:
         # race with DynamicMap updates, causing KeyError when Panel tries to
         # access removed models. The guard skips the insert if the cell was
         # removed before the deferred callback runs.
-        for cell_id, (cell, plot_grid) in cells_to_rebuild.items():
+        for cell_id, (cell, plot_grid, grid_id) in cells_to_rebuild.items():
             view = self._build_cell(cell_id, cell).view
             pn.state.execute(
                 lambda g=cell.geometry, w=view, pg=plot_grid, cid=cell_id: (
                     pg.insert_widget_at(g, w) if cid in self._cells else None
                 )
             )
-            # Bump versions only after successful rebuild — if the rebuild
-            # raised, the version stays stale so the next poll retries.
+            # Record signature/grid and bump versions only after a successful
+            # rebuild — if _build_cell raised, the stale records make the next
+            # poll retry.
+            self._cell_signatures[cell_id] = self._cell_signature(cell)
+            self._cell_grid[cell_id] = grid_id
             for layer in cell.layers:
                 if layer.layer_id in versions_to_apply:
                     sl = self._session_layers.get(layer.layer_id)

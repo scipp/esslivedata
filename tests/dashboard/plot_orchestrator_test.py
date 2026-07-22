@@ -6,9 +6,14 @@ import uuid
 import pydantic
 import pytest
 
-from ess.livedata.dashboard.plot_data_service import LayerState, PlotDataService
+from ess.livedata.dashboard.plot_data_service import (
+    LayerId,
+    LayerState,
+    PlotDataService,
+)
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
+    CellId,
     DataSourceConfig,
     GridId,
     PlotConfig,
@@ -977,6 +982,48 @@ class TestTopologyReadPathsTolerateConcurrentRemoval:
         layer_id = self._setup_layer(plot_orchestrator, workflow_id)
         plot_orchestrator.remove_layer(layer_id)
         plot_orchestrator._reset_layer_presentation(layer_id)
+
+
+class TestMissingIdsAcrossSessions:
+    """Ids can vanish between a session's poll and its click (another session
+    removed them). Mutators of a gone target are silent no-ops, matching the
+    grid-level mutators; creators/updaters, whose user input would otherwise be
+    dropped silently, raise KeyError for the widget layer to surface."""
+
+    def test_remove_cell_missing_id_is_noop(self, plot_orchestrator):
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.remove_cell(CellId(uuid.uuid4()))
+        assert plot_orchestrator.topology_version() == before
+
+    def test_set_cell_title_missing_id_is_noop(self, plot_orchestrator):
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.set_cell_title(CellId(uuid.uuid4()), 'Title')
+        assert plot_orchestrator.topology_version() == before
+
+    def test_remove_layer_missing_id_is_noop(self, plot_orchestrator):
+        before = plot_orchestrator.topology_version()
+        plot_orchestrator.remove_layer(LayerId(uuid.uuid4()))
+        assert plot_orchestrator.topology_version() == before
+
+    def test_update_layer_config_missing_layer_raises_key_error(
+        self, plot_orchestrator, workflow_id
+    ):
+        with pytest.raises(KeyError, match='no longer exists'):
+            plot_orchestrator.update_layer_config(
+                LayerId(uuid.uuid4()), make_plot_config(workflow_id)
+            )
+
+    def test_add_layer_missing_cell_raises_key_error(
+        self, plot_orchestrator, workflow_id
+    ):
+        with pytest.raises(KeyError, match='no longer exists'):
+            plot_orchestrator.add_layer(
+                CellId(uuid.uuid4()), make_plot_config(workflow_id)
+            )
+
+    def test_add_cell_missing_grid_raises_key_error(self, plot_orchestrator):
+        with pytest.raises(KeyError, match='no longer exists'):
+            plot_orchestrator.add_cell(GridId(uuid.uuid4()), DEFAULT_GEOMETRY)
 
 
 class TestErrorHandling:

@@ -476,7 +476,7 @@ class PlotOrchestrator:
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
         with self._topology_lock:
             self._grids[grid_id] = grid
-            self._bump_topology_version()
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info(
             'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
@@ -502,7 +502,7 @@ class PlotOrchestrator:
 
             with self._topology_lock:
                 del self._grids[grid_id]
-                self._bump_topology_version()
+            self._bump_topology_version()
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
 
@@ -551,7 +551,7 @@ class PlotOrchestrator:
         keys.insert(new_index, keys.pop(current_index))
         with self._topology_lock:
             self._grids = {k: self._grids[k] for k in keys}
-            self._bump_topology_version()
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info('Moved grid %s by %d positions', grid_id, delta)
 
@@ -632,7 +632,7 @@ class PlotOrchestrator:
             items = list(self._grids.items())
             items.insert(position, (new_grid_id, new_grid))
             self._grids = dict(items)
-            self._bump_topology_version()
+        self._bump_topology_version()
 
         self._persist_to_store()
         self._logger.info(
@@ -668,14 +668,21 @@ class PlotOrchestrator:
         -------
         :
             ID of the added cell.
+
+        Raises
+        ------
+        KeyError
+            If the grid does not exist (e.g. removed by another session).
         """
+        if grid_id not in self._grids:
+            raise KeyError(f'Grid {grid_id} no longer exists')
         cell_id = CellId(uuid4())
         cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
         grid = self._grids[grid_id]
         with self._topology_lock:
             grid.cells[cell_id] = cell
             self._cell_to_grid[cell_id] = grid_id
-            self._bump_topology_version()
+        self._bump_topology_version()
         return cell_id
 
     def remove_cell(self, cell_id: CellId) -> None:
@@ -687,6 +694,8 @@ class PlotOrchestrator:
         cell_id
             ID of the cell to remove.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
@@ -708,6 +717,8 @@ class PlotOrchestrator:
             New user-defined title, or ``None``/empty to clear it and fall back
             to the derived title.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
         cell.user_title = title or None
@@ -773,10 +784,14 @@ class PlotOrchestrator:
 
         Raises
         ------
+        KeyError
+            If the cell does not exist (e.g. removed by another session).
         ValueError
             If the resulting cell would combine a non-overlayable layer (a table
             or a layout-mode plot) with any other layer.
         """
+        if cell_id not in self._cell_to_grid:
+            raise KeyError(f'Cell {cell_id} no longer exists')
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
@@ -805,6 +820,8 @@ class PlotOrchestrator:
         layer_id
             ID of the layer to remove.
         """
+        if layer_id not in self._layer_to_cell:
+            return
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
@@ -840,7 +857,14 @@ class PlotOrchestrator:
             ID of the layer to update.
         new_config
             New plot configuration.
+
+        Raises
+        ------
+        KeyError
+            If the layer does not exist (e.g. removed by another session).
         """
+        if layer_id not in self._layer_to_cell:
+            raise KeyError(f'Layer {layer_id} no longer exists')
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
