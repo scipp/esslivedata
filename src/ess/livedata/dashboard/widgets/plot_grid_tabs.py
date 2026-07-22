@@ -256,8 +256,16 @@ class PlotGridTabs:
         self._reconcile_topology()
         self._last_topology_version = self._orchestrator.topology_version()
 
-        # Register handler for periodic polling
-        session_updater.register_custom_handler(self._poll_for_plot_updates)
+        # Register the poll pass; the predicate lets wake ticks skip it (and
+        # the batched hold+freeze) when nothing visible changed.
+        session_updater.register_custom_handler(
+            self._poll_for_plot_updates, has_work=self._has_pending_work
+        )
+        # A tab switch changes what the poll pass must flush but bumps no
+        # shared version, so request an immediate in-session tick rather than
+        # waiting for the housekeeping cadence.
+        self._session_updater = session_updater
+        self._tabs.param.watch(self._on_active_tab_changed, 'active')
 
         # Two-tier teardown, run on both the clean disconnect
         # (``on_session_destroyed``) and the stale-session reaper paths. Tier 2
@@ -619,6 +627,29 @@ class PlotGridTabs:
         if previous is not None:
             previous.dispose()
         return cell_widget
+
+    def _on_active_tab_changed(self, event) -> None:
+        self._session_updater.request_tick()
+
+    def _has_pending_work(self) -> bool:
+        """Wake-tick gate: True when the next poll pass would do visible work.
+
+        Mirrors the gates inside :meth:`_poll_for_plot_updates`: topology
+        reconcile, active-tab frame flush, tab switch. Per-layer plotter swaps
+        (job restarts observed by ``sync_job_states``) and freshness stall
+        aging have no cheap counter; the housekeeping tick runs the full pass
+        unconditionally and picks those up — a restarted job's plot also
+        resets on its first new frame, which does advance the generation.
+        """
+        if self._orchestrator.topology_version() != self._last_topology_version:
+            return True
+        active_grid_id = self._get_active_grid_id()
+        if active_grid_id != self._last_active_grid_id:
+            return True
+        return (
+            self._orchestrator.frame_generation(active_grid_id)
+            != self._last_flushed_generation
+        )
 
     def _poll_for_plot_updates(self) -> None:
         """

@@ -162,23 +162,26 @@ class DashboardBase(ServiceBase, ABC):
             notification_queue=self._services.notification_queue,
             username=pn.state.user,
             document=pn.state.curdoc,
+            wakeup_hub=self._services.wakeup_hub,
         )
 
     def _start_periodic_callback(
-        self, session_updater: SessionUpdater, period: int = 100
+        self, session_updater: SessionUpdater, period: int = 1000
     ) -> None:
         """
-        Start the periodic callback for a session.
+        Start the housekeeping callback for a session.
 
         Parameters
         ----------
         session_updater:
             The session updater to drive with the periodic callback.
         period:
-            The period in milliseconds for the periodic update step. Kept short
-            so a freshly computed frame reaches the browser promptly; the actual
-            plot-data flush is gated per data-burst frame (see PlotGridTabs), so
-            faster polling adds only cheap no-op scans, not extra Bokeh work.
+            The period in milliseconds for the housekeeping tick. Latency-
+            sensitive updates (plot frames, widget refresh after actions) are
+            driven by WakeupHub wake ticks the moment shared state changes;
+            this slow tick only ages wall-clock-driven displays (staleness,
+            heartbeats) and catches up after lost wakes, so its cadence bounds
+            neither display lag nor idle CPU-per-session in the common case.
         """
         session_id = session_updater.session_id
         session_registry = self._services.session_registry

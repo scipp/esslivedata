@@ -11,6 +11,7 @@ from ess.livedata.dashboard.notification_queue import (
 )
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
+from ess.livedata.dashboard.wakeup_hub import WakeupHub
 
 
 class FakeDocument:
@@ -55,6 +56,7 @@ def _make_updater(
     notification_queue: NotificationQueue | None = None,
     username: str | None = None,
     document: FakeDocument | None = None,
+    wakeup_hub: WakeupHub | None = None,
 ) -> SessionUpdater:
     return SessionUpdater(
         session_id=session_id,
@@ -62,6 +64,7 @@ def _make_updater(
         notification_queue=notification_queue or NotificationQueue(),
         username=username,
         document=document,
+        wakeup_hub=wakeup_hub,
     )
 
 
@@ -131,6 +134,88 @@ class TestSessionUpdater:
         updater.periodic_update()
 
         assert calls == []
+
+    def test_wake_runs_handler_when_predicate_fires(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.wake()
+
+        assert calls == [1]
+
+    def test_wake_skips_handler_when_predicate_is_false(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.wake()
+
+        assert calls == []
+
+    def test_wake_skips_handler_without_predicate(self):
+        """Handlers with no cheap change signal run on housekeeping ticks only."""
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1))
+
+        updater.wake()
+        assert calls == []
+        updater.periodic_update()
+        assert calls == [1]
+
+    def test_housekeeping_runs_handler_despite_false_predicate(self):
+        """The housekeeping tick is the safety net: predicates never gate it."""
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.periodic_update()
+
+        assert calls == [1]
+
+    def test_wake_runs_handler_when_predicate_raises(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+
+        def broken_predicate() -> bool:
+            raise RuntimeError("boom")
+
+        updater.register_custom_handler(
+            lambda: calls.append(1), has_work=broken_predicate
+        )
+
+        updater.wake()
+
+        assert calls == [1]
+
+    def test_registers_with_wakeup_hub_and_unregisters_on_cleanup(self):
+        hub = WakeupHub()
+        document = FakeDocument()
+        updater = _make_updater(
+            SessionId('s'), SessionRegistry(), document=document, wakeup_hub=hub
+        )
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        hub.wake_all()
+        document.run_next_tick_callbacks()
+        assert calls == [1]
+
+        updater.cleanup()
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+    def test_request_tick_schedules_wake_on_own_document(self):
+        document = FakeDocument()
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.request_tick()
+        assert calls == []
+        document.run_next_tick_callbacks()
+        assert calls == [1]
 
     def test_cleanup_unregisters_from_notification_queue(self):
         session_id = SessionId('session-1')

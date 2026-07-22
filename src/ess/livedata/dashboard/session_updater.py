@@ -25,6 +25,8 @@ from .widgets.heartbeat_widget import HeartbeatWidget
 if TYPE_CHECKING:
     from bokeh.document import Document
 
+    from .wakeup_hub import WakeupHub
+
 logger = structlog.get_logger(__name__)
 
 
@@ -32,18 +34,23 @@ class SessionUpdater:
     """
     Per-session component that drives all widget updates.
 
-    Each browser session creates its own SessionUpdater instance. The updater
-    polls shared services (NotificationQueue) and runs custom handlers in its
-    periodic callback, ensuring all session-bound components are updated
-    in the correct session context.
+    Each browser session creates its own SessionUpdater instance. All widget
+    updates (structural rebuilds via version-based change detection, plot-data
+    flushes, status badges) run through custom handlers registered here, in
+    the session's context and batched in a single hold+freeze pass.
 
-    Plot updates are driven via custom handlers that call
-    SessionPlotManager.update_pipes(), which uses the Presenter dirty flag
-    mechanism for change detection.
+    Ticks come in two flavors:
 
-    All widget updates (structural rebuilds via version-based change detection,
-    status badges, timing, worker lists) use polling via custom handlers
-    registered here, ensuring all updates run batched in the session context.
+    - **Wake ticks** (:meth:`wake`), scheduled by the shared
+      :class:`WakeupHub` right after data commits or shared version bumps.
+      They run only handlers whose ``has_work`` predicate fires, and skip the
+      hold+freeze batch entirely when none does — a wake meant for another
+      session's tab costs no model-graph recompute.
+    - **Housekeeping ticks** (:meth:`periodic_update`), driven by a slow
+      periodic callback. They run every handler unconditionally, covering
+      wall-clock-driven updates (staleness aging, heartbeat displays) that no
+      version counter can signal, and acting as the catch-up safety net for
+      lost wakes (ADR 0007).
 
     Parameters
     ----------
@@ -53,11 +60,18 @@ class SessionUpdater:
         Registry for session heartbeats and tracking.
     notification_queue:
         Shared queue for notifications.
+    username:
+        Authenticated username for this session, if available.
     document:
         The session's Bokeh document, used to marshal document-mutating
         teardown onto the session's IOLoop when :meth:`cleanup` runs off it
-        (the stale-session reaper). ``None`` in non-session contexts (tests),
-        where teardown runs inline.
+        (the stale-session reaper), and to schedule wake ticks. ``None`` in
+        non-session contexts (tests), where teardown runs inline.
+    wakeup_hub:
+        Shared hub scheduling wake ticks across threads. When provided
+        together with ``document``, this session registers for wakes and
+        unregisters on cleanup. ``None`` leaves the session purely
+        poll-driven.
     """
 
     def __init__(
@@ -68,14 +82,18 @@ class SessionUpdater:
         notification_queue: NotificationQueue,
         username: str | None = None,
         document: Document | None = None,
+        wakeup_hub: WakeupHub | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
         self._notification_queue = notification_queue
         self._document = document
+        self._wakeup_hub = wakeup_hub
 
-        # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
-        self._custom_handlers: list[Callable[[], None]] = []
+        # Custom update handlers with their optional wake-tick work predicates.
+        self._custom_handlers: list[
+            tuple[Callable[[], None], Callable[[], bool] | None]
+        ] = []
         # Tier-2 teardown: sever shared state. Safe on any thread; run inline.
         self._cleanup_handlers: list[Callable[[], None]] = []
         # Tier-1 teardown: mutate Bokeh document state. Must run on the
@@ -94,6 +112,9 @@ class SessionUpdater:
         # Auto-register this session with the registry
         self._session_registry.register(session_id, self, username=username)
 
+        if self._wakeup_hub is not None and self._document is not None:
+            self._wakeup_hub.register(session_id, self._document, self.wake)
+
         logger.debug("SessionUpdater created for session %s", session_id)
 
     def set_periodic_callback(self, callback: pn.io.PeriodicCallback) -> None:
@@ -110,25 +131,38 @@ class SessionUpdater:
         """
         self._periodic_callback = callback
 
-    def register_custom_handler(self, handler: Callable[[], None]) -> None:
+    def register_custom_handler(
+        self,
+        handler: Callable[[], None],
+        *,
+        has_work: Callable[[], bool] | None = None,
+    ) -> None:
         """
-        Register a custom handler to be called during periodic updates.
+        Register a custom handler to be called during update ticks.
 
-        Custom handlers are called in the correct session context during
-        the periodic update cycle. Use this for processing pending setups
-        or other session-specific work (e.g., SessionPlotManager.update_pipes).
+        Custom handlers are called in the correct session context, inside the
+        batched hold+freeze pass. Housekeeping ticks run every handler; wake
+        ticks run only handlers whose ``has_work`` predicate returns True.
 
         Parameters
         ----------
         handler:
-            Callback to invoke during periodic updates.
+            Callback to invoke during update ticks.
+        has_work:
+            Cheap predicate telling a wake tick whether ``handler`` has
+            pending visible work. Must be a superset signal of the handler's
+            internal change gates for everything that should react promptly to
+            a wake; changes it cannot see (e.g. wall-clock staleness) are
+            picked up by the housekeeping tick. ``None`` means the handler has
+            no cheap change signal and runs on housekeeping ticks only.
         """
-        self._custom_handlers.append(handler)
+        self._custom_handlers.append((handler, has_work))
 
     def unregister_custom_handler(self, handler: Callable[[], None]) -> None:
         """Unregister a custom handler."""
-        if handler in self._custom_handlers:
-            self._custom_handlers.remove(handler)
+        self._custom_handlers = [
+            (h, p) for h, p in self._custom_handlers if h is not handler
+        ]
 
     def register_cleanup_handler(self, handler: Callable[[], None]) -> None:
         """
@@ -171,32 +205,73 @@ class SessionUpdater:
 
     def periodic_update(self) -> None:
         """
-        Called from this session's periodic callback.
+        Housekeeping tick, called from this session's periodic callback.
 
-        Polls shared services for changes and runs custom handlers
-        in a single batched UI update.
+        Runs every handler unconditionally: the safety net for lost wakes and
+        the clock for wall-clock-driven updates no version counter signals.
 
         Heartbeats are sent to the registry only when we have evidence that
         the browser is still connected (via the browser heartbeat widget).
         """
         # Check if browser has sent a heartbeat (widget value changed)
         self._check_browser_heartbeat()
+        self._tick(housekeeping=True)
 
-        # Poll for notifications
+    def wake(self) -> None:
+        """Wake tick, scheduled by the :class:`WakeupHub` on shared changes.
+
+        Runs only handlers whose ``has_work`` predicate fires; when none does
+        and no notifications are pending, returns without entering the
+        hold+freeze batch, so a wake meant for another session's tab costs no
+        model-graph recompute.
+        """
+        self._tick(housekeeping=False)
+
+    def request_tick(self) -> None:
+        """Schedule a wake tick on this session's own IOLoop.
+
+        For in-session events with no shared version bump (e.g. a tab switch)
+        whose visible effect should not wait for the housekeeping tick.
+        """
+        if self._document is not None:
+            self._document.add_next_tick_callback(self.wake)
+        else:
+            self.wake()
+
+    def _tick(self, *, housekeeping: bool) -> None:
         notifications = self._poll_notifications()
+        handlers = [
+            handler
+            for handler, has_work in self._custom_handlers
+            if housekeeping or (has_work is not None and self._check_work(has_work))
+        ]
+        if not notifications and not handlers:
+            return
 
         with self._batched_update():
             self._show_notifications(notifications)
-
-            # Run custom handlers (e.g., SessionPlotManager.update_pipes)
-            # in correct session context
-            for handler in self._custom_handlers:
+            for handler in handlers:
                 try:
                     handler()
                 except Exception:
                     logger.exception(
                         "Error in custom handler for session %s", self._session_id
                     )
+
+    def _check_work(self, has_work: Callable[[], bool]) -> bool:
+        """Evaluate a work predicate; a raising predicate counts as work.
+
+        Running the handler on a broken predicate keeps updates flowing (the
+        handler itself is exception-guarded) instead of silently freezing the
+        widget until the next housekeeping tick.
+        """
+        try:
+            return has_work()
+        except Exception:
+            logger.exception(
+                "Error in has_work predicate for session %s", self._session_id
+            )
+            return True
 
     @contextmanager
     def _batched_update(self) -> Iterator[None]:
@@ -253,6 +328,8 @@ class SessionUpdater:
             on the IOLoop and leaves this ``False``.
         """
         # Tier 2: sever shared state. Safe on any thread.
+        if self._wakeup_hub is not None:
+            self._wakeup_hub.unregister(self._session_id)
         self._notification_queue.unregister_session(self._session_id)
         self._run_handlers(self._cleanup_handlers)
         self._cleanup_handlers.clear()

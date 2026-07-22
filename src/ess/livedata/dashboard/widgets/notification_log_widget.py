@@ -46,6 +46,10 @@ class NotificationLogWidget:
             margin=(0, 10),
         )
 
+    def is_stale(self) -> bool:
+        """True when the queue advanced past the last rendered version."""
+        return self._queue.version != self._last_version
+
     def refresh(self) -> None:
         """Refresh the log display if the queue has changed."""
         version = self._queue.version

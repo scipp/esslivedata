@@ -52,15 +52,21 @@ class Orchestrator:
         self._active_job_registry = active_job_registry
         self._logger = structlog.get_logger()
 
-    def update(self) -> None:
+    def update(self) -> bool:
         """
         Call this periodically to consume data and feed it into the dashboard.
+
+        Returns
+        -------
+        :
+            True if any messages were consumed, i.e. shared state may have
+            changed and sessions are worth waking.
         """
         messages = self._message_source.get_messages()
         self._logger.debug("Consumed %d messages", len(messages))
 
         if not messages:
-            return
+            return False
 
         # The ingestion guard serializes message processing against generation
         # flips in ActiveJobRegistry.begin_generation() (called from the UI
@@ -87,6 +93,7 @@ class Orchestrator:
                 self._forward_messages(
                     [m for m in messages if m.stream not in control_streams]
                 )
+        return True
 
     def _forward_messages(self, messages: list[Message[Any]]) -> None:
         for message in messages:

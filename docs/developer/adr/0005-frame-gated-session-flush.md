@@ -240,5 +240,5 @@ makes the periodic callback a safety net rather than the detection clock, so
 it can drop to ~1--2 s for the things that genuinely need a clock (heartbeat,
 notifications, freshness-pill stall aging), retiring the 100 ms tick's
 per-tick `hold`+`freeze` recompute and layer scan. Sequencing and the
-`WakeupHub` design live in #1046; the delivery model this follows from is
+`WakeupHub` design live in #1096; the delivery model this follows from is
 ADR 0007.

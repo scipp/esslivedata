@@ -1146,6 +1146,13 @@ class WorkflowStatusWidget:
             lambda: self._orchestrator.commit_workflow(self._workflow_id),
         )
 
+    def is_stale(self) -> bool:
+        """True when the workflow's state version advanced past the last rebuild."""
+        return (
+            self._orchestrator.get_workflow_state_version(self._workflow_id)
+            != self._last_state_version
+        )
+
     def refresh(self) -> None:
         """Refresh widget from current state.
 
@@ -1222,6 +1229,7 @@ class WorkflowStatusListWidget:
         self._populated: bool = False
         self._gate_checkbox: pn.widgets.Checkbox | None = None
         self._gate_banner: pn.pane.HTML | None = None
+        self._last_gate_version: int = orchestrator.get_gate_version()
 
         self._derived_devices = DerivedDevicesOverview(
             orchestrator=orchestrator,
@@ -1351,6 +1359,7 @@ class WorkflowStatusListWidget:
         :meth:`JobOrchestrator.set_gate_enabled` is a no-op for equal values, so
         there is no feedback loop.
         """
+        self._last_gate_version = self._orchestrator.get_gate_version()
         if self._gate_checkbox is None:
             return
         enabled = self._orchestrator.gate_enabled
@@ -1435,7 +1444,9 @@ class WorkflowStatusListWidget:
             When provided, refreshes are skipped while the tab is hidden.
         """
         self._is_visible = is_visible
-        session_updater.register_custom_handler(self._refresh_all)
+        session_updater.register_custom_handler(
+            self._refresh_all, has_work=self._has_pending_work
+        )
         self._derived_devices.register_periodic_refresh(session_updater)
         # Populate as soon as the session is connected. onload callbacks run
         # with pn.state.curdoc set (unlike session-factory code), so
@@ -1454,6 +1465,21 @@ class WorkflowStatusListWidget:
             with pn.io.hold():
                 self._panel.extend([w.panel() for w in self._widgets.values()])
             self._populated = True
+
+    def _has_pending_work(self) -> bool:
+        """Wake-tick gate: True when a refresh would rebuild something.
+
+        Covers structural changes (per-workflow state versions, gate toggle).
+        Live status badges, timing text, and wall-clock staleness have no
+        version counter and refresh on the housekeeping tick instead.
+        """
+        if self._is_visible is not None and not self._is_visible():
+            return False
+        if not self._populated:
+            return True
+        if self._orchestrator.get_gate_version() != self._last_gate_version:
+            return True
+        return any(widget.is_stale() for widget in self._widgets.values())
 
     def _refresh_all(self) -> None:
         """Refresh all workflow status widgets.

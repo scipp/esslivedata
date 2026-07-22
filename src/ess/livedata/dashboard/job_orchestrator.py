@@ -192,6 +192,7 @@ class JobOrchestrator:
         instrument_config: Instrument | None = None,
         notification_queue: NotificationQueue | None = None,
         clock: Callable[[], float] = time.time,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -221,6 +222,12 @@ class JobOrchestrator:
         clock
             Callable returning the current time in seconds, used for command
             expiry. Injectable to allow deterministic testing without real waits.
+        on_change
+            Called after UI-driven workflow state-version bumps (staging,
+            commit, stop, gate toggle), e.g. to wake sessions so widgets
+            refresh without waiting for the next poll. Ingestion-driven bumps
+            (adoption) need no poke: the ingestion loop wakes sessions after
+            each drain pass anyway.
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
@@ -230,6 +237,7 @@ class JobOrchestrator:
         self._instrument_config = instrument_config
         self._notification_queue = notification_queue
         self._clock = clock
+        self._on_change = on_change
 
         # Command acknowledgement tracking
         self._pending_commands = PendingCommandTracker(clock=clock)
@@ -506,6 +514,7 @@ class JobOrchestrator:
         )
 
         state.commit(job_set)
+        self._notify_change()
 
         # Flip the generation, clear the workflow's buffers, and notify
         # subscribers atomically under the ingestion guard, *before* sending
@@ -897,6 +906,7 @@ class JobOrchestrator:
                 self._job_states.pop(job_id, None)
             self._active_job_registry.deactivate(workflow_id)
         state.deactivate(reason)
+        self._notify_change()
 
         self._persist_state_to_store(workflow_id)
 
@@ -1170,6 +1180,7 @@ class JobOrchestrator:
             return
         self._gate_enabled = enabled
         self._gate_version += 1
+        self._notify_change()
 
     def get_gate_version(self) -> int:
         """Version counter bumped whenever the global gate toggle changes."""
@@ -1185,6 +1196,12 @@ class JobOrchestrator:
             return
 
         self._workflows[workflow_id].version += 1
+        self._notify_change()
+
+    def _notify_change(self) -> None:
+        """Poke the wake hook after a UI-driven state-version bump."""
+        if self._on_change is not None:
+            self._on_change()
 
     def _notify_command_success(
         self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int

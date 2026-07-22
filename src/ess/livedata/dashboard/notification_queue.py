@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -58,7 +59,12 @@ class NotificationQueue:
     to prevent unbounded memory growth.
     """
 
-    def __init__(self, *, max_age_events: int = 100) -> None:
+    def __init__(
+        self,
+        *,
+        max_age_events: int = 100,
+        on_push: Callable[[], None] | None = None,
+    ) -> None:
         """
         Initialize the notification queue.
 
@@ -66,12 +72,16 @@ class NotificationQueue:
         ----------
         max_age_events:
             Maximum number of events to retain. Older events are purged.
+        on_push:
+            Called (outside the queue lock) after each push, e.g. to wake
+            sessions so toasts show without waiting for the next poll.
         """
         self._events: deque[NotificationEvent] = deque(maxlen=max_age_events)
         self._event_offset = 0  # Index of first event in deque
         self._cursors: dict[SessionId, _SessionCursor] = {}
         self._lock = threading.Lock()
         self._version = 0
+        self._on_push = on_push
 
     def push(self, event: NotificationEvent) -> None:
         """
@@ -89,6 +99,8 @@ class NotificationQueue:
                 self._event_offset += 1
             self._events.append(event)
             self._version += 1
+        if self._on_push is not None:
+            self._on_push()
 
     def register_session(self, session_id: SessionId) -> None:
         """
