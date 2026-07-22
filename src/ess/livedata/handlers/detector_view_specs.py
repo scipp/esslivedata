@@ -211,7 +211,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     OutputView(
         name='image',
         title='Image',
-        streams={'since_start': 'cumulative', 'per_update': 'current'},
+        fields={'since_start': 'cumulative', 'per_update': 'current'},
         description=(
             'Detector image. With "since run start" shows accumulated counts; '
             'with "latest update" or a window, shows recent counts.'
@@ -226,7 +226,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     OutputView(
         name='total_counts',
         title='Total',
-        streams={
+        fields={
             'since_start': 'counts_total_cumulative',
             'per_update': 'counts_total',
         },
@@ -235,7 +235,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     OutputView(
         name='total_in_range',
         title='Total in range',
-        streams={
+        fields={
             'since_start': 'counts_in_toa_range_cumulative',
             'per_update': 'counts_in_toa_range',
         },
@@ -307,7 +307,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         OutputView(
             name='roi_spectra',
             title='ROI spectra',
-            streams={
+            fields={
                 'since_start': 'roi_spectra_cumulative',
                 'per_update': 'roi_spectra_current',
             },
@@ -317,13 +317,13 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         OutputView(
             name='roi_rectangle',
             title='ROI Rectangles (readback)',
-            streams={'since_start': 'roi_rectangle'},
+            fields={'since_start': 'roi_rectangle'},
             description='Current rectangle ROI geometries confirmed by backend.',
         ),
         OutputView(
             name='roi_polygon',
             title='ROI Polygons (readback)',
-            streams={'since_start': 'roi_polygon'},
+            fields={'since_start': 'roi_polygon'},
             description='Current polygon ROI geometries confirmed by backend.',
         ),
     )
@@ -452,7 +452,7 @@ def make_detector_view_outputs(
                 OutputView(
                     name='spectrum_view',
                     title=title,
-                    streams={'since_start': 'spectrum_view'},
+                    fields={'since_start': 'spectrum_view'},
                     description=description,
                     params=(
                         'coordinate_mode',

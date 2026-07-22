@@ -56,6 +56,11 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
   (the WorkflowId *name* slug, not the display title), so a workflow's gear is
   `.lt-wf-monitor_histogram.lt-tool-settings`.
 
+`lt-wf-*` and `lt-grid-*` slug different things on purpose: a workflow has a stable
+*name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
+none, so `lt-grid-*` slugs the grid *title* instead (`plot_grid_manager.py`) — the same
+title that also drives the grid's download filename.
+
 These classes have no associated style rules — adding/removing them is visually inert.
 Treat them as a stable contract: do not drop them in refactors (a test in
 `buttons_test.py` guards the helper). When adding tool buttons to a view that repeats

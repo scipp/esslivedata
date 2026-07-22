@@ -60,10 +60,10 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'counts_total_cumulative'},
+            fields={'since_start': 'counts_total_cumulative'},
         ),
         OutputView(
-            name='histogram', title='Histogram', streams={'since_start': 'histogram'}
+            name='histogram', title='Histogram', fields={'since_start': 'histogram'}
         ),
     )
 

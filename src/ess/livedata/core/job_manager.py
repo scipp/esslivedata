@@ -191,7 +191,7 @@ class JobFactory:
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
-            processor=stream_processor,
+            workflow=stream_processor,
             source_names=[job_id.source_name],
             input_streams=set(aux_streams.values()),
             gating_streams=context_streams,
@@ -293,7 +293,6 @@ class JobManager:
         job_threads:
             Number of worker threads for job processing (1 = sequential).
         """
-        self.service_name = 'data_reduction'
         self._last_update: int = 0
         self._job_factory = job_factory
         self._context_reader = context_reader

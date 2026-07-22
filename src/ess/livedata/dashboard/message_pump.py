@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from .job_orchestrator import JobOrchestrator
 
 
-class Orchestrator:
+class MessagePump:
     """
-    Orchestrates the flow of data from Kafka to the GUI layer of the dashboard.
+    Pumps the flow of data from Kafka to the GUI layer of the dashboard.
 
     This class consumes messages from a message source and forwards them to a data
     forwarder, which caches them in a local data service. A transaction mechanism
@@ -111,7 +111,7 @@ class Orchestrator:
         unknown generations are counted and dropped. Job status messages are
         admitted for any known workflow: they are the observation feed for
         job adoption and desired/observed reconciliation (ADR 0008), so
-        unknown job_numbers must reach the orchestrator instead of being
+        unknown job_numbers must reach the JobOrchestrator instead of being
         filtered here.
 
         Parameters

@@ -18,7 +18,7 @@ from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.orchestrator import Orchestrator
+from ess.livedata.dashboard.message_pump import MessagePump
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 
@@ -67,7 +67,7 @@ class PermissiveJobRegistry:
         yield
 
 
-def _make_orchestrator(
+def _make_message_pump(
     *,
     message_source,
     data_service,
@@ -75,8 +75,8 @@ def _make_orchestrator(
     service_registry=None,
     job_orchestrator=None,
     active_job_registry=None,
-) -> Orchestrator:
-    return Orchestrator(
+) -> MessagePump:
+    return MessagePump(
         message_source=message_source,
         data_service=data_service,
         job_service=job_service,
@@ -126,18 +126,18 @@ class FakeMessageSource:
         return messages
 
 
-class TestOrchestrator:
+class TestMessagePump:
     def test_update_with_no_messages(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
         )
 
-        orchestrator.update()
+        message_pump.update()
 
         assert len(data_service) == 0
 
@@ -145,7 +145,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -164,7 +164,7 @@ class TestOrchestrator:
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
         source.add_message(result_key.model_dump_json(), data)
 
-        orchestrator.update()
+        message_pump.update()
 
         assert result_key.data_key in data_service
         assert sc.identical(data_service[result_key.data_key], data)
@@ -173,7 +173,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -206,7 +206,7 @@ class TestOrchestrator:
         source.add_message(result_key1.model_dump_json(), data1)
         source.add_message(result_key2.model_dump_json(), data2)
 
-        orchestrator.update()
+        message_pump.update()
 
         assert result_key1.data_key in data_service
         assert result_key2.data_key in data_service
@@ -217,7 +217,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -236,7 +236,7 @@ class TestOrchestrator:
         source.add_message("not-a-valid-result-key", good_data)
         source.add_message(good_key.model_dump_json(), good_data)
 
-        orchestrator.update()
+        message_pump.update()
 
         assert good_key.data_key in data_service
         assert sc.identical(data_service[good_key.data_key], good_data)
@@ -245,7 +245,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -266,19 +266,19 @@ class TestOrchestrator:
 
         # Add initial data
         source.add_message(result_key.model_dump_json(), original_data)
-        orchestrator.update()
+        message_pump.update()
         assert sc.identical(data_service[result_key.data_key], original_data)
 
         # Overwrite with new data
         source.add_message(result_key.model_dump_json(), new_data)
-        orchestrator.update()
+        message_pump.update()
         assert sc.identical(data_service[result_key.data_key], new_data)
 
     def test_update_with_output_name(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -297,7 +297,7 @@ class TestOrchestrator:
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
         source.add_message(result_key.model_dump_json(), data)
 
-        orchestrator.update()
+        message_pump.update()
 
         assert result_key.data_key in data_service
         assert sc.identical(data_service[result_key.data_key], data)
@@ -306,7 +306,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -324,7 +324,7 @@ class TestOrchestrator:
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
 
-        orchestrator.forward(_data_stream_id(result_key), data)
+        message_pump.forward(_data_stream_id(result_key), data)
 
         assert result_key.data_key in data_service
         assert sc.identical(data_service[result_key.data_key], data)
@@ -333,7 +333,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -343,7 +343,7 @@ class TestOrchestrator:
 
         # JSON parsing or Pydantic validation error
         with pytest.raises(ValueError, match="Invalid JSON"):
-            orchestrator.forward(
+            message_pump.forward(
                 StreamId(kind=StreamKind.LIVEDATA_DATA, name="invalid_json"), data
             )
 
@@ -351,7 +351,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -381,9 +381,9 @@ class TestOrchestrator:
         float_data = sc.DataArray(sc.array(dims=['y'], values=[1.5, 2.5]))
         string_data = sc.DataArray(sc.array(dims=['z'], values=['a', 'b']))
 
-        orchestrator.forward(_data_stream_id(result_key1), int_data)
-        orchestrator.forward(_data_stream_id(result_key2), float_data)
-        orchestrator.forward(_data_stream_id(result_key3), string_data)
+        message_pump.forward(_data_stream_id(result_key1), int_data)
+        message_pump.forward(_data_stream_id(result_key2), float_data)
+        message_pump.forward(_data_stream_id(result_key3), string_data)
 
         assert sc.identical(data_service[result_key1.data_key], int_data)
         assert sc.identical(data_service[result_key2.data_key], float_data)
@@ -394,7 +394,7 @@ class TestOrchestrator:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -424,13 +424,13 @@ class TestOrchestrator:
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
         source.add_message(result_key.model_dump_json(), data)
 
-        orchestrator.update()
+        message_pump.update()
 
         assert transaction_started
         assert result_key.data_key in data_service
 
 
-class TestOrchestratorAcknowledgementProcessing:
+class TestMessagePumpAcknowledgementProcessing:
     def test_forward_with_ack_message(self) -> None:
         """Test that acknowledgement messages are forwarded to job orchestrator."""
         from ess.livedata.config.acknowledgement import (
@@ -442,7 +442,7 @@ class TestOrchestratorAcknowledgementProcessing:
         data_service = DataService()
         job_service = JobService()
         job_orchestrator = FakeJobOrchestrator()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -455,7 +455,7 @@ class TestOrchestratorAcknowledgementProcessing:
             response=AcknowledgementResponse.ACK,
         )
 
-        orchestrator.forward(RESPONSES_STREAM_ID, ack)
+        message_pump.forward(RESPONSES_STREAM_ID, ack)
 
         assert len(job_orchestrator.acknowledgements) == 1
         assert job_orchestrator.acknowledgements[0] == ("test-uuid", "ACK", None)
@@ -471,7 +471,7 @@ class TestOrchestratorAcknowledgementProcessing:
         data_service = DataService()
         job_service = JobService()
         job_orchestrator = FakeJobOrchestrator()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -485,7 +485,7 @@ class TestOrchestratorAcknowledgementProcessing:
             message="Workflow not found",
         )
 
-        orchestrator.forward(RESPONSES_STREAM_ID, ack)
+        message_pump.forward(RESPONSES_STREAM_ID, ack)
 
         assert len(job_orchestrator.acknowledgements) == 1
         assert job_orchestrator.acknowledgements[0] == (
@@ -495,7 +495,7 @@ class TestOrchestratorAcknowledgementProcessing:
         )
 
 
-class TestOrchestratorServiceStatusRouting:
+class TestMessagePumpServiceStatusRouting:
     """Test that ServiceStatus messages are routed to the ServiceRegistry."""
 
     def test_forward_routes_service_status_to_registry(self) -> None:
@@ -506,7 +506,7 @@ class TestOrchestratorServiceStatusRouting:
         data_service = DataService()
         job_service = JobService()
         service_registry = make_service_registry()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -522,7 +522,7 @@ class TestOrchestratorServiceStatusRouting:
             active_job_count=2,
         )
 
-        orchestrator.forward(STATUS_STREAM_ID, status)
+        message_pump.forward(STATUS_STREAM_ID, status)
 
         # Verify the service registry received the status
         assert len(service_registry.worker_statuses) == 1
@@ -539,7 +539,7 @@ class TestOrchestratorServiceStatusRouting:
         data_service = DataService()
         job_service = JobService()
         service_registry = make_service_registry()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -558,32 +558,32 @@ class TestOrchestratorServiceStatusRouting:
             state=JobState.active,
         )
 
-        orchestrator.forward(STATUS_STREAM_ID, job_status)
+        message_pump.forward(STATUS_STREAM_ID, job_status)
 
         # Verify job service received the status (not service registry)
         assert len(service_registry.worker_statuses) == 0
         assert len(job_service.job_statuses) == 1
 
 
-class TestOrchestratorGenerationFiltering:
+class TestMessagePumpGenerationFiltering:
     """Data is admitted only for the workflow's current generation."""
 
     _workflow_id = WorkflowId(instrument="test", name="wf", version=1)
 
-    def _make_orchestrator(self, current: dict[WorkflowId, uuid.UUID] | None = None):
+    def _make_message_pump(self, current: dict[WorkflowId, uuid.UUID] | None = None):
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
         registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
         for workflow_id, job_number in (current or {}).items():
             registry.begin_generation(workflow_id, job_number, config={})
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
             active_job_registry=registry,
         )
-        return orchestrator, data_service, job_service, registry
+        return message_pump, data_service, job_service, registry
 
     def _result_key(self, job_number: uuid.UUID) -> ResultKey:
         return ResultKey(
@@ -592,29 +592,29 @@ class TestOrchestratorGenerationFiltering:
             output_name="result",
         )
 
-    def _forward_data(self, orchestrator, job_number: uuid.UUID) -> ResultKey:
+    def _forward_data(self, message_pump, job_number: uuid.UUID) -> ResultKey:
         result_key = self._result_key(job_number)
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
-        orchestrator.forward(_data_stream_id(result_key), data)
+        message_pump.forward(_data_stream_id(result_key), data)
         return result_key
 
     def test_accepts_data_for_current_generation(self) -> None:
         job_number = make_job_number()
-        orchestrator, data_service, _, _ = self._make_orchestrator(
+        message_pump, data_service, _, _ = self._make_message_pump(
             {self._workflow_id: job_number}
         )
 
-        result_key = self._forward_data(orchestrator, job_number)
+        result_key = self._forward_data(message_pump, job_number)
 
         assert result_key.data_key in data_service
 
     def test_records_generation_stamp_at_ingest(self) -> None:
         job_number = make_job_number()
-        orchestrator, data_service, _, _ = self._make_orchestrator(
+        message_pump, data_service, _, _ = self._make_message_pump(
             {self._workflow_id: job_number}
         )
 
-        result_key = self._forward_data(orchestrator, job_number)
+        result_key = self._forward_data(message_pump, job_number)
 
         class OneKeySubscriber(DataServiceSubscriber):
             @property
@@ -631,28 +631,28 @@ class TestOrchestratorGenerationFiltering:
 
     def test_discards_data_from_replaced_generation(self) -> None:
         old_number = make_job_number()
-        orchestrator, data_service, _, registry = self._make_orchestrator(
+        message_pump, data_service, _, registry = self._make_message_pump(
             {self._workflow_id: old_number}
         )
         registry.begin_generation(self._workflow_id, make_job_number(), config={})
 
-        result_key = self._forward_data(orchestrator, old_number)
+        result_key = self._forward_data(message_pump, old_number)
 
         assert result_key.data_key not in data_service
 
     def test_discards_data_for_unknown_generation(self) -> None:
-        orchestrator, data_service, _, _ = self._make_orchestrator(
+        message_pump, data_service, _, _ = self._make_message_pump(
             {self._workflow_id: make_job_number()}
         )
 
-        result_key = self._forward_data(orchestrator, make_job_number())
+        result_key = self._forward_data(message_pump, make_job_number())
 
         assert result_key.data_key not in data_service
 
     def test_discards_data_for_workflow_without_generation(self) -> None:
-        orchestrator, data_service, _, _ = self._make_orchestrator()
+        message_pump, data_service, _, _ = self._make_message_pump()
 
-        result_key = self._forward_data(orchestrator, make_job_number())
+        result_key = self._forward_data(message_pump, make_job_number())
 
         assert result_key.data_key not in data_service
 
@@ -663,7 +663,7 @@ class TestOrchestratorGenerationFiltering:
 
         old_number = make_job_number()
         new_number = make_job_number()
-        orchestrator, _, job_service, registry = self._make_orchestrator(
+        message_pump, _, job_service, registry = self._make_message_pump(
             {self._workflow_id: old_number}
         )
         registry.begin_generation(self._workflow_id, new_number, config={})
@@ -674,7 +674,7 @@ class TestOrchestratorGenerationFiltering:
                 workflow_id=self._workflow_id,
                 state=JobState.active,
             )
-            orchestrator.forward(STATUS_STREAM_ID, status)
+            message_pump.forward(STATUS_STREAM_ID, status)
 
         assert len(job_service.job_statuses) == 3
 
@@ -683,7 +683,7 @@ class TestOrchestratorGenerationFiltering:
 
         source = FakeMessageSource()
         job_service = JobService()
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=DataService(),
             job_service=job_service,
@@ -695,7 +695,7 @@ class TestOrchestratorGenerationFiltering:
             workflow_id=self._workflow_id,
             state=JobState.active,
         )
-        orchestrator.forward(STATUS_STREAM_ID, status)
+        message_pump.forward(STATUS_STREAM_ID, status)
 
         assert len(job_service.job_statuses) == 0
 
@@ -722,7 +722,7 @@ class TestOrchestratorGenerationFiltering:
             ) -> None:
                 registry.begin_generation(workflow_id, job_number, config={})
 
-        orchestrator = _make_orchestrator(
+        message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
@@ -743,7 +743,7 @@ class TestOrchestratorGenerationFiltering:
             )
         )
 
-        orchestrator.update()
+        message_pump.update()
 
         assert result_key.data_key in data_service
 

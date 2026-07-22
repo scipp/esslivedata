@@ -144,7 +144,7 @@ flowchart TB
 
 `StreamId` contains `kind` (StreamKind enum) and `name` (specific identifier). Isolates internal code from Kafka topic names.
 
-StreamKind values: `UNKNOWN`, `MONITOR_COUNTS`, `MONITOR_EVENTS`, `DETECTOR_EVENTS`, `AREA_DETECTOR`, `LOG`, `LIVEDATA_COMMANDS`, `LIVEDATA_RESPONSES`, `LIVEDATA_DATA`, `LIVEDATA_ROI`, `LIVEDATA_STATUS`.
+StreamKind values: `UNKNOWN`, `MONITOR_COUNTS`, `MONITOR_EVENTS`, `DETECTOR_EVENTS`, `AREA_DETECTOR`, `LOG`, `DEVICE`, `LIVEDATA_COMMANDS`, `LIVEDATA_RESPONSES`, `LIVEDATA_DATA`, `LIVEDATA_NICOS_DATA`, `LIVEDATA_ROI`, `LIVEDATA_STATUS`, `RUN_CONTROL`.
 
 ## Stream Mapping
 

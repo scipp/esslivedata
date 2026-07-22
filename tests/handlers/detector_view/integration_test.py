@@ -415,7 +415,7 @@ class TestROIDeliveryViaJob:
             workflow_id=WorkflowId(
                 instrument='dummy', namespace='detector_view', name='x', version=1
             ),
-            processor=workflow,
+            workflow=workflow,
             source_names=['detector'],
             input_streams=set(rendered.values()),
             gating_streams=set(),

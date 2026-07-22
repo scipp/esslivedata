@@ -38,7 +38,7 @@ class SessionUpdater:
     in the correct session context.
 
     Plot updates are driven via custom handlers that call
-    SessionPlotManager.update_pipes(), which uses the Presenter dirty flag
+    SessionLayer.update_pipe(), which uses the Presenter dirty flag
     mechanism for change detection.
 
     All widget updates (structural rebuilds via version-based change detection,
@@ -74,7 +74,7 @@ class SessionUpdater:
         self._notification_queue = notification_queue
         self._document = document
 
-        # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
+        # Callbacks for custom updates (e.g., plot pipe polling)
         self._custom_handlers: list[Callable[[], None]] = []
         # Tier-2 teardown: sever shared state. Safe on any thread; run inline.
         self._cleanup_handlers: list[Callable[[], None]] = []
@@ -116,7 +116,7 @@ class SessionUpdater:
 
         Custom handlers are called in the correct session context during
         the periodic update cycle. Use this for processing pending setups
-        or other session-specific work (e.g., SessionPlotManager.update_pipes).
+        or other session-specific work (e.g., polling SessionLayer.update_pipe).
 
         Parameters
         ----------
@@ -188,7 +188,7 @@ class SessionUpdater:
         with self._batched_update():
             self._show_notifications(notifications)
 
-            # Run custom handlers (e.g., SessionPlotManager.update_pipes)
+            # Run custom handlers (e.g., plot pipe polling)
             # in correct session context
             for handler in self._custom_handlers:
                 try:

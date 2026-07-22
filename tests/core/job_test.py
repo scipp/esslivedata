@@ -113,7 +113,7 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
     return Job(
         job_id=job_id,
         workflow_id=sample_workflow_id,
-        processor=fake_processor,
+        workflow=fake_processor,
         source_names=["test_source"],
         input_streams={"aux_source"},
         gating_streams=set(),
@@ -280,7 +280,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -308,7 +308,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -359,7 +359,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -402,7 +402,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -453,7 +453,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -491,7 +491,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -526,7 +526,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -555,7 +555,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -592,7 +592,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -644,7 +644,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -681,7 +681,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),
@@ -715,7 +715,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),
@@ -731,7 +731,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams=set(),
             gating_streams=set(),
@@ -758,7 +758,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),

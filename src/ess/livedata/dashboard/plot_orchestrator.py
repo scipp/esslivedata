@@ -28,7 +28,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     DataKey,
     JobNumber,
-    StreamRole,
+    Windowing,
     WorkflowId,
     WorkflowSpec,
 )
@@ -87,6 +87,21 @@ class DataSourceConfig:
     workflow_id: WorkflowId
     source_names: list[str]
     view_name: str = 'result'
+
+
+@dataclass(frozen=True)
+class ResolvedDataSource:
+    """A data source with its output view resolved to a backend field name.
+
+    Produced by :func:`_build_resolved_data_sources` from a
+    :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
+    field name selected for the current window mode, ready to key a
+    :class:`DataKey`. Runtime-only — never persisted.
+    """
+
+    workflow_id: WorkflowId
+    source_names: list[str]
+    output_name: str
 
 
 @dataclass
@@ -182,8 +197,8 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
-    """Map a window mode to the stream role its data is subscribed from."""
+def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
+    """Map a window mode to the windowing its data is subscribed from."""
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
@@ -191,70 +206,71 @@ def resolve_field_name(
     spec: WorkflowSpec,
     view_name: str,
     *,
-    role: StreamRole = 'since_start',
+    windowing: Windowing = 'since_start',
 ) -> str:
-    """Resolve a (view, role) pair to the backend pydantic field name.
+    """Resolve a (view, windowing) pair to the backend pydantic field name.
 
     Falls back to ``view_name`` as a raw field name when no matching view
     is declared (lets unannotated reduction outputs work unchanged).
     """
     view = spec.get_output_view(view_name)
-    return view.field_for(role) if view is not None else view_name
+    return view.field_for(windowing) if view is not None else view_name
 
 
-def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
-    """Return the stream role wanted by a data-source slot.
+def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
+    """Return the windowing wanted by a data role.
 
-    The primary slot follows the user-selected window mode; correlation
+    The primary role follows the user-selected window mode; correlation
     axes always want per-update data.
     """
-    if slot != PRIMARY:
+    if role != PRIMARY:
         return 'per_update'
     window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
+    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
 
 
 def _build_resolved_data_sources(
     config: PlotConfig,
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[str, DataSourceConfig]:
-    """Build a copy of ``config.data_sources`` with view names resolved to fields.
+) -> dict[str, ResolvedDataSource]:
+    """Resolve ``config.data_sources`` view names to backend field names.
 
-    The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``DataKey.output_name``).
+    Falls back to the view name verbatim when the data source's workflow is
+    not in the registry (lets a layer whose workflow has not been seen yet
+    still set up a pipeline, keyed by whatever name it was given).
     """
-    resolved: dict[str, DataSourceConfig] = {}
-    for slot, ds in config.data_sources.items():
+    resolved: dict[str, ResolvedDataSource] = {}
+    for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        if spec is None:
-            resolved[slot] = ds
-            continue
-        field_name = resolve_field_name(
-            spec, ds.view_name, role=_role_for_slot(slot, config.params)
+        output_name = (
+            resolve_field_name(
+                spec, ds.view_name, windowing=_windowing_for_role(role, config.params)
+            )
+            if spec is not None
+            else ds.view_name
         )
-        resolved[slot] = DataSourceConfig(
+        resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
-            view_name=field_name,
+            output_name=output_name,
         )
     return resolved
 
 
 def _build_keys_by_role(
-    data_sources: dict[str, DataSourceConfig],
+    data_sources: dict[str, ResolvedDataSource],
 ) -> dict[str, list[DataKey]]:
     """Build stable DataKeys grouped by role.
 
     Keys carry no job identity — they are fully determined by the plot
-    config. ``DataSourceConfig.view_name`` is expected to already carry the
-    resolved backend pydantic field name (see ``_build_resolved_data_sources``).
+    config.
     """
     return {
         role: [
             DataKey(
                 workflow_id=ds.workflow_id,
                 source_name=sn,
-                output_name=ds.view_name,
+                output_name=ds.output_name,
             )
             for sn in ds.source_names
         ]
@@ -1031,7 +1047,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.streams.values():
+                if field_name in view.fields.values():
                     return view.title
             return field_name
 

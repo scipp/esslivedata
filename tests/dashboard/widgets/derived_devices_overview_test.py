@@ -42,7 +42,7 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'counts_total_cumulative'},
+            fields={'since_start': 'counts_total_cumulative'},
         ),
     )
 
