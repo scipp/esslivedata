@@ -188,7 +188,8 @@ class TestSessionUpdater:
         updater.periodic_update()  # t=0: full pass
         assert (len(gated), len(ungated)) == (1, 1)
 
-        for _now in (1.0, 2.0, 3.0, 4.0):
+        for t in (1.0, 2.0, 3.0, 4.0):
+            now = t
             updater.periodic_update()  # gated: false predicate, no run
         assert (len(gated), len(ungated)) == (1, 1)
 
