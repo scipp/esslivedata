@@ -68,7 +68,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   i.e. a ResultKey with the job number stripped. The dashboard data plane and
   NICOS derived devices (ADR 0006) key by DataKey, not ResultKey.
 - **OutputView** — user-facing presentation of a workflow output, bundling
-  backend output fields by window role (`since_start`/`per_update`)
+  backend output fields by `Windowing` (`since_start`/`per_update`)
   (`config/workflow_spec.py`).
 
 ### Data kinds and services
@@ -171,16 +171,16 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 
 ## One word, several meanings
 
-- **role** — three senses: (1) *data role*: a plot layer's data-source key —
-  `primary`/`x_axis`/`y_axis` (`dashboard/data_roles.py`); (2) *window role*
-  (`StreamRole`): the time-window of an output — `since_start`/`per_update`
-  (`config/workflow_spec.py`); (3) *aux-input role*: the logical name of an
-  auxiliary workflow input a user selects a stream for (`AuxSources`).
-  Qualify the word when ambiguity is possible.
+- **role** — two senses: (1) *data role*: a plot layer's data-source key —
+  `primary`/`x_axis`/`y_axis` (`dashboard/data_roles.py`); (2) *aux-input
+  role*: the logical name of an auxiliary workflow input a user selects a
+  stream for (`AuxSources`). Qualify the word when ambiguity is possible. The
+  time-window flavor of an output field (`since_start`/`per_update`) is
+  `Windowing`, not a role (`config/workflow_spec.py`).
 - **stream** — (1) a Kafka/internal data stream (`StreamId`); (2) a dashboard
   subscriber pipeline (`StreamManager.make_stream`); (3) an
-  `hv.streams.Pipe` per-session channel; (4) `OutputView.streams`, backend
-  output field bundles. Sense (1) is the default; qualify the others.
+  `hv.streams.Pipe` per-session channel. Sense (1) is the default; qualify
+  the others.
 - **source name** — raw Kafka FlatBuffers producer name at the boundary, but the
   canonical *stream name* everywhere else (see
   [Identity and keying](#identity-and-keying)).
@@ -193,9 +193,10 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   writing name the level, usually *layer*.
 - **frame** — neutron pulse frame (instrument context) vs. the dashboard
   update-flush cycle (ADR 0005).
-- **orchestrator** — backend `OrchestratingProcessor`; dashboard `Orchestrator`
-  (message pump), `JobOrchestrator` (workflow lifecycle), `PlotOrchestrator`
-  (grid topology). Never write "the orchestrator" without qualification.
+- **orchestrator** — backend `OrchestratingProcessor`; dashboard
+  `JobOrchestrator` (workflow lifecycle), `PlotOrchestrator` (grid topology).
+  The dashboard's Kafka-to-`DataService` message pump is `MessagePump`, not
+  an orchestrator.
 - **processor** — the Service-driven `Processor` protocol; *not* a workflow.
   (`ess.reduce.streaming.StreamProcessor` is an upstream class a Workflow may
   wrap.)

@@ -192,7 +192,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            streams={'since_start': 'cumulative', 'per_update': 'current'},
+            fields={'since_start': 'cumulative', 'per_update': 'current'},
             description=(
                 'Monitor histogram. With "since run start" shows accumulated '
                 'counts; with "latest update" or a window, shows recent counts.'
@@ -202,7 +202,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_counts',
             title='Total',
-            streams={
+            fields={
                 'since_start': 'counts_total_cumulative',
                 'per_update': 'counts_total',
             },
@@ -215,7 +215,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_in_range',
             title='Total in range',
-            streams={
+            fields={
                 'since_start': 'counts_in_toa_range_cumulative',
                 'per_update': 'counts_in_toa_range',
             },

@@ -36,19 +36,19 @@ T = TypeVar('T')
 
 JobNumber = uuid.UUID
 
-StreamRole = Literal['since_start', 'per_update']
+Windowing = Literal['since_start', 'per_update']
 
 
 @dataclass(frozen=True)
 class OutputView:
-    """A user-facing output bundling one or more backend streams.
+    """A user-facing output bundling one or more backend fields.
 
     Each view represents a single quantity (e.g. "Histogram", "Total")
-    that may be observed over different time windows. The ``streams`` mapping
-    binds time-window *roles* to the backend pydantic field names that carry
-    that view of the data — ``since_start`` for run-cumulative streams and
-    ``per_update`` for per-update streams. Window mode (selected by the user)
-    determines which role is subscribed to.
+    that may be observed over different time windows. The ``fields`` mapping
+    binds windowing flavors to the backend pydantic field names that carry
+    that view of the data — ``since_start`` for run-cumulative fields and
+    ``per_update`` for per-update fields. Window mode (selected by the user)
+    determines which one is subscribed to.
 
     ``params`` names the workflow parameter fields (top-level fields of the
     workflow's params model) that shape this output. It powers the UI's
@@ -61,21 +61,21 @@ class OutputView:
 
     name: str
     title: str
-    streams: Mapping[StreamRole, str]
+    fields: Mapping[Windowing, str]
     description: str | None = None
     params: tuple[str, ...] = ()
 
-    def field_for(self, role: StreamRole) -> str:
-        """Return the backend field name for the requested role.
+    def field_for(self, windowing: Windowing) -> str:
+        """Return the backend field name for the requested windowing.
 
-        Falls back to the other declared role when the requested role is
-        absent — handles views that only expose one role (e.g. cumulative-
-        only quantities).
+        Falls back to the other declared windowing when the requested one is
+        absent — handles views that only expose one (e.g. cumulative-only
+        quantities).
         """
-        if (field_name := self.streams.get(role)) is not None:
+        if (field_name := self.fields.get(windowing)) is not None:
             return field_name
-        other: StreamRole = 'per_update' if role == 'since_start' else 'since_start'
-        return self.streams[other]
+        other: Windowing = 'per_update' if windowing == 'since_start' else 'since_start'
+        return self.fields[other]
 
 
 class WorkflowOutputsBase(BaseModel):
@@ -446,7 +446,7 @@ class WorkflowSpec(BaseModel):
     def get_output_views(self) -> Sequence[OutputView]:
         """Return the user-facing output views for this workflow.
 
-        Falls back to one view per pydantic field (with ``since_start`` role)
+        Falls back to one view per pydantic field (bound as ``since_start``)
         when the outputs class does not declare ``output_views``.
         """
         return _resolve_output_views(self.outputs)
@@ -680,7 +680,7 @@ def _resolve_output_views(outputs: type[BaseModel]) -> tuple[OutputView, ...]:
         OutputView(
             name=field_name,
             title=(field_info.title or field_name),
-            streams={'since_start': field_name},
+            fields={'since_start': field_name},
             description=field_info.description,
         )
         for field_name, field_info in outputs.model_fields.items()
@@ -694,7 +694,7 @@ def find_timeseries_outputs(
     Find all timeseries output views in the workflow registry.
 
     A timeseries output is a 0-D DataArray with a 'time' coordinate. The
-    backing field for each ``per_update`` (or ``since_start``) stream of an
+    backing field for each ``per_update`` (or ``since_start``) entry of an
     output view is inspected; views whose backing field templates match are
     reported by view name.
 
@@ -718,7 +718,7 @@ def find_timeseries_outputs(
 
         timeseries_views: list[str] = []
         for view in spec.get_output_views():
-            for field_name in view.streams.values():
+            for field_name in view.fields.values():
                 field_info = spec.outputs.model_fields.get(field_name)
                 if field_info is None or not field_info.default_factory:
                     continue

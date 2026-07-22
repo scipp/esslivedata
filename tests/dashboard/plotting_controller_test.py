@@ -501,7 +501,7 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='image',
                     title='Image',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields={'since_start': 'cumulative', 'per_update': 'current'},
                 ),
             )
 
@@ -538,7 +538,7 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='i_of_q',
                     title='I(Q)',
-                    streams={'since_start': 'i_of_q'},
+                    fields={'since_start': 'i_of_q'},
                 ),
             )
             i_of_q: sc.DataArray = pydantic.Field(
@@ -571,7 +571,7 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='total',
                     title='Total',
-                    streams={'per_update': 'counts_total'},
+                    fields={'per_update': 'counts_total'},
                 ),
             )
             counts_total: sc.DataArray = pydantic.Field(
@@ -633,7 +633,7 @@ class TestSinceStartAvailable:
                 OutputView(
                     name='total',
                     title='Total',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields={'since_start': 'cumulative', 'per_update': 'current'},
                 ),
             )
             cumulative: sc.DataArray = pydantic.Field(
@@ -654,7 +654,7 @@ class TestSinceStartAvailable:
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(
-                    name='total', title='Total', streams={'per_update': 'counts_total'}
+                    name='total', title='Total', fields={'per_update': 'counts_total'}
                 ),
             )
             counts_total: sc.DataArray = pydantic.Field(
@@ -728,7 +728,7 @@ class TestCreateExtractorsFromParams:
 
 
 class TestResolveFieldName:
-    """Verify ``resolve_field_name`` maps (view, role) to the backing field."""
+    """Verify ``resolve_field_name`` maps (view, windowing) to the backing field."""
 
     def _spec(self) -> WorkflowSpec:
         from typing import ClassVar
@@ -740,12 +740,12 @@ class TestResolveFieldName:
                 OutputView(
                     name='image',
                     title='Image',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields={'since_start': 'cumulative', 'per_update': 'current'},
                 ),
                 OutputView(
                     name='total_counts',
                     title='Total',
-                    streams={'per_update': 'counts_total'},
+                    fields={'per_update': 'counts_total'},
                 ),
             )
             cumulative: sc.DataArray = pydantic.Field()
@@ -763,26 +763,29 @@ class TestResolveFieldName:
             group=REDUCTION,
         )
 
-    def test_since_start_role_resolves_to_cumulative(self) -> None:
+    def test_since_start_windowing_resolves_to_cumulative(self) -> None:
         from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
 
         assert (
-            resolve_field_name(self._spec(), 'image', role='since_start')
+            resolve_field_name(self._spec(), 'image', windowing='since_start')
             == 'cumulative'
         )
 
-    def test_per_update_role_resolves_to_current(self) -> None:
+    def test_per_update_windowing_resolves_to_current(self) -> None:
         from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
 
-        assert resolve_field_name(self._spec(), 'image', role='per_update') == 'current'
+        assert (
+            resolve_field_name(self._spec(), 'image', windowing='per_update')
+            == 'current'
+        )
 
-    def test_falls_back_to_other_role_when_requested_missing(self) -> None:
+    def test_falls_back_to_other_windowing_when_requested_missing(self) -> None:
         """``total_counts`` only declares ``per_update``; asking for
         ``since_start`` falls back to it."""
         from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
 
         assert (
-            resolve_field_name(self._spec(), 'total_counts', role='since_start')
+            resolve_field_name(self._spec(), 'total_counts', windowing='since_start')
             == 'counts_total'
         )
 
@@ -806,4 +809,4 @@ class TestResolveFieldName:
         )
         # The auto-generated view maps `result` via since_start. Asking for
         # per_update on this view falls back to since_start.
-        assert resolve_field_name(spec, 'result', role='per_update') == 'result'
+        assert resolve_field_name(spec, 'result', windowing='per_update') == 'result'

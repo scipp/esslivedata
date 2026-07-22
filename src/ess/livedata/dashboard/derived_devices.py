@@ -16,7 +16,7 @@ workflow registry; nothing here reads mutable state.
 
 The contract keys outputs by pydantic *field name*, whereas the dashboard
 renders outputs as user-facing :class:`OutputView` s. A view maps to one or
-more backing fields via ``OutputView.streams``; an output view "is a device"
+more backing fields via ``OutputView.fields``; an output view "is a device"
 when any of its backing fields is in the contract.
 """
 
@@ -130,7 +130,7 @@ def view_device_names(
     """Device names a given output view maps to, across the given sources.
 
     A view "is a device" on a source when any of its backing fields (the
-    pydantic field names in ``view.streams``) is an in-contract output for that
+    pydantic field names in ``view.fields``) is an in-contract output for that
     ``(workflow, source)``. Used by the per-output marker: a non-empty result
     means the output chip carries a device.
 
@@ -154,7 +154,7 @@ def view_device_names(
     names = {
         name
         for source_name in source_names
-        for field_name in view.streams.values()
+        for field_name in view.fields.values()
         if (name := contract.device_name(workflow_id, source_name, field_name))
         is not None
     }

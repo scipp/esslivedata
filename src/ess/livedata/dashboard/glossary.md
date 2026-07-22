@@ -17,8 +17,8 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
 - **StreamManager** — factory registering a subscriber pipeline for a set of
   DataKeys; the result is informally called a *data stream*
   (`dashboard/stream_manager.py`).
-- **Orchestrator** (unqualified, dashboard) — the message pump
-  (`dashboard/orchestrator.py`): pulls from the transport's MessageSource,
+- **MessagePump** — the dashboard's Kafka-to-DataService message pump
+  (`dashboard/message_pump.py`): pulls from the transport's MessageSource,
   filters by active generation, writes into DataService, routes status and
   acknowledgements. Distinct from JobOrchestrator and PlotOrchestrator.
 

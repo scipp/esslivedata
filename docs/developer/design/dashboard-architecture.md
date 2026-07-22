@@ -58,7 +58,7 @@ graph TD
     end
 
     subgraph "Application Layer"
-        O["Orchestrator"]
+        O["MessagePump"]
         DS["DataService"]
         JO["JobOrchestrator"]
         AJR["ActiveJobRegistry"]
@@ -111,7 +111,7 @@ graph TD
 flowchart TD
     DS[DashboardServices]
     DS --> Transport
-    DS --> Orchestrator
+    DS --> MessagePump
     DS --> DataService
     DS --> JobOrchestrator
     DS --> PlotOrchestrator
@@ -130,7 +130,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant K as Kafka
-    participant O as Orchestrator
+    participant O as MessagePump
     participant AJR as ActiveJobRegistry
     participant DS as DataService
     participant Sub as Plot Subscribers
@@ -145,7 +145,7 @@ sequenceDiagram
     Sub->>UI: Update plot data (via Pipe)
 ```
 
-The `Orchestrator` (see `dashboard/orchestrator.py`) is the message pump. It consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. Status messages and command acknowledgements are routed to `JobOrchestrator`.
+The `MessagePump` (see `dashboard/message_pump.py`) consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. Status messages and command acknowledgements are routed to `JobOrchestrator`.
 
 `DataService` (see `dashboard/data_service.py`) is a dict-like store keyed by `DataKey` (the job-number-stripped form of `ResultKey`). Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.
 
@@ -202,7 +202,7 @@ Key responsibilities:
 flowchart LR
     subgraph "Background Thread"
         UL["Update Loop<br>(DashboardServices)"]
-        UL --> O["Orchestrator.update()"]
+        UL --> O["MessagePump.update()"]
         UL --> SC["SessionRegistry.cleanup_stale_sessions()"]
     end
 
@@ -219,7 +219,7 @@ flowchart LR
 
 Two threading contexts exist:
 
-1. **Background thread** (`orchestrator-update`): Runs `Orchestrator.update()` in a loop at ~5 Hz. Consumes Kafka messages and writes to `DataService`. Uses `ActiveJobRegistry.ingestion_guard()` to serialize against UI-thread job cleanup.
+1. **Background thread** (`orchestrator-update`): Runs `MessagePump.update()` in a loop at ~5 Hz. Consumes Kafka messages and writes to `DataService`. Uses `ActiveJobRegistry.ingestion_guard()` to serialize against UI-thread job cleanup.
 
 2. **Per-session Tornado callbacks**: Each browser session has a `SessionUpdater` that runs in the Tornado IOLoop at ~1 Hz. It batches all UI mutations inside `pn.io.hold()` + `doc.models.freeze()` to minimize Bokeh model recomputation.
 

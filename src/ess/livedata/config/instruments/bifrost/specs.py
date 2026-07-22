@@ -100,7 +100,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         OutputView(
             name='detector_region_counts',
             title='Detector Region Counts',
-            streams={
+            fields={
                 'since_start': 'detector_region_counts_cumulative',
                 'per_update': 'detector_region_counts',
             },

@@ -285,18 +285,18 @@ class _CouplingOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            streams={'since_start': 'histogram'},
+            fields={'since_start': 'histogram'},
             params=('coordinate_mode', 'toa_edges'),
         ),
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'total'},
+            fields={'since_start': 'total'},
         ),
         OutputView(
             name='total_in_range',
             title='Total in range',
-            streams={'since_start': 'total_in_range'},
+            fields={'since_start': 'total_in_range'},
             params=('coordinate_mode', 'toa_range'),
         ),
     )
@@ -323,7 +323,7 @@ class TestParamOutputCoupling:
     """Tests for OutputView.params and the WorkflowSpec coupling resolvers."""
 
     def test_output_view_params_default_empty(self) -> None:
-        view = OutputView(name='x', title='X', streams={'since_start': 'x'})
+        view = OutputView(name='x', title='X', fields={'since_start': 'x'})
         assert view.params == ()
 
     def test_get_output_param_titles_resolves_in_model_order(self) -> None:
@@ -909,7 +909,7 @@ class TestOutputViews:
         assert [v.name for v in views] == ['result', 'transmission']
         assert [v.title for v in views] == ['I(Q)', 'Transmission']
         # Default fallback maps the field via `since_start`.
-        assert views[0].streams == {'since_start': 'result'}
+        assert views[0].fields == {'since_start': 'result'}
 
     def test_declared_views_take_precedence(self) -> None:
         """When ``output_views`` is declared, it overrides the fallback."""
@@ -919,7 +919,7 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields={'since_start': 'cumulative', 'per_update': 'current'},
                 ),
             )
             cumulative: sc.DataArray = Field(title='cumulative-field')
@@ -963,7 +963,7 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields={'since_start': 'cumulative', 'per_update': 'current'},
                 ),
             )
             cumulative: sc.DataArray = Field(
@@ -996,8 +996,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='Same', streams={'since_start': 'field_a'}),
-                OutputView(name='b', title='Same', streams={'since_start': 'field_b'}),
+                OutputView(name='a', title='Same', fields={'since_start': 'field_a'}),
+                OutputView(name='b', title='Same', fields={'since_start': 'field_b'}),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()
@@ -1019,8 +1019,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='A', streams={'since_start': 'field_a'}),
-                OutputView(name='b', title='B', streams={'since_start': 'field_b'}),
+                OutputView(name='a', title='A', fields={'since_start': 'field_a'}),
+                OutputView(name='b', title='B', fields={'since_start': 'field_b'}),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()

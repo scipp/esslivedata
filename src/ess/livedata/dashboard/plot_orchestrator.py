@@ -28,7 +28,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     DataKey,
     JobNumber,
-    StreamRole,
+    Windowing,
     WorkflowId,
     WorkflowSpec,
 )
@@ -197,8 +197,8 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
-    """Map a window mode to the stream role its data is subscribed from."""
+def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
+    """Map a window mode to the windowing its data is subscribed from."""
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
@@ -206,19 +206,19 @@ def resolve_field_name(
     spec: WorkflowSpec,
     view_name: str,
     *,
-    role: StreamRole = 'since_start',
+    windowing: Windowing = 'since_start',
 ) -> str:
-    """Resolve a (view, role) pair to the backend pydantic field name.
+    """Resolve a (view, windowing) pair to the backend pydantic field name.
 
     Falls back to ``view_name`` as a raw field name when no matching view
     is declared (lets unannotated reduction outputs work unchanged).
     """
     view = spec.get_output_view(view_name)
-    return view.field_for(role) if view is not None else view_name
+    return view.field_for(windowing) if view is not None else view_name
 
 
-def _stream_role_for_data_role(role: str, params: pydantic.BaseModel) -> StreamRole:
-    """Return the stream role wanted by a data role.
+def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
+    """Return the windowing wanted by a data role.
 
     The primary role follows the user-selected window mode; correlation
     axes always want per-update data.
@@ -226,7 +226,7 @@ def _stream_role_for_data_role(role: str, params: pydantic.BaseModel) -> StreamR
     if role != PRIMARY:
         return 'per_update'
     window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
+    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
 
 
 def _build_resolved_data_sources(
@@ -244,7 +244,7 @@ def _build_resolved_data_sources(
         spec = registry.get(ds.workflow_id)
         output_name = (
             resolve_field_name(
-                spec, ds.view_name, role=_stream_role_for_data_role(role, config.params)
+                spec, ds.view_name, windowing=_windowing_for_role(role, config.params)
             )
             if spec is not None
             else ds.view_name
@@ -1047,7 +1047,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.streams.values():
+                if field_name in view.fields.values():
                     return view.title
             return field_name
 
