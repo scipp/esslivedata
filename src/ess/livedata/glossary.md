@@ -206,8 +206,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   callbacks (Panel/Bokeh event handlers, `SessionUpdater` custom/cleanup
   handlers, signal handlers) — don't reuse it for backend concepts.
 - **config** — spans `WorkflowConfig` (runtime start command), instrument
-  configuration (`Instrument`, YAML), dashboard `ConfigStore` (UI persistence),
-  and `CommandDispatcher` (backend command dispatch). Always qualify.
+  configuration (`Instrument`, YAML), and dashboard `ConfigStore` (UI
+  persistence). Always qualify.
 - **state / status** — `JobState` (wire enum) vs `JobPhase` (internal lifecycle)
   vs `ServiceState` (worker lifecycle); `JobStatus`/`ServiceStatus` are the
   heartbeat payloads carrying them.
