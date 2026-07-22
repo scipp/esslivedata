@@ -6,6 +6,17 @@ A :class:`Stream` describes one streaming group in a NeXus file (or a
 synthesised in-process stream) at the wire level — what it is, not what an
 instrument chooses to call it. The instrument-facing name is the key into
 :attr:`Instrument.streams`, supplied per-instrument in ``specs.py``.
+
+That name is the routing handle for every consumer except the Kafka
+boundary: workflow wiring, context-binding resolution, and the timeseries UI
+all index into ``streams`` by name. ``topic`` and ``source`` are read only
+where a message actually arrives from Kafka (e.g. building a
+``StreamLUT``); elsewhere the wire identity is irrelevant.
+
+Validation happens at construction — :meth:`Stream.__post_init__` and
+:func:`name_streams` raise immediately on a malformed record or a naming
+collision — so a misconfigured registry fails when the instrument module is
+imported, not later.
 """
 
 from __future__ import annotations
@@ -24,6 +35,12 @@ class Stream:
     that *do* arrive over Kafka, ``topic`` and ``source`` must be set;
     ``nexus_path`` may still be None for hand-coded entries that have not been
     cross-referenced with a NeXus geometry file.
+
+    Display strings (title, description) are not part of this record: they
+    live in ``Instrument.source_metadata``, keyed by the same name. ``Stream``
+    is wire/NeXus plumbing with a different audience and lifecycle than
+    human-readable labels; merging the two would pull display strings into
+    every record-equality check, override path, and parser fixture.
     """
 
     writer_module: str
@@ -118,6 +135,13 @@ class ContextBinding:
     for context that is a property of one workflow). Both feed the gate and
     ``set_context``; the wire name is always the declared :attr:`stream_name`
     and there is no cold-start seed.
+
+    Bindings live in their own list rather than as a field on :class:`Stream`
+    because :attr:`dependent_sources` and :attr:`workflow_key` are properties
+    of *how a stream is used*, not of the stream itself: one stream can feed
+    several bindings with different scoping (e.g. two Sciline workflows
+    triggered by different sources). A field on the record would force one
+    global answer.
     """
 
     stream_name: str
