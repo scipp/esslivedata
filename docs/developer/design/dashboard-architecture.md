@@ -70,7 +70,7 @@ graph TD
 
     subgraph "Presentation Layer"
         PGT["PlotGridTabs"]
-        WSW["WorkflowStatusWidget"]
+        WSW["WorkflowStatusListWidget"]
         CW["ConfigurationWidget"]
         Plots["Plots<br>(HoloViews)"]
     end
