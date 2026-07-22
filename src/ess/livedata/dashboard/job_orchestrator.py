@@ -505,6 +505,14 @@ class JobOrchestrator:
             message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
         )
 
+        # Drop the superseded generation's tracked states. The old jobs have
+        # been stopped above; their final heartbeats are no longer in the
+        # current set, so on_job_status_updated would ignore them and never
+        # clean these up (the same cleanup _deactivate_workflow performs).
+        if state.current is not None:
+            for job_id in state.current.job_ids():
+                self._job_states.pop(job_id, None)
+
         state.commit(job_set)
 
         # Flip the generation, clear the workflow's buffers, and notify
