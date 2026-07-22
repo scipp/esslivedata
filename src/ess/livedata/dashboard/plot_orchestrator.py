@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import threading
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -44,7 +44,6 @@ from .plotting_controller import PlottingController
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
 
-SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
 CellId = NewType('CellId', UUID)
 
@@ -183,51 +182,6 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
-GridRemovedCallback = Callable[[GridId], None]
-GridUpdatedCallback = Callable[[GridId, PlotGridConfig], None]
-CellRemovedCallback = Callable[[GridId, CellGeometry], None]
-
-
-class CellUpdatedCallback(Protocol):
-    """Callback for cell configuration changes.
-
-    Called when a cell's configuration changes (layer added/removed/updated).
-    Subscribers should query PlotDataService for layer state (error, stopped, data).
-    """
-
-    def __call__(
-        self,
-        *,
-        grid_id: GridId,
-        cell_id: CellId,
-        cell: PlotCell,
-    ) -> None:
-        """
-        Handle cell configuration update.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell being updated.
-        cell
-            Plot cell configuration with all layers.
-        """
-
-
-@dataclass
-class LifecycleSubscription:
-    """Subscription to plot grid lifecycle events."""
-
-    on_grid_created: GridCreatedCallback | None = None
-    on_grid_removed: GridRemovedCallback | None = None
-    on_grid_updated: GridUpdatedCallback | None = None
-    on_cell_updated: CellUpdatedCallback | None = None
-    on_cell_removed: CellRemovedCallback | None = None
-
-
 def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
     """Map a window mode to the stream role its data is subscribed from."""
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
@@ -343,7 +297,34 @@ class _LayerJobTracker:
 
 
 class PlotOrchestrator:
-    """Manages plot grid configurations and plot lifecycle."""
+    """Manages plot grid configurations and plot lifecycle.
+
+    Threading
+    ---------
+    The topology mappings (``_grids``, ``_cell_to_grid``, ``_layer_to_cell``)
+    are shared across all browser sessions. They are mutated only on the single
+    Tornado/Bokeh IOLoop thread (all UI callbacks and per-session polls run
+    there): the IOLoop thread is the sole topology *writer*. The only other
+    thread touching topology is the ``orchestrator-update`` thread, which
+    *reads* it during ingestion (``_grid_of_layer``, ``_pull_and_build``,
+    ``get_layer_config`` via ``_reset_layer_presentation``).
+
+    ``_topology_lock`` (an ``RLock``) makes those cross-thread reads see a
+    consistent multi-dict snapshot. Writers hold it only around the dict
+    mutations themselves -- never across file I/O (``_persist_to_store``),
+    pipeline setup, ``plotter.compute``, or ``DataService`` unregistration --
+    so ingestion latency never couples to those. Deletes are leaf-first
+    (``_layer_to_cell`` before ``_cell_to_grid`` before ``_grids``) and inserts
+    root-first, so a reader that races a mutation fails at the first hop with a
+    ``KeyError`` that all read paths tolerate. Lock order is
+    ``_topology_lock`` before ``_dirty_lock``, never the reverse.
+
+    Widgets do not receive pushed lifecycle notifications. Each mutator bumps
+    ``_topology_version``; each session's poll compares it against its last
+    seen value and reconciles on its own IOLoop tick and document lock (ADR
+    0007). ``topology_version()`` needs no lock: the bump and every poll read
+    happen on the same IOLoop thread, and an int read is atomic regardless.
+    """
 
     def __init__(
         self,
@@ -399,7 +380,12 @@ class PlotOrchestrator:
         self._cell_to_grid: dict[CellId, GridId] = {}
         self._layer_jobs: dict[LayerId, _LayerJobTracker] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
-        self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
+        # Bumped by every topology mutator on the IOLoop thread; polled by each
+        # session's widgets to detect grid/cell changes (see class docstring).
+        self._topology_version: int = 0
+        # Guards cross-thread multi-dict reads of the topology mappings; see the
+        # class "Threading" docstring for the discipline and lock order.
+        self._topology_lock = threading.RLock()
         self._data_subscriptions: dict[LayerId, Any] = {}  # DataSubscriber
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
         # Layers whose DataService keys changed since the last flush, bucketed
@@ -423,6 +409,20 @@ class PlotOrchestrator:
         if grid_id is None:
             return 0
         return self._frame_clock.generation(grid_id)
+
+    def topology_version(self) -> int:
+        """Monotonic counter bumped on every grid/cell/layer topology change.
+
+        Sessions poll this to detect creation, removal, reorder, rename,
+        enable/disable, and cell/layer composition changes, then reconcile
+        their widgets. It does *not* advance for pure data flow (frame
+        flushes). See the class "Threading" docstring.
+        """
+        return self._topology_version
+
+    def _bump_topology_version(self) -> None:
+        """Advance the topology version. IOLoop-thread only."""
+        self._topology_version += 1
 
     @property
     def instrument(self) -> str:
@@ -474,12 +474,13 @@ class PlotOrchestrator:
         """
         grid_id = GridId(uuid4())
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
-        self._grids[grid_id] = grid
+        with self._topology_lock:
+            self._grids[grid_id] = grid
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info(
             'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
         )
-        self._notify_grid_created(grid_id)
         return grid_id
 
     def remove_grid(self, grid_id: GridId) -> None:
@@ -499,10 +500,11 @@ class PlotOrchestrator:
             for cell_id, cell in list(grid.cells.items()):
                 self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
-            del self._grids[grid_id]
+            with self._topology_lock:
+                del self._grids[grid_id]
+            self._bump_topology_version()
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
-            self._notify_grid_removed(grid_id)
 
     def rename_grid(self, grid_id: GridId, new_title: str) -> None:
         """
@@ -515,11 +517,13 @@ class PlotOrchestrator:
         new_title
             New display title for the grid.
         """
+        if grid_id not in self._grids:
+            return
         grid = self._grids[grid_id]
         grid.title = new_title
         self._persist_to_store()
         self._logger.info('Renamed grid %s to %s', grid_id, new_title)
-        self._notify_grid_updated(grid_id)
+        self._bump_topology_version()
 
     def move_grid(self, grid_id: GridId, delta: int) -> None:
         """
@@ -535,6 +539,8 @@ class PlotOrchestrator:
         delta
             Number of positions to move (negative=up, positive=down).
         """
+        if grid_id not in self._grids:
+            return
         keys = list(self._grids.keys())
         current_index = keys.index(grid_id)
         new_index = current_index + delta
@@ -543,10 +549,11 @@ class PlotOrchestrator:
 
         # Rebuild dict in new order
         keys.insert(new_index, keys.pop(current_index))
-        self._grids = {k: self._grids[k] for k in keys}
+        with self._topology_lock:
+            self._grids = {k: self._grids[k] for k in keys}
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info('Moved grid %s by %d positions', grid_id, delta)
-        self._notify_grid_updated(grid_id)
 
     def set_grid_enabled(self, grid_id: GridId, *, enabled: bool) -> None:
         """
@@ -562,11 +569,13 @@ class PlotOrchestrator:
         enabled
             Whether the grid should be visible.
         """
+        if grid_id not in self._grids:
+            return
         grid = self._grids[grid_id]
         grid.enabled = enabled
         self._persist_to_store()
         self._logger.info('Set grid %s enabled=%s', grid_id, enabled)
-        self._notify_grid_updated(grid_id)
+        self._bump_topology_version()
 
     def replace_grid(
         self, grid_id: GridId, title: str, nrows: int, ncols: int
@@ -574,10 +583,10 @@ class PlotOrchestrator:
         """
         Replace a grid with a new empty grid at the same position.
 
-        Tears down all cells/layers of the old grid, fires ``on_grid_removed``,
-        then creates a new grid at the same position with the given dimensions
-        and fires ``on_grid_created``. The new grid inherits the old grid's
-        ``enabled`` state.
+        Tears down all cells/layers of the old grid, then creates a new grid at
+        the same position with the given dimensions. The new grid inherits the
+        old grid's ``enabled`` state. Bumps the topology version once; sessions
+        reconcile the position change on their next poll.
 
         Parameters
         ----------
@@ -611,19 +620,19 @@ class PlotOrchestrator:
         for cell_id, cell in list(old_grid.cells.items()):
             self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
-        del self._grids[grid_id]
-        self._notify_grid_removed(grid_id)
-
         # Create new grid and insert at the same position
         new_grid_id = GridId(uuid4())
         new_grid = PlotGridConfig(
             title=title, nrows=nrows, ncols=ncols, enabled=enabled
         )
 
-        # Rebuild dict with new grid at the original position
-        items = list(self._grids.items())
-        items.insert(position, (new_grid_id, new_grid))
-        self._grids = dict(items)
+        with self._topology_lock:
+            del self._grids[grid_id]
+            # Rebuild dict with new grid at the original position
+            items = list(self._grids.items())
+            items.insert(position, (new_grid_id, new_grid))
+            self._grids = dict(items)
+        self._bump_topology_version()
 
         self._persist_to_store()
         self._logger.info(
@@ -633,7 +642,6 @@ class PlotOrchestrator:
             title,
             position,
         )
-        self._notify_grid_created(new_grid_id)
         return new_grid_id
 
     def add_cell(
@@ -660,12 +668,21 @@ class PlotOrchestrator:
         -------
         :
             ID of the added cell.
+
+        Raises
+        ------
+        KeyError
+            If the grid does not exist (e.g. removed by another session).
         """
+        if grid_id not in self._grids:
+            raise KeyError(f'Grid {grid_id} no longer exists')
         cell_id = CellId(uuid4())
         cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
         grid = self._grids[grid_id]
-        grid.cells[cell_id] = cell
-        self._cell_to_grid[cell_id] = grid_id
+        with self._topology_lock:
+            grid.cells[cell_id] = cell
+            self._cell_to_grid[cell_id] = grid_id
+        self._bump_topology_version()
         return cell_id
 
     def remove_cell(self, cell_id: CellId) -> None:
@@ -677,6 +694,8 @@ class PlotOrchestrator:
         cell_id
             ID of the cell to remove.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
@@ -684,7 +703,7 @@ class PlotOrchestrator:
         self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
         self._persist_to_store()
-        self._notify_cell_removed(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def set_cell_title(self, cell_id: CellId, title: str | None) -> None:
         """
@@ -698,12 +717,14 @@ class PlotOrchestrator:
             New user-defined title, or ``None``/empty to clear it and fall back
             to the derived title.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
         cell.user_title = title or None
         self._persist_to_store()
         self._logger.info('Set cell %s title to %r', cell_id, cell.user_title)
-        self._notify_cell_updated(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
         """
@@ -719,12 +740,13 @@ class PlotOrchestrator:
         :
             The layer's plot configuration.
         """
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
-        cell = self._grids[grid_id].cells[cell_id]
-        for layer in cell.layers:
-            if layer.layer_id == layer_id:
-                return layer.config
+        with self._topology_lock:
+            cell_id = self._layer_to_cell[layer_id]
+            grid_id = self._cell_to_grid[cell_id]
+            cell = self._grids[grid_id].cells[cell_id]
+            for layer in cell.layers:
+                if layer.layer_id == layer_id:
+                    return layer.config
         raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
     def get_cell(self, cell_id: CellId) -> PlotCell:
@@ -762,10 +784,14 @@ class PlotOrchestrator:
 
         Raises
         ------
+        KeyError
+            If the cell does not exist (e.g. removed by another session).
         ValueError
             If the resulting cell would combine a non-overlayable layer (a table
             or a layout-mode plot) with any other layer.
         """
+        if cell_id not in self._cell_to_grid:
+            raise KeyError(f'Cell {cell_id} no longer exists')
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
@@ -775,10 +801,10 @@ class PlotOrchestrator:
 
         layer_id = LayerId(uuid4())
         layer = Layer(layer_id=layer_id, config=config)
-        cell.layers.append(layer)
-
-        self._layer_to_cell[layer_id] = cell_id
-        self._setup_layer(grid_id, cell_id, layer)
+        with self._topology_lock:
+            cell.layers.append(layer)
+            self._layer_to_cell[layer_id] = cell_id
+        self._setup_layer(layer)
         self._refresh_resolvers_for_cell(cell_id)
 
         return layer_id
@@ -794,12 +820,15 @@ class PlotOrchestrator:
         layer_id
             ID of the layer to remove.
         """
+        if layer_id not in self._layer_to_cell:
+            return
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
         # Find and remove the layer
-        cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
+        with self._topology_lock:
+            cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
 
         # Unsubscribe and clean up layer state
         self._cleanup_layer(layer_id)
@@ -811,9 +840,7 @@ class PlotOrchestrator:
 
         self._refresh_resolvers_for_cell(cell_id)
         self._persist_to_store()
-
-        # Notify with updated cell config
-        self._notify_cell_updated(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def update_layer_config(self, layer_id: LayerId, new_config: PlotConfig) -> None:
         """
@@ -830,7 +857,14 @@ class PlotOrchestrator:
             ID of the layer to update.
         new_config
             New plot configuration.
+
+        Raises
+        ------
+        KeyError
+            If the layer does not exist (e.g. removed by another session).
         """
+        if layer_id not in self._layer_to_cell:
+            raise KeyError(f'Layer {layer_id} no longer exists')
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
@@ -860,13 +894,12 @@ class PlotOrchestrator:
 
         # Create new layer with new identity
         new_layer = Layer(layer_id=new_layer_id, config=new_config)
-        cell.layers[layer_index] = new_layer
-
-        # Set up mapping for new layer
-        self._layer_to_cell[new_layer_id] = cell_id
+        with self._topology_lock:
+            cell.layers[layer_index] = new_layer
+            self._layer_to_cell[new_layer_id] = cell_id
 
         # Subscribe new layer to workflow
-        self._setup_layer(grid_id, cell_id, new_layer)
+        self._setup_layer(new_layer)
         self._refresh_resolvers_for_cell(cell_id)
 
     def _remove_cell_and_cleanup(
@@ -890,8 +923,9 @@ class PlotOrchestrator:
 
         # Remove cell from grid and mapping
         grid = self._grids[grid_id]
-        del grid.cells[cell_id]
-        del self._cell_to_grid[cell_id]
+        with self._topology_lock:
+            del grid.cells[cell_id]
+            del self._cell_to_grid[cell_id]
 
     def _cleanup_layer(
         self, layer_id: LayerId, *, remove_from_cell_mapping: bool = True
@@ -921,7 +955,8 @@ class PlotOrchestrator:
         self._plot_data_service.remove(layer_id)
         self._layer_resolvers.pop(layer_id, None)
         if remove_from_cell_mapping:
-            self._layer_to_cell.pop(layer_id, None)
+            with self._topology_lock:
+                self._layer_to_cell.pop(layer_id, None)
 
     def _check_overlayable_composition(self, configs: list[PlotConfig]) -> None:
         """Reject a multi-layer cell that contains a non-overlayable layer.
@@ -1044,7 +1079,8 @@ class PlotOrchestrator:
             self._dirty_layers.setdefault(grid_id, set()).add(layer_id)
 
     def _grid_of_layer(self, layer_id: LayerId) -> GridId:
-        return self._cell_to_grid[self._layer_to_cell[layer_id]]
+        with self._topology_lock:
+            return self._cell_to_grid[self._layer_to_cell[layer_id]]
 
     def flush_frames(self) -> None:
         """Rebuild each grid's dirty viewed layers, committing per grid.
@@ -1107,9 +1143,10 @@ class PlotOrchestrator:
         transitions the layer to ERROR and thus still warrants a frame
         commit), False if the layer is gone or its data is not ready.
         """
-        if layer_id not in self._layer_to_cell:
-            return False
-        subscriber = self._data_subscriptions.get(layer_id)
+        with self._topology_lock:
+            if layer_id not in self._layer_to_cell:
+                return False
+            subscriber = self._data_subscriptions.get(layer_id)
         if subscriber is None:
             return False
         state = self._plot_data_service.get(layer_id)
@@ -1175,7 +1212,7 @@ class PlotOrchestrator:
         state = self._plot_data_service.get(layer_id)
         return None if state is None else state.version
 
-    def _setup_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
+    def _setup_layer(self, layer: Layer) -> None:
         """
         Create a layer's plotter and data pipeline.
 
@@ -1194,10 +1231,6 @@ class PlotOrchestrator:
 
         Parameters
         ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell containing the layer.
         layer
             The layer to set up.
         """
@@ -1214,8 +1247,7 @@ class PlotOrchestrator:
                 # Empty input: a static overlay computes from its params alone.
                 self._compute_layer(layer_id, plotter, state.version, {})
                 self._frame_clock.commit(self._grid_of_layer(layer_id))
-            cell = self._grids[grid_id].cells[cell_id]
-            self._notify_cell_updated(grid_id, cell_id, cell)
+            self._bump_topology_version()
             self._persist_to_store()
             return
 
@@ -1255,9 +1287,9 @@ class PlotOrchestrator:
                 if any(n is None for n in self._layer_jobs[layer_id].job_numbers):
                     self._plot_data_service.job_stopped(layer_id)
 
-        # Always notify current config - sessions will poll PlotDataService for state
-        cell = self._grids[grid_id].cells[cell_id]
-        self._notify_cell_updated(grid_id, cell_id, cell)
+        # Sessions poll PlotDataService for state; the version bump makes them
+        # reconcile the new cell/layer composition.
+        self._bump_topology_version()
         self._persist_to_store()
 
     def _current_job_numbers(
@@ -1692,142 +1724,6 @@ class PlotOrchestrator:
             Safe to modify without affecting internal state.
         """
         return copy.deepcopy(self._grids)
-
-    def subscribe_to_lifecycle(
-        self,
-        *,
-        on_grid_created: GridCreatedCallback | None = None,
-        on_grid_removed: GridRemovedCallback | None = None,
-        on_grid_updated: GridUpdatedCallback | None = None,
-        on_cell_updated: CellUpdatedCallback | None = None,
-        on_cell_removed: CellRemovedCallback | None = None,
-    ) -> SubscriptionId:
-        """
-        Subscribe to plot grid lifecycle events.
-
-        Subscribers will be notified when grids or cells are created, updated,
-        or removed. At least one callback must be provided.
-
-        Callbacks are fired in the order grids are created. Late subscribers
-        (subscribing after grids already exist) should call `get_all_grids()`
-        to get existing grids in their creation order before relying on callbacks
-        for new grids.
-
-        Parameters
-        ----------
-        on_grid_created
-            Called when a new grid is created with (grid_id, grid_config).
-        on_grid_removed
-            Called when a grid is removed.
-        on_grid_updated
-            Called when a grid is renamed, reordered, or enabled/disabled.
-        on_cell_updated
-            Called when a cell is added or updated.
-        on_cell_removed
-            Called when a cell is removed.
-
-        Returns
-        -------
-        :
-            Subscription ID that can be used to unsubscribe.
-        """
-        subscription_id = SubscriptionId(uuid4())
-        self._lifecycle_subscribers[subscription_id] = LifecycleSubscription(
-            on_grid_created=on_grid_created,
-            on_grid_removed=on_grid_removed,
-            on_grid_updated=on_grid_updated,
-            on_cell_updated=on_cell_updated,
-            on_cell_removed=on_cell_removed,
-        )
-        return subscription_id
-
-    def unsubscribe_from_lifecycle(self, subscription_id: SubscriptionId) -> None:
-        """
-        Unsubscribe from plot grid lifecycle events.
-
-        Parameters
-        ----------
-        subscription_id
-            The subscription ID returned from subscribe_to_lifecycle.
-        """
-        if subscription_id in self._lifecycle_subscribers:
-            del self._lifecycle_subscribers[subscription_id]
-
-    def _notify_grid_created(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was created."""
-        grid = self._grids[grid_id]
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_created:
-                try:
-                    subscription.on_grid_created(grid_id, grid)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid created callback for grid %s', grid_id
-                    )
-
-    def _notify_grid_removed(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was removed."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_removed:
-                try:
-                    subscription.on_grid_removed(grid_id)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid removed callback for grid %s', grid_id
-                    )
-
-    def _notify_grid_updated(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was renamed, reordered, or toggled."""
-        grid = self._grids[grid_id]
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_updated:
-                try:
-                    subscription.on_grid_updated(grid_id, grid)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid updated callback for grid %s', grid_id
-                    )
-
-    def _notify_cell_updated(
-        self,
-        grid_id: GridId,
-        cell_id: CellId,
-        cell: PlotCell,
-    ) -> None:
-        """Notify subscribers that a cell config was added or updated."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_cell_updated:
-                try:
-                    subscription.on_cell_updated(
-                        grid_id=grid_id,
-                        cell_id=cell_id,
-                        cell=cell,
-                    )
-                except Exception:
-                    self._logger.exception(
-                        'Error in cell updated callback for grid %s cell %s at (%d,%d)',
-                        grid_id,
-                        cell_id,
-                        cell.geometry.row,
-                        cell.geometry.col,
-                    )
-
-    def _notify_cell_removed(
-        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
-    ) -> None:
-        """Notify subscribers that a cell was removed."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_cell_removed:
-                try:
-                    subscription.on_cell_removed(grid_id, cell.geometry)
-                except Exception:
-                    self._logger.exception(
-                        'Error in cell removed callback for grid %s cell %s at (%d,%d)',
-                        grid_id,
-                        cell_id,
-                        cell.geometry.row,
-                        cell.geometry.col,
-                    )
 
     def shutdown(self) -> None:
         """

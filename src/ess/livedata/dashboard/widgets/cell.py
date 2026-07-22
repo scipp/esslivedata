@@ -30,6 +30,7 @@ from ..format_utils import extract_error_summary
 from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
+    CellGeometry,
     CellId,
     LayerId,
     PlotCell,
@@ -239,6 +240,11 @@ class CellWidget:
     def view(self) -> pn.Column:
         """The Panel widget for this cell."""
         return self._view
+
+    @property
+    def geometry(self) -> CellGeometry:
+        """Grid geometry (position and span) of this cell."""
+        return self._cell.geometry
 
     @property
     def has_plot(self) -> bool:

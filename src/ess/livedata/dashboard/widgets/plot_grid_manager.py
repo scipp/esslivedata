@@ -23,7 +23,6 @@ from ..plot_orchestrator import (
     PlotCell,
     PlotGridConfig,
     PlotOrchestrator,
-    SubscriptionId,
 )
 from .buttons import ButtonStyles, create_download_button, create_tool_button
 from .plot_widgets import get_workflow_display_info
@@ -254,8 +253,9 @@ class PlotGridManager:
     Widget for managing plot grid configurations.
 
     Provides a form to add new grids and a list of existing grids with
-    remove buttons. Automatically updates when grids are added or removed
-    through the orchestrator.
+    remove buttons. The grid list is refreshed by the owning ``PlotGridTabs``
+    via :meth:`on_topology_changed` when the orchestrator's topology version
+    changes; the manager has no periodic callback of its own.
 
     Parameters
     ----------
@@ -265,15 +265,22 @@ class PlotGridManager:
     workflow_registry
         Registry of available workflows and their specifications. Used to
         look up workflow titles for display in the grid preview.
+    on_local_grid_created
+        Optional callback invoked with the new grid's id on the three local
+        creation paths (add, save changes, save as copy). Lets the owning
+        session focus the new grid's tab without a shared focus signal.
     """
 
     def __init__(
         self,
         orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        *,
+        on_local_grid_created: Callable[[GridId], None] | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._workflow_registry = workflow_registry
+        self._on_local_grid_created = on_local_grid_created
         templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
         self._selected_template: GridSpec | None = None
@@ -368,15 +375,6 @@ class PlotGridManager:
         # tab addition better when all tabs have the same sizing mode.
         self._grid_list = pn.Column(
             sizing_mode='stretch_both', margin=(0, _HORIZONTAL_MARGIN)
-        )
-
-        # Subscribe to orchestrator updates
-        self._subscription_id: SubscriptionId | None = (
-            self._orchestrator.subscribe_to_lifecycle(
-                on_grid_created=self._on_grid_created,
-                on_grid_removed=self._on_grid_removed,
-                on_grid_updated=self._on_grid_updated,
-            )
         )
 
         # Source indicator shows what the preview is displaying
@@ -720,6 +718,8 @@ class PlotGridManager:
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
+        self._notify_local_grid_created(grid_id)
+
         # Reset to Template mode with no template selected
         with pn.io.hold():
             self._mode_selector.value = _MODE_TEMPLATE
@@ -735,18 +735,20 @@ class PlotGridManager:
             self._reset_to_defaults()
             self._update_preview()
 
-    def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Handle grid creation from orchestrator."""
-        self._update_grid_list()
+    def on_topology_changed(self) -> None:
+        """Refresh the grid list after a topology change.
 
-    def _on_grid_removed(self, grid_id: GridId) -> None:
-        """Handle grid removal from orchestrator."""
-        if self._editing_grid_id == grid_id:
+        Called by the owning ``PlotGridTabs`` on its poll when the
+        orchestrator's topology version changed. If the grid being edited was
+        removed by another session, exit edit mode first (its form state is
+        stale). Form/edit state is otherwise preserved: only the grid rows are
+        rebuilt.
+        """
+        if (
+            self._editing_grid_id is not None
+            and self._orchestrator.peek_grid(self._editing_grid_id) is None
+        ):
             self._exit_edit_mode()
-        self._update_grid_list()
-
-    def _on_grid_updated(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Handle grid update (rename, reorder, enable/disable) from orchestrator."""
         self._update_grid_list()
 
     def _update_grid_list(self) -> None:
@@ -958,6 +960,8 @@ class PlotGridManager:
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
+        self._notify_local_grid_created(new_grid_id)
+
     def _on_save_as_copy(self, event) -> None:
         """Handle Save as Copy button click in edit mode."""
         cells_to_add = self._editing_cells or ()
@@ -975,11 +979,12 @@ class PlotGridManager:
             for layer in cell.layers:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
-    def shutdown(self) -> None:
-        """Unsubscribe from lifecycle events."""
-        if self._subscription_id is not None:
-            self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
-            self._subscription_id = None
+        self._notify_local_grid_created(grid_id)
+
+    def _notify_local_grid_created(self, grid_id: GridId) -> None:
+        """Report a locally-initiated grid creation to the owning tabs widget."""
+        if self._on_local_grid_created is not None:
+            self._on_local_grid_created(grid_id)
 
     @property
     def panel(self) -> pn.Column:
