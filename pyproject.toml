@@ -34,7 +34,7 @@ dependencies = [
   "confluent_kafka",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.6.1",
+  "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
