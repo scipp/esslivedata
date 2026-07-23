@@ -14,11 +14,12 @@ T = TypeVar('T')
 
 
 def _variable_nbytes(var: sc.Variable) -> int:
-    """Return the byte size of a variable's values, plus variances if present."""
-    nbytes = var.values.nbytes
-    if var.variances is not None:
-        nbytes += var.variances.nbytes
-    return nbytes
+    """Return the byte size of a variable's values, plus variances if present.
+
+    Variances always match the values array's shape and dtype, so their size
+    is derived rather than read via a second scipp property access.
+    """
+    return var.values.nbytes * (2 if var.variances is not None else 1)
 
 
 class BufferProtocol(ABC, Generic[T]):
