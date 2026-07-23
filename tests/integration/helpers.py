@@ -10,7 +10,7 @@ from typing import Any
 
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.config.workflow_spec import JobId, ResultKey
+from ess.livedata.config.workflow_spec import DataKey, JobId, WorkflowId
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,20 @@ def wait_for_condition(
         time.sleep(poll_interval)
 
 
-def _get_result_keys_for_job_id(data_service: Any, job_id: JobId) -> list[ResultKey]:
-    """Get all ResultKeys in DataService that match the given JobId."""
-    return [key for key in data_service if key.job_id == job_id]
+def _get_data_keys_for_source(
+    data_service: Any, workflow_id: WorkflowId, source_name: str
+) -> list[DataKey]:
+    """Get all DataKeys in DataService for one workflow source.
+
+    The data plane is keyed by the stable ``DataKey`` (workflow, source,
+    output); the per-commit job_number is provenance, not identity, so jobs
+    are matched via their source_name.
+    """
+    return [
+        key
+        for key in data_service
+        if key.workflow_id == workflow_id and key.source_name == source_name
+    ]
 
 
 # Job-specific helpers
@@ -93,12 +104,13 @@ def _get_result_keys_for_job_id(data_service: Any, job_id: JobId) -> list[Result
 
 def wait_for_job_data(
     backend: Any,
+    workflow_id: WorkflowId,
     job_ids: list[JobId],
     timeout: float = 10.0,
     poll_interval: float = 0.5,
-) -> dict[JobId, dict[ResultKey, Any]]:
+) -> dict[JobId, dict[DataKey, Any]]:
     """
-    Wait for job data to arrive for specific jobs.
+    Wait for data to arrive for every source of the given jobs.
 
     This helper processes messages via backend.update() and waits until all
     specified jobs have received data, then returns the data.
@@ -107,6 +119,8 @@ def wait_for_job_data(
     ----------
     backend:
         The DashboardBackend instance (must have .update() and .data_service)
+    workflow_id:
+        Workflow the jobs belong to
     job_ids:
         List of JobIds to wait for
     timeout:
@@ -117,7 +131,7 @@ def wait_for_job_data(
     Returns
     -------
     :
-        Dictionary mapping JobId to {ResultKey: data} for each job
+        Dictionary mapping JobId to {DataKey: data} for each job
 
     Raises
     ------
@@ -127,11 +141,12 @@ def wait_for_job_data(
 
     def check_for_job_data():
         backend.update()
-        for job_id in job_ids:
-            keys = _get_result_keys_for_job_id(backend.data_service, job_id)
-            if not keys:
-                return False
-        return True
+        return all(
+            _get_data_keys_for_source(
+                backend.data_service, workflow_id, job_id.source_name
+            )
+            for job_id in job_ids
+        )
 
     try:
         wait_for_condition(
@@ -143,7 +158,9 @@ def wait_for_job_data(
 
     result = {}
     for job_id in job_ids:
-        keys = _get_result_keys_for_job_id(backend.data_service, job_id)
+        keys = _get_data_keys_for_source(
+            backend.data_service, workflow_id, job_id.source_name
+        )
         result[job_id] = {key: backend.data_service[key] for key in keys}
     return result
 

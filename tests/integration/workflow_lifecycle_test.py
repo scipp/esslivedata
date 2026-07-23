@@ -48,7 +48,7 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     assert job_id.source_name == 'monitor1'
 
     # Wait for job data to arrive for the specific jobs we created
-    all_job_data = wait_for_job_data(backend, job_ids, timeout=30.0)
+    all_job_data = wait_for_job_data(backend, workflow_id, job_ids, timeout=30.0)
 
     # Verify that we received data with expected outputs
     job_data = all_job_data[job_id]

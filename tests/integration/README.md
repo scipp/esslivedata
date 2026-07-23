@@ -50,7 +50,7 @@ def test_my_workflow(integration_env):
 
     # Use helper to wait for data for the specific jobs we created
     # Returns dict[JobId, dict[ResultKey, data]]
-    job_data = wait_for_job_data(backend, job_ids, timeout=10.0)
+    job_data = wait_for_job_data(backend, workflow_id, job_ids, timeout=10.0)
 
     # Make assertions about the jobs we created
     assert job_ids[0] in job_data
