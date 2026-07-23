@@ -62,14 +62,21 @@ def test_recommit_clears_accumulated_data(integration_env: IntegrationEnv) -> No
     )
     assert new_job_ids[0].job_number != job_ids[0].job_number
 
-    # The commit cleared the workflow's DataService keys and old-generation
-    # data fails the ingest filter, so the next observed cumulative output is
-    # the new generation's fresh accumulation.
-    wait_for_backend_condition(
-        backend, lambda: cumulative_total() is not None, timeout=30.0
-    )
-    post_commit_total = cumulative_total()
-    assert post_commit_total is not None
+    # The commit cleared the workflow's buffers and old-generation data fails
+    # the ingest filter, so the next readable cumulative output is the new
+    # generation's fresh accumulation. Capture it inside the condition: the
+    # total keeps growing, so a later re-read could mask the drop.
+    observed: list[float] = []
+
+    def fresh_total_observed() -> bool:
+        total = cumulative_total()
+        if total is None:
+            return False
+        observed.append(total)
+        return True
+
+    wait_for_backend_condition(backend, fresh_total_observed, timeout=30.0)
+    post_commit_total = observed[0]
     assert post_commit_total < pre_commit_total, (
         f"Cumulative total {post_commit_total} did not drop below the "
         f"pre-commit value {pre_commit_total}"

@@ -104,20 +104,27 @@ def wait_for_condition(
         time.sleep(poll_interval)
 
 
-def _get_data_keys_for_source(
+def _get_job_data(
     data_service: Any, workflow_id: WorkflowId, source_name: str
-) -> list[DataKey]:
-    """Get all DataKeys in DataService for one workflow source.
+) -> dict[DataKey, Any]:
+    """Get all readable data in DataService for one workflow source.
 
     The data plane is keyed by the stable ``DataKey`` (workflow, source,
     output); the per-commit job_number is provenance, not identity, so jobs
     are matched via their source_name.
+
+    A generation flip (recommit) clears buffers in place: the key stays
+    iterable but reading it raises KeyError until new-generation data
+    arrives. Such cleared keys are treated as absent.
     """
-    return [
-        key
-        for key in data_service
-        if key.workflow_id == workflow_id and key.source_name == source_name
-    ]
+    result: dict[DataKey, Any] = {}
+    for key in data_service:
+        if key.workflow_id == workflow_id and key.source_name == source_name:
+            try:
+                result[key] = data_service[key]
+            except KeyError:
+                continue
+    return result
 
 
 def get_output_data(
@@ -127,11 +134,11 @@ def get_output_data(
     output_name: str,
 ) -> Any | None:
     """Return the latest data for one output of a workflow source, or None."""
-    for key in _get_data_keys_for_source(
+    for key, value in _get_job_data(
         backend.data_service, workflow_id, source_name
-    ):
+    ).items():
         if key.output_name == output_name:
-            return backend.data_service[key]
+            return value
     return None
 
 
@@ -217,14 +224,19 @@ def wait_for_job_data(
         If job data does not arrive for all jobs within the timeout period
     """
 
+    result: dict[JobId, dict[DataKey, Any]] = {}
+
     def check_for_job_data():
         backend.update()
-        return all(
-            _get_data_keys_for_source(
+        result.clear()
+        for job_id in job_ids:
+            job_data = _get_job_data(
                 backend.data_service, workflow_id, job_id.source_name
             )
-            for job_id in job_ids
-        )
+            if not job_data:
+                return False
+            result[job_id] = job_data
+        return True
 
     try:
         wait_for_condition(
@@ -234,12 +246,6 @@ def wait_for_job_data(
         dump_diagnostics(backend)
         raise
 
-    result = {}
-    for job_id in job_ids:
-        keys = _get_data_keys_for_source(
-            backend.data_service, workflow_id, job_id.source_name
-        )
-        result[job_id] = {key: backend.data_service[key] for key in keys}
     return result
 
 
