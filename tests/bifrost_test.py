@@ -240,7 +240,7 @@ class TestDetectorRatemeter:
         from ess.livedata.preprocessors.accumulators import (
             make_no_copy_accumulator_pair,
         )
-        from ess.livedata.preprocessors.stream_processor_workflow import (
+        from ess.livedata.workflows.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
 
