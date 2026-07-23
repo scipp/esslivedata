@@ -43,7 +43,7 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.preprocessors.stream_processor_workflow import (
+    from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
 

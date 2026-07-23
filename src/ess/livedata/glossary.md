@@ -45,7 +45,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 ### Workflow and job identity
 
 - **Workflow** — the scientific reduction logic: a protocol with
-  `accumulate`/`finalize`/`clear` (`preprocessors/workflow_factory.py`), usually
+  `accumulate`/`finalize`/`clear` (`workflows/workflow_factory.py`), usually
   wrapping an `ess.reduce.streaming.StreamProcessor`. A workflow *runs as* a Job.
 - **WorkflowId** — `(instrument, name, version)`; string form
   `instrument/name/version` (`config/workflow_spec.py`).

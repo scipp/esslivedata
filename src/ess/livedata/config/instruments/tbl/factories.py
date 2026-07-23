@@ -12,7 +12,7 @@ from .views import fold_image
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize TBL-specific factories and workflows."""
-    from ess.livedata.preprocessors.area_detector_view import AreaDetectorView
+    from ess.livedata.workflows.area_detector_view import AreaDetectorView
 
     specs.orca_view_handle.attach_factory()(
         AreaDetectorView.view_factory(

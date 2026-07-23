@@ -6,7 +6,7 @@ from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
-from ess.livedata.preprocessors.monitor_workflow_specs import MonitorDataParams
+from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.backend import DashboardBackend
 
 

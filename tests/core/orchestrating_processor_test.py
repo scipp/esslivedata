@@ -33,7 +33,7 @@ from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
 from ess.livedata.preprocessors.accumulators import LogData
 from ess.livedata.preprocessors.timeseries import LogdataPreprocessorFactory
 from ess.livedata.preprocessors.to_nxlog import ToNXlog
-from ess.livedata.preprocessors.wavelength_lut_workflow_specs import (
+from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
 )
 

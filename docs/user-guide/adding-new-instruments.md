@@ -173,7 +173,7 @@ names; the names must also appear in the `monitors=...` argument of the
 `Instrument` constructor and be wired up in the stream mapping (see below).
 
 ```python
-from ess.livedata.preprocessors.monitor_workflow_specs import (
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
@@ -198,7 +198,7 @@ both the `Instrument` instance and the stream mapping:
 
 ```python
 # specs.py
-from ess.livedata.preprocessors.monitor_workflow_specs import (
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
@@ -477,7 +477,7 @@ instrument.add_logical_view(
 For detectors with complex 3D geometries, use helper functions to register projections:
 
 ```python
-from ess.livedata.preprocessors.detector_view_specs import register_detector_view_spec
+from ess.livedata.workflows.detector_view_specs import register_detector_view_spec
 
 # Single projection for all detectors
 xy_handle = register_detector_view_spec(
@@ -551,7 +551,7 @@ __all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
 ```python
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.preprocessors.detector_view_specs import DetectorViewParams
+from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
 # Create instrument
 instrument = Instrument(
@@ -618,7 +618,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Instrument packages and implementation imports go here
     import sciline
     from ess.livedata.preprocessors.detector_data import DetectorLogicalView
-    from ess.livedata.preprocessors.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.workflows.stream_processor_workflow import StreamProcessorWorkflow
 
     # Configure detector
     instrument.configure_detector(

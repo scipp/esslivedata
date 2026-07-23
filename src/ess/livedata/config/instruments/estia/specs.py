@@ -16,8 +16,8 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
-from ess.livedata.preprocessors.detector_view_specs import SpectrumViewSpec
-from ess.livedata.preprocessors.monitor_workflow_specs import (
+from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )

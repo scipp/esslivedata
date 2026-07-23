@@ -131,7 +131,7 @@ class ContextBinding:
     The same record is declared at two scopes: instrument scope
     (:meth:`Instrument.add_context_binding`, for source properties such as
     motion) and spec scope
-    (:meth:`ess.livedata.preprocessors.workflow_factory.SpecHandle.add_context_binding`,
+    (:meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`,
     for context that is a property of one workflow). Both feed the gate and
     ``set_context``; the wire name is always the declared :attr:`stream_name`
     and there is no cold-start seed.
@@ -157,7 +157,7 @@ class ChainPatchBinding:
     :meth:`ess.livedata.config.instrument.Instrument.chain_patch_path`)
     alongside its :attr:`dependent_sources` and ``ValueLog`` ``workflow_key``.
     Resolving the path up front lets the wiring step in
-    :mod:`ess.livedata.preprocessors.dynamic_transforms` run as a pure function of
+    :mod:`ess.livedata.workflows.dynamic_transforms` run as a pure function of
     this self-contained data, without re-consulting the instrument's stream
     topology. The :attr:`stream_name` is retained as the dedup key when
     grouping patches per component type.

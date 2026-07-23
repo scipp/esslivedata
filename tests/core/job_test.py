@@ -10,7 +10,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobSchedule, WorkflowId
 from ess.livedata.core.job import Job, JobData, JobId, JobResult
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.preprocessors.workflow_factory import Workflow
+from ess.livedata.workflows.workflow_factory import Workflow
 
 
 class TestJobResult:

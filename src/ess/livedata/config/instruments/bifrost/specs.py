@@ -25,8 +25,8 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.workflow_spec import OutputView, WorkflowOutputsBase
 from ess.livedata.parameter_models import EnergyEdges, QEdges
-from ess.livedata.preprocessors.detector_view_specs import SpectrumViewSpec
-from ess.livedata.preprocessors.monitor_workflow_specs import (
+from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )

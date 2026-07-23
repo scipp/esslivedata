@@ -70,7 +70,7 @@ from ..config.chopper import (
 from ..core.message import Message, MessageSource, StreamId, StreamKind
 from ..core.timestamp import Timestamp
 from ..preprocessors.accumulators import LogData
-from ..preprocessors.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
+from ..workflows.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 
 logger = structlog.get_logger(__name__)
 

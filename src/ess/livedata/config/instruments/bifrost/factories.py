@@ -62,7 +62,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
     from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
-    from ess.livedata.preprocessors.stream_processor_workflow import (
+    from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
 

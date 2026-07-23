@@ -3,7 +3,7 @@
 """Per-binding Sciline keys for f144 NXlog context streams.
 
 :class:`ValueLog` is the typed Sciline-key wrapper that
-:class:`~ess.livedata.preprocessors.stream_processor_workflow.StreamProcessorWorkflow`
+:class:`~ess.livedata.workflows.stream_processor_workflow.StreamProcessorWorkflow`
 delivers raw NXlog payloads through. Each chain-patch binding declares
 its own subclass so multiple dynamic transforms can coexist on one
 workflow without colliding on a shared Sciline parameter.
@@ -49,7 +49,7 @@ class ValueLog:
     gate (ADR 0002) blocks the workflow until the underlying f144 stream
     has produced a value.
 
-    :class:`~ess.livedata.preprocessors.stream_processor_workflow.StreamProcessorWorkflow`
+    :class:`~ess.livedata.workflows.stream_processor_workflow.StreamProcessorWorkflow`
     detects subclasses of this type among its ``context_keys`` values and
     wraps the raw NXlog as ``key(values=raw)`` before delegating to
     ``set_context``.
