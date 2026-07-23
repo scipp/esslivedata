@@ -47,6 +47,15 @@ def test_dashboard_flags_crashed_service_worker_stale(
     job_id = job_ids[0]
     wait_for_job_data(backend, WORKFLOW_ID, job_ids, timeout=30.0)
 
+    # The job's ACTIVE status must have been observed before the crash:
+    # results can arrive ahead of the first status heartbeat (2 s cadence),
+    # and the post-crash assertions are about the *last observed* state.
+    def job_active() -> bool:
+        status = backend.job_service.job_statuses.get(job_id)
+        return status is not None and status.state == JobState.active
+
+    wait_for_backend_condition(backend, job_active, timeout=30.0)
+
     def running_monitor_worker_keys() -> list[str]:
         return [
             key
