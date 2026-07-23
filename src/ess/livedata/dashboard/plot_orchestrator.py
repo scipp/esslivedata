@@ -16,7 +16,8 @@ from __future__ import annotations
 import copy
 import threading
 import traceback
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -388,6 +389,11 @@ class PlotOrchestrator:
         self._instrument = instrument
         self._instrument_config = instrument_config
         self._config_store = config_store
+        # Suppresses per-mutation persistence during composite lifecycle
+        # operations (startup replay, shutdown). See ``_suppress_persist``.
+        # Read/written only on the IOLoop thread, the sole topology writer,
+        # so it needs no lock.
+        self._persist_suppressed = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
         self._logger = structlog.get_logger()
@@ -1664,25 +1670,56 @@ class PlotOrchestrator:
             raw_grids = data.get('grids', [])
             specs = self._parse_grid_specs(raw_grids)
 
-            # Apply each spec through the normal API
-            for spec in specs:
-                grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
-                for cell in spec.cells:
-                    cell_id = self.add_cell(
-                        grid_id, cell.geometry, user_title=cell.user_title
-                    )
-                    for layer in cell.layers:
-                        self.add_layer(cell_id, layer.config)
-                if not spec.enabled:
-                    self.set_grid_enabled(grid_id, enabled=False)
+            # Apply each spec through the normal API. Persistence is suppressed:
+            # the mutators would otherwise write partial state after every step,
+            # so an exception partway through replay would truncate the store to
+            # whatever was applied before the crash, losing the remaining tabs
+            # even on a clean restart.
+            with self._suppress_persist():
+                for spec in specs:
+                    grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
+                    for cell in spec.cells:
+                        cell_id = self.add_cell(
+                            grid_id, cell.geometry, user_title=cell.user_title
+                        )
+                        for layer in cell.layers:
+                            self.add_layer(cell_id, layer.config)
+                    if not spec.enabled:
+                        self.set_grid_enabled(grid_id, enabled=False)
 
             self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
 
+    @contextmanager
+    def _suppress_persist(self) -> Iterator[None]:
+        """
+        Suppress per-mutation persistence within the block.
+
+        Composite lifecycle operations (startup replay, shutdown) drive the
+        normal single-step mutators, each of which persists the *whole*
+        in-memory state. Persisting those intermediate states is what lets a
+        partially-applied replay truncate the saved layout, or a shutdown
+        overwrite it with ``{'grids': []}``. Inside this block every
+        ``_persist_to_store`` call is a no-op, so the store is never written
+        while the in-memory model is mid-transition.
+
+        Persistence is suppressed, not deferred: nothing is written on exit.
+        The model was just built from the store (replay) or is being torn down
+        (shutdown), so the last committed layout is exactly what should
+        survive. If the block raises, the store is likewise left untouched,
+        preserving the full saved layout for the next attempt.
+        """
+        was_suppressed = self._persist_suppressed
+        self._persist_suppressed = True
+        try:
+            yield
+        finally:
+            self._persist_suppressed = was_suppressed
+
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
-        if self._config_store is None:
+        if self._config_store is None or self._persist_suppressed:
             return
 
         try:
@@ -1749,9 +1786,13 @@ class PlotOrchestrator:
         Call this method when the orchestrator is no longer needed to prevent
         memory leaks.
         """
-        # Remove all grids (which unsubscribes all plots)
+        # Remove all grids (which unsubscribes all plots). Persistence is
+        # suppressed so tearing down the in-memory model does not overwrite the
+        # saved layout with an empty one; the last committed layout must
+        # survive to the next session.
         grid_ids = list(self._grids.keys())
-        for grid_id in grid_ids:
-            self.remove_grid(grid_id)
+        with self._suppress_persist():
+            for grid_id in grid_ids:
+                self.remove_grid(grid_id)
 
         self._logger.info('PlotOrchestrator shutdown complete')
