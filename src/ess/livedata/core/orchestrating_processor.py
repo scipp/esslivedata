@@ -13,8 +13,7 @@ import structlog
 from ess.livedata import __version__
 
 from ..config.device_contract import DeviceContract
-from ..handlers.config_handler import ConfigProcessor
-from .handler import Accumulator, PreprocessorFactory
+from ..core.command_dispatcher import CommandDispatcher
 from .job import (
     JobResult,
     JobState,
@@ -47,6 +46,7 @@ from .message_batcher import (
     MessageBatcher,
 )
 from .nicos_devices import DeviceExtractor
+from .preprocessor import Accumulator, PreprocessorFactory
 from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -172,7 +172,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             device_contract=DeviceContract.from_instrument(instrument),
         )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
-        self._config_processor = ConfigProcessor(
+        self._config_processor = CommandDispatcher(
             job_manager_adapter=self._job_manager_adapter
         )
         self._last_status_update: Timestamp | None = None

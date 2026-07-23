@@ -10,8 +10,8 @@ import pytest
 
 from ess.livedata.config.stream import Device
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
-from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
+from ess.livedata.preprocessors.accumulators import LogData
 
 
 class FakeSource(MessageSource[Message]):

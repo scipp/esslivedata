@@ -5,7 +5,7 @@
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
+from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.conftest import IntegrationEnv
 from tests.integration.helpers import (
     wait_for_job_data,

@@ -13,7 +13,7 @@ logger = structlog.get_logger(__name__)
 
 class JobManagerAdapter:
     """
-    Translates Command messages dispatched by ConfigProcessor into JobManager calls.
+    Translates Command messages dispatched by CommandDispatcher into JobManager calls.
 
     A WorkflowConfig is translated into a new scheduled job and a JobCommand into
     a job action, each wrapped in a CommandAcknowledgement for the frontend.

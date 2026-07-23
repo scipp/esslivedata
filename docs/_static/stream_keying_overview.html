@@ -136,7 +136,7 @@
 <div class="flow">&darr;</div>
 
 <div class="layer l-pre">
-  <div class="title"><span>Preprocessors / Accumulators</span><span class="file mono">handlers/</span></div>
+  <div class="title"><span>Preprocessors / Accumulators</span><span class="file mono">preprocessors/</span></div>
   <div class="desc">Keyed by <code>StreamId</code>; emit <code>WorkflowData.data : { <span class="k-stream">StreamId(name)</span> : value }</code>.</div>
 </div>
 
@@ -157,7 +157,7 @@
     <div class="desc"><code>add()</code> forwards <code>{**primary_data, **aux_data}</code> unchanged.</div>
 
     <div class="layer l-spw">
-      <div class="title"><span>StreamProcessorWorkflow</span><span class="file mono">handlers/stream_processor_workflow.py</span></div>
+      <div class="title"><span>StreamProcessorWorkflow</span><span class="file mono">preprocessors/stream_processor_workflow.py</span></div>
       <div class="desc"><code>dynamic_keys</code> : <code>{ <span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> }</code> &mdash; fed to <code>accumulate()</code></div>
       <div class="desc"><code>context_keys</code> : <code>{ <span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> }</code> &mdash; fed to <code>set_context()</code></div>
       <div class="xlate"><b>Translation 3</b> &nbsp;<span class="k-stream">stream_name</span> &rarr; <span class="k-sciline">sciline.Key</span> &nbsp;(dict lookup in <code>accumulate</code>; which dict the name is in decides accumulate vs. set_context) &nbsp;<span class="tag data">data path</span></div>

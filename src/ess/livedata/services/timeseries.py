@@ -9,11 +9,11 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
-from ess.livedata.handlers.timeseries_handler import LogdataHandlerFactory
 from ess.livedata.kafka.chopper_synthesizer import ChopperSynthesizer
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.preprocessors.timeseries import LogdataPreprocessorFactory
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -40,7 +40,7 @@ def make_timeseries_service_builder(
         .build()
     )
     service_name = 'timeseries'
-    preprocessor_factory = LogdataHandlerFactory(instrument=instrument_obj)
+    preprocessor_factory = LogdataPreprocessorFactory(instrument=instrument_obj)
     # The default batcher processes messages in batches, not emitting messages unless
     # the current batch is considered "complete", by the first message after the batch
     # interval arriving. This works for monitor and detector processing (including for

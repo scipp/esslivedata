@@ -14,7 +14,6 @@ import structlog
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
-from .core.handler import PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.message_batcher import (
     AdaptiveMessageBatcher,
@@ -22,6 +21,7 @@ from .core.message_batcher import (
     SimpleMessageBatcher,
 )
 from .core.orchestrating_processor import OrchestratingProcessor
+from .core.preprocessor import PreprocessorFactory
 from .core.rate_aware_batcher import RateAwareMessageBatcher
 from .core.sciline_scheduler import (
     SCHEDULER_MODES,

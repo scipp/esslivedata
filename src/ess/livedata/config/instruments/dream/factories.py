@@ -31,13 +31,15 @@ def setup_factories(instrument: Instrument) -> None:
     from scippnexus import NXdetector
 
     from ess import dream, powder
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-    from ess.livedata.handlers.detector_view import (
+    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
+    from ess.livedata.workflows.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.workflows.stream_processor_workflow import (
+        StreamProcessorWorkflow,
+    )
 
     from .specs import DreamDetectorViewParams
 
@@ -115,7 +117,7 @@ def setup_factories(instrument: Instrument) -> None:
         )
 
     # Monitor workflow factory with DREAM-specific TOF configuration
-    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+    from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):

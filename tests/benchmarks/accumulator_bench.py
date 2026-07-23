@@ -11,11 +11,6 @@ import pytest
 from streaming_data_types import dataarray_da00, eventdata_ev44
 
 from ess.livedata.core.message import StreamKind
-from ess.livedata.handlers.to_nxevent_data import (
-    DetectorEvents,
-    MonitorEvents,
-    ToNXevent_data,
-)
 from ess.livedata.kafka.message_adapter import (
     ChainedAdapter,
     Da00ToScippAdapter,
@@ -26,6 +21,11 @@ from ess.livedata.kafka.message_adapter import (
     KafkaToMonitorEventsAdapter,
 )
 from ess.livedata.kafka.stream_mapping import InputStreamKey, StreamLUT
+from ess.livedata.preprocessors.to_nxevent_data import (
+    DetectorEvents,
+    MonitorEvents,
+    ToNXevent_data,
+)
 
 TOPIC = "test_topic"
 SOURCE = "test_source"

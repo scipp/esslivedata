@@ -20,7 +20,6 @@ from ess.livedata.core.message import (
     StreamKind,
 )
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
     Ad00ToScippAdapter,
     AdaptingMessageSource,
@@ -45,6 +44,7 @@ from ess.livedata.kafka.message_adapter import (
     RouteByTopicAdapter,
 )
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.preprocessors.to_nxevent_data import DetectorEvents
 
 
 def make_serialized_ev44() -> bytes:
