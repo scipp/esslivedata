@@ -25,8 +25,9 @@ python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
   malformed/insane wire payloads consumed by the adapter- and service-level
   robustness tests (add new corruption modes there). Known holes are strict
   `xfail`s referencing their issue; fixing the issue flips them loudly.
-- `pytest -m browser` runs local Playwright UI tests (fake backend, e.g. the
-  multi-session smoke test); excluded from the default run and CI.
+- `pytest -m browser` runs Playwright UI tests (fake backend, e.g. the
+  multi-session smoke test); excluded from the default run, CI runs them
+  via `tox -e browser`.
 
 ```sh
 python -m pytest                      # fast tests only (~25s)

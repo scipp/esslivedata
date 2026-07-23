@@ -119,6 +119,57 @@ jobs:
           done
           true
 
+  browser:
+    # Playwright UI tests: a real chromium driving the dashboard served by the
+    # in-process fake backend (no Kafka), covering multi-session sync and grid
+    # management flows. Runs in parallel with the unit-test job.
+    name: Browser UI tests (Playwright)
+    needs: formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ needs.formatting.outputs.min_python }}'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements/ci.txt
+      - name: Install chromium system libraries
+        # The chromium binary itself is installed by the tox env (matching its
+        # playwright version); only the apt-level libraries need sudo here.
+        run: |
+          python -m pip install playwright
+          playwright install-deps chromium
+      - name: Run browser tests
+        shell: bash
+        run: |
+          tox -e browser 2>&1 | tee browser-output.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Surface failure output as annotations
+        # Log download can be firewalled; annotations are readable via the
+        # checks API. Emit the pytest failure summary in newline-escaped
+        # chunks (annotation count and size are limited).
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          sed -e 's/\x1b\[[0-9;]*m//g' browser-output.txt > clean.txt
+          awk '/=== (FAILURES|ERRORS) ===/{found=1} found && n<150 {print; n++}' clean.txt > summary.txt
+          sed -n '/short test summary info/,$p' clean.txt >> summary.txt
+          if [ ! -s summary.txt ]; then
+            tail -n 100 clean.txt > summary.txt
+          fi
+          split -l 20 summary.txt chunk_
+          n=0
+          for f in chunk_*; do
+            [ -e "$f" ] || continue
+            n=$((n + 1))
+            if [ "$n" -gt 8 ]; then break; fi
+            msg=$(sed -e 's/%/%25/g' "$f" | awk '{printf "%s%%0A", $0}')
+            echo "::error title=browser-tests part ${n}::${msg}"
+          done
+          true
+
   instrument-check:
     # Verify that an instrument deployment can construct its backend services
     # using only the dependencies declared in its extras. Catches imports that

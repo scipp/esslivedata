@@ -13,9 +13,9 @@ through the stable ``lt-*`` automation hooks:
   updating.
 
 Each test launches its own dashboard on a dedicated port for isolation, since
-grid topology changes are process-global. Runs locally via ``pytest -m
-browser`` (excluded from the default run and CI; skips cleanly where
-Playwright is absent).
+grid topology changes are process-global. Runs via ``pytest -m browser``
+(excluded from the default run; CI runs them via ``tox -e browser``; skips
+cleanly where Playwright is absent).
 """
 
 from __future__ import annotations
