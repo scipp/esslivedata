@@ -36,7 +36,7 @@ class ServiceProcess:
         Log messages to wait for during startup. Services are considered ready
         when ALL messages have appeared in the output. Defaults to waiting for
         "Service started". For services with Kafka consumers, consider also
-        waiting for "Kafka consumer ready and polling" to ensure functional
+        waiting for "kafka_consumer_ready" to ensure functional
         readiness.
     **kwargs:
         Service-specific arguments passed as command-line flags
