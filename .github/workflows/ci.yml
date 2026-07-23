@@ -99,8 +99,10 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          sed -n '/=== FAILURES ===/,/Captured stdout/p' integration-output.txt | head -n 140 > summary.txt
-          sed -n '/short test summary info/,$p' integration-output.txt >> summary.txt
+          sed -e 's/\x1b\[[0-9;]*m//g' integration-output.txt \
+            | grep -v 'Consumed 0 messages' > clean.txt
+          sed -n '/=== FAILURES ===/,$p' clean.txt | head -n 150 > summary.txt
+          sed -n '/short test summary info/,$p' clean.txt >> summary.txt
           if [ ! -s summary.txt ]; then
             tail -n 60 integration-output.txt > summary.txt
           fi
