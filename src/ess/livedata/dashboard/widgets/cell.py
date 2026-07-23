@@ -402,6 +402,7 @@ class CellWidget:
             self._toolbars_shown = visible
             layers_column.visible = visible
 
+        geometry = cell.geometry
         return create_cell_titlebar(
             title=title,
             has_user_title=has_user_title,
@@ -411,6 +412,10 @@ class CellWidget:
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
             freshness_pane=self._freshness_pane,
+            # Per-cell automation hook: a rebuilt cell's DOM position is not
+            # stable, so the grid position addresses it (unique per grid, and
+            # only the active tab's grid is rendered).
+            css_classes=[f'lt-cell-r{geometry.row}c{geometry.col}'],
         )
 
     def _build_layer_toolbars(

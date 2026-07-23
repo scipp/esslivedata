@@ -27,6 +27,7 @@ from ess.livedata.dashboard.widgets.plot_widgets import (
     _create_configure_button_or_menu,
     _create_toolbar_visibility_button,
     _format_window_info,
+    create_cell_titlebar,
     derive_cell_title,
     get_plot_cell_display_info,
 )
@@ -54,6 +55,31 @@ class TestPerPanelToolHooks:
         )
         assert 'lt-tool' in menu.css_classes
         assert 'lt-tool-settings' in menu.css_classes
+
+    def test_titlebar_pencil_carries_per_cell_context_hook(self) -> None:
+        """The edit pencil must carry the caller's per-cell context class.
+
+        A rebuilt cell's DOM position is not stable, so automation addresses
+        the pencil via the cell-position context (e.g. lt-cell-r0c0) instead
+        of DOM order.
+        """
+        titlebar = create_cell_titlebar(
+            title='T',
+            has_user_title=False,
+            on_edit_title_callback=lambda: None,
+            configure_layers=[(LayerId('a'), 'A')],
+            on_configure_layer=lambda _: None,
+            toolbars_visible=True,
+            on_toggle_toolbars_callback=lambda _: None,
+            css_classes=['lt-cell-r0c0'],
+        )
+        pencils = [
+            obj
+            for obj in titlebar.objects
+            if 'lt-tool-pencil' in (getattr(obj, 'css_classes', None) or [])
+        ]
+        assert len(pencils) == 1
+        assert 'lt-cell-r0c0' in pencils[0].css_classes
 
 
 class _FakeParams(TimeWindowMixin):

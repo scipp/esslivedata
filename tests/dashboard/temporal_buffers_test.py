@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 import scipp as sc
 
@@ -433,6 +435,40 @@ class TestTemporalBuffer:
         buffer.add(make_single_slice_datetime([11.0, 11.0], 11))
         result = buffer.get()
         assert result.coords['time'].values[-1] == sc.datetime(11, unit='s').value
+
+    def test_datetime64_buffer_keeps_accepting_after_repeated_wraparound(self):
+        """Sustained adds past capacity must keep working with datetime64 times.
+
+        Regression test for https://github.com/scipp/esslivedata/issues/1087:
+        a datetime64 time coord must survive many wraparound cycles, not just
+        the first trim. After running several multiples of capacity, the
+        newest data is retained, the oldest dropped, and the time coord stays
+        monotonic datetime64.
+        """
+        timespan = 3.0
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(timespan)
+        buffer.set_max_memory(100)  # Tiny ring so wraparound happens fast
+
+        buffer.add(make_single_slice_datetime([0.0, 0.0], 0))
+        capacity = buffer._data_buffer.max_capacity
+        n_total = 3 * capacity
+        for t in range(1, n_total):
+            buffer.add(make_single_slice_datetime([float(t)] * 2, t))
+
+        result = buffer.get()
+        times = result.coords['time']
+        assert times.dtype == sc.DType.datetime64
+        # Newest data retained, with values still aligned to their times.
+        assert times.values[-1] == sc.datetime(n_total - 1, unit='s').value
+        assert result['time', -1].values[0] == float(n_total - 1)
+        # Oldest data dropped: nothing older than the required timespan.
+        assert (
+            times.values[0] >= sc.datetime(n_total - 1 - int(timespan), unit='s').value
+        )
+        # Time coord is strictly monotonic (no stale or reordered samples).
+        int_times = times.values.astype('datetime64[s]').astype('int64')
+        assert all(b > a for a, b in pairwise(int_times))
 
     def test_timespan_zero_trims_all_old_data_on_overflow(self):
         """Test that timespan=0.0 trims all data to make room for new data."""
