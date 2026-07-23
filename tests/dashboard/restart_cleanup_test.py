@@ -252,6 +252,29 @@ class TestRestartCleanup:
             == job_ids_3[0].job_number
         )
 
+    def test_recommit_does_not_leak_superseded_job_states(self, workflow_spec):
+        """A recommit drops the superseded generation's tracked job states.
+
+        Regression for #1080: job_number is fresh per commit, so recommit
+        keys are new; the old jobs' final heartbeats fall outside the current
+        set and can no longer self-clean. Without explicit cleanup, tracked
+        states grow by one per source on every restart-commit, unbounded.
+        """
+        _, job_orchestrator, _, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+
+        job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
+        for job_id in job_ids_1:
+            job_orchestrator.on_job_status_updated(
+                JobStatus(job_id=job_id, workflow_id=workflow_id, state=JobState.active)
+            )
+        assert set(job_orchestrator._job_states) == set(job_ids_1)
+
+        job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
+
+        assert set(job_orchestrator._job_states).isdisjoint(job_ids_1)
+        assert set(job_ids_1).isdisjoint(job_ids_2)
+
     def test_other_workflow_data_survives_recommit(
         self, workflow_spec, workflow_spec_2
     ):
