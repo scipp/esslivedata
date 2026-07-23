@@ -2986,6 +2986,14 @@ class TestGetLogScaleClim:
         assert low == pytest.approx(constant * 0.9)
         assert high == pytest.approx(constant * 1.1)
 
+    def test_uniform_small_constant_keeps_positive_bounds(self) -> None:
+        # HoloViews' own additive value+/-1 fallback would give a non-positive
+        # lower bound here (0.5 -> -0.5), invalid on a log scale.
+        data = self._image([[0.5, 0.5], [0.5, 0.5]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low > 0.0
+        assert low < 0.5 < high
+
     def test_uniform_data_with_nan_brackets_the_constant(self) -> None:
         constant = 1e6
         data = self._image([[constant, np.nan], [np.nan, constant]])

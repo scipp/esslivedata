@@ -633,11 +633,12 @@ class Plotter:
         error in _draw_colorbar. Scipp's nanmin/nanmax return +inf/-inf rather
         than NaN for all-NaN input, so the all-NaN case surfaces as vmax < vmin.
 
-        A second degenerate case is uniform data (``vmax == vmin``): HoloViews
-        renders a fully saturated plot with a zero-width color range. Bounds
-        bracketing the constant value give a readable colorbar instead. Log-scale
-        masking has already replaced non-positive values with NaN, so a non-NaN
-        constant is guaranteed positive.
+        Uniform data (``vmax == vmin``) is a second degenerate case. HoloViews
+        does handle it, but via an *additive* fallback (value +/- 1) that yields
+        a non-positive lower bound for small constants (e.g. 0.5 -> -0.5), which
+        is invalid on a log scale. A multiplicative bracket around the constant
+        stays positive. Log-scale masking has already replaced non-positive
+        values with NaN, so a non-NaN constant is guaranteed positive.
 
         Parameters
         ----------
