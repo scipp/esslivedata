@@ -1629,6 +1629,27 @@ class TestClearKeysAndStamps:
         assert service["other"].value == 3
         assert get_pipe().notifications[-1] == {"key1", "key2"}
 
+    def test_cleared_keys_are_absent_from_the_mapping_view(self):
+        """Every iterated key must be readable: dict(service) after a clear.
+
+        Buffers survive clear_keys (extractors, retention), but a key whose
+        read raises must not be yielded by iteration or counted by len.
+        """
+        service = DataService[str, int]()
+        service["key1"] = make_test_data(1)
+        service["key2"] = make_test_data(2)
+
+        service.clear_keys(["key1"])
+
+        assert set(service) == {"key2"}
+        assert len(service) == 1
+        assert "key1" not in service
+        assert {k: v.value for k, v in dict(service).items()} == {"key2": 2}
+
+        service["key1"] = make_test_data(3)
+        assert set(service) == {"key1", "key2"}
+        assert len(service) == 2
+
     def test_clear_keys_preserves_subscriber_registration(self):
         """Data arriving after a clear reaches the still-registered subscriber."""
         service = DataService[str, int]()

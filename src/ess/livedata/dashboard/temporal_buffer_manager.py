@@ -79,6 +79,14 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             return None
         return self._states[key].buffer.get()
 
+    def has_data(self, key: K) -> bool:
+        """Return whether a buffer exists for the key and holds data.
+
+        Cheap emptiness probe, unlike :py:meth:`get_buffered_data` which
+        assembles the buffered data.
+        """
+        return key in self._states and not self._states[key].buffer.is_empty()
+
     def create_buffer(self, key: K, extractors: Sequence[UpdateExtractor]) -> None:
         """
         Create a buffer with appropriate type based on extractors.

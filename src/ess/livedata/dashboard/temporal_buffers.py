@@ -52,6 +52,10 @@ class BufferProtocol(ABC, Generic[T]):
         """Clear all data from the buffer."""
 
     @abstractmethod
+    def is_empty(self) -> bool:
+        """Return whether the buffer holds no data. Cheap, unlike ``get``."""
+
+    @abstractmethod
     def set_required_timespan(self, seconds: float) -> None:
         """
         Set the required timespan for the buffer.
@@ -109,6 +113,10 @@ class SingleValueBuffer(BufferProtocol[T]):
     def clear(self) -> None:
         """Clear the stored value."""
         self._data = None
+
+    def is_empty(self) -> bool:
+        """Return whether no value is stored."""
+        return self._data is None
 
     def set_required_timespan(self, seconds: float) -> None:
         """Set required timespan (unused for SingleValueBuffer)."""
@@ -385,6 +393,10 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         self._data_buffer = None
         self._coord_buffers = {}
         self._reference = None
+
+    def is_empty(self) -> bool:
+        """Return whether no data has been buffered."""
+        return self._data_buffer is None
 
     def set_required_timespan(self, seconds: float) -> None:
         """Set the required timespan for the buffer."""
