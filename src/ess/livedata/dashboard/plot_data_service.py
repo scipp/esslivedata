@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import weakref
+from collections.abc import Callable
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
 from uuid import UUID
@@ -274,6 +275,44 @@ class PlotDataService:
     def __init__(self) -> None:
         self._layers: dict[LayerId, LayerStateMachine] = {}
         self._lock = threading.Lock()
+        self._version = 0
+
+    @property
+    def version(self) -> int:
+        """Counter advanced whenever any layer's version advanced.
+
+        Aggregates the per-layer counters into a single cheap read, so a
+        session can gate its poll pass on "did any layer's lifecycle change"
+        without scanning every layer. Only transitions that took effect count:
+        a no-op ``data_arrived`` on an already-READY layer leaves it alone,
+        which is what keeps the gate quiet under steady data flow.
+        """
+        return self._version
+
+    def _apply(
+        self,
+        layer_id: LayerId,
+        transition: Callable[[LayerStateMachine], None],
+        *,
+        create: bool = False,
+    ) -> None:
+        """Run a state transition, advancing ``version`` if it took effect.
+
+        Transitions that the state machine rejects or treats as a no-op leave
+        the layer's version untouched and must not advance the aggregate, or
+        every data message would arm every session's poll gate.
+        """
+        with self._lock:
+            if create:
+                state = self._layers.setdefault(layer_id, LayerStateMachine())
+            else:
+                state = self._layers.get(layer_id)
+                if state is None:
+                    return
+            before = state.version
+            transition(state)
+            if state.version != before:
+                self._version += 1
 
     def get(self, layer_id: LayerId) -> LayerStateMachine | None:
         """
@@ -305,9 +344,7 @@ class PlotDataService:
         plotter:
             Plotter instance for per-session presenter creation.
         """
-        with self._lock:
-            state = self._layers.setdefault(layer_id, LayerStateMachine())
-            state.job_started(plotter)
+        self._apply(layer_id, lambda state: state.job_started(plotter), create=True)
 
     def data_arrived(self, layer_id: LayerId) -> None:
         """
@@ -318,10 +355,7 @@ class PlotDataService:
         layer_id:
             Layer ID to update.
         """
-        with self._lock:
-            state = self._layers.get(layer_id)
-            if state is not None:
-                state.data_arrived()
+        self._apply(layer_id, lambda state: state.data_arrived())
 
     def job_stopped(self, layer_id: LayerId) -> None:
         """
@@ -332,10 +366,7 @@ class PlotDataService:
         layer_id:
             Layer ID to update.
         """
-        with self._lock:
-            state = self._layers.get(layer_id)
-            if state is not None:
-                state.job_stopped()
+        self._apply(layer_id, lambda state: state.job_stopped())
 
     def error_occurred(self, layer_id: LayerId, error_msg: str) -> None:
         """
@@ -350,9 +381,9 @@ class PlotDataService:
         error_msg:
             Error message to display.
         """
-        with self._lock:
-            state = self._layers.setdefault(layer_id, LayerStateMachine())
-            state.error_occurred(error_msg)
+        self._apply(
+            layer_id, lambda state: state.error_occurred(error_msg), create=True
+        )
 
     def remove(self, layer_id: LayerId) -> None:
         """
