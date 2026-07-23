@@ -27,7 +27,7 @@ import structlog
 from ..config.stream import Device
 from ..core.message import Message, MessageSource, StreamId, StreamKind
 from ..core.timestamp import Timestamp
-from ..handlers.accumulators import LogData
+from ..preprocessors.accumulators import LogData
 
 logger = structlog.get_logger(__name__)
 

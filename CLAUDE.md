@@ -94,10 +94,10 @@ Kafka Topics -> MessageSource -> OrchestratingProcessor -> Preprocessors -> JobM
 
 ### Key Components
 
-- **`core/`**: `service.py` (lifecycle), `orchestrating_processor.py` (job-based batching), `handler.py` (preprocessor factory/protocols), `message.py` (Message, StreamId, StreamKind), `job_manager.py` (scheduling)
+- **`core/`**: `service.py` (lifecycle), `orchestrating_processor.py` (job-based batching), `preprocessor.py` (preprocessor factory/protocols), `command_dispatcher.py` (dispatches commands to `JobManagerAdapter`), `message.py` (Message, StreamId, StreamKind), `job_manager.py` (scheduling)
 - **`kafka/`**: `source.py` (consumers), `sink.py` (producers), `message_adapter.py` (raw -> domain), `stream_mapping.py` (topic -> stream)
 - **`config/`**: YAML + Jinja2 configs. Defaults in `config/defaults/`, per-instrument in `config/instruments/`
-- **`handlers/`**: Preprocessor factories for detector, monitor, and reduction data; accumulators; workflow protocol
+- **`preprocessors/`**: Preprocessor factories for detector, monitor, and reduction data; accumulators; workflow protocol
 - **`dashboard/`**: Panel/HoloViews visualizations, MVC pattern, `DataService` for data stream subscriptions
 
 ## Code Style

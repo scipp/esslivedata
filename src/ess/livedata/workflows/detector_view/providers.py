@@ -1,0 +1,357 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Sciline providers for detector view workflow.
+
+This module provides all Sciline providers for event projection, histogramming,
+and image generation in the detector view workflow.
+"""
+
+from __future__ import annotations
+
+import scipp as sc
+from ess.reduce.nexus.types import (
+    EmptyDetector,
+    NeXusTransformation,
+    RawDetector,
+    SampleRun,
+)
+from ess.reduce.unwrap.types import WavelengthDetector
+from scippnexus import NXdetector
+
+from ..geometry_signal import geometry_signal
+from .projectors import GeometricProjector, LogicalProjector, Projector
+from .types import (
+    DETECTOR_TRANSFORM,
+    AccumulatedHistogram,
+    AccumulationMode,
+    CountsInRange,
+    CountsTotal,
+    Cumulative,
+    DetectorGeometry,
+    DetectorHistogram,
+    DetectorImage,
+    EventCoordName,
+    HistogramBins,
+    HistogramSlice,
+    PixelWeights,
+    ScreenBinnedEvents,
+    ScreenMetadata,
+    SpectrumView,
+    SpectrumViewTransform,
+    UsePixelWeighting,
+)
+
+
+def _project_detector(
+    detector: sc.DataArray, projector: Projector
+) -> ScreenBinnedEvents:
+    # TODO Can we modify the provider in ess.reduce to not add variances in the first
+    # place (optionally)? This is wasteful here, if variances are needed they can be
+    # added after histogramming.
+    detector = sc.values(detector)
+    return ScreenBinnedEvents(projector.project_events(detector))
+
+
+def project_raw_detector(
+    raw_detector: RawDetector[SampleRun], projector: Projector
+) -> ScreenBinnedEvents:
+    """
+    Project TOA events to screen coordinates.
+
+    Parameters
+    ----------
+    raw_detector:
+        Detector data with events binned by detector pixel (event_time_offset coord).
+    projector:
+        Projector instance (geometric or logical).
+
+    Returns
+    -------
+    :
+        Events binned by screen coordinates with event_time_offset preserved.
+    """
+    return _project_detector(raw_detector, projector)
+
+
+def project_wavelength_detector(
+    wavelength_detector: WavelengthDetector[SampleRun], projector: Projector
+) -> ScreenBinnedEvents:
+    """
+    Project wavelength events to screen coordinates.
+
+    Parameters
+    ----------
+    wavelength_detector:
+        Detector data with events binned by detector pixel (wavelength coord).
+    projector:
+        Projector instance (geometric or logical).
+
+    Returns
+    -------
+    :
+        Events binned by screen coordinates with wavelength preserved.
+    """
+    return _project_detector(wavelength_detector, projector)
+
+
+def compute_pixel_weights(
+    projector: Projector,
+    empty_detector: EmptyDetector[SampleRun],
+) -> PixelWeights:
+    """
+    Compute pixel weights for normalizing screen pixels.
+
+    Returns the number of detector pixels contributing to each screen pixel.
+    Used to normalize output images when pixel weighting is enabled.
+
+    Parameters
+    ----------
+    projector:
+        Projector instance (geometric or logical).
+    empty_detector:
+        Empty detector structure (used by logical projector for shape info).
+
+    Returns
+    -------
+    :
+        2D array of weights matching screen dimensions.
+    """
+    if isinstance(projector, GeometricProjector):
+        return PixelWeights(projector.compute_weights())
+    elif isinstance(projector, LogicalProjector):
+        return PixelWeights(projector.compute_weights(empty_detector))
+    else:
+        raise TypeError(f"Unknown projector type: {type(projector)}")
+
+
+def get_screen_metadata(
+    projector: Projector,
+    empty_detector: EmptyDetector[SampleRun],
+) -> ScreenMetadata:
+    """
+    Extract screen metadata from projector.
+
+    For GeometricProjector, metadata is stored at construction time.
+    For LogicalProjector, metadata is computed from the empty detector.
+
+    Parameters
+    ----------
+    projector:
+        The projector instance.
+    empty_detector:
+        Detector structure without events (used by LogicalProjector).
+
+    Returns
+    -------
+    :
+        Screen metadata with output dimensions and coordinates.
+    """
+    if isinstance(projector, GeometricProjector):
+        return projector.screen_metadata
+    return projector.get_screen_metadata(empty_detector)
+
+
+def detector_geometry(
+    transform: NeXusTransformation[NXdetector, SampleRun],
+) -> DetectorGeometry:
+    """
+    Expose the detector's resolved placement as the geometry-change signal.
+
+    Stamped onto the accumulated histogram by :func:`compute_detector_histogram`
+    to drive the cumulative accumulator's reset-on-move. File-less sources override
+    :data:`DetectorGeometry` with ``None`` instead of inserting this provider.
+    See :func:`~ess.livedata.workflows.geometry_signal.geometry_signal`.
+    """
+    return DetectorGeometry(geometry_signal(transform))
+
+
+def compute_detector_histogram(
+    screen_binned_events: ScreenBinnedEvents,
+    bins: HistogramBins,
+    event_coord: EventCoordName,
+    geometry: DetectorGeometry,
+) -> DetectorHistogram:
+    """
+    Histogram events by the specified event coordinate.
+
+    Events have already been projected to screen coordinates by the projection
+    providers. This function histograms the specified event coordinate dimension.
+
+    Parameters
+    ----------
+    screen_binned_events:
+        Events binned by screen coordinates (from geometric or logical projection).
+    bins:
+        Bin edges for histogramming.
+    event_coord:
+        Name of the event coordinate to histogram.
+    geometry:
+        Scalar geometry signal stamped as the ``DETECTOR_TRANSFORM`` coord so the
+        cumulative accumulator can reset on a detector move. ``None`` (file-less
+        sources) stamps nothing.
+
+    Returns
+    -------
+    :
+        Histogram with spatial dims and the event coordinate dimension.
+    """
+    if screen_binned_events.bins is None:
+        # Already dense data (shouldn't happen in normal flow)
+        result = screen_binned_events
+    else:
+        # Convert bins to match the event coordinate unit, rename dimension for
+        # histogramming, then restore original dimension name and unit for output.
+        output_dim = bins.dim
+        event_unit = screen_binned_events.bins.coords[event_coord].unit
+        bins_converted = bins.to(unit=event_unit).rename_dims({output_dim: event_coord})
+        result = screen_binned_events.hist({event_coord: bins_converted})
+        result = result.rename_dims({event_coord: output_dim})
+        result.coords[output_dim] = bins
+
+    if geometry is not None:
+        result.coords[DETECTOR_TRANSFORM] = geometry
+    return DetectorHistogram(result)
+
+
+def accumulated_histogram(
+    data: DetectorHistogram,
+) -> AccumulatedHistogram[AccumulationMode]:
+    """
+    Route histogram to accumulation-mode-specific accumulator.
+
+    This generic provider allows the histogram to be computed once and
+    accumulated differently based on the accumulation mode type parameter:
+
+    - AccumulatedHistogram[Cumulative]: Uses EternalAccumulator
+      (accumulates forever)
+    - AccumulatedHistogram[Current]: Uses a window accumulator
+      (clears after finalize)
+
+    Sciline instantiates this provider for each concrete type parameter.
+    """
+    return AccumulatedHistogram[AccumulationMode](data)
+
+
+def detector_image(
+    histogram: AccumulatedHistogram[AccumulationMode],
+    histogram_slice: HistogramSlice,
+    weights: PixelWeights,
+    use_weighting: UsePixelWeighting,
+) -> DetectorImage[AccumulationMode]:
+    """
+    Compute 2D detector image by summing over spectral dimension.
+
+    This generic provider works for both accumulation modes:
+
+    - DetectorImage[Cumulative]: Summed over all accumulated data
+    - DetectorImage[Current]: Current window only (since last finalize)
+
+    Parameters
+    ----------
+    histogram:
+        Histogram with screen dims and spectral dim.
+    histogram_slice:
+        Optional (low, high) range for slicing. If None, sum over full range.
+    weights:
+        Pixel weights for normalization.
+    use_weighting:
+        Whether to apply pixel weighting.
+
+    Returns
+    -------
+    :
+        2D detector image.
+    """
+    spectral_dim = histogram.dims[-1]
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        sliced = histogram[spectral_dim, low:high]
+    else:
+        sliced = histogram
+    image = sliced.sum(spectral_dim)
+
+    if use_weighting:
+        image = image / weights
+    return DetectorImage[AccumulationMode](image)
+
+
+def counts_total(
+    histogram: AccumulatedHistogram[AccumulationMode],
+) -> CountsTotal[AccumulationMode]:
+    """
+    Compute total event counts.
+
+    This generic provider works for both accumulation modes.
+
+    Parameters
+    ----------
+    histogram:
+        Histogram for the given accumulation mode.
+
+    Returns
+    -------
+    :
+        Total counts as 0D scalar.
+    """
+    return CountsTotal[AccumulationMode](histogram.sum())
+
+
+def spectrum_view(
+    histogram: AccumulatedHistogram[Cumulative],
+    transform: SpectrumViewTransform,
+) -> SpectrumView:
+    """
+    Apply the per-instrument spectrum transform to the cumulative histogram.
+
+    The transform typically sums over unwanted spatial dims and/or rebins
+    kept spatial dims, preserving the event coordinate axis. When the
+    ``SpectrumViewSpec`` declares a ``params_model``, the factory binds the
+    runtime parameter instance into the callable before inserting it here.
+
+    Parameters
+    ----------
+    histogram:
+        Cumulative accumulated histogram (spatial dims + event coordinate).
+    transform:
+        Callable ``(histogram,) -> spectrum`` bound at workflow-construction
+        time.
+
+    Returns
+    -------
+    :
+        Spectrum view as a reshaped/partially-summed histogram.
+    """
+    return SpectrumView(transform(histogram))
+
+
+def counts_in_range(
+    histogram: AccumulatedHistogram[AccumulationMode],
+    histogram_slice: HistogramSlice,
+) -> CountsInRange[AccumulationMode]:
+    """
+    Compute event counts within specified range.
+
+    This generic provider works for both accumulation modes.
+
+    Parameters
+    ----------
+    histogram:
+        Histogram for the given accumulation mode.
+    histogram_slice:
+        Optional (low, high) range for counting. If None, counts all.
+
+    Returns
+    -------
+    :
+        Counts in range as 0D scalar.
+    """
+    spectral_dim = histogram.dims[-1]
+
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        sliced = histogram[spectral_dim, low:high]
+    else:
+        sliced = histogram
+
+    return CountsInRange[AccumulationMode](sliced.sum())

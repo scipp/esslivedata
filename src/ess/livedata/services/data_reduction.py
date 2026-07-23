@@ -8,10 +8,10 @@ from typing import NoReturn
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.preprocessors.data_reduction import ReductionPreprocessorFactory
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -39,7 +39,7 @@ def make_reduction_service_builder(
         .build()
     )
     service_name = 'data_reduction'
-    preprocessor_factory = ReductionHandlerFactory(
+    preprocessor_factory = ReductionPreprocessorFactory(
         instrument=instrument_config, group_by_pixel=group_by_pixel
     )
     devices = instrument_config.devices

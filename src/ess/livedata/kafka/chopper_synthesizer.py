@@ -69,8 +69,8 @@ from ..config.chopper import (
 )
 from ..core.message import Message, MessageSource, StreamId, StreamKind
 from ..core.timestamp import Timestamp
-from ..handlers.accumulators import LogData
-from ..handlers.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
+from ..preprocessors.accumulators import LogData
+from ..workflows.wavelength_lut_workflow_specs import CHOPPER_CASCADE_SOURCE
 
 logger = structlog.get_logger(__name__)
 

@@ -60,9 +60,11 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.accumulation_mode import Cumulative, Current
-    from ess.livedata.handlers.accumulators import make_no_copy_accumulator_pair
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
+    from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
+    from ess.livedata.workflows.stream_processor_workflow import (
+        StreamProcessorWorkflow,
+    )
 
     from .streams import detector_number
 
@@ -299,8 +301,8 @@ def _create_base_reduction_workflow():
     from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.accumulation_mode import AccumulationMode
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.preprocessors.accumulation_mode import AccumulationMode
+    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
     # Detector group names in the pinned (pre-2026-06-08) geometry artifact
     # carry a numeric prefix, e.g. ``123_channel_1_1_triplet``. Newer files
