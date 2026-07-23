@@ -48,6 +48,47 @@ jobs:
       tox-env: ${{ matrix.python.tox-env }}
     secrets: inherit
 
+  integration:
+    # Real-Kafka integration tests: fake data sources feeding the real
+    # service stack (monitor_data/detector_data/data_reduction) plus the
+    # dashboard backend, against a single-node KRaft broker. Runs in
+    # parallel with the unit-test job.
+    name: Integration tests (Kafka)
+    needs: formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      kafka:
+        image: apache/kafka:3.9.1
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+          KAFKA_MESSAGE_MAX_BYTES: 104857600
+          KAFKA_REPLICA_FETCH_MAX_BYTES: 104857600
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ needs.formatting.outputs.min_python }}'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements/ci.txt
+      - run: tox -e integration
+
   instrument-check:
     # Verify that an instrument deployment can construct its backend services
     # using only the dependencies declared in its extras. Catches imports that
