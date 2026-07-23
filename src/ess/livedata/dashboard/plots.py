@@ -625,13 +625,20 @@ class Plotter:
     @staticmethod
     def _get_log_scale_clim(data: sc.DataArray) -> tuple[float, float] | None:
         """
-        Return fallback clim for log scale if data is all NaN.
+        Return fallback clim for log scale when HoloViews cannot pick bounds.
 
         HoloViews' LogColorMapper fails when color_mapper.low is None (which
         happens when all data is NaN). This provides explicit bounds to avoid
         the "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
-        error in _draw_colorbar. Limits are not returned if data is not 'None' as in
-        this case we let Holoviews handle the bounds.
+        error in _draw_colorbar. Scipp's nanmin/nanmax return +inf/-inf rather
+        than NaN for all-NaN input, so the all-NaN case surfaces as vmax < vmin.
+
+        Uniform data (``vmax == vmin``) is a second degenerate case. HoloViews
+        does handle it, but via an *additive* fallback (value +/- 1) that yields
+        a non-positive lower bound for small constants (e.g. 0.5 -> -0.5), which
+        is invalid on a log scale. A multiplicative bracket around the constant
+        stays positive. Log-scale masking has already replaced non-positive
+        values with NaN, so a non-NaN constant is guaranteed positive.
 
         Parameters
         ----------
@@ -641,14 +648,17 @@ class Plotter:
         Returns
         -------
         :
-            Tuple of (low, high) bounds, or None if data has valid positive values.
+            Tuple of (low, high) bounds, or None if HoloViews can pick sensible
+            bounds itself (data has a range of valid positive values).
         """
         vmin = float(data.data.nanmin().value)
         vmax = float(data.data.nanmax().value)
-        # If all NaN, nanmin/nanmax return nan
-        if np.isnan(vmin) or np.isnan(vmax) or vmax <= vmin:
-            # Return placeholder bounds for empty/invalid data
+        if vmax < vmin:
+            # All NaN: LogColorMapper cannot handle None bounds.
             return (1.0, 10.0)
+        if vmax == vmin:
+            # Uniform positive data: bracket the constant value.
+            return (vmin * 0.9, vmax * 1.1)
         return None
 
     def compute(
