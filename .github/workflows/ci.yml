@@ -102,7 +102,7 @@ jobs:
           set +e
           sed -e 's/\x1b\[[0-9;]*m//g' integration-output.txt \
             | grep -v 'Consumed 0 messages' > clean.txt
-          awk '/=== FAILURES ===/{found=1} found && n<150 {print; n++}' clean.txt > summary.txt
+          awk '/=== (FAILURES|ERRORS) ===/{found=1} found && n<150 {print; n++}' clean.txt > summary.txt
           grep 'DIAG' clean.txt >> summary.txt
           sed -n '/short test summary info/,$p' clean.txt >> summary.txt
           if [ ! -s summary.txt ]; then
