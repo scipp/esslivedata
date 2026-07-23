@@ -7,20 +7,20 @@
 #
 annotated-types==0.7.0
     # via pydantic
-ase==3.28.0
+ase==3.29.0
     # via ncrystal
-asttokens==3.0.1
+asttokens==3.0.2
     # via stack-data
 bokeh==3.9.1
     # via
     #   holoviews
     #   panel
     #   panel-material-ui
-certifi==2026.6.17
+certifi==2026.7.22
     # via requests
-charset-normalizer==3.4.7
+charset-normalizer==3.4.9
     # via requests
-click==8.4.1
+click==8.4.2
     # via dask
 cloudpickle==3.1.2
     # via dask
@@ -36,24 +36,25 @@ cyclebane==24.10.0
     # via sciline
 cycler==0.12.1
     # via matplotlib
-dask==2026.6.0
+dask==2026.7.1
     # via
     #   essdiffraction
     #   esspolarization
     #   essreduce
     #   essreflectometry
     #   esssans
+    #   essspectroscopy
 decorator==5.3.1
     # via ipython
 dnspython==2.8.0
     # via email-validator
 email-validator==2.3.0
     # via scippneutron
-essdiffraction==26.6.0
+essdiffraction==26.6.1
     # via -r basetest.in
 esspolarization==25.10.0
     # via essreflectometry
-essreduce==26.6.1
+essreduce==26.6.3
     # via
     #   essdiffraction
     #   esspolarization
@@ -64,7 +65,7 @@ essreflectometry==26.6.0
     # via -r basetest.in
 esssans==26.6.0
     # via -r basetest.in
-essspectroscopy==26.6.0
+essspectroscopy==26.7.0
     # via -r basetest.in
 execnet==2.1.2
     # via pytest-xdist
@@ -88,7 +89,8 @@ h5py==3.16.0
     # via
     #   scippneutron
     #   scippnexus
-holoviews==1.23.0
+    #   tof
+holoviews==1.23.1
     # via -r basetest.in
 idna==3.18
     # via
@@ -100,7 +102,7 @@ iniconfig==2.3.0
     # via pytest
 ipydatawidgets==4.3.5
     # via pythreejs
-ipython==9.14.1
+ipython==9.15.0
     # via ipywidgets
 ipython-pygments-lexers==1.1.1
     # via ipython
@@ -133,7 +135,7 @@ markdown-it-py==4.2.0
     #   panel
 markupsafe==3.0.3
     # via jinja2
-matplotlib==3.11.0
+matplotlib==3.11.1
     # via
     #   ase
     #   mpltoolbox
@@ -146,20 +148,20 @@ mdurl==0.1.2
     # via markdown-it-py
 mpltoolbox==26.2.0
     # via scippneutron
-narwhals==2.22.1
+narwhals==2.24.0
     # via
     #   bokeh
     #   holoviews
     #   panel
-ncrystal[cif]==4.4.4
+ncrystal[cif]==4.4.6
     # via essdiffraction
-ncrystal-core==4.4.4
+ncrystal-core==4.4.6
     # via ncrystal
-ncrystal-python==4.4.4
+ncrystal-python==4.4.6
     # via ncrystal
 networkx==3.6.1
     # via cyclebane
-nh3==0.3.5
+nh3==0.3.6
     # via panel
 numpy==2.4.6
     # via
@@ -191,7 +193,7 @@ packaging==26.2
     #   panel-material-ui
     #   pooch
     #   pytest
-pandas==3.0.3
+pandas==3.0.5
     # via
     #   essreflectometry
     #   esssans
@@ -203,7 +205,7 @@ panel==1.9.3
     #   -r basetest.in
     #   holoviews
     #   panel-material-ui
-panel-material-ui==0.12.0
+panel-material-ui==0.14.0
     # via panel
 param==2.4.1
     # via
@@ -217,13 +219,13 @@ partd==1.4.2
     # via dask
 pexpect==4.9.0
     # via ipython
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   bokeh
     #   matplotlib
-platformdirs==4.10.0
+platformdirs==4.11.0
     # via pooch
-plopp==26.5.0
+plopp==26.7.0
     # via
     #   essdiffraction
     #   essreflectometry
@@ -255,7 +257,7 @@ pygments==2.20.0
     #   pytest
 pyparsing==3.3.2
     # via matplotlib
-pytest==9.1.0
+pytest==9.1.1
     # via
     #   -r basetest.in
     #   pytest-benchmark
@@ -290,39 +292,31 @@ requests==2.34.2
     #   pooch
 sciline==25.11.1
     # via
-    #   essdiffraction
     #   esspolarization
     #   essreduce
     #   essreflectometry
     #   esssans
-    #   essspectroscopy
 scipp==26.3.1
     # via
-    #   essdiffraction
     #   esspolarization
     #   essreduce
     #   essreflectometry
     #   esssans
-    #   essspectroscopy
     #   plopp
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==26.6.0
+scippneutron==26.7.0
     # via
     #   -r basetest.in
-    #   essdiffraction
     #   essreduce
     #   essreflectometry
     #   esssans
-    #   essspectroscopy
 scippnexus==26.1.1
     # via
-    #   essdiffraction
     #   essreduce
     #   essreflectometry
     #   esssans
-    #   essspectroscopy
     #   scippneutron
 scipy==1.17.1
     # via
@@ -331,6 +325,7 @@ scipy==1.17.1
     #   essreduce
     #   scippneutron
     #   scippnexus
+    #   tof
 six==1.17.0
     # via python-dateutil
 spglib==2.6.0
@@ -339,7 +334,7 @@ spglib==2.6.0
     #   ncrystal
 stack-data==0.6.3
     # via ipython
-tof==26.6.0
+tof==26.7.0
     # via
     #   essdiffraction
     #   essspectroscopy
@@ -349,7 +344,7 @@ toolz==1.1.0
     #   partd
 tornado==6.5.7
     # via bokeh
-tqdm==4.68.3
+tqdm==4.69.0
     # via panel
 traitlets==5.15.1
     # via
@@ -360,8 +355,9 @@ traitlets==5.15.1
     #   traittypes
 traittypes==0.2.3
     # via ipydatawidgets
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
+    #   ase
     #   ipython
     #   panel
     #   pydantic
@@ -374,7 +370,7 @@ uc-micro-py==2.0.0
     # via linkify-it-py
 urllib3==2.7.0
     # via requests
-wcwidth==0.8.1
+wcwidth==0.8.2
     # via prompt-toolkit
 widgetsnbextension==4.0.15
     # via ipywidgets
