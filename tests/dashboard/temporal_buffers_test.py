@@ -439,9 +439,9 @@ class TestTemporalBuffer:
     def test_datetime64_buffer_keeps_accepting_after_repeated_wraparound(self):
         """Sustained adds past capacity must keep working with datetime64 times.
 
-        Regression test for https://github.com/scipp/esslivedata/issues/1087:
-        a datetime64 time coord must survive many wraparound cycles, not just
-        the first trim. After running several multiples of capacity, the
+        The datetime64 trim path runs on every overflow, not just the first,
+        so a single-trim test cannot catch corruption that accumulates over
+        wraparound cycles. After running several multiples of capacity, the
         newest data is retained, the oldest dropped, and the time coord stays
         monotonic datetime64.
         """

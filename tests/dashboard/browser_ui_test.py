@@ -2,16 +2,15 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Browser-driven regression tests for dashboard UI flows.
 
-Automates checklist items from #1097 that need no Kafka backend, driving the
-fake-backend dashboard (seeded from the committed dummy fixture) through the
-stable ``lt-*`` automation hooks:
+Automates the recurring manual verification items that need no Kafka backend,
+driving the fake-backend dashboard (seeded from the committed dummy fixture)
+through the stable ``lt-*`` automation hooks:
 
 - session reload restores tabs and live updates;
-- a grid created in one session appears in others without stealing focus
-  (#1040);
-- a cell title survives a no-op Save of the cell-properties modal (#1083);
+- a grid created in one session appears in others without stealing focus;
+- a cell title survives a no-op Save of the cell-properties modal;
 - disabling or removing a grid keeps the remaining tabs resolving and
-  updating (#1088).
+  updating.
 
 Each test launches its own dashboard on a dedicated port for isolation, since
 grid topology changes are process-global. Runs locally via ``pytest -m
@@ -87,8 +86,8 @@ def test_grid_created_in_one_session_appears_in_other_without_stealing_focus():
             lambda: "Created Elsewhere" in observer.tab_names(),
             label="new grid tab in the other session",
         )
-        # ...but its active tab must not change (#1040). The creating session
-        # focuses the new tab, which is local intent, not shared state.
+        # ...but its active tab must not change: tab focus is local intent,
+        # not shared state, so only the creating session focuses the new tab.
         assert _active_tab(observer) == observer_tab
         wait_until(
             creator,
@@ -116,7 +115,8 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
             label="renamed cell titlebar",
         )
 
-        # Reopen and Save without typing: the title must survive (#1083).
+        # Reopen and Save without typing: an untouched Save must not clear
+        # the user title (the field pre-fill must round-trip through Save).
         dash.open_modal(pencil)
         assert page.locator(_CELL_TITLE_INPUT).input_value() == "My Cell"
         page.get_by_role("button", name="Save", exact=True).click()
@@ -134,7 +134,9 @@ def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
     with fake_dashboard("dummy", 5036) as url, Dashboard.connect(url) as dash:
         # Arrange three grids ordered [Bravo, Charlie, Detectors]: two empty
         # grids ahead of the fixture's populated one, so disabling the first
-        # and removing the middle both shift the Detectors tab index (#1088).
+        # and removing the middle both shift the Detectors tab position --
+        # the regression class where tab indices fall out of alignment with
+        # the grid list once a preceding grid is hidden or gone.
         dash.goto_tab("Manage Plots")
         _add_grid(dash, "Bravo")
         dash.goto_tab("Manage Plots")
