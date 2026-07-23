@@ -657,7 +657,7 @@ class PlotGridTabs:
         return (
             time.monotonic() - self._last_freshness_update
             >= _FRESHNESS_STALL_INTERVAL_S
-            and any(gid == active_grid_id for gid in self._cell_grid.values())
+            and active_grid_id in self._cell_grid.values()
         )
 
     def _poll_for_plot_updates(self) -> None:

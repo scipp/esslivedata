@@ -108,14 +108,19 @@ def plot_grid_tabs(
 
 
 def _tick(*widgets: PlotGridTabs) -> None:
-    """Drive one poll cycle for each widget.
+    """Drive one gated poll cycle for each widget.
 
-    Under polling, tab/cell reconciliation happens on the session's periodic
-    callback rather than on a push from the orchestrator, so tests must poll
-    explicitly after mutating shared state.
+    Runs the poll pass only when the widget's ``_has_pending_work`` predicate
+    fires, mirroring SessionUpdater's wake/housekeeping ticks. This makes every
+    test asserting a visible effect after ``_tick`` also guard the predicate:
+    a change source the pass handles but the predicate misses fails here
+    instead of silently lagging until the periodic full pass in production.
+    Tests that rely on that full pass (documented predicate holes, e.g.
+    plotter swaps) call ``_poll_for_plot_updates`` directly.
     """
     for widget in widgets:
-        widget._poll_for_plot_updates()
+        if widget._has_pending_work():
+            widget._poll_for_plot_updates()
 
 
 class TestPlotGridTabsInitialization:
@@ -1326,3 +1331,47 @@ class TestCellReconcile:
 
         # Reconfigure mints a fresh LayerId -> signature changed -> rebuilt.
         assert plot_grid_tabs._cells[cell_id] is not widget_before
+
+
+class TestWakeGateContract:
+    """Contract of ``_has_pending_work``, the gate registered with SessionUpdater.
+
+    The gate must go quiet once a pass ran (a stuck-True gate makes every
+    housekeeping tick pay the full hold+freeze pass in every session) and
+    re-arm for each change source the pass renders (a missed source lags
+    until the periodic full pass). The mutate->tick->assert tests above cover
+    the re-arm direction implicitly via the gated ``_tick``; this test pins
+    the quiescence direction explicitly.
+    """
+
+    def test_gate_quiet_after_pass_and_rearms_per_source(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        # Topology change arms the gate; the pass clears it.
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        _add_static_cell(plot_orchestrator, grid_id, geometry)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        # A tab switch wakes synchronously (no document in tests), so the
+        # flush must have passed through the gate; quiet again afterwards.
+        plot_grid_tabs.tabs.active = 2
+        assert plot_grid_tabs._last_active_grid_id == grid_id
+        assert not plot_grid_tabs._has_pending_work()
+
+        # Stall aging: with cells on the active grid and no data events, the
+        # timer alone re-arms the gate; the pass resets it.
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
