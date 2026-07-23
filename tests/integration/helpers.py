@@ -75,6 +75,45 @@ def topic_high_watermark(topic: str) -> int:
         consumer.close()
 
 
+def wait_for_watermark_stall(
+    topic: str, *, settle: float = 4.0, timeout: float = 40.0
+) -> int:
+    """Wait until a topic's high watermark stops advancing, then return it.
+
+    The watermark counts as stalled once two samples taken ``settle`` seconds
+    apart are equal. Proves that a producer went quiet (e.g. a stopped job
+    publishes no further results), tolerating in-flight messages produced
+    just before the observation started.
+
+    Parameters
+    ----------
+    topic:
+        Topic whose single-partition high watermark to observe.
+    settle:
+        Window in seconds within which no new message may arrive; must exceed
+        the producer's publish cadence for a stall to be provable.
+    timeout:
+        Maximum total time to wait for a stall.
+
+    Raises
+    ------
+    WaitTimeout:
+        If the watermark is still advancing after the timeout.
+    """
+    deadline = time.time() + timeout
+    previous = topic_high_watermark(topic)
+    while True:
+        time.sleep(settle)
+        current = topic_high_watermark(topic)
+        if current == previous:
+            return current
+        if time.time() > deadline:
+            raise WaitTimeout(
+                f"Watermark of {topic} still advancing after {timeout} seconds"
+            )
+        previous = current
+
+
 def wait_for_condition(
     condition: Callable[[], bool], timeout: float = 5.0, poll_interval: float = 0.1
 ) -> None:

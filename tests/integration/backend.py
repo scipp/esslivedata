@@ -134,6 +134,11 @@ class DashboardBackend:
         return self._services.job_service
 
     @property
+    def service_registry(self):
+        self._check_available()
+        return self._services.service_registry
+
+    @property
     def plotting_controller(self):
         self._check_available()
         return self._services.plotting_controller
