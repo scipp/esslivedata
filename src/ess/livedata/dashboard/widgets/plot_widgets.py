@@ -375,6 +375,7 @@ def create_cell_titlebar(
     toolbars_visible: bool,
     on_toggle_toolbars_callback: Callable[[bool], None],
     freshness_pane: pn.pane.HTML | None = None,
+    css_classes: list[str] | None = None,
 ) -> pn.Row:
     """
     Create the cell-level titlebar shown above the per-layer info rows.
@@ -407,6 +408,10 @@ def create_cell_titlebar(
     freshness_pane:
         Optional pane showing the data freshness/lag indicator, placed between
         the title and the action buttons. Updated in place by the caller.
+    css_classes:
+        Extra context classes for the edit (pencil) button so repeated cell
+        instances are uniquely addressable in automation (e.g.
+        ``lt-cell-r0c0``); a rebuilt cell's DOM position is not stable.
 
     Returns
     -------
@@ -430,6 +435,7 @@ def create_cell_titlebar(
         button_color=Colors.TEXT_MUTED,
         hover_color=HoverColors.MUTED,
         on_click_callback=on_edit_title_callback,
+        css_classes=css_classes,
     )
     toggle_button = _create_toolbar_visibility_button(
         visible=toolbars_visible,

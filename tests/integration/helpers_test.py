@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, JobId, JobNumber, WorkflowId
 from ess.livedata.core.job_manager import JobState, JobStatus
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
@@ -60,7 +60,7 @@ class IntegrationTestBackend:
     """Backend stub for testing wait helpers with real services."""
 
     def __init__(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         self.job_service = job_service
         self.data_service = data_service
@@ -79,7 +79,7 @@ class IntegrationTestBackend:
 
 
 @pytest.fixture
-def data_service() -> DataService[ResultKey, Any]:
+def data_service() -> DataService[DataKey, Any]:
     """Create a DataService for testing."""
     return DataService()
 
@@ -119,36 +119,38 @@ class TestWaitForJobData:
     """Tests for wait_for_job_data helper."""
 
     def test_succeeds_when_data_arrives_for_single_job(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """wait_for_job_data should return when data arrives for single job."""
         backend = IntegrationTestBackend(job_service, data_service)
         workflow_a = make_workflow_id('workflow_a')
         job_1 = make_job_number(1)
         job_id = make_job_id(job_1, 'source1')
-        result_key = ResultKey(
+        data_key = DataKey(
             workflow_id=workflow_a,
-            job_id=job_id,
+            source_name=job_id.source_name,
             output_name='output1',
         )
 
         # Simulate data arriving after a few updates
         def simulate_data_arrival():
             if backend.update_count == 2:
-                data_service[result_key] = make_test_result('data')
+                data_service[data_key] = make_test_result('data')
 
         backend.on_update_callbacks.append(simulate_data_arrival)
 
-        result = wait_for_job_data(backend, [job_id], timeout=2.0, poll_interval=0.05)
+        result = wait_for_job_data(
+            backend, workflow_a, [job_id], timeout=2.0, poll_interval=0.05
+        )
 
         assert backend.update_count >= 2
-        # Should return dict mapping JobId to {ResultKey: data}
+        # Should return dict mapping JobId to {DataKey: data}
         assert job_id in result
-        assert result_key in result[job_id]
-        assert result[job_id][result_key].value == 'data'
+        assert data_key in result[job_id]
+        assert result[job_id][data_key].value == 'data'
 
     def test_succeeds_when_data_arrives_for_all_jobs(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """wait_for_job_data should return when data arrives for all specified jobs."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -164,21 +166,21 @@ class TestWaitForJobData:
             if backend.update_count == 2:
                 for job_id in job_ids:
                     data_service[
-                        ResultKey(
+                        DataKey(
                             workflow_id=workflow_a,
-                            job_id=job_id,
+                            source_name=job_id.source_name,
                             output_name='output1',
                         )
                     ] = make_test_result('data')
 
         backend.on_update_callbacks.append(simulate_data_arrival)
 
-        wait_for_job_data(backend, job_ids, timeout=2.0, poll_interval=0.05)
+        wait_for_job_data(backend, workflow_a, job_ids, timeout=2.0, poll_interval=0.05)
 
         assert backend.update_count >= 2
 
     def test_must_not_succeed_if_only_some_jobs_have_data(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """CRITICAL: must NOT succeed if only some jobs have data (require all)."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -191,18 +193,20 @@ class TestWaitForJobData:
 
         # Add data for only the first job
         data_service[
-            ResultKey(
+            DataKey(
                 workflow_id=workflow_a,
-                job_id=job_ids[0],
+                source_name=job_ids[0].source_name,
                 output_name='output1',
             )
         ] = make_test_result('data')
 
         with pytest.raises(WaitTimeout):
-            wait_for_job_data(backend, job_ids, timeout=0.3, poll_interval=0.05)
+            wait_for_job_data(
+                backend, workflow_a, job_ids, timeout=0.3, poll_interval=0.05
+            )
 
     def test_must_not_succeed_for_wrong_job(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """CRITICAL: must NOT succeed when data arrives for different job."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -211,18 +215,41 @@ class TestWaitForJobData:
         job_id_expected = make_job_id(job_1, 'source1')
         job_id_other = make_job_id(job_1, 'other_source')
 
-        # Add data for different job
+        # Add data for different source
         data_service[
-            ResultKey(
+            DataKey(
                 workflow_id=workflow_a,
-                job_id=job_id_other,
+                source_name=job_id_other.source_name,
                 output_name='output1',
             )
         ] = make_test_result('data')
 
         with pytest.raises(WaitTimeout):
             wait_for_job_data(
-                backend, [job_id_expected], timeout=0.3, poll_interval=0.05
+                backend, workflow_a, [job_id_expected], timeout=0.3, poll_interval=0.05
+            )
+
+    def test_must_not_succeed_for_wrong_workflow(
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
+    ):
+        """Data for the same source under another workflow must not match."""
+        backend = IntegrationTestBackend(job_service, data_service)
+        job_id = make_job_id(make_job_number(1), 'source1')
+        data_service[
+            DataKey(
+                workflow_id=make_workflow_id('workflow_b'),
+                source_name='source1',
+                output_name='output1',
+            )
+        ] = make_test_result('data')
+
+        with pytest.raises(WaitTimeout):
+            wait_for_job_data(
+                backend,
+                make_workflow_id('workflow_a'),
+                [job_id],
+                timeout=0.3,
+                poll_interval=0.05,
             )
 
 
@@ -230,7 +257,7 @@ class TestWaitForJobStatuses:
     """Tests for wait_for_job_statuses helper."""
 
     def test_succeeds_when_status_arrives_for_single_job(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """wait_for_job_statuses should return when status arrives for single job."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -261,7 +288,7 @@ class TestWaitForJobStatuses:
         assert result[job_id].state == JobState.active
 
     def test_succeeds_when_status_arrives_for_all_jobs(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """wait_for_job_statuses should return when status arrives for all jobs."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -291,7 +318,7 @@ class TestWaitForJobStatuses:
         assert backend.update_count >= 2
 
     def test_must_not_succeed_if_only_some_jobs_have_status(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """CRITICAL: must NOT succeed if only some jobs have status (require all)."""
         backend = IntegrationTestBackend(job_service, data_service)
@@ -315,7 +342,7 @@ class TestWaitForJobStatuses:
             wait_for_job_statuses(backend, job_ids, timeout=0.3, poll_interval=0.05)
 
     def test_must_not_succeed_for_wrong_job(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+        self, job_service: JobService, data_service: DataService[DataKey, Any]
     ):
         """CRITICAL: must NOT succeed when status arrives for different job."""
         backend = IntegrationTestBackend(job_service, data_service)

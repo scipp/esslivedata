@@ -12,8 +12,8 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )

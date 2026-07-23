@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 import scipp as sc
 
@@ -288,6 +290,44 @@ class TestTemporalBuffer:
         with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
             buffer.add(large_data)
 
+    def test_max_capacity_accounts_for_variances(self):
+        """Test that variances are counted towards the per-element memory budget.
+
+        Uses a large x dimension so the (variance-free) scalar 'time' coord's
+        contribution to the per-element byte count is negligible, making the
+        variances-vs-no-variances capacities differ by close to a factor of 2.
+        """
+        x_size = 1000
+        max_memory = 1_000_000
+
+        buffer_without_variances = TemporalBuffer()
+        buffer_without_variances.set_max_memory(max_memory)
+        buffer_without_variances.add(make_single_slice([1.0] * x_size, 0.0))
+        capacity_without_variances = buffer_without_variances._data_buffer.max_capacity
+
+        buffer_with_variances = TemporalBuffer()
+        buffer_with_variances.set_max_memory(max_memory)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0] * x_size,
+                variances=[0.1] * x_size,
+                unit='counts',
+            ),
+            coords={
+                'x': sc.arange('x', x_size, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer_with_variances.add(data)
+        capacity_with_variances = buffer_with_variances._data_buffer.max_capacity
+
+        # Values and variances are both 8-byte floats, so counting variances
+        # roughly halves the number of elements that fit in the same budget.
+        assert capacity_with_variances == pytest.approx(
+            capacity_without_variances / 2, rel=0.01
+        )
+
     def test_ring_buffer_behavior_when_full_with_infinite_timespan(self):
         """Test that buffer drops oldest data when full and timespan is infinite."""
         buffer = TemporalBuffer()
@@ -395,6 +435,40 @@ class TestTemporalBuffer:
         buffer.add(make_single_slice_datetime([11.0, 11.0], 11))
         result = buffer.get()
         assert result.coords['time'].values[-1] == sc.datetime(11, unit='s').value
+
+    def test_datetime64_buffer_keeps_accepting_after_repeated_wraparound(self):
+        """Sustained adds past capacity must keep working with datetime64 times.
+
+        The datetime64 trim path runs on every overflow, not just the first,
+        so a single-trim test cannot catch corruption that accumulates over
+        wraparound cycles. After running several multiples of capacity, the
+        newest data is retained, the oldest dropped, and the time coord stays
+        monotonic datetime64.
+        """
+        timespan = 3.0
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(timespan)
+        buffer.set_max_memory(100)  # Tiny ring so wraparound happens fast
+
+        buffer.add(make_single_slice_datetime([0.0, 0.0], 0))
+        capacity = buffer._data_buffer.max_capacity
+        n_total = 3 * capacity
+        for t in range(1, n_total):
+            buffer.add(make_single_slice_datetime([float(t)] * 2, t))
+
+        result = buffer.get()
+        times = result.coords['time']
+        assert times.dtype == sc.DType.datetime64
+        # Newest data retained, with values still aligned to their times.
+        assert times.values[-1] == sc.datetime(n_total - 1, unit='s').value
+        assert result['time', -1].values[0] == float(n_total - 1)
+        # Oldest data dropped: nothing older than the required timespan.
+        assert (
+            times.values[0] >= sc.datetime(n_total - 1 - int(timespan), unit='s').value
+        )
+        # Time coord is strictly monotonic (no stale or reordered samples).
+        int_times = times.values.astype('datetime64[s]').astype('int64')
+        assert all(b > a for a, b in pairwise(int_times))
 
     def test_timespan_zero_trims_all_old_data_on_overflow(self):
         """Test that timespan=0.0 trims all data to make room for new data."""

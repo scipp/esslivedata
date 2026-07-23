@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Thread-safe registry of the current generation per workflow.
 
-Mediates between the background ingestion thread (Orchestrator.update)
+Mediates between the background ingestion thread (MessagePump.update)
 and the UI thread (JobOrchestrator.commit_workflow / stop_workflow).
 All lock acquisition is internal — callers never see the lock.
 """

@@ -24,8 +24,8 @@ from .data_service import DataService
 from .frame_clock import FrameClock
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
+from .message_pump import MessagePump
 from .notification_queue import NotificationQueue
-from .orchestrator import Orchestrator
 from .plot_data_service import PlotDataService
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
@@ -107,7 +107,7 @@ class DashboardServices:
         self._stop_event = threading.Event()
         self._update_interval = 0.05  # seconds
 
-        # Committed per grid by the orchestrator's flush as each grid's burst
+        # Committed per grid by PlotOrchestrator's flush as each grid's burst
         # frame finishes; read by per-session poll loops to coalesce
         # synchronized plot flushes scoped to the tab each session shows.
         self.frame_clock = FrameClock()
@@ -152,11 +152,11 @@ class DashboardServices:
         logger.info("orchestrator_update_thread_stopped")
 
     def _update_loop(self) -> None:
-        """Background loop that periodically updates the orchestrator."""
+        """Background loop that periodically pumps messages and polls run-state."""
         while not self._stop_event.is_set():
             start = time.monotonic()
             try:
-                consumed = self.orchestrator.update()
+                consumed = self.message_pump.update()
                 # Expire pending commands whose acknowledgement never arrived, so
                 # a silently dropped send surfaces as an error toast rather than a
                 # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
@@ -212,7 +212,7 @@ class DashboardServices:
             os.kill(os.getpid(), signal.SIGINT)
 
     def _setup_data_infrastructure(self) -> None:
-        """Set up data services, forwarder, and orchestrator."""
+        """Set up data services, forwarder, and message pump."""
         # Set up transport and get resources
         transport_resources = self._exit_stack.enter_context(self._transport)
 
@@ -235,7 +235,7 @@ class DashboardServices:
             roi_publisher=self._roi_publisher,
         )
 
-        # Orchestrator will be wired to job_orchestrator after workflow setup
+        # MessagePump will be wired to job_orchestrator after workflow setup
         self._transport_resources = transport_resources
         logger.info("Data infrastructure setup complete")
 
@@ -290,7 +290,7 @@ class DashboardServices:
             instrument_config=self.instrument_config,
         )
 
-        self.orchestrator = Orchestrator(
+        self.message_pump = MessagePump(
             self._transport_resources.message_source,
             data_service=self.data_service,
             job_service=self.job_service,

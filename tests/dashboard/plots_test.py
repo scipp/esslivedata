@@ -2960,3 +2960,47 @@ class TestTimeseriesDownsamplingAndThrottle:
         plotter.compute({'primary': {data_key: data}})
         # No throttle path: recomputes unconditionally, fresh cached state object.
         assert plotter.get_cached_state() is not first_state
+
+
+class TestGetLogScaleClim:
+    @staticmethod
+    def _image(values: list[list[float]]) -> sc.DataArray:
+        arr = np.array(values, dtype='float64')
+        return sc.DataArray(
+            sc.array(dims=['y', 'x'], values=arr, unit='counts'),
+            coords={
+                'y': sc.arange('y', arr.shape[0], unit='m'),
+                'x': sc.arange('x', arr.shape[1], unit='m'),
+            },
+        )
+
+    def test_all_nan_returns_placeholder(self) -> None:
+        data = self._image([[np.nan, np.nan], [np.nan, np.nan]])
+        assert plots.Plotter._get_log_scale_clim(data) == (1.0, 10.0)
+
+    def test_uniform_positive_data_brackets_the_constant(self) -> None:
+        constant = 1e6
+        data = self._image([[constant, constant], [constant, constant]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low < constant < high
+        assert low == pytest.approx(constant * 0.9)
+        assert high == pytest.approx(constant * 1.1)
+
+    def test_uniform_small_constant_keeps_positive_bounds(self) -> None:
+        # HoloViews' own additive value+/-1 fallback would give a non-positive
+        # lower bound here (0.5 -> -0.5), invalid on a log scale.
+        data = self._image([[0.5, 0.5], [0.5, 0.5]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low > 0.0
+        assert low < 0.5 < high
+
+    def test_uniform_data_with_nan_brackets_the_constant(self) -> None:
+        constant = 1e6
+        data = self._image([[constant, np.nan], [np.nan, constant]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low == pytest.approx(constant * 0.9)
+        assert high == pytest.approx(constant * 1.1)
+
+    def test_varying_data_defers_to_holoviews(self) -> None:
+        data = self._image([[1.0, 2.0], [3.0, 4.0]])
+        assert plots.Plotter._get_log_scale_clim(data) is None

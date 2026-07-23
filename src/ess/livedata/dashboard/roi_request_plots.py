@@ -463,7 +463,7 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         Parameters
         ----------
         pipe:
-            Pipe from SessionPlotManager (ignored).
+            Pipe from the session layer (ignored).
 
         Returns
         -------

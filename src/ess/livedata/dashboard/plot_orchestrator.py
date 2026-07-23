@@ -16,7 +16,8 @@ from __future__ import annotations
 import copy
 import threading
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -28,7 +29,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     DataKey,
     JobNumber,
-    StreamRole,
+    Windowing,
     WorkflowId,
     WorkflowSpec,
 )
@@ -87,6 +88,21 @@ class DataSourceConfig:
     workflow_id: WorkflowId
     source_names: list[str]
     view_name: str = 'result'
+
+
+@dataclass(frozen=True)
+class ResolvedDataSource:
+    """A data source with its output view resolved to a backend field name.
+
+    Produced by :func:`_build_resolved_data_sources` from a
+    :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
+    field name selected for the current window mode, ready to key a
+    :class:`DataKey`. Runtime-only — never persisted.
+    """
+
+    workflow_id: WorkflowId
+    source_names: list[str]
+    output_name: str
 
 
 @dataclass
@@ -182,8 +198,8 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
-    """Map a window mode to the stream role its data is subscribed from."""
+def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
+    """Map a window mode to the windowing its data is subscribed from."""
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
@@ -191,70 +207,71 @@ def resolve_field_name(
     spec: WorkflowSpec,
     view_name: str,
     *,
-    role: StreamRole = 'since_start',
+    windowing: Windowing = 'since_start',
 ) -> str:
-    """Resolve a (view, role) pair to the backend pydantic field name.
+    """Resolve a (view, windowing) pair to the backend pydantic field name.
 
     Falls back to ``view_name`` as a raw field name when no matching view
     is declared (lets unannotated reduction outputs work unchanged).
     """
     view = spec.get_output_view(view_name)
-    return view.field_for(role) if view is not None else view_name
+    return view.field_for(windowing) if view is not None else view_name
 
 
-def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
-    """Return the stream role wanted by a data-source slot.
+def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
+    """Return the windowing wanted by a data role.
 
-    The primary slot follows the user-selected window mode; correlation
+    The primary role follows the user-selected window mode; correlation
     axes always want per-update data.
     """
-    if slot != PRIMARY:
+    if role != PRIMARY:
         return 'per_update'
     window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
+    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
 
 
 def _build_resolved_data_sources(
     config: PlotConfig,
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[str, DataSourceConfig]:
-    """Build a copy of ``config.data_sources`` with view names resolved to fields.
+) -> dict[str, ResolvedDataSource]:
+    """Resolve ``config.data_sources`` view names to backend field names.
 
-    The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``DataKey.output_name``).
+    Falls back to the view name verbatim when the data source's workflow is
+    not in the registry (lets a layer whose workflow has not been seen yet
+    still set up a pipeline, keyed by whatever name it was given).
     """
-    resolved: dict[str, DataSourceConfig] = {}
-    for slot, ds in config.data_sources.items():
+    resolved: dict[str, ResolvedDataSource] = {}
+    for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        if spec is None:
-            resolved[slot] = ds
-            continue
-        field_name = resolve_field_name(
-            spec, ds.view_name, role=_role_for_slot(slot, config.params)
+        output_name = (
+            resolve_field_name(
+                spec, ds.view_name, windowing=_windowing_for_role(role, config.params)
+            )
+            if spec is not None
+            else ds.view_name
         )
-        resolved[slot] = DataSourceConfig(
+        resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
-            view_name=field_name,
+            output_name=output_name,
         )
     return resolved
 
 
 def _build_keys_by_role(
-    data_sources: dict[str, DataSourceConfig],
+    data_sources: dict[str, ResolvedDataSource],
 ) -> dict[str, list[DataKey]]:
     """Build stable DataKeys grouped by role.
 
     Keys carry no job identity — they are fully determined by the plot
-    config. ``DataSourceConfig.view_name`` is expected to already carry the
-    resolved backend pydantic field name (see ``_build_resolved_data_sources``).
+    config.
     """
     return {
         role: [
             DataKey(
                 workflow_id=ds.workflow_id,
                 source_name=sn,
-                output_name=ds.view_name,
+                output_name=ds.output_name,
             )
             for sn in ds.source_names
         ]
@@ -376,6 +393,11 @@ class PlotOrchestrator:
         self._instrument = instrument
         self._instrument_config = instrument_config
         self._config_store = config_store
+        # Suppresses per-mutation persistence during composite lifecycle
+        # operations (startup replay, shutdown). See ``_suppress_persist``.
+        # Read/written only on the IOLoop thread, the sole topology writer,
+        # so it needs no lock.
+        self._persist_suppressed = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
         self._on_change = on_change
@@ -1038,7 +1060,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.streams.values():
+                if field_name in view.fields.values():
                     return view.title
             return field_name
 
@@ -1655,25 +1677,56 @@ class PlotOrchestrator:
             raw_grids = data.get('grids', [])
             specs = self._parse_grid_specs(raw_grids)
 
-            # Apply each spec through the normal API
-            for spec in specs:
-                grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
-                for cell in spec.cells:
-                    cell_id = self.add_cell(
-                        grid_id, cell.geometry, user_title=cell.user_title
-                    )
-                    for layer in cell.layers:
-                        self.add_layer(cell_id, layer.config)
-                if not spec.enabled:
-                    self.set_grid_enabled(grid_id, enabled=False)
+            # Apply each spec through the normal API. Persistence is suppressed:
+            # the mutators would otherwise write partial state after every step,
+            # so an exception partway through replay would truncate the store to
+            # whatever was applied before the crash, losing the remaining tabs
+            # even on a clean restart.
+            with self._suppress_persist():
+                for spec in specs:
+                    grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
+                    for cell in spec.cells:
+                        cell_id = self.add_cell(
+                            grid_id, cell.geometry, user_title=cell.user_title
+                        )
+                        for layer in cell.layers:
+                            self.add_layer(cell_id, layer.config)
+                    if not spec.enabled:
+                        self.set_grid_enabled(grid_id, enabled=False)
 
             self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
 
+    @contextmanager
+    def _suppress_persist(self) -> Iterator[None]:
+        """
+        Suppress per-mutation persistence within the block.
+
+        Composite lifecycle operations (startup replay, shutdown) drive the
+        normal single-step mutators, each of which persists the *whole*
+        in-memory state. Persisting those intermediate states is what lets a
+        partially-applied replay truncate the saved layout, or a shutdown
+        overwrite it with ``{'grids': []}``. Inside this block every
+        ``_persist_to_store`` call is a no-op, so the store is never written
+        while the in-memory model is mid-transition.
+
+        Persistence is suppressed, not deferred: nothing is written on exit.
+        The model was just built from the store (replay) or is being torn down
+        (shutdown), so the last committed layout is exactly what should
+        survive. If the block raises, the store is likewise left untouched,
+        preserving the full saved layout for the next attempt.
+        """
+        was_suppressed = self._persist_suppressed
+        self._persist_suppressed = True
+        try:
+            yield
+        finally:
+            self._persist_suppressed = was_suppressed
+
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
-        if self._config_store is None:
+        if self._config_store is None or self._persist_suppressed:
             return
 
         try:
@@ -1740,9 +1793,13 @@ class PlotOrchestrator:
         Call this method when the orchestrator is no longer needed to prevent
         memory leaks.
         """
-        # Remove all grids (which unsubscribes all plots)
+        # Remove all grids (which unsubscribes all plots). Persistence is
+        # suppressed so tearing down the in-memory model does not overwrite the
+        # saved layout with an empty one; the last committed layout must
+        # survive to the next session.
         grid_ids = list(self._grids.keys())
-        for grid_id in grid_ids:
-            self.remove_grid(grid_id)
+        with self._suppress_persist():
+            for grid_id in grid_ids:
+                self.remove_grid(grid_id)
 
         self._logger.info('PlotOrchestrator shutdown complete')

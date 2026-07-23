@@ -52,7 +52,7 @@ A `FrameClock` (one per `DashboardServices`, shared with `PlotOrchestrator`)
 carries a `generation` counter keyed by grid (tab). As a burst drains, the
 ingestion thread buckets each visible layer's due recompute by grid
 (`PlotOrchestrator._enqueue_compute`) rather than computing inline. Once the
-burst is drained (after each `Orchestrator.update()` in the loop),
+burst is drained (after each `MessagePump.update()` in the loop),
 `flush_frames` runs the buckets grid by grid and `commit(grid_id)`s each grid
 the moment its own layers finish -- so a session showing one tab sees its frame
 without waiting on any other tab's compute.

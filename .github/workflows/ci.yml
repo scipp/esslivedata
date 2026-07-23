@@ -48,6 +48,77 @@ jobs:
       tox-env: ${{ matrix.python.tox-env }}
     secrets: inherit
 
+  integration:
+    # Real-Kafka integration tests: fake data sources feeding the real
+    # service stack (monitor_data/detector_data/data_reduction) plus the
+    # dashboard backend, against a single-node KRaft broker. Runs in
+    # parallel with the unit-test job.
+    name: Integration tests (Kafka)
+    needs: formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      kafka:
+        image: apache/kafka:3.9.1
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+          KAFKA_MESSAGE_MAX_BYTES: 104857600
+          KAFKA_REPLICA_FETCH_MAX_BYTES: 104857600
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ needs.formatting.outputs.min_python }}'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements/ci.txt
+      - name: Run integration tests
+        shell: bash
+        run: |
+          tox -e integration 2>&1 | tee integration-output.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Surface failure output as annotations
+        # Log download can be firewalled; annotations are readable via the
+        # checks API. Emit the pytest failure summary in newline-escaped
+        # chunks (annotation count and size are limited).
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          sed -e 's/\x1b\[[0-9;]*m//g' integration-output.txt \
+            | grep -v 'Consumed 0 messages' > clean.txt
+          awk '/=== FAILURES ===/{found=1} found && n<150 {print; n++}' clean.txt > summary.txt
+          grep 'DIAG' clean.txt >> summary.txt
+          sed -n '/short test summary info/,$p' clean.txt >> summary.txt
+          if [ ! -s summary.txt ]; then
+            tail -n 100 clean.txt > summary.txt
+          fi
+          split -l 20 summary.txt chunk_
+          n=0
+          for f in chunk_*; do
+            [ -e "$f" ] || continue
+            n=$((n + 1))
+            if [ "$n" -gt 8 ]; then break; fi
+            msg=$(sed -e 's/%/%25/g' "$f" | awk '{printf "%s%%0A", $0}')
+            echo "::error title=integration-tests part ${n}::${msg}"
+          done
+          true
+
   instrument-check:
     # Verify that an instrument deployment can construct its backend services
     # using only the dependencies declared in its extras. Catches imports that

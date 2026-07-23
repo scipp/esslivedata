@@ -9,10 +9,10 @@ def _make_pooch():
     import pooch
 
     return pooch.create(
-        path=pooch.os_cache('beamlime'),
+        path=pooch.os_cache('esslivedata'),
         env='LIVEDATA_DATA_DIR',
         retry_if_failed=3,
-        base_url='https://public.esss.dk/groups/scipp/beamlime/benchmarks/',
+        base_url='https://public.esss.dk/groups/scipp/esslivedata/benchmarks/',
         version=_version,
         registry={'benchmark_results.json': 'md5:0a35bf3777e297c1e34f82d94591fcac'},
     )

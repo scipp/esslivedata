@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import copy
 import uuid
 
 import pydantic
@@ -2523,6 +2524,132 @@ class TestPersistenceRoundTrip:
 
         raw = config_store.get('plot_grids')
         assert 'enabled' not in raw['grids'][0]
+
+
+class TestPersistenceResilience:
+    """A failing startup replay or a shutdown must never truncate the saved layout.
+
+    Regression tests for #1073: every mutator persists the whole in-memory model
+    on each step, so composite lifecycle operations that drive those mutators
+    (startup replay, shutdown) could otherwise leak partial or empty state to the
+    store and permanently lose the user's tabs.
+    """
+
+    @pytest.fixture
+    def config_store(self):
+        from ess.livedata.dashboard.config_store import InMemoryConfigStore
+
+        return InMemoryConfigStore()
+
+    def _make_orchestrator(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        return PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+            config_store=config_store,
+        )
+
+    def test_replay_failure_preserves_full_saved_layout(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+        workflow_id,
+    ):
+        """A mid-replay exception leaves the entire saved layout intact."""
+        # Two valid grids straddling a broken one in the store.
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        for title in ('First', 'Third'):
+            grid_id = orch1.add_grid(title=title, nrows=1, ncols=1)
+            add_cell_with_layer(
+                orch1, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
+            )
+
+        # Insert a grid whose cell stacks two non-overlayable ('table') layers
+        # between the good ones. It parses fine but add_layer rejects the second
+        # layer during replay, aborting the loop before 'Third' is reached.
+        grids = config_store['plot_grids']['grids']
+        assert [g['title'] for g in grids] == ['First', 'Third']
+        table_layer = copy.deepcopy(grids[0]['cells'][0]['layers'][0])
+        table_layer['plot_name'] = 'table'
+        broken_grid = {
+            'title': 'Broken',
+            'nrows': 1,
+            'ncols': 1,
+            'cells': [
+                {
+                    'geometry': {'row': 0, 'col': 0, 'row_span': 1, 'col_span': 1},
+                    'layers': [copy.deepcopy(table_layer), copy.deepcopy(table_layer)],
+                }
+            ],
+        }
+        grids.insert(1, broken_grid)
+        config_store['plot_grids'] = {'grids': grids}
+        saved_before = copy.deepcopy(config_store['plot_grids'])
+
+        # A fresh session replays the store; 'Broken' raises mid-replay.
+        self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+
+        # All three grid definitions survive, including 'Third' which was never
+        # reached: nothing was overwritten, so a later fix/restart recovers them.
+        assert config_store['plot_grids'] == saved_before
+        assert [g['title'] for g in config_store['plot_grids']['grids']] == [
+            'First',
+            'Broken',
+            'Third',
+        ]
+
+    def test_shutdown_preserves_saved_layout(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+        workflow_id,
+    ):
+        """Tearing down the in-memory model does not wipe the saved layout."""
+        orch = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch.add_grid(title='Keep', nrows=1, ncols=1)
+        add_cell_with_layer(
+            orch, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
+        )
+        saved_before = copy.deepcopy(config_store['plot_grids'])
+        assert saved_before['grids']
+
+        orch.shutdown()
+
+        assert orch.get_all_grids() == {}
+        assert config_store['plot_grids'] == saved_before
 
 
 class TestDeliveryPausedForHiddenLayers:

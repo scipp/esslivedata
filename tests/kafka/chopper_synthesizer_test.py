@@ -15,11 +15,11 @@ from ess.livedata.config.chopper import (
     speed_setpoint_stream,
 )
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
-from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.kafka.chopper_synthesizer import (
     CHOPPER_CASCADE_STREAM,
     ChopperSynthesizer,
 )
+from ess.livedata.preprocessors.accumulators import LogData
 
 
 class FakeSource(MessageSource[Message]):

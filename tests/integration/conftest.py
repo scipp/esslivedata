@@ -7,11 +7,51 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 import pytest
+from confluent_kafka import KafkaError, KafkaException
+from confluent_kafka.admin import AdminClient, NewTopic
 
+from ess.livedata.config import config_names
+from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.streams import get_stream_mapping
 from tests.integration.backend import DashboardBackend
 from tests.integration.service_process import ServiceGroup, ServiceProcess
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_topics_exist(instrument: str) -> None:
+    """Create the topics consumers validate at startup.
+
+    Consumers fail fast on missing topics (``validate_topics_exist``), and
+    broker-side auto-creation only triggers on produce, so a pristine broker
+    (CI, fresh local setup) needs the topics created up front. Idempotent.
+    """
+    mapping = get_stream_mapping(instrument=instrument, dev=True)
+    topics = (
+        mapping.detector_topics
+        | mapping.area_detector_topics
+        | mapping.monitor_topics
+        | mapping.log_topics
+        | {
+            mapping.topics.livedata_commands,
+            mapping.topics.livedata_data,
+            mapping.topics.livedata_responses,
+            mapping.topics.livedata_roi,
+            mapping.topics.livedata_status,
+            mapping.topics.filewriter,
+        }
+    )
+    admin = AdminClient(load_config(namespace=config_names.kafka, env='dev'))
+    futures = admin.create_topics(
+        [NewTopic(topic, num_partitions=1) for topic in sorted(topics)]
+    )
+    for topic, future in futures.items():
+        try:
+            future.result()
+        except KafkaException as e:
+            if e.args[0].code() != KafkaError.TOPIC_ALREADY_EXISTS:
+                raise
+            logger.debug("Topic already exists: %s", topic)
 
 
 @dataclass
@@ -63,6 +103,7 @@ def _create_service_group(
         ServiceGroup instance
     """
     instrument, log_level = _get_instrument_and_log_level(request)
+    _ensure_topics_exist(instrument)
 
     services_dict = {}
     for name, (module_path, extra_kwargs) in services_config.items():
@@ -106,6 +147,8 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
         DashboardBackend instance
     """
     instrument, log_level_name = _get_instrument_and_log_level(request)
+
+    _ensure_topics_exist(instrument)
 
     logger.info("Creating dashboard backend for instrument: %s", instrument)
     with DashboardBackend(
@@ -212,7 +255,7 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -243,7 +286,7 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -274,7 +317,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -284,7 +327,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),

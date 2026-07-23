@@ -24,12 +24,12 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import OutputView, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.parameter_models import EnergyEdges, QEdges
+from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 from .streams_parsed import PARSED_STREAMS
 
@@ -100,7 +100,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         OutputView(
             name='detector_region_counts',
             title='Detector Region Counts',
-            streams={
+            fields={
                 'since_start': 'detector_region_counts_cumulative',
                 'per_update': 'detector_region_counts',
             },

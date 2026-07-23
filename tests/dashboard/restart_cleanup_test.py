@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Integration tests for the interaction between JobOrchestrator, Orchestrator,
+Integration tests for the interaction between JobOrchestrator, MessagePump,
 and DataService during workflow restart.
 
 These tests verify observable behavior around the generation flip at commit:
@@ -10,7 +10,7 @@ replaced generation is rejected, and a stopped workflow's data is retained
 under its stable keys until the next commit.
 
 The "race condition" tests exercise the threading hazards between the
-background update thread (Orchestrator.update) and the UI thread
+background update thread (MessagePump.update) and the UI thread
 (JobOrchestrator.commit_workflow). The single-generation invariant test is
 the merge gate for the stable-key model: it must fail on an implementation
 whose generation flip is not atomic with the buffer clear.
@@ -31,7 +31,7 @@ from ess.livedata.dashboard.data_service import DataService, DataServiceSubscrib
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.orchestrator import Orchestrator
+from ess.livedata.dashboard.message_pump import MessagePump
 from ess.livedata.dashboard.service_registry import ServiceRegistry
 from ess.livedata.fakes import FakeMessageSink
 
@@ -78,7 +78,7 @@ class _KeysSubscriber(DataServiceSubscriber):
 
 
 def _make_system(*workflow_specs):
-    """Wire up real JobOrchestrator, Orchestrator, DataService, and
+    """Wire up real JobOrchestrator, MessagePump, DataService, and
     ActiveJobRegistry."""
     data_service = DataService()
     job_service = JobService()
@@ -96,7 +96,7 @@ def _make_system(*workflow_specs):
         job_service=job_service,
     )
 
-    orchestrator = Orchestrator(
+    message_pump = MessagePump(
         message_source=fake_sink,  # unused; we call forward() directly
         data_service=data_service,
         job_service=job_service,
@@ -105,7 +105,7 @@ def _make_system(*workflow_specs):
         active_job_registry=active_job_registry,
     )
 
-    return orchestrator, job_orchestrator, data_service, job_service
+    return message_pump, job_orchestrator, data_service, job_service
 
 
 class TestRestartCleanup:
@@ -118,13 +118,13 @@ class TestRestartCleanup:
     def test_data_cleared_on_recommit(self, workflow_spec):
         """The generation flip clears the workflow's buffers: the plot goes
         blank until the new generation's first data arrives."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for source_name in workflow_spec.source_names:
             key = _make_result_key(workflow_id, source_name, job_ids[0].job_number)
-            orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
 
         subscriber = _KeysSubscriber(_data_keys(workflow_spec))
         data_service.register_subscriber(subscriber)
@@ -138,14 +138,14 @@ class TestRestartCleanup:
         """A pure restart (staged config unchanged) clears too — uniform
         semantics, matching the fresh buffers that per-commit keys used to
         provide."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         key = _make_result_key(
             workflow_id, workflow_spec.source_names[0], job_ids[0].job_number
         )
-        orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
+        message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
         assert key.data_key in data_service
 
         # No staging between commits: byte-identical config.
@@ -158,13 +158,13 @@ class TestRestartCleanup:
     def test_data_retained_after_stop(self, workflow_spec):
         """Stopping does not evict: the stopped generation's data stays
         displayed under its stable keys until the next commit."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-            orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
 
         job_orchestrator.stop_workflow(workflow_id)
 
@@ -175,7 +175,7 @@ class TestRestartCleanup:
         """Data arriving for the old job after recommit does not enter
         DataService — old-parameter data can never sit under a stable key
         whose active config is new."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
@@ -184,26 +184,26 @@ class TestRestartCleanup:
         job_orchestrator.commit_workflow(workflow_id)
 
         key = _make_result_key(workflow_id, workflow_spec.source_names[0], old_number)
-        orchestrator.forward(_data_stream_id(key), sc.scalar(42.0))
+        message_pump.forward(_data_stream_id(key), sc.scalar(42.0))
 
         assert len(data_service) == 0
 
     def test_new_data_accepted_after_recommit(self, workflow_spec):
         """Data for the new generation is accepted after recommit."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids_1[0].job_number)
-            orchestrator.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
 
         job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
         new_number = job_ids_2[0].job_number
 
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, new_number)
-            orchestrator.forward(_data_stream_id(key), sc.scalar(99.0))
+            message_pump.forward(_data_stream_id(key), sc.scalar(99.0))
 
         for data_key in _data_keys(workflow_spec):
             assert data_key in data_service
@@ -212,7 +212,7 @@ class TestRestartCleanup:
     def test_status_for_replaced_job_is_still_accepted(self, workflow_spec):
         """JobStatus keeps job-number semantics: the just-replaced generation
         may still report its final states (it is the registry's ``last``)."""
-        orchestrator, job_orchestrator, _, job_service = _make_system(workflow_spec)
+        message_pump, job_orchestrator, _, job_service = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
@@ -223,7 +223,7 @@ class TestRestartCleanup:
         status = JobStatus(
             job_id=old_job_id, workflow_id=workflow_id, state=JobState.active
         )
-        orchestrator.forward(STATUS_STREAM_ID, status)
+        message_pump.forward(STATUS_STREAM_ID, status)
 
         assert len(job_service.job_statuses) == 1
 
@@ -232,7 +232,7 @@ class TestRestartCleanup:
         window. Its heartbeats are still observed (ADR 0008) — the job is an
         orphan for reconciliation to stop — but they do not displace the
         committed current generation."""
-        orchestrator, job_orchestrator, _, job_service = _make_system(workflow_spec)
+        message_pump, job_orchestrator, _, job_service = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
         job_ids = job_orchestrator.commit_workflow(workflow_id)
@@ -244,7 +244,7 @@ class TestRestartCleanup:
         status = JobStatus(
             job_id=oldest_job_id, workflow_id=workflow_id, state=JobState.active
         )
-        orchestrator.forward(STATUS_STREAM_ID, status)
+        message_pump.forward(STATUS_STREAM_ID, status)
 
         assert len(job_service.job_statuses) == 1
         assert (
@@ -252,11 +252,34 @@ class TestRestartCleanup:
             == job_ids_3[0].job_number
         )
 
+    def test_recommit_does_not_leak_superseded_job_states(self, workflow_spec):
+        """A recommit drops the superseded generation's tracked job states.
+
+        Regression for #1080: job_number is fresh per commit, so recommit
+        keys are new; the old jobs' final heartbeats fall outside the current
+        set and can no longer self-clean. Without explicit cleanup, tracked
+        states grow by one per source on every restart-commit, unbounded.
+        """
+        _, job_orchestrator, _, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+
+        job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
+        for job_id in job_ids_1:
+            job_orchestrator.on_job_status_updated(
+                JobStatus(job_id=job_id, workflow_id=workflow_id, state=JobState.active)
+            )
+        assert set(job_orchestrator._job_states) == set(job_ids_1)
+
+        job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
+
+        assert set(job_orchestrator._job_states).isdisjoint(job_ids_1)
+        assert set(job_ids_1).isdisjoint(job_ids_2)
+
     def test_other_workflow_data_survives_recommit(
         self, workflow_spec, workflow_spec_2
     ):
         """Recommitting one workflow does not affect data from another workflow."""
-        orchestrator, job_orchestrator, data_service, _ = _make_system(
+        message_pump, job_orchestrator, data_service, _ = _make_system(
             workflow_spec, workflow_spec_2
         )
 
@@ -272,8 +295,8 @@ class TestRestartCleanup:
         key_2 = _make_result_key(
             wf_id_2, workflow_spec_2.source_names[0], jobs_2[0].job_number
         )
-        orchestrator.forward(_data_stream_id(key_1), sc.scalar(1.0))
-        orchestrator.forward(_data_stream_id(key_2), sc.scalar(2.0))
+        message_pump.forward(_data_stream_id(key_1), sc.scalar(1.0))
+        message_pump.forward(_data_stream_id(key_2), sc.scalar(2.0))
 
         job_orchestrator.commit_workflow(wf_id_1)
         job_orchestrator.commit_workflow(wf_id_1)
@@ -284,7 +307,7 @@ class TestRestartCleanup:
 
 class TestConcurrentForwardAndCommit:
     """
-    Thread-safety tests for concurrent Orchestrator.forward() (background
+    Thread-safety tests for concurrent MessagePump.forward() (background
     thread) and JobOrchestrator.commit_workflow() (UI thread).
 
     The generation flip (begin_generation + buffer clear) must be atomic
@@ -295,7 +318,7 @@ class TestConcurrentForwardAndCommit:
     @pytest.mark.slow
     def test_concurrent_forward_and_commit_does_not_crash(self, workflow_spec):
         """Concurrent data forwarding and workflow restart must not crash."""
-        orchestrator, job_orchestrator, _data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, _data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
         registry = job_orchestrator.active_job_registry
 
@@ -314,7 +337,7 @@ class TestConcurrentForwardAndCommit:
                     key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
                     try:
                         with registry.ingestion_guard():
-                            orchestrator.forward(
+                            message_pump.forward(
                                 _data_stream_id(key), sc.scalar(float(i))
                             )
                     except Exception as exc:
@@ -354,7 +377,7 @@ class TestConcurrentForwardAndCommit:
         A free-running checker additionally asserts that no single pull ever
         observes a mix of generations (the clear is atomic to pulls).
         """
-        orchestrator, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
         registry = job_orchestrator.active_job_registry
         subscriber = _KeysSubscriber(_data_keys(workflow_spec))
@@ -373,7 +396,7 @@ class TestConcurrentForwardAndCommit:
             with registry.ingestion_guard():
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-                    orchestrator.forward(_data_stream_id(key), sc.scalar(value))
+                    message_pump.forward(_data_stream_id(key), sc.scalar(value))
 
         def ingest_loop():
             try:

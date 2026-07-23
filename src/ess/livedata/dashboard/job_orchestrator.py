@@ -513,13 +513,21 @@ class JobOrchestrator:
             message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
         )
 
+        # Drop the superseded generation's tracked states. The old jobs have
+        # been stopped above; their final heartbeats are no longer in the
+        # current set, so on_job_status_updated would ignore them and never
+        # clean these up (the same cleanup _deactivate_workflow performs).
+        if state.current is not None:
+            for job_id in state.current.job_ids():
+                self._job_states.pop(job_id, None)
+
         state.commit(job_set)
         self._notify_change()
 
         # Flip the generation, clear the workflow's buffers, and notify
         # subscribers atomically under the ingestion guard, *before* sending
         # the commands: new-generation data cannot exist on the wire before
-        # the flip, and when Orchestrator.update() next runs, the generation
+        # the flip, and when MessagePump.update() next runs, the generation
         # filter and the DataService subscribers are consistent. The clear
         # gives the new generation a blank slate — a windowed extractor can
         # never aggregate across a parameter change — and applies equally to
@@ -552,7 +560,7 @@ class JobOrchestrator:
 
     @property
     def active_job_registry(self) -> ActiveJobRegistry:
-        """Registry shared with Orchestrator for thread-safe data flow."""
+        """Registry shared with MessagePump for thread-safe data flow."""
         return self._active_job_registry
 
     def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
@@ -884,7 +892,7 @@ class JobOrchestrator:
         # Remove from active set immediately, before the backend has processed
         # the stop command. This means any final results the backend publishes
         # between now and actually stopping will be discarded by the ingest
-        # filter in Orchestrator.forward(). This is intentional: the user has
+        # filter in MessagePump.forward(). This is intentional: the user has
         # requested a stop, so late-arriving data would be confusing.
         self._deactivate_workflow(workflow_id, StoppedReason.user)
         return True
