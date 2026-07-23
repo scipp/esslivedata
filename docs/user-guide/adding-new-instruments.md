@@ -161,7 +161,7 @@ def setup_factories(instrument: Instrument) -> None:
 
 **Which imports must be lazy (inside `setup_factories`)**:
 - Any imports from other `ess.*` packages: `ess.dream`, `ess.powder`, `ess.sans`, `ess.loki`, etc.
-- Workflow implementation modules: `ess.livedata.preprocessors.*` (detector preprocessors, workflow factories, etc.) as those depend on `ess.reduce`.
+- Workflow implementation modules: `ess.livedata.workflows.*` and `ess.livedata.preprocessors.*` (workflows, detector preprocessors, workflow factories, etc.) as those depend on `ess.reduce`.
 - Workflow framework: `sciline`
 - Geometry and data loading: `scippnexus`, etc.
 
@@ -527,7 +527,7 @@ To provide a geometry file:
 2. Test the output file: load it, verify detector views and workflows produce correct results.
 3. Upload the verified file and get the registry entry:
    ```sh
-   python -m ess.livedata.preprocessors.upload_geometry geometry-<instrument>-<YYYY-MM-DD>.nxs
+   python -m ess.livedata.scripts.upload_geometry geometry-<instrument>-<YYYY-MM-DD>.nxs
    ```
 4. Add the printed registry entry to `_registry` in [detector_data.py](../../src/ess/livedata/preprocessors/detector_data.py) and commit.
 
