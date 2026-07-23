@@ -190,7 +190,7 @@ class DashboardBase(ServiceBase, ABC):
 
         def _safe_step():
             try:
-                session_updater.periodic_update()
+                session_updater.housekeeping_tick()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 

@@ -77,15 +77,15 @@ def _make_updater(
 
 
 class TestSessionUpdater:
-    def test_periodic_update_runs_without_error(self):
+    def test_housekeeping_tick_runs_without_error(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
         updater = _make_updater(session_id, registry)
 
         # Session is registered at construction time (not via heartbeat)
-        # periodic_update should run without error
-        updater.periodic_update()
+        # housekeeping_tick should run without error
+        updater.housekeeping_tick()
 
         # Session should remain active (registered at construction)
         assert registry.is_active(session_id)
@@ -107,7 +107,7 @@ class TestSessionUpdater:
         assert len(notifications) == 1
         assert notifications[0].message == 'Test'
 
-    def test_custom_handler_called_during_periodic_update(self):
+    def test_custom_handler_called_during_housekeeping_tick(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
@@ -118,7 +118,7 @@ class TestSessionUpdater:
         updater.register_custom_handler(lambda: calls.append(1))
 
         # Periodic update should call handler
-        updater.periodic_update()
+        updater.housekeeping_tick()
 
         assert len(calls) == 1
 
@@ -139,7 +139,7 @@ class TestSessionUpdater:
         updater.unregister_custom_handler(handler)
 
         # Periodic update should not call handler
-        updater.periodic_update()
+        updater.housekeeping_tick()
 
         assert calls == []
 
@@ -169,7 +169,7 @@ class TestSessionUpdater:
 
         updater.wake()
         assert calls == []
-        updater.periodic_update()  # first housekeeping tick is a full pass
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
         assert calls == [1]
 
     def test_full_pass_runs_handler_despite_false_predicate(self):
@@ -178,7 +178,7 @@ class TestSessionUpdater:
         calls: list[int] = []
         updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
 
-        updater.periodic_update()  # first housekeeping tick is a full pass
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
 
         assert calls == [1]
 
@@ -190,16 +190,16 @@ class TestSessionUpdater:
         updater.register_custom_handler(lambda: gated.append(1), has_work=lambda: False)
         updater.register_custom_handler(lambda: ungated.append(1))
 
-        updater.periodic_update()  # t=0: full pass
+        updater.housekeeping_tick()  # t=0: full pass
         assert (len(gated), len(ungated)) == (1, 1)
 
         for t in (1.0, 2.0, 3.0, 4.0):
             now = t
-            updater.periodic_update()  # gated: false predicate, no run
+            updater.housekeeping_tick()  # gated: false predicate, no run
         assert (len(gated), len(ungated)) == (1, 1)
 
         now = 5.0
-        updater.periodic_update()  # full-pass interval elapsed
+        updater.housekeeping_tick()  # full-pass interval elapsed
         assert (len(gated), len(ungated)) == (2, 2)
 
     def test_gated_housekeeping_runs_handler_whose_predicate_fires(self):
@@ -208,9 +208,9 @@ class TestSessionUpdater:
         calls: list[int] = []
         updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
 
-        updater.periodic_update()  # t=0: full pass
+        updater.housekeeping_tick()  # t=0: full pass
         now = 1.0
-        updater.periodic_update()  # gated, but predicate fires
+        updater.housekeeping_tick()  # gated, but predicate fires
 
         assert calls == [1, 1]
 

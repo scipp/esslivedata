@@ -55,7 +55,7 @@ class SessionUpdater:
       They run only handlers whose ``has_work`` predicate fires, and skip the
       hold+freeze batch entirely when none does — a wake meant for another
       session's tab costs no model-graph recompute.
-    - **Housekeeping ticks** (:meth:`periodic_update`), driven by a slow
+    - **Housekeeping ticks** (:meth:`housekeeping_tick`), driven by a slow
       periodic callback. They are predicate-gated like wake ticks — so an
       idle tick costs no batch — except that every ``_FULL_PASS_INTERVAL_S``
       one runs every handler unconditionally: the clock for wall-clock-driven
@@ -250,7 +250,7 @@ class SessionUpdater:
         """
         self._document_teardown_handlers.append(handler)
 
-    def periodic_update(self) -> None:
+    def housekeeping_tick(self) -> None:
         """
         Housekeeping tick, called from this session's periodic callback.
 
@@ -258,6 +258,10 @@ class SessionUpdater:
         ``_FULL_PASS_INTERVAL_S`` it runs every handler unconditionally: the
         clock for wall-clock-driven updates no version counter signals, and
         the bound on how long a predicate hole can keep a widget stale.
+        The gated ticks in between exist to evaluate predicate *time* terms:
+        wakes fire only on events, so state defined by the absence of events
+        (a stalled stream aging a freshness pill) is noticed only because
+        this tick polls the predicates on a fixed clock.
 
         Heartbeats are sent to the registry only when we have evidence that
         the browser is still connected (via the browser heartbeat widget).
