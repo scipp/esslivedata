@@ -164,6 +164,16 @@ class DashboardBackend:
         return self._services.job_orchestrator
 
     @property
+    def roi_publisher(self):
+        self._check_available()
+        return self._services.roi_publisher
+
+    @property
+    def notification_queue(self):
+        self._check_available()
+        return self._services.notification_queue
+
+    @property
     def config_manager(self):
         """
         Get the config store manager.
