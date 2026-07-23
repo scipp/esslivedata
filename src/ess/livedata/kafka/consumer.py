@@ -34,6 +34,13 @@ def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
     ``Consumer.assign`` replaces the entire assignment, so all partitions of all
     topics must be passed in a single call; assigning per topic in a loop would
     leave only the last topic assigned.
+
+    Offsets are pinned to the current high watermark rather than left to
+    ``auto.offset.reset``: with manual assignment, "latest" is resolved lazily
+    when fetching starts, so a message produced between ``assign()`` and the
+    first fetch would be skipped silently (e.g. a command sent right after a
+    service reports ready). Pinning makes the contract deterministic: every
+    message produced after assignment is consumed.
     """
     assignment: list[kafka.TopicPartition] = []
     for topic in topics:
@@ -48,12 +55,29 @@ def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
             logger.error("topic_has_no_partitions", topic=topic)
             raise ValueError(f"Topic '{topic}' exists but has no partitions")
         partition_ids = list(partitions.keys())
-        assignment.extend(kafka.TopicPartition(topic, p) for p in partition_ids)
+        offsets: dict[int, int] = {}
+        for partition in partition_ids:
+            try:
+                _low, high = consumer.get_watermark_offsets(
+                    kafka.TopicPartition(topic, partition), timeout=5.0
+                )
+            except KafkaException as e:
+                logger.exception(
+                    "watermark_fetch_failed", topic=topic, partition=partition
+                )
+                raise ValueError(
+                    f"Failed to fetch watermark for '{topic}' partition"
+                    f" {partition}: {e}"
+                ) from e
+            offsets[partition] = high
+        assignment.extend(
+            kafka.TopicPartition(topic, p, offsets[p]) for p in partition_ids
+        )
         logger.info(
             "partitions_resolved",
             topic=topic,
             partition_count=len(partition_ids),
-            partitions=partition_ids,
+            offsets=offsets,
         )
     consumer.assign(assignment)
 
