@@ -44,9 +44,12 @@ class WakeupHub:
     cleared *before* the tick body runs, so a change landing during the tick
     schedules a fresh wake instead of waiting for the housekeeping poll.
 
-    Sessions unregister on teardown (:meth:`SessionUpdater.cleanup`, both the
-    clean and reaper paths); scheduling into a destroyed document raises, and
-    the session is then dropped lazily.
+    Sessions register only once their browser session has loaded (see the
+    registration site in :class:`SessionUpdater`: a wake tick mutating the
+    document before the client's initial sync would be invisible to the
+    client forever) and unregister on teardown (:meth:`SessionUpdater.cleanup`,
+    both the clean and reaper paths); scheduling into a destroyed document
+    raises, and the session is then dropped lazily.
     """
 
     def __init__(self) -> None:

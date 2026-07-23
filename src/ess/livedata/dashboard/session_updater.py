@@ -85,6 +85,12 @@ class SessionUpdater:
     clock:
         Callable returning monotonic seconds, paces the full-pass interval.
         Injectable for deterministic tests.
+    on_load:
+        Scheduler deferring a callback until the browser session has loaded
+        (websocket attached); defaults to ``pn.state.onload``, which runs the
+        callback inline outside a server session. Wake registration goes
+        through it — see the comment at the registration site. Injectable for
+        deterministic tests.
     """
 
     def __init__(
@@ -97,6 +103,7 @@ class SessionUpdater:
         document: Document | None = None,
         wakeup_hub: WakeupHub | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_load: Callable[[Callable[[], None]], None] = pn.state.onload,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
@@ -104,6 +111,7 @@ class SessionUpdater:
         self._document = document
         self._wakeup_hub = wakeup_hub
         self._clock = clock
+        self._severed = False
         # -inf so the session's first housekeeping tick is a full pass.
         self._last_full_pass = float('-inf')
 
@@ -129,10 +137,30 @@ class SessionUpdater:
         # Auto-register this session with the registry
         self._session_registry.register(session_id, self, username=username)
 
+        # Wake delivery must not start before the browser has attached: with
+        # data streaming, a wake tick would fire in the window between the
+        # initial HTML render and the client's websocket sync, and any models
+        # it adds (e.g. the first poll building all cell widgets) are missing
+        # from the client's snapshot and never re-sent — the session renders
+        # permanently empty while the server side looks healthy. Hence
+        # registration is deferred until the session is loaded.
         if self._wakeup_hub is not None and self._document is not None:
-            self._wakeup_hub.register(session_id, self._document, self.wake)
+            on_load(self._register_for_wakes)
 
         logger.debug("SessionUpdater created for session %s", session_id)
+
+    def _register_for_wakes(self) -> None:
+        """Register with the wakeup hub once the browser session has loaded.
+
+        Skipped when cleanup already ran (session destroyed before load), so
+        the deferred registration cannot resurrect a torn-down session.
+        """
+        if self._wakeup_hub is None:
+            raise RuntimeError("Wakeup hub not initialized")
+        if self._document is None:
+            raise RuntimeError("Document not initialized")
+        if not self._severed:
+            self._wakeup_hub.register(self._session_id, self._document, self.wake)
 
     def set_periodic_callback(self, callback: pn.io.PeriodicCallback) -> None:
         """
@@ -353,6 +381,7 @@ class SessionUpdater:
             on the IOLoop and leaves this ``False``.
         """
         # Tier 2: sever shared state. Safe on any thread.
+        self._severed = True
         if self._wakeup_hub is not None:
             self._wakeup_hub.unregister(self._session_id)
         self._notification_queue.unregister_session(self._session_id)

@@ -58,8 +58,13 @@ def _make_updater(
     document: FakeDocument | None = None,
     wakeup_hub: WakeupHub | None = None,
     clock: Callable[[], float] | None = None,
+    on_load: Callable[[Callable[[], None]], None] | None = None,
 ) -> SessionUpdater:
-    kwargs = {} if clock is None else {'clock': clock}
+    kwargs = {}
+    if clock is not None:
+        kwargs['clock'] = clock
+    if on_load is not None:
+        kwargs['on_load'] = on_load
     return SessionUpdater(
         session_id=session_id,
         session_registry=registry,
@@ -238,6 +243,50 @@ class TestSessionUpdater:
         assert calls == [1]
 
         updater.cleanup()
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+    def test_no_wake_delivery_before_session_loaded(self):
+        # A wake tick mutating the document between the initial HTML render
+        # and the client's websocket sync builds widgets the client never
+        # sees, so wake registration must wait for the session load signal.
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+        for callback in on_load_callbacks:
+            callback()
+        hub.wake_all()
+        document.run_next_tick_callbacks()
+        assert calls == [1]
+
+    def test_load_after_cleanup_does_not_resurrect_session(self):
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+
+        updater.cleanup()
+        for callback in on_load_callbacks:
+            callback()
         hub.wake_all()
         assert document.next_tick_callbacks == []
 
