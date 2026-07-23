@@ -76,6 +76,10 @@ class SystemStatusWidget:
 
         Session and backend displays are heartbeat/wall-clock driven with no
         version signal and refresh on the housekeeping tick instead.
+
+        Returns False while the tab is hidden, matching :meth:`_refresh_all`.
+        Becoming visible again is not a change any predicate can observe, so
+        the tab switch requests a *full* tick (see ``PlotGridTabs``).
         """
         if self._is_visible is not None and not self._is_visible():
             return False

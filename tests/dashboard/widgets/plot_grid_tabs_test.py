@@ -1375,3 +1375,73 @@ class TestWakeGateContract:
         assert plot_grid_tabs._has_pending_work()
         _tick(plot_grid_tabs)
         assert not plot_grid_tabs._has_pending_work()
+
+    def _quiescent_active_layer(self, plot_orchestrator, plot_grid_tabs):
+        """Put a static layer on the active grid and drive the gate quiet."""
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, geometry)
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = 2
+        assert plot_grid_tabs._last_active_grid_id == grid_id
+        assert not plot_grid_tabs._has_pending_work()
+        return plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+    @staticmethod
+    def _assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs):
+        """Pin that the gate fired on the layer-version term, not by accident.
+
+        Topology and frame generation are the other event-driven terms; if
+        either moved too, the assertion on ``_has_pending_work`` would pass
+        even with the layer-version term removed.
+        """
+        assert plot_orchestrator.topology_version() == (
+            plot_grid_tabs._last_topology_version
+        )
+        assert plot_orchestrator.frame_generation(
+            plot_grid_tabs._last_active_grid_id
+        ) == (plot_grid_tabs._last_flushed_generation)
+
+    def test_job_stopped_rearms_gate(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        """Stopping a workflow must arm the gate through the layer-version term.
+
+        Unlike a restart, a stop produces no further frame, so the gate's
+        frame-generation term can never cover it: without the layer-version
+        term the plots keep their live rendering until the next unconditional
+        full pass, i.e. up to _FULL_PASS_INTERVAL_S after the workflow stopped.
+        """
+        layer_id = self._quiescent_active_layer(plot_orchestrator, plot_grid_tabs)
+
+        plot_data_service.job_stopped(layer_id)
+
+        self._assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+    def test_plotter_swap_rearms_gate(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        plotting_controller,
+    ):
+        """A plotter swap keeps the LayerId, so the cell signature is unchanged
+        and only the layer-version term can arm the gate."""
+        from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+
+        layer_id = self._quiescent_active_layer(plot_orchestrator, plot_grid_tabs)
+        plotter = plotting_controller.create_plotter(
+            'vlines', params=VLinesParams(geometry=LinesCoordinates(positions='30'))
+        )
+
+        plot_data_service.job_started(layer_id, plotter)
+
+        self._assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()

@@ -131,6 +131,50 @@ class TestWakeupHub:
 
         assert ticks == []
 
+    def test_clear_pending_rearms_session_whose_tick_never_dispatched(self):
+        """A scheduled wake that is lost before it runs must not silence the
+        session for good; the housekeeping tick's ``clear_pending`` re-arms it."""
+        hub = WakeupHub()
+        doc = FakeDocument()
+        ticks: list[int] = []
+        session_id = SessionId('s')
+        hub.register(session_id, doc, lambda: ticks.append(1))
+
+        hub.wake_all()
+        # Bokeh's hold/unhold race: the callback is dropped without running.
+        doc.next_tick_callbacks.clear()
+        hub.wake_all()
+        assert doc.next_tick_callbacks == []
+
+        hub.clear_pending(session_id)
+        hub.wake_all()
+        assert len(doc.next_tick_callbacks) == 1
+        doc.run_next_tick_callbacks()
+        assert ticks == [1]
+
+    def test_clear_pending_for_unknown_session_is_noop(self):
+        hub = WakeupHub()
+        hub.clear_pending(SessionId('never-registered'))
+
+    def test_reregistration_supersedes_in_flight_wake(self):
+        """An in-flight callback belongs to the entry that scheduled it, so a
+        session re-registering under the same id does not run the old tick."""
+        hub = WakeupHub()
+        doc = FakeDocument()
+        ticks: list[str] = []
+        session_id = SessionId('s')
+        hub.register(session_id, doc, lambda: ticks.append('a'))
+
+        hub.wake_all()
+        hub.register(session_id, doc, lambda: ticks.append('b'))
+        doc.run_next_tick_callbacks()
+        assert ticks == []
+
+        # The fresh entry starts unpending, so the next wake reaches it.
+        hub.wake_all()
+        doc.run_next_tick_callbacks()
+        assert ticks == ['b']
+
     def test_tick_exception_is_contained(self):
         hub = WakeupHub()
         doc = FakeDocument()

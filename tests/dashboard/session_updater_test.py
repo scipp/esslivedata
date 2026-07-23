@@ -290,6 +290,32 @@ class TestSessionUpdater:
         hub.wake_all()
         assert document.next_tick_callbacks == []
 
+    def test_housekeeping_tick_rearms_wake_delivery_after_lost_callback(self):
+        # A wake scheduled but never dispatched leaves the hub's pending flag
+        # set. The housekeeping tick clears it, bounding the outage to one
+        # housekeeping period instead of silencing the session for good.
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+        for callback in on_load_callbacks:
+            callback()
+
+        hub.wake_all()
+        document.next_tick_callbacks.clear()  # callback lost before dispatch
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+        updater.housekeeping_tick()
+        hub.wake_all()
+        assert len(document.next_tick_callbacks) == 1
+
     def test_request_tick_schedules_wake_on_own_document(self):
         document = FakeDocument()
         updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
@@ -300,6 +326,52 @@ class TestSessionUpdater:
         assert calls == []
         document.run_next_tick_callbacks()
         assert calls == [1]
+
+    def test_request_tick_full_runs_handler_despite_false_predicate(self):
+        """A tab switch changes what is visible without changing shared state,
+        so no predicate can see it -- the full flag must bypass them."""
+        document = FakeDocument()
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.request_tick(full=True)
+        document.run_next_tick_callbacks()
+
+        assert calls == [1]
+
+    def test_request_tick_tolerates_destroyed_document(self):
+        # Scheduling into a destroyed document raises; there is nothing left to
+        # update, so the failure must not propagate to the caller.
+        document = FakeDocument(raise_on_schedule=True)
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.request_tick()  # must not raise
+
+        assert calls == []
+
+    def test_unregister_custom_handler_matches_equal_bound_method(self):
+        """Callers register and unregister ``obj.refresh`` in separate calls,
+        yielding distinct bound-method objects that compare equal."""
+
+        class Widget:
+            def __init__(self) -> None:
+                self.calls: list[int] = []
+
+            def refresh(self) -> None:
+                self.calls.append(1)
+
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        widget = Widget()
+        updater.register_custom_handler(widget.refresh)
+        assert widget.refresh is not widget.refresh
+        updater.unregister_custom_handler(widget.refresh)
+
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
+
+        assert widget.calls == []
 
     def test_cleanup_unregisters_from_notification_queue(self):
         session_id = SessionId('session-1')

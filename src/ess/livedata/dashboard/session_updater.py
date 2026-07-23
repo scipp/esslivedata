@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
+from functools import partial
 from typing import TYPE_CHECKING
 
 import panel as pn
@@ -163,6 +164,16 @@ class SessionUpdater:
         if not self._severed:
             self._wakeup_hub.register(self._session_id, self._document, self.wake)
 
+    @property
+    def severed(self) -> bool:
+        """True once :meth:`cleanup` ran, i.e. the session is being torn down.
+
+        Load-deferred setup must consult this before touching the session: the
+        browser may never connect, and the stale-session reaper can tear the
+        session down while its ``onload`` callbacks are still queued.
+        """
+        return self._severed
+
     def set_periodic_callback(self, callback: pn.io.PeriodicCallback) -> None:
         """
         Store a reference to the periodic callback driving this updater.
@@ -208,8 +219,11 @@ class SessionUpdater:
 
     def unregister_custom_handler(self, handler: Callable[[], None]) -> None:
         """Unregister a custom handler."""
+        # Equality, not identity: ``updater.register_custom_handler(w.refresh)``
+        # followed by ``updater.unregister_custom_handler(w.refresh)`` passes two
+        # distinct bound-method objects that compare equal.
         self._custom_handlers = [
-            (h, p) for h, p in self._custom_handlers if h is not handler
+            (h, p) for h, p in self._custom_handlers if h != handler
         ]
 
     def register_cleanup_handler(self, handler: Callable[[], None]) -> None:
@@ -269,6 +283,10 @@ class SessionUpdater:
         """
         # Check if browser has sent a heartbeat (widget value changed)
         self._check_browser_heartbeat()
+        # Re-arm wake delivery: a scheduled wake that never dispatched would
+        # otherwise leave this session's pending flag set for good.
+        if self._wakeup_hub is not None:
+            self._wakeup_hub.clear_pending(self._session_id)
         now = self._clock()
         full = now - self._last_full_pass >= _FULL_PASS_INTERVAL_S
         if full:
@@ -285,16 +303,33 @@ class SessionUpdater:
         """
         self._tick(full=False)
 
-    def request_tick(self) -> None:
-        """Schedule a wake tick on this session's own IOLoop.
+    def request_tick(self, *, full: bool = False) -> None:
+        """Schedule a tick on this session's own IOLoop.
 
         For in-session events with no shared version bump (e.g. a tab switch)
         whose visible effect should not wait for the housekeeping tick.
+
+        Parameters
+        ----------
+        full:
+            Run every handler instead of only those whose predicate fires. Set
+            by events that change *what is visible* rather than what changed:
+            a handler skipped while its tab was hidden holds content frozen
+            since it was last shown, and no ``has_work`` predicate can see
+            that, since nothing in the shared state changed.
         """
-        if self._document is not None:
-            self._document.add_next_tick_callback(self.wake)
-        else:
-            self.wake()
+        tick = partial(self._tick, full=full)
+        if self._document is None:
+            tick()
+            return
+        try:
+            self._document.add_next_tick_callback(tick)
+        except Exception:
+            # Destroyed document racing teardown; nothing left to update.
+            logger.debug(
+                "Dropping requested tick for session %s: scheduling failed",
+                self._session_id,
+            )
 
     def _tick(self, *, full: bool) -> None:
         notifications = self._poll_notifications()

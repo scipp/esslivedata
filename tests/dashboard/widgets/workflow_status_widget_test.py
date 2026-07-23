@@ -904,6 +904,66 @@ class TestPerSourceStatus:
         assert dots_after != dots_before
 
 
+class TestIsStale:
+    """Staleness predicate gating the widget's refresh on a wake tick.
+
+    It has two independent terms: the workflow state version (structural
+    changes) and the job-status version. Neither may be dropped -- a status
+    arriving without a structural change, or vice versa, would otherwise sit
+    unrendered until the session's next unconditional full pass.
+    """
+
+    def test_status_update_without_state_change_makes_widget_stale(
+        self, workflow_status_widget, job_service, workflow_id, job_orchestrator
+    ):
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_number = job_orchestrator.commit_workflow(workflow_id)[0].job_number
+        status = JobStatus(
+            job_id=JobId(source_name='source1', job_number=job_number),
+            workflow_id=workflow_id,
+            state=JobState.active,
+        )
+        job_service.status_updated(status)
+        workflow_status_widget.refresh()
+        state_version = job_orchestrator.get_workflow_state_version(workflow_id)
+        assert not workflow_status_widget.is_stale()
+
+        # A heartbeat for the already-known job: no structural change, so only
+        # the job-status term can see it.
+        job_service.status_updated(status)
+
+        assert job_orchestrator.get_workflow_state_version(workflow_id) == state_version
+        assert workflow_status_widget.is_stale()
+
+        workflow_status_widget.refresh()
+        assert not workflow_status_widget.is_stale()
+
+    def test_state_version_change_alone_makes_widget_stale(
+        self, workflow_status_widget, job_service, workflow_id, job_orchestrator
+    ):
+        job_version = job_service.version
+        assert not workflow_status_widget.is_stale()
+
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+
+        # No status arrived: only the state-version term can see this.
+        assert job_service.version == job_version
+        assert workflow_status_widget.is_stale()
+
+        workflow_status_widget.refresh()
+        assert not workflow_status_widget.is_stale()
+
+
 class TestWorkflowStatusListWidget:
     """Tests for WorkflowStatusListWidget."""
 

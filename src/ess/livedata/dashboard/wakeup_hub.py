@@ -42,7 +42,9 @@ class WakeupHub:
     A per-session pending flag coalesces bursts: while a wake is scheduled but
     has not run, further ``wake_all`` calls skip that session. The flag is
     cleared *before* the tick body runs, so a change landing during the tick
-    schedules a fresh wake instead of waiting for the housekeeping poll.
+    schedules a fresh wake instead of waiting for the housekeeping poll, and
+    :meth:`clear_pending` re-arms it from the housekeeping tick so a scheduled
+    tick that never dispatches cannot silence a session for good.
 
     Sessions register only once their browser session has loaded (see the
     registration site in :class:`SessionUpdater`: a wake tick mutating the
@@ -70,6 +72,25 @@ class WakeupHub:
         with self._lock:
             self._sessions.pop(session_id, None)
 
+    def clear_pending(self, session_id: SessionId) -> None:
+        """Re-arm a session for wakes regardless of what happened to its tick.
+
+        The pending flag is otherwise cleared only by :meth:`_run`, so a
+        scheduled tick that never dispatches would silence this session's
+        wakes for the rest of its life. That is reachable: Bokeh routes
+        ``add_next_tick_callback`` through ``Document.callbacks``, which
+        defers the event into ``_held_events`` while a hold is active (every
+        tick runs under ``pn.io.hold()``), and ``unhold`` copies and rebinds
+        that list non-atomically — a foreign-thread append in between is lost.
+        Calling this from the session's housekeeping tick bounds the damage to
+        one housekeeping period. A redundant clear only costs a duplicate
+        tick, which is harmless: ticks are idempotent and version-gated.
+        """
+        with self._lock:
+            entry = self._sessions.get(session_id)
+            if entry is not None:
+                entry.pending = False
+
     def wake_all(self) -> None:
         """Schedule a tick for every registered session without one pending."""
         with self._lock:
@@ -94,7 +115,10 @@ class WakeupHub:
         """
         with self._lock:
             entry.pending = False
-            if entry.session_id not in self._sessions:
+            # Identity, not membership: a session re-registering under the same
+            # id installs a fresh entry, and this in-flight callback belongs to
+            # the superseded one.
+            if self._sessions.get(entry.session_id) is not entry:
                 return
         try:
             entry.tick()

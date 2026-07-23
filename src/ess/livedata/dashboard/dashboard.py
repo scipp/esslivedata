@@ -179,11 +179,12 @@ class DashboardBase(ServiceBase, ABC):
             The period in milliseconds for the housekeeping tick. Latency-
             sensitive updates (plot frames, widget refresh after actions) are
             driven by WakeupHub wake ticks the moment shared state changes;
-            housekeeping ticks are predicate-gated (an idle tick costs no
-            hold+freeze batch) with a periodic unconditional full pass that
-            ages wall-clock-driven displays and bounds predicate holes (see
-            SessionUpdater), so this cadence bounds neither display lag nor
-            idle CPU-per-session in the common case.
+            housekeeping ticks are predicate-gated, with a periodic
+            unconditional full pass that ages wall-clock-driven displays and
+            bounds predicate holes (see SessionUpdater). A tick therefore costs
+            a hold+freeze batch only when some handler reports pending work --
+            for a session showing a plot grid that is at worst the freshness
+            pill's stall cadence, well below this callback's rate.
         """
         session_id = session_updater.session_id
         session_registry = self._services.session_registry
@@ -194,8 +195,18 @@ class DashboardBase(ServiceBase, ABC):
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        callback = pn.state.add_periodic_callback(_safe_step, period=period)
-        session_updater.set_periodic_callback(callback)
+        def _start_ticking():
+            # Deferred for the same reason as wake registration (see
+            # SessionUpdater): the first housekeeping tick is a full pass, and
+            # running it before the client has synced risks the session
+            # rendering permanently empty. The session may be torn down while
+            # this callback is still queued.
+            if session_updater.severed:
+                return
+            callback = pn.state.add_periodic_callback(_safe_step, period=period)
+            session_updater.set_periodic_callback(callback)
+
+        pn.state.onload(_start_ticking)
 
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)

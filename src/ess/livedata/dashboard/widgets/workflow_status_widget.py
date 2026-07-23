@@ -299,6 +299,7 @@ class WorkflowStatusWidget:
         self._last_state_version = self._orchestrator.get_workflow_state_version(
             self._workflow_id
         )
+        self._last_job_version = self._job_service.version
 
     @property
     def workflow_id(self) -> WorkflowId:
@@ -1147,10 +1148,19 @@ class WorkflowStatusWidget:
         )
 
     def is_stale(self) -> bool:
-        """True when the workflow's state version advanced past the last rebuild."""
+        """True when a refresh would show something the browser has not seen.
+
+        Two independent sources: the workflow's state version (structural
+        changes -> full rebuild) and the job-status version (badge, per-source
+        dots and timing text). The latter matters on its own because a
+        committed job reaching RUNNING bumps no workflow state version, so
+        without it the row would sit on its post-commit rendering until the
+        session's next unconditional full pass.
+        """
         return (
             self._orchestrator.get_workflow_state_version(self._workflow_id)
             != self._last_state_version
+            or self._job_service.version != self._last_job_version
         )
 
     def refresh(self) -> None:
@@ -1161,6 +1171,7 @@ class WorkflowStatusWidget:
         Otherwise, updates only the status badge and timing text, skipping
         assignments when the values haven't changed.
         """
+        self._last_job_version = self._job_service.version
         current_version = self._orchestrator.get_workflow_state_version(
             self._workflow_id
         )
@@ -1467,11 +1478,16 @@ class WorkflowStatusListWidget:
             self._populated = True
 
     def _has_pending_work(self) -> bool:
-        """Wake-tick gate: True when a refresh would rebuild something.
+        """Wake-tick gate: True when a refresh would change something.
 
-        Covers structural changes (per-workflow state versions, gate toggle).
-        Live status badges, timing text, and wall-clock staleness have no
-        version counter and refresh on the housekeeping tick instead.
+        Covers structural changes (per-workflow state versions, gate toggle)
+        and observed job status (badges, dots, timing). Purely wall-clock
+        staleness -- text that ages with no message behind it -- has no
+        counter and rides the unconditional full pass instead.
+
+        Returns False while the tab is hidden, matching :meth:`_refresh_all`.
+        Becoming visible again is not a change any predicate can observe, so
+        the tab switch requests a *full* tick (see ``PlotGridTabs``).
         """
         if self._is_visible is not None and not self._is_visible():
             return False
