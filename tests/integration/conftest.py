@@ -255,7 +255,7 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -286,7 +286,7 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -317,7 +317,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),
@@ -327,7 +327,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
                     'dev': True,
                     'readiness_messages': [
                         'Service started',
-                        'Kafka consumer ready and polling',
+                        'kafka_consumer_ready',
                     ],
                 },
             ),

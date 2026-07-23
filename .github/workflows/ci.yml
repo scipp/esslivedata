@@ -99,7 +99,8 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          sed -n '/=== FAILURES ===/,$p' integration-output.txt | tail -n 160 > summary.txt
+          sed -n '/=== FAILURES ===/,/Captured stdout/p' integration-output.txt | head -n 140 > summary.txt
+          sed -n '/short test summary info/,$p' integration-output.txt >> summary.txt
           if [ ! -s summary.txt ]; then
             tail -n 60 integration-output.txt > summary.txt
           fi
