@@ -3,9 +3,10 @@
 """
 SessionUpdater - Per-session component that drives all widget updates.
 
-This module implements the polling-based update model for multi-session support.
-Each browser session has its own SessionUpdater that polls for changes from
-shared services in the correct session context.
+This module implements the update model for multi-session support. Each browser
+session has its own SessionUpdater, woken by the shared WakeupHub after commits
+and backed by a slow housekeeping tick, which pulls changes from shared services
+in the correct session context.
 """
 
 from __future__ import annotations

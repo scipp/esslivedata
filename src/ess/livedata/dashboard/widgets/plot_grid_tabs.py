@@ -632,7 +632,7 @@ class PlotGridTabs:
         self._session_updater.request_tick()
 
     def _has_pending_work(self) -> bool:
-        """Gated-tick gate: True when the next poll pass would do visible work.
+        """Gated-tick gate: True when the next pass would do visible work.
 
         Mirrors the gates inside :meth:`_poll_for_plot_updates`: topology
         reconcile, active-tab frame flush, tab switch, and freshness-pill
@@ -664,7 +664,8 @@ class PlotGridTabs:
         """
         Reconcile topology and push plot-data updates for this session.
 
-        Called from SessionUpdater's periodic callback (inside hold+freeze).
+        Called from SessionUpdater's wake and housekeeping ticks (inside
+        hold+freeze), gated by :meth:`_has_pending_work`.
         First, on a topology-version change, rebuilds grid tabs and refreshes
         the manager. Then a single pass over all orchestrator cells:
         - Detects cell composition changes via signatures (layer add/remove/
@@ -675,9 +676,9 @@ class PlotGridTabs:
 
         Only layers on the currently visible grid tab call ``update_pipe()``,
         since ``dynamic=True`` on Tabs means hidden tabs have no materialized
-        Bokeh models. Skipped layers keep their dirty flag set; on tab switch
-        the next poll cycle sends the latest cached state. Polling at ~100ms
-        intervals is acceptable for config UI updates.
+        Bokeh models. Skipped layers keep their dirty flag set; a tab switch
+        requests its own tick (:meth:`_on_active_tab_changed`), which sends the
+        newly visible layers' latest cached state.
         """
         # Reconcile grid tabs only when the shared topology changed. Runs on
         # this session's thread and document lock, not pushed cross-session.
