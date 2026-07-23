@@ -99,21 +99,25 @@ jobs:
         if: failure()
         shell: bash
         run: |
+          set +e
           sed -e 's/\x1b\[[0-9;]*m//g' integration-output.txt \
             | grep -v 'Consumed 0 messages' > clean.txt
-          sed -n '/=== FAILURES ===/,$p' clean.txt | head -n 150 > summary.txt
+          awk '/=== FAILURES ===/{found=1} found && n<150 {print; n++}' clean.txt > summary.txt
+          grep 'DIAG' clean.txt >> summary.txt
           sed -n '/short test summary info/,$p' clean.txt >> summary.txt
           if [ ! -s summary.txt ]; then
-            tail -n 60 integration-output.txt > summary.txt
+            tail -n 100 clean.txt > summary.txt
           fi
           split -l 20 summary.txt chunk_
           n=0
           for f in chunk_*; do
+            [ -e "$f" ] || continue
             n=$((n + 1))
-            [ "$n" -gt 8 ] && break
+            if [ "$n" -gt 8 ]; then break; fi
             msg=$(sed -e 's/%/%25/g' "$f" | awk '{printf "%s%%0A", $0}')
             echo "::error title=integration-tests part ${n}::${msg}"
           done
+          true
 
   instrument-check:
     # Verify that an instrument deployment can construct its backend services
