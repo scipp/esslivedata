@@ -37,10 +37,12 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
     try:
         for suffix in (
             'beam_monitor',
+            'detector',
             'livedata_commands',
             'livedata_responses',
             'livedata_heartbeat',
             'livedata_data',
+            'livedata_roi',
         ):
             topic = f'{instrument}_{suffix}'
             try:
@@ -50,6 +52,25 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
                 logger.warning("DIAG topic %s: low=%s high=%s", topic, low, high)
             except Exception as e:
                 logger.warning("DIAG topic %s: watermark fetch failed: %s", topic, e)
+    finally:
+        consumer.close()
+
+
+def topic_high_watermark(topic: str) -> int:
+    """Return the high watermark offset of a topic's single partition.
+
+    Reads broker metadata without consuming, so it can prove that no new
+    message was written to a topic (e.g. no spurious command was sent).
+    """
+    from confluent_kafka import Consumer, TopicPartition
+
+    config = load_config(namespace=config_names.kafka, env='dev')
+    consumer = Consumer({**config, 'group.id': f'watermark-{uuid.uuid4()}'})
+    try:
+        _low, high = consumer.get_watermark_offsets(
+            TopicPartition(topic, 0), timeout=10.0
+        )
+        return high
     finally:
         consumer.close()
 
@@ -97,6 +118,63 @@ def _get_data_keys_for_source(
         for key in data_service
         if key.workflow_id == workflow_id and key.source_name == source_name
     ]
+
+
+def get_output_data(
+    backend: Any,
+    workflow_id: WorkflowId,
+    source_name: str,
+    output_name: str,
+) -> Any | None:
+    """Return the latest data for one output of a workflow source, or None."""
+    for key in _get_data_keys_for_source(
+        backend.data_service, workflow_id, source_name
+    ):
+        if key.output_name == output_name:
+            return backend.data_service[key]
+    return None
+
+
+def wait_for_backend_condition(
+    backend: Any,
+    condition: Callable[[], bool],
+    timeout: float = 10.0,
+    poll_interval: float = 0.5,
+    instrument: str = 'dummy',
+) -> None:
+    """Pump the backend until ``condition()`` holds.
+
+    Calls ``backend.update()`` before each check and dumps DIAG diagnostics
+    on timeout, like the job-specific helpers.
+
+    Parameters
+    ----------
+    backend:
+        The DashboardBackend instance (must have .update())
+    condition:
+        Callable returning True when the awaited state is reached
+    timeout:
+        Maximum time to wait in seconds
+    poll_interval:
+        Time between checks in seconds
+    instrument:
+        Instrument name, used for topic names in timeout diagnostics
+
+    Raises
+    ------
+    WaitTimeout:
+        If the condition is not met within the timeout period
+    """
+
+    def check() -> bool:
+        backend.update()
+        return condition()
+
+    try:
+        wait_for_condition(check, timeout=timeout, poll_interval=poll_interval)
+    except WaitTimeout:
+        dump_diagnostics(backend, instrument=instrument)
+        raise
 
 
 # Job-specific helpers

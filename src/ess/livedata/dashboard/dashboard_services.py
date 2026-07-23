@@ -212,11 +212,11 @@ class DashboardServices:
         # Create ROI publisher for publishing ROI updates to Kafka. Its
         # job-number resolver is injected in _setup_workflow_management once
         # the JobOrchestrator exists.
-        self._roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
+        self.roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             stream_manager=self.stream_manager,
-            roi_publisher=self._roi_publisher,
+            roi_publisher=self.roi_publisher,
         )
 
         # MessagePump will be wired to job_orchestrator after workflow setup
@@ -262,7 +262,7 @@ class DashboardServices:
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
         )
-        self._roi_publisher.set_job_number_resolver(
+        self.roi_publisher.set_job_number_resolver(
             self.job_orchestrator.get_active_job_number
         )
 
