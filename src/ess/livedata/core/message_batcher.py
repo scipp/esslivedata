@@ -17,6 +17,16 @@ logger = structlog.get_logger(__name__)
 
 @dataclass(slots=True, kw_only=True)
 class MessageBatch:
+    """Messages delivered together, spanning the given time range.
+
+    The time range is load-bearing beyond delivery cadence: downstream it is
+    the service's data clock -- job activation and run resets fire once these
+    times advance past their scheduled points (``JobManager._advance_to_time``).
+    Window placement is therefore a correctness concern, not only a liveness
+    one: an end time in a wrong epoch fires or parks every pending schedule,
+    even while batches keep flowing.
+    """
+
     start_time: Timestamp
     end_time: Timestamp
     messages: list[Message[Any]]
