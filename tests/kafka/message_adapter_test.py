@@ -1287,6 +1287,28 @@ class TestFutureTimestampGuard:
         assert result.value.timestamp_unix_ns == timestamp_unix_ns
         assert result.value.value == 1.0
 
+    def test_clamp_warning_without_counter_fires_once_per_stream(self) -> None:
+        """Adapters without a StreamCounter (e.g. dashboard-side routes) must
+        not warn per message: a producer with a broken clock sends thousands
+        of messages per stats window."""
+        from structlog.testing import capture_logs
+
+        def make_message(source_name: str) -> FakeKafkaMessage:
+            payload = logdata_f144.serialise_f144(
+                source_name=source_name,
+                value=1.0,
+                timestamp_unix_ns=_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60),
+            )
+            return FakeKafkaMessage(value=payload, topic="sensors")
+
+        adapter = KafkaToF144Adapter()
+        with capture_logs() as captured:
+            adapter.adapt(make_message("temperature1"))
+            adapter.adapt(make_message("temperature1"))
+            adapter.adapt(make_message("temperature2"))
+        clamps = [c for c in captured if c["event"] == "future_timestamp_clamped"]
+        assert [c["source_name"] for c in clamps] == ["temperature1", "temperature2"]
+
     def test_within_bound_da00_timestamp_is_accepted_unchanged(self) -> None:
         timestamp_ns = _future_ns(5)
         payload = dataarray_da00.serialise_da00(

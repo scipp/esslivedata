@@ -197,6 +197,10 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         self._stream_kind = stream_kind
         self._stream_counter = stream_counter
         self._future_bound_ns = int(future_bound_s * 1_000_000_000)
+        # Rate-limits clamp warnings when no StreamCounter is wired in (e.g.
+        # dashboard-side routes): once per stream per adapter lifetime,
+        # instead of once per message.
+        self._clamp_logged: set[tuple[str, str]] = set()
 
     def get_stream_id(self, topic: str, source_name: str) -> StreamId:
         if self._stream_lut is None:
@@ -242,7 +246,8 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         Clamps are counted per stream and surfaced in the backend stream
         stats; the first clamp per stream per stats window is also logged, so
         a device with a broken clock is visible without a log line per
-        message.
+        message. Without a StreamCounter (e.g. dashboard-side routes) the
+        warning fires once per stream for the adapter's lifetime instead.
         """
         now_ns = time.time_ns()
         bound_ns = now_ns + self._future_bound_ns
@@ -250,9 +255,11 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
             return timestamp
         clamped_ns = _clamp_target_ns(message, bound_ns=bound_ns, now_ns=now_ns)
         topic = message.topic()
-        is_first_clamp = True
         if self._stream_counter is not None:
             is_first_clamp = self._stream_counter.record_clamped(topic, source_name)
+        else:
+            is_first_clamp = (topic, source_name) not in self._clamp_logged
+            self._clamp_logged.add((topic, source_name))
         if is_first_clamp:
             logger.warning(
                 'future_timestamp_clamped',
