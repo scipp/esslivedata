@@ -132,7 +132,7 @@ def create_layer_info_row(
     *,
     title: str | None = None,
     description: str | None = None,
-    stopped: bool = False,
+    badge: str | None = None,
     time_pane: pn.pane.HTML | None = None,
 ) -> pn.Row | pn.Column:
     """
@@ -150,8 +150,9 @@ def create_layer_info_row(
         Optional title text to display on the left side of the row.
     description:
         Optional description shown as tooltip when hovering over the title.
-    stopped:
-        If True, adds a visual indicator (border) showing workflow has ended.
+    badge:
+        Optional pre-rendered status pill HTML ("stopped"/"error"), placed at
+        the far left to mirror the titlebar pill position.
     time_pane:
         Optional pane showing this layer's data time range/lag, placed on its
         own line below the title and updated in place by the caller.
@@ -161,8 +162,18 @@ def create_layer_info_row(
     :
         Panel Row (or Column when a time pane is given) for one layer.
     """
-    # Build left content: title and optional tooltip icon
+    # Build left content: status badge, title, and optional tooltip icon
     left_items: list = []
+    if badge:
+        left_items.append(
+            pn.pane.HTML(
+                badge,
+                sizing_mode='fixed',
+                height=ButtonStyles.TOOL_BUTTON_SIZE,
+                margin=(0, 6, 0, 0),
+                styles={'display': 'flex', 'align-items': 'center'},
+            )
+        )
     if title:
         title_html = pn.pane.HTML(
             f'<span style="font-size: 12px; color: {Colors.TEXT};">{title}</span>',
@@ -194,12 +205,6 @@ def create_layer_info_row(
 
     margin = ButtonStyles.CELL_MARGIN
 
-    # Add border when workflow is stopped
-    styles = {}
-    if stopped:
-        styles['border'] = f'2px solid {Colors.TEXT}'
-        styles['border-radius'] = '4px'
-
     title_row = pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
@@ -210,7 +215,6 @@ def create_layer_info_row(
 
     if time_pane is None:
         title_row.margin = (margin, margin, margin, margin)
-        title_row.styles = styles
         return title_row
 
     # Time info goes on its own line below the title row to avoid competing
@@ -220,7 +224,6 @@ def create_layer_info_row(
         time_pane,
         sizing_mode='stretch_width',
         margin=(margin, margin, margin, margin),
-        styles=styles,
     )
 
 
