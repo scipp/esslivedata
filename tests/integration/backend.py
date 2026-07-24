@@ -134,6 +134,11 @@ class DashboardBackend:
         return self._services.job_service
 
     @property
+    def service_registry(self):
+        self._check_available()
+        return self._services.service_registry
+
+    @property
     def plotting_controller(self):
         self._check_available()
         return self._services.plotting_controller
@@ -162,6 +167,16 @@ class DashboardBackend:
     def job_orchestrator(self):
         self._check_available()
         return self._services.job_orchestrator
+
+    @property
+    def roi_publisher(self):
+        self._check_available()
+        return self._services.roi_publisher
+
+    @property
+    def notification_queue(self):
+        self._check_available()
+        return self._services.notification_queue
 
     @property
     def config_manager(self):

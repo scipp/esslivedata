@@ -113,7 +113,7 @@ markers = [
   "instrument: Specify instrument name for parameterized tests",
   "services: Specify which services to use in integration_env fixture (monitor, detector, or reduction)",
   "slow: Slow tests (>2s) excluded by default, run in CI via tox",
-  "browser: Browser-driven (Playwright) UI tests; run locally, excluded from CI",
+  "browser: Browser-driven (Playwright) UI tests; excluded from the default run, run in CI via tox -e browser",
 ]
 filterwarnings = [
   "error",

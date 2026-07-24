@@ -230,14 +230,6 @@ class ServiceProcess:
             logger.warning("Service %s was not running", self.service_module)
             return
 
-        if self.process.poll() is not None:
-            logger.info("Service %s already stopped", self.service_module)
-            return
-
-        logger.info(
-            "Stopping service %s (PID %s)", self.service_module, self.process.pid
-        )
-
         # Use ExitStack to ensure all cleanup happens even if exceptions occur
         with ExitStack() as cleanup_stack:
             # Register pipe cleanup
@@ -263,6 +255,19 @@ class ServiceProcess:
                         )
 
             cleanup_stack.callback(stop_threads)
+
+            if self.process.poll() is not None:
+                # Already dead (clean exit or crash-injection kill): still reap
+                # and run the pipe/thread cleanup, else the unclosed pipe
+                # FileIOs surface as ResourceWarnings that pytest escalates to
+                # an error on the next test.
+                self.process.wait()
+                logger.info("Service %s already stopped", self.service_module)
+                return
+
+            logger.info(
+                "Stopping service %s (PID %s)", self.service_module, self.process.pid
+            )
 
             # Terminate/kill the process (done first, cleanup happens via ExitStack)
             self.process.terminate()

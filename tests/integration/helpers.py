@@ -37,10 +37,12 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
     try:
         for suffix in (
             'beam_monitor',
+            'detector',
             'livedata_commands',
             'livedata_responses',
             'livedata_heartbeat',
             'livedata_data',
+            'livedata_roi',
         ):
             topic = f'{instrument}_{suffix}'
             try:
@@ -52,6 +54,64 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
                 logger.warning("DIAG topic %s: watermark fetch failed: %s", topic, e)
     finally:
         consumer.close()
+
+
+def topic_high_watermark(topic: str) -> int:
+    """Return the high watermark offset of a topic's single partition.
+
+    Reads broker metadata without consuming, so it can prove that no new
+    message was written to a topic (e.g. no spurious command was sent).
+    """
+    from confluent_kafka import Consumer, TopicPartition
+
+    config = load_config(namespace=config_names.kafka, env='dev')
+    consumer = Consumer({**config, 'group.id': f'watermark-{uuid.uuid4()}'})
+    try:
+        _low, high = consumer.get_watermark_offsets(
+            TopicPartition(topic, 0), timeout=10.0
+        )
+        return high
+    finally:
+        consumer.close()
+
+
+def wait_for_watermark_stall(
+    topic: str, *, settle: float = 4.0, timeout: float = 40.0
+) -> int:
+    """Wait until a topic's high watermark stops advancing, then return it.
+
+    The watermark counts as stalled once two samples taken ``settle`` seconds
+    apart are equal. Proves that a producer went quiet (e.g. a stopped job
+    publishes no further results), tolerating in-flight messages produced
+    just before the observation started.
+
+    Parameters
+    ----------
+    topic:
+        Topic whose single-partition high watermark to observe.
+    settle:
+        Window in seconds within which no new message may arrive; must exceed
+        the producer's publish cadence for a stall to be provable.
+    timeout:
+        Maximum total time to wait for a stall.
+
+    Raises
+    ------
+    WaitTimeout:
+        If the watermark is still advancing after the timeout.
+    """
+    deadline = time.time() + timeout
+    previous = topic_high_watermark(topic)
+    while True:
+        time.sleep(settle)
+        current = topic_high_watermark(topic)
+        if current == previous:
+            return current
+        if time.time() > deadline:
+            raise WaitTimeout(
+                f"Watermark of {topic} still advancing after {timeout} seconds"
+            )
+        previous = current
 
 
 def wait_for_condition(
@@ -83,20 +143,77 @@ def wait_for_condition(
         time.sleep(poll_interval)
 
 
-def _get_data_keys_for_source(
+def _get_job_data(
     data_service: Any, workflow_id: WorkflowId, source_name: str
-) -> list[DataKey]:
-    """Get all DataKeys in DataService for one workflow source.
+) -> dict[DataKey, Any]:
+    """Get all data in DataService for one workflow source.
 
     The data plane is keyed by the stable ``DataKey`` (workflow, source,
     output); the per-commit job_number is provenance, not identity, so jobs
     are matched via their source_name.
     """
-    return [
-        key
+    return {
+        key: data_service[key]
         for key in data_service
         if key.workflow_id == workflow_id and key.source_name == source_name
-    ]
+    }
+
+
+def get_output_data(
+    backend: Any,
+    workflow_id: WorkflowId,
+    source_name: str,
+    output_name: str,
+) -> Any | None:
+    """Return the latest data for one output of a workflow source, or None."""
+    for key, value in _get_job_data(
+        backend.data_service, workflow_id, source_name
+    ).items():
+        if key.output_name == output_name:
+            return value
+    return None
+
+
+def wait_for_backend_condition(
+    backend: Any,
+    condition: Callable[[], bool],
+    timeout: float = 10.0,
+    poll_interval: float = 0.5,
+    instrument: str = 'dummy',
+) -> None:
+    """Pump the backend until ``condition()`` holds.
+
+    Calls ``backend.update()`` before each check and dumps DIAG diagnostics
+    on timeout, like the job-specific helpers.
+
+    Parameters
+    ----------
+    backend:
+        The DashboardBackend instance (must have .update())
+    condition:
+        Callable returning True when the awaited state is reached
+    timeout:
+        Maximum time to wait in seconds
+    poll_interval:
+        Time between checks in seconds
+    instrument:
+        Instrument name, used for topic names in timeout diagnostics
+
+    Raises
+    ------
+    WaitTimeout:
+        If the condition is not met within the timeout period
+    """
+
+    def check() -> bool:
+        backend.update()
+        return condition()
+
+    try:
+        wait_for_condition(check, timeout=timeout, poll_interval=poll_interval)
+    except WaitTimeout:
+        dump_diagnostics(backend, instrument=instrument)
+        raise
 
 
 # Job-specific helpers
@@ -139,14 +256,19 @@ def wait_for_job_data(
         If job data does not arrive for all jobs within the timeout period
     """
 
+    result: dict[JobId, dict[DataKey, Any]] = {}
+
     def check_for_job_data():
         backend.update()
-        return all(
-            _get_data_keys_for_source(
+        result.clear()
+        for job_id in job_ids:
+            job_data = _get_job_data(
                 backend.data_service, workflow_id, job_id.source_name
             )
-            for job_id in job_ids
-        )
+            if not job_data:
+                return False
+            result[job_id] = job_data
+        return True
 
     try:
         wait_for_condition(
@@ -156,12 +278,6 @@ def wait_for_job_data(
         dump_diagnostics(backend)
         raise
 
-    result = {}
-    for job_id in job_ids:
-        keys = _get_data_keys_for_source(
-            backend.data_service, workflow_id, job_id.source_name
-        )
-        result[job_id] = {key: backend.data_service[key] for key in keys}
     return result
 
 

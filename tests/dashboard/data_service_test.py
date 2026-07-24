@@ -1390,6 +1390,69 @@ class TestThreadSafety:
         assert not errors, f"concurrent access raised: {errors[0]!r}"
         assert service["key1"].value >= 0
 
+    def test_concurrent_ingestion_generation_flips_and_mapping_reads(self):
+        """Stress the production thread mix: ingest vs. clear_keys vs. reads.
+
+        The ingestion thread writes stamped data while the UI thread flips
+        generations via ``clear_keys`` and a reader exercises the Mapping
+        view. Iteration, ``len``, membership, and ``get`` must never raise:
+        iteration yields only keys holding data, and ``get`` absorbs the
+        inherent race of a key being cleared between iteration and read
+        (unguarded ``__getitem__`` across that window is racy by design —
+        consumers needing atomicity use ``snapshot``).
+        """
+        service = DataService[str, int]()
+        keys = [f"key{i}" for i in range(4)]
+        errors: list[BaseException] = []
+        stop = threading.Event()
+
+        def ingest() -> None:
+            i = 0
+            try:
+                while not stop.is_set():
+                    with service.transaction():
+                        service.set_item(
+                            keys[i % len(keys)],
+                            make_test_data(i, time=float(i)),
+                            stamp=i,
+                        )
+                    i += 1
+            except BaseException as exc:
+                errors.append(exc)
+
+        def flip_generations() -> None:
+            try:
+                for _ in range(300):
+                    service.clear_keys(keys)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                stop.set()
+
+        def read() -> None:
+            try:
+                while not stop.is_set():
+                    for key in service:
+                        value = service.get(key)
+                        assert value is None or value.value >= 0
+                    assert len(service) <= len(keys)
+                    assert "unrelated" not in service
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=target)
+            for target in (ingest, flip_generations, read)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not errors, f"concurrent access raised: {errors[0]!r}"
+        service.set_item("key0", make_test_data(1), stamp="final")
+        assert service["key0"].value == 1
+
     def test_write_blocked_by_transaction_notifies_once_it_commits(self):
         """The lock is transaction-scoped, the notify deferral thread-local.
 
@@ -1628,6 +1691,27 @@ class TestClearKeysAndStamps:
         assert snapshot == {}
         assert service["other"].value == 3
         assert get_pipe().notifications[-1] == {"key1", "key2"}
+
+    def test_cleared_keys_are_absent_from_the_mapping_view(self):
+        """Every iterated key must be readable: dict(service) after a clear.
+
+        Buffers survive clear_keys (extractors, retention), but a key whose
+        read raises must not be yielded by iteration or counted by len.
+        """
+        service = DataService[str, int]()
+        service["key1"] = make_test_data(1)
+        service["key2"] = make_test_data(2)
+
+        service.clear_keys(["key1"])
+
+        assert set(service) == {"key2"}
+        assert len(service) == 1
+        assert "key1" not in service
+        assert {k: v.value for k, v in dict(service).items()} == {"key2": 2}
+
+        service["key1"] = make_test_data(3)
+        assert set(service) == {"key1", "key2"}
+        assert len(service) == 2
 
     def test_clear_keys_preserves_subscriber_registration(self):
         """Data arriving after a clear reaches the still-registered subscriber."""
