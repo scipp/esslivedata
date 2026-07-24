@@ -1221,10 +1221,13 @@ class TestFutureTimestampGuard:
         assert result.value.time_of_arrival == [123456]
 
     def test_beyond_bound_monitor_timestamp_is_clamped(self) -> None:
+        """Only the envelope is clamped; the payload keeps the device's claimed
+        pulse time (see KafkaAdapter._clamp_future for the contract)."""
+        reference_time_ns = _future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)
         payload = eventdata_ev44.serialise_ev44(
             source_name="monitor1",
             message_id=0,
-            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time=[reference_time_ns],
             reference_time_index=0,
             time_of_flight=[123456],
             pixel_id=[1],
@@ -1239,6 +1242,7 @@ class TestFutureTimestampGuard:
         result = adapter.adapt(message)
         _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
         assert result.value.time_of_arrival == [123456]
+        assert result.value.reference_time_ns == reference_time_ns
 
     def test_unmapped_stream_is_reported_as_unmapped_not_clamped(self) -> None:
         """Kafka subscription is per-topic, so a service sees sources it does

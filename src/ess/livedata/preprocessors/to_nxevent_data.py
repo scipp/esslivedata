@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 import numpy as np
@@ -20,6 +20,18 @@ def _require_single_pulse(ev44: eventdata_ev44.EventData) -> None:
         raise NotImplementedError("Processing multi-pulse messages is not supported.")
 
 
+def _single_reference_time_ns(ev44: eventdata_ev44.EventData) -> int | None:
+    """The payload's pulse time, or None if the message carries none.
+
+    An absent vector surfaces as the ``int`` ``0`` from flatbuffers-python's
+    ``*AsNumpy()`` accessors, equivalent to an empty one.
+    """
+    ref = ev44.reference_time
+    if isinstance(ref, int) or len(ref) == 0:
+        return None
+    return int(ref[-1])
+
+
 @dataclass
 class MonitorEvents:
     """
@@ -30,15 +42,25 @@ class MonitorEvents:
 
     Note that we keep the raw array of time of arrivals, and the unit. This is to avoid
     unnecessary copies of the data.
+
+    ``reference_time_ns`` is the payload's pulse time -- the device's claim,
+    which flows to science consumers unmodified (see
+    ``KafkaAdapter._clamp_future`` for the envelope/payload contract) -- or
+    None when the message carries none.
     """
 
     time_of_arrival: Sequence[int]
     unit: str
+    reference_time_ns: int | None = field(default=None, kw_only=True)
 
     @staticmethod
     def from_ev44(ev44: eventdata_ev44.EventData) -> MonitorEvents:
         _require_single_pulse(ev44)
-        return MonitorEvents(time_of_arrival=ev44.time_of_flight, unit='ns')
+        return MonitorEvents(
+            time_of_arrival=ev44.time_of_flight,
+            unit='ns',
+            reference_time_ns=_single_reference_time_ns(ev44),
+        )
 
 
 @dataclass
@@ -66,7 +88,10 @@ class DetectorEvents(MonitorEvents):
     def from_ev44(ev44: eventdata_ev44.EventData) -> DetectorEvents:
         _require_single_pulse(ev44)
         return DetectorEvents(
-            pixel_id=ev44.pixel_id, time_of_arrival=ev44.time_of_flight, unit='ns'
+            pixel_id=ev44.pixel_id,
+            time_of_arrival=ev44.time_of_flight,
+            unit='ns',
+            reference_time_ns=_single_reference_time_ns(ev44),
         )
 
 
@@ -129,6 +154,16 @@ class _WeightsBuffer:
 
 
 class ToNXevent_data(Accumulator[Events, sc.DataArray]):
+    """Accumulates event chunks into an NXevent_data-shaped binned DataArray.
+
+    ``event_time_zero`` is the payload's pulse time (the device's claim,
+    passed through unmodified), with the envelope timestamp as fallback for
+    messages that carry no pulse time. The two differ when the envelope was
+    clamped at the adapter boundary: absolute event times from a device with
+    a broken clock are then wrong by the device's clock error, visibly,
+    rather than silently replaced by an arrival estimate off the pulse grid.
+    """
+
     def __init__(self):
         self._chunks: list[Events] = []
         self._timestamps: list[int] = []
@@ -150,7 +185,8 @@ class ToNXevent_data(Accumulator[Events, sc.DataArray]):
         elif self._have_event_id != isinstance(data, DetectorEvents):
             # This should never happen, but we check to be safe.
             raise ValueError("Inconsistent event_id")
-        self._timestamps.append(timestamp.to_ns())
+        ref_ns = data.reference_time_ns
+        self._timestamps.append(ref_ns if ref_ns is not None else timestamp.to_ns())
         self._chunks.append(data)
         return True
 

@@ -505,8 +505,9 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
         pixel_id = _vector_or_empty(event.PixelIdAsNumpy(), dtype=np.int32)
 
         # A fallback, useful in particular for testing so serialized data can be reused.
-        if reference_time.size > 0:
-            timestamp = Timestamp.from_ns(reference_time[-1])
+        reference_time_ns = int(reference_time[-1]) if reference_time.size > 0 else None
+        if reference_time_ns is not None:
+            timestamp = Timestamp.from_ns(reference_time_ns)
         else:
             timestamp = Timestamp.from_ms(message.timestamp()[1])
         timestamp = self._clamp_future(message, source_name, timestamp)
@@ -516,9 +517,14 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
                 pixel_id=pixel_id,
                 time_of_arrival=time_of_arrival,
                 unit='ns',
+                reference_time_ns=reference_time_ns,
             )
         else:
-            value = MonitorEvents(time_of_arrival=time_of_arrival, unit='ns')
+            value = MonitorEvents(
+                time_of_arrival=time_of_arrival,
+                unit='ns',
+                reference_time_ns=reference_time_ns,
+            )
         self._record_lag(message, source_name, timestamp)
         return Message(timestamp=timestamp, stream=stream, value=value)
 
