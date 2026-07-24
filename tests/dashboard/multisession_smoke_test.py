@@ -18,8 +18,8 @@ session must disturb neither. It is deliberately behavioral -- it observes
 rendered ColumnDataSource contents, not internals -- so it stays valid across
 delivery-mechanism refactors (#1045, #1046).
 
-Runs locally via ``pytest -m browser`` (excluded from the default run and CI;
-skips cleanly where Playwright is absent).
+Runs via ``pytest -m browser`` (excluded from the default run; CI runs them
+via ``tox -e browser``; skips cleanly where Playwright is absent).
 """
 
 from __future__ import annotations
