@@ -11,6 +11,7 @@ from ess.livedata.dashboard.notification_queue import (
 )
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
+from ess.livedata.dashboard.wakeup_hub import WakeupHub
 
 
 class FakeDocument:
@@ -55,26 +56,36 @@ def _make_updater(
     notification_queue: NotificationQueue | None = None,
     username: str | None = None,
     document: FakeDocument | None = None,
+    wakeup_hub: WakeupHub | None = None,
+    clock: Callable[[], float] | None = None,
+    on_load: Callable[[Callable[[], None]], None] | None = None,
 ) -> SessionUpdater:
+    kwargs = {}
+    if clock is not None:
+        kwargs['clock'] = clock
+    if on_load is not None:
+        kwargs['on_load'] = on_load
     return SessionUpdater(
         session_id=session_id,
         session_registry=registry,
         notification_queue=notification_queue or NotificationQueue(),
         username=username,
         document=document,
+        wakeup_hub=wakeup_hub,
+        **kwargs,
     )
 
 
 class TestSessionUpdater:
-    def test_periodic_update_runs_without_error(self):
+    def test_housekeeping_tick_runs_without_error(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
         updater = _make_updater(session_id, registry)
 
         # Session is registered at construction time (not via heartbeat)
-        # periodic_update should run without error
-        updater.periodic_update()
+        # housekeeping_tick should run without error
+        updater.housekeeping_tick()
 
         # Session should remain active (registered at construction)
         assert registry.is_active(session_id)
@@ -96,7 +107,7 @@ class TestSessionUpdater:
         assert len(notifications) == 1
         assert notifications[0].message == 'Test'
 
-    def test_custom_handler_called_during_periodic_update(self):
+    def test_custom_handler_called_during_housekeeping_tick(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
 
@@ -107,7 +118,7 @@ class TestSessionUpdater:
         updater.register_custom_handler(lambda: calls.append(1))
 
         # Periodic update should call handler
-        updater.periodic_update()
+        updater.housekeeping_tick()
 
         assert len(calls) == 1
 
@@ -128,9 +139,239 @@ class TestSessionUpdater:
         updater.unregister_custom_handler(handler)
 
         # Periodic update should not call handler
-        updater.periodic_update()
+        updater.housekeeping_tick()
 
         assert calls == []
+
+    def test_wake_runs_handler_when_predicate_fires(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.wake()
+
+        assert calls == [1]
+
+    def test_wake_skips_handler_when_predicate_is_false(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.wake()
+
+        assert calls == []
+
+    def test_wake_skips_handler_without_predicate(self):
+        """Handlers with no cheap change signal run on full passes only."""
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1))
+
+        updater.wake()
+        assert calls == []
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
+        assert calls == [1]
+
+    def test_full_pass_runs_handler_despite_false_predicate(self):
+        """The full pass is the safety net: predicates never gate it."""
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
+
+        assert calls == [1]
+
+    def test_housekeeping_between_full_passes_is_predicate_gated(self):
+        now = 0.0
+        updater = _make_updater(SessionId('s'), SessionRegistry(), clock=lambda: now)
+        gated: list[int] = []
+        ungated: list[int] = []
+        updater.register_custom_handler(lambda: gated.append(1), has_work=lambda: False)
+        updater.register_custom_handler(lambda: ungated.append(1))
+
+        updater.housekeeping_tick()  # t=0: full pass
+        assert (len(gated), len(ungated)) == (1, 1)
+
+        for t in (1.0, 2.0, 3.0, 4.0):
+            now = t
+            updater.housekeeping_tick()  # gated: false predicate, no run
+        assert (len(gated), len(ungated)) == (1, 1)
+
+        now = 5.0
+        updater.housekeeping_tick()  # full-pass interval elapsed
+        assert (len(gated), len(ungated)) == (2, 2)
+
+    def test_gated_housekeeping_runs_handler_whose_predicate_fires(self):
+        now = 0.0
+        updater = _make_updater(SessionId('s'), SessionRegistry(), clock=lambda: now)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.housekeeping_tick()  # t=0: full pass
+        now = 1.0
+        updater.housekeeping_tick()  # gated, but predicate fires
+
+        assert calls == [1, 1]
+
+    def test_wake_runs_handler_when_predicate_raises(self):
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        calls: list[int] = []
+
+        def broken_predicate() -> bool:
+            raise RuntimeError("boom")
+
+        updater.register_custom_handler(
+            lambda: calls.append(1), has_work=broken_predicate
+        )
+
+        updater.wake()
+
+        assert calls == [1]
+
+    def test_registers_with_wakeup_hub_and_unregisters_on_cleanup(self):
+        hub = WakeupHub()
+        document = FakeDocument()
+        updater = _make_updater(
+            SessionId('s'), SessionRegistry(), document=document, wakeup_hub=hub
+        )
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        hub.wake_all()
+        document.run_next_tick_callbacks()
+        assert calls == [1]
+
+        updater.cleanup()
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+    def test_no_wake_delivery_before_session_loaded(self):
+        # A wake tick mutating the document between the initial HTML render
+        # and the client's websocket sync builds widgets the client never
+        # sees, so wake registration must wait for the session load signal.
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+        for callback in on_load_callbacks:
+            callback()
+        hub.wake_all()
+        document.run_next_tick_callbacks()
+        assert calls == [1]
+
+    def test_load_after_cleanup_does_not_resurrect_session(self):
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+
+        updater.cleanup()
+        for callback in on_load_callbacks:
+            callback()
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+    def test_housekeeping_tick_rearms_wake_delivery_after_lost_callback(self):
+        # A wake scheduled but never dispatched leaves the hub's pending flag
+        # set. The housekeeping tick clears it, bounding the outage to one
+        # housekeeping period instead of silencing the session for good.
+        hub = WakeupHub()
+        document = FakeDocument()
+        on_load_callbacks: list[Callable[[], None]] = []
+        updater = _make_updater(
+            SessionId('s'),
+            SessionRegistry(),
+            document=document,
+            wakeup_hub=hub,
+            on_load=on_load_callbacks.append,
+        )
+        for callback in on_load_callbacks:
+            callback()
+
+        hub.wake_all()
+        document.next_tick_callbacks.clear()  # callback lost before dispatch
+        hub.wake_all()
+        assert document.next_tick_callbacks == []
+
+        updater.housekeeping_tick()
+        hub.wake_all()
+        assert len(document.next_tick_callbacks) == 1
+
+    def test_request_tick_schedules_wake_on_own_document(self):
+        document = FakeDocument()
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.request_tick()
+        assert calls == []
+        document.run_next_tick_callbacks()
+        assert calls == [1]
+
+    def test_request_tick_full_runs_handler_despite_false_predicate(self):
+        """A tab switch changes what is visible without changing shared state,
+        so no predicate can see it -- the full flag must bypass them."""
+        document = FakeDocument()
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: False)
+
+        updater.request_tick(full=True)
+        document.run_next_tick_callbacks()
+
+        assert calls == [1]
+
+    def test_request_tick_tolerates_destroyed_document(self):
+        # Scheduling into a destroyed document raises; there is nothing left to
+        # update, so the failure must not propagate to the caller.
+        document = FakeDocument(raise_on_schedule=True)
+        updater = _make_updater(SessionId('s'), SessionRegistry(), document=document)
+        calls: list[int] = []
+        updater.register_custom_handler(lambda: calls.append(1), has_work=lambda: True)
+
+        updater.request_tick()  # must not raise
+
+        assert calls == []
+
+    def test_unregister_custom_handler_matches_equal_bound_method(self):
+        """Callers register and unregister ``obj.refresh`` in separate calls,
+        yielding distinct bound-method objects that compare equal."""
+
+        class Widget:
+            def __init__(self) -> None:
+                self.calls: list[int] = []
+
+            def refresh(self) -> None:
+                self.calls.append(1)
+
+        updater = _make_updater(SessionId('s'), SessionRegistry())
+        widget = Widget()
+        updater.register_custom_handler(widget.refresh)
+        assert widget.refresh is not widget.refresh
+        updater.unregister_custom_handler(widget.refresh)
+
+        updater.housekeeping_tick()  # first housekeeping tick is a full pass
+
+        assert widget.calls == []
 
     def test_cleanup_unregisters_from_notification_queue(self):
         session_id = SessionId('session-1')

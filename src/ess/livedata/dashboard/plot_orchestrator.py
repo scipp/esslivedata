@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import threading
 import traceback
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
@@ -355,6 +355,7 @@ class PlotOrchestrator:
         raw_templates: Sequence[dict[str, Any]] = (),
         instrument_config: Instrument | None = None,
         frame_clock: FrameClock | None = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -382,6 +383,9 @@ class PlotOrchestrator:
             Shared counter advanced when a visible layer is recomputed, letting
             per-session poll loops coalesce synchronized plot flushes. A private
             instance is created if none is provided.
+        on_change
+            Called after every topology-version bump, e.g. to wake sessions so
+            grid/cell changes render without waiting for the next poll.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -396,6 +400,7 @@ class PlotOrchestrator:
         self._persist_suppressed = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
+        self._on_change = on_change
         self._logger = structlog.get_logger()
 
         self._grids: dict[GridId, PlotGridConfig] = {}
@@ -445,6 +450,8 @@ class PlotOrchestrator:
     def _bump_topology_version(self) -> None:
         """Advance the topology version. IOLoop-thread only."""
         self._topology_version += 1
+        if self._on_change is not None:
+            self._on_change()
 
     @property
     def instrument(self) -> str:

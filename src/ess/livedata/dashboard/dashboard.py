@@ -162,35 +162,51 @@ class DashboardBase(ServiceBase, ABC):
             notification_queue=self._services.notification_queue,
             username=pn.state.user,
             document=pn.state.curdoc,
+            wakeup_hub=self._services.wakeup_hub,
         )
 
     def _start_periodic_callback(
-        self, session_updater: SessionUpdater, period: int = 100
+        self, session_updater: SessionUpdater, period: int = 1000
     ) -> None:
         """
-        Start the periodic callback for a session.
+        Start the housekeeping callback for a session.
 
         Parameters
         ----------
         session_updater:
             The session updater to drive with the periodic callback.
         period:
-            The period in milliseconds for the periodic update step. Kept short
-            so a freshly computed frame reaches the browser promptly; the actual
-            plot-data flush is gated per data-burst frame (see PlotGridTabs), so
-            faster polling adds only cheap no-op scans, not extra Bokeh work.
+            The period in milliseconds for the housekeeping tick. Latency-
+            sensitive updates (plot frames, widget refresh after actions) are
+            driven by WakeupHub wake ticks the moment shared state changes;
+            housekeeping ticks are predicate-gated, with a periodic
+            unconditional full pass that ages wall-clock-driven displays and
+            bounds predicate holes (see SessionUpdater). A tick therefore costs
+            a hold+freeze batch only when some handler reports pending work --
+            for a session showing a plot grid that is at worst the freshness
+            pill's stall cadence, well below this callback's rate.
         """
         session_id = session_updater.session_id
         session_registry = self._services.session_registry
 
         def _safe_step():
             try:
-                session_updater.periodic_update()
+                session_updater.housekeeping_tick()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        callback = pn.state.add_periodic_callback(_safe_step, period=period)
-        session_updater.set_periodic_callback(callback)
+        def _start_ticking():
+            # Deferred for the same reason as wake registration (see
+            # SessionUpdater): the first housekeeping tick is a full pass, and
+            # running it before the client has synced risks the session
+            # rendering permanently empty. The session may be torn down while
+            # this callback is still queued.
+            if session_updater.severed:
+                return
+            callback = pn.state.add_periodic_callback(_safe_step, period=period)
+            session_updater.set_periodic_callback(callback)
+
+        pn.state.onload(_start_ticking)
 
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)

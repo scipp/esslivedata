@@ -156,6 +156,12 @@ class PlotGridTabs:
         # visible tab changed; -1 forces a flush on the first poll.
         self._last_flushed_generation: int = -1
         self._last_active_grid_id: GridId | None = None
+        # Aggregate PlotDataService version observed by the last completed poll
+        # pass. Per-layer lifecycle changes (plotter swap on job restart, the
+        # STOPPED transition on job stop) bump no topology version and, for a
+        # stop, produce no further frame, so this is their only cheap signal.
+        # -1 forces a pass on the first poll.
+        self._last_layer_version: int = -1
         # Wall-clock (monotonic) of the last freshness-pill refresh, throttling
         # the stall-aging path between data frames.
         self._last_freshness_update: float = 0.0
@@ -256,8 +262,16 @@ class PlotGridTabs:
         self._reconcile_topology()
         self._last_topology_version = self._orchestrator.topology_version()
 
-        # Register handler for periodic polling
-        session_updater.register_custom_handler(self._poll_for_plot_updates)
+        # Register the poll pass; the predicate lets wake ticks skip it (and
+        # the batched hold+freeze) when nothing visible changed.
+        session_updater.register_custom_handler(
+            self._poll_for_plot_updates, has_work=self._has_pending_work
+        )
+        # A tab switch changes what the poll pass must flush but bumps no
+        # shared version, so request an immediate in-session tick rather than
+        # waiting for the housekeeping cadence.
+        self._session_updater = session_updater
+        self._tabs.param.watch(self._on_active_tab_changed, 'active')
 
         # Two-tier teardown, run on both the clean disconnect
         # (``on_session_destroyed``) and the stale-session reaper paths. Tier 2
@@ -556,6 +570,10 @@ class PlotGridTabs:
         """Clean up modal state after completion or cancellation."""
         self._current_modal = None
         self._modal_container.clear()
+        # Closing the modal un-hides the grid (``_get_active_grid_id`` reports
+        # None while one is open), which is a visibility change like a tab
+        # switch: no shared state moved, so request the tick explicitly.
+        self._session_updater.request_tick(full=True)
 
     def _show_cell_properties_modal(
         self, cell_id: CellId, current_title: str, has_user_title: bool
@@ -620,11 +638,48 @@ class PlotGridTabs:
             previous.dispose()
         return cell_widget
 
+    def _on_active_tab_changed(self, event) -> None:
+        # Full tick: a tab switch changes what is visible without changing any
+        # shared state, so handlers that skipped work while their tab was
+        # hidden (status badges, timing text) have nothing to report to their
+        # predicates yet would render content frozen since the tab was last
+        # shown.
+        self._session_updater.request_tick(full=True)
+
+    def _has_pending_work(self) -> bool:
+        """Gated-tick gate: True when the next pass would do visible work.
+
+        Mirrors the gates inside :meth:`_poll_for_plot_updates`: topology
+        reconcile, per-layer lifecycle change, active-tab frame flush, tab
+        switch, and freshness-pill stall aging. The stall term is time-based
+        because a stalled stream sends no data and thus no wakes; with healthy
+        data the per-frame flush resets the timer before the stall interval
+        elapses and the term stays False.
+        """
+        if self._orchestrator.topology_version() != self._last_topology_version:
+            return True
+        if self._plot_data_service.version != self._last_layer_version:
+            return True
+        active_grid_id = self._get_active_grid_id()
+        if active_grid_id != self._last_active_grid_id:
+            return True
+        if (
+            self._orchestrator.frame_generation(active_grid_id)
+            != self._last_flushed_generation
+        ):
+            return True
+        return (
+            time.monotonic() - self._last_freshness_update
+            >= _FRESHNESS_STALL_INTERVAL_S
+            and active_grid_id in self._cell_grid.values()
+        )
+
     def _poll_for_plot_updates(self) -> None:
         """
         Reconcile topology and push plot-data updates for this session.
 
-        Called from SessionUpdater's periodic callback (inside hold+freeze).
+        Called from SessionUpdater's wake and housekeeping ticks (inside
+        hold+freeze), gated by :meth:`_has_pending_work`.
         First, on a topology-version change, rebuilds grid tabs and refreshes
         the manager. Then a single pass over all orchestrator cells:
         - Detects cell composition changes via signatures (layer add/remove/
@@ -635,10 +690,16 @@ class PlotGridTabs:
 
         Only layers on the currently visible grid tab call ``update_pipe()``,
         since ``dynamic=True`` on Tabs means hidden tabs have no materialized
-        Bokeh models. Skipped layers keep their dirty flag set; on tab switch
-        the next poll cycle sends the latest cached state. Polling at ~100ms
-        intervals is acceptable for config UI updates.
+        Bokeh models. Skipped layers keep their dirty flag set; a tab switch
+        requests its own tick (:meth:`_on_active_tab_changed`), which sends the
+        newly visible layers' latest cached state.
         """
+        # Snapshot before reading any layer state, and record it only once the
+        # pass completes (below): a concurrent lifecycle change is then picked
+        # up by the next pass, and an exception escaping mid-pass leaves the
+        # gate armed so the next tick retries.
+        layer_version = self._plot_data_service.version
+
         # Reconcile grid tabs only when the shared topology changed. Runs on
         # this session's thread and document lock, not pushed cross-session.
         version = self._orchestrator.topology_version()
@@ -826,6 +887,7 @@ class PlotGridTabs:
         if flush_due:
             self._last_flushed_generation = generation
         self._last_active_grid_id = active_grid_id
+        self._last_layer_version = layer_version
 
     def sever(self) -> None:
         """Release shared orchestrator state held by this session (tier 2).

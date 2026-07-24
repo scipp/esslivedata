@@ -67,7 +67,23 @@ class SystemStatusWidget:
             When provided, refreshes are skipped while the tab is hidden.
         """
         self._is_visible = is_visible
-        session_updater.register_custom_handler(self._refresh_all)
+        session_updater.register_custom_handler(
+            self._refresh_all, has_work=self._has_pending_work
+        )
+
+    def _has_pending_work(self) -> bool:
+        """Wake-tick gate: only the notification log has a change counter.
+
+        Session and backend displays are heartbeat/wall-clock driven with no
+        version signal and refresh on the housekeeping tick instead.
+
+        Returns False while the tab is hidden, matching :meth:`_refresh_all`.
+        Becoming visible again is not a change any predicate can observe, so
+        the tab switch requests a *full* tick (see ``PlotGridTabs``).
+        """
+        if self._is_visible is not None and not self._is_visible():
+            return False
+        return self._notification_widget.is_stale()
 
     def _refresh_all(self) -> None:
         """Refresh all sub-widgets, gated by visibility predicate."""

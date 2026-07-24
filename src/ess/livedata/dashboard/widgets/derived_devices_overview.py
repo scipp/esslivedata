@@ -81,7 +81,13 @@ class DerivedDevicesOverview:
 
     def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
         """Rebuild the device list when the live-device set may have changed."""
-        session_updater.register_custom_handler(self._refresh)
+        session_updater.register_custom_handler(
+            self._refresh, has_work=self._has_pending_work
+        )
+
+    def _has_pending_work(self) -> bool:
+        """Wake-tick gate: the signature captures every relevant change."""
+        return self._signature() != self._last_signature
 
     def open(self) -> None:
         """Rebuild the list and open the modal."""
