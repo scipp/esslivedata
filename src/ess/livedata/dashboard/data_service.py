@@ -417,14 +417,25 @@ class DataService(MutableMapping[K, V]):
             self._notify()
 
     def __iter__(self) -> Iterator[K]:
-        """Iterate over keys."""
+        """Iterate over keys that hold data.
+
+        Buffers survive :py:meth:`clear_keys` (only their data is dropped),
+        but a key whose read would raise must not be yielded — Mapping
+        consumers pair iteration with ``__getitem__`` (``items()``,
+        ``dict(service)``). Emptiness is probed cheaply, without assembling
+        the buffered data.
+        """
         with self._lock:
-            return iter(list(self._buffer_manager))
+            return iter(
+                [k for k in self._buffer_manager if self._buffer_manager.has_data(k)]
+            )
 
     def __len__(self) -> int:
-        """Return the number of keys."""
+        """Return the number of keys that hold data."""
         with self._lock:
-            return len(self._buffer_manager)
+            return sum(
+                1 for k in self._buffer_manager if self._buffer_manager.has_data(k)
+            )
 
     def _notify(self) -> None:
         # Some updates may have been added while notifying. Drain pending under

@@ -107,24 +107,17 @@ def wait_for_condition(
 def _get_job_data(
     data_service: Any, workflow_id: WorkflowId, source_name: str
 ) -> dict[DataKey, Any]:
-    """Get all readable data in DataService for one workflow source.
+    """Get all data in DataService for one workflow source.
 
     The data plane is keyed by the stable ``DataKey`` (workflow, source,
     output); the per-commit job_number is provenance, not identity, so jobs
     are matched via their source_name.
-
-    A generation flip (recommit) clears buffers in place: the key stays
-    iterable but reading it raises KeyError until new-generation data
-    arrives. Such cleared keys are treated as absent.
     """
-    result: dict[DataKey, Any] = {}
-    for key in data_service:
-        if key.workflow_id == workflow_id and key.source_name == source_name:
-            try:
-                result[key] = data_service[key]
-            except KeyError:
-                continue
-    return result
+    return {
+        key: data_service[key]
+        for key in data_service
+        if key.workflow_id == workflow_id and key.source_name == source_name
+    }
 
 
 def get_output_data(
