@@ -142,3 +142,23 @@ class TestFormatStreamStatsDetails:
         html = _format_stream_stats_details(stats)
         assert "<b>bad</b>" not in html
         assert "&lt;b&gt;" in html
+
+    def test_clamped_count_is_flagged(self) -> None:
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(
+                    topic="t", source_name="src", stream="s", count=10, clamped=4
+                ),
+            ),
+        )
+        html = _format_stream_stats_details(stats)
+        assert "4 clamped" in html
+
+    def test_no_clamped_summary_when_all_zero(self) -> None:
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t", source_name="src", stream="s", count=10),),
+        )
+        html = _format_stream_stats_details(stats)
+        assert "clamped" not in html

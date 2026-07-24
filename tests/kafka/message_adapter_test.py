@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
+
 import numpy as np
 import pytest
 import scipp as sc
@@ -11,6 +13,7 @@ from streaming_data_types import (
 )
 from streaming_data_types.exceptions import WrongSchemaException
 
+from ess.livedata.core.job import StreamStat
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
@@ -21,6 +24,7 @@ from ess.livedata.core.message import (
 )
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import (
+    FUTURE_TIMESTAMP_BOUND_S,
     Ad00ToScippAdapter,
     AdaptingMessageSource,
     ChainedAdapter,
@@ -42,6 +46,7 @@ from ess.livedata.kafka.message_adapter import (
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
+    UnmappedStreamError,
 )
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.preprocessors.to_nxevent_data import DetectorEvents
@@ -1144,3 +1149,306 @@ class TestAdapterLagRecording:
         adapter.adapt(message)
 
         assert counter.drain_lag() is None
+
+
+def _future_ns(offset_s: float) -> int:
+    return time.time_ns() + int(offset_s * 1_000_000_000)
+
+
+def _assert_clamped_to_now(timestamp_ns: int, *, before_ns: int) -> None:
+    """The clamped timestamp is the adapter's wall clock at adapt time."""
+    assert before_ns <= timestamp_ns <= time.time_ns()
+
+
+class TestFutureTimestampGuard:
+    """A data-derived timestamp too far ahead of the wall clock is clamped.
+
+    Within-bound future timestamps must pass through unchanged -- the guard
+    only clamps implausible values, not all future data (replays and normal
+    facility clock skew are legitimate).
+    """
+
+    def test_within_bound_ev44_timestamp_is_accepted_unchanged(self) -> None:
+        reference_time = _future_ns(5)
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[reference_time],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
+        result = adapter.adapt(message)
+        assert result.timestamp.to_ns() == reference_time
+        assert result.value.time_of_flight == [123456]
+
+    def test_beyond_bound_ev44_timestamp_is_clamped(self) -> None:
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS)
+        before_ns = time.time_ns()
+        result = adapter.adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+        assert result.value.time_of_flight == [123456]
+
+    def test_within_bound_monitor_timestamp_is_accepted_unchanged(self) -> None:
+        reference_time = _future_ns(5)
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[reference_time],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToMonitorEventsAdapter(
+            stream_lut={
+                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor1"
+            }
+        )
+        result = adapter.adapt(message)
+        assert result.timestamp.to_ns() == reference_time
+        assert result.value.time_of_arrival == [123456]
+
+    def test_beyond_bound_monitor_timestamp_is_clamped(self) -> None:
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToMonitorEventsAdapter(
+            stream_lut={
+                InputStreamKey(topic="monitors", source_name="monitor1"): "monitor1"
+            }
+        )
+        before_ns = time.time_ns()
+        result = adapter.adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+        assert result.value.time_of_arrival == [123456]
+
+    def test_unmapped_stream_is_reported_as_unmapped_not_clamped(self) -> None:
+        """Kafka subscription is per-topic, so a service sees sources it does
+        not consume. A foreign producer's broken clock must not surface as an
+        error in a service that ignores its data."""
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="foreign",
+            message_id=0,
+            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time_index=0,
+            time_of_flight=[123456],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToMonitorEventsAdapter(stream_lut={})
+        with pytest.raises(UnmappedStreamError):
+            adapter.adapt(message)
+
+    def test_within_bound_f144_timestamp_is_accepted_unchanged(self) -> None:
+        timestamp_unix_ns = _future_ns(5)
+        payload = logdata_f144.serialise_f144(
+            source_name="temperature1", value=1.0, timestamp_unix_ns=timestamp_unix_ns
+        )
+        message = FakeKafkaMessage(value=payload, topic="sensors")
+        result = KafkaToF144Adapter().adapt(message)
+        assert result.timestamp.to_ns() == timestamp_unix_ns
+        assert result.value.timestamp_unix_ns == timestamp_unix_ns
+        assert result.value.value == 1.0
+
+    def test_beyond_bound_f144_clamp_leaves_payload_untouched(self) -> None:
+        """The clamp rewrites only the envelope timestamp. The payload is the
+        device's claim and flows to science consumers unmodified, so a wrong
+        device clock is visible in the data instead of silently replaced."""
+        timestamp_unix_ns = _future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)
+        payload = logdata_f144.serialise_f144(
+            source_name="temperature1", value=1.0, timestamp_unix_ns=timestamp_unix_ns
+        )
+        message = FakeKafkaMessage(value=payload, topic="sensors")
+        before_ns = time.time_ns()
+        result = KafkaToF144Adapter().adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+        assert result.value.timestamp_unix_ns == timestamp_unix_ns
+        assert result.value.value == 1.0
+
+    def test_within_bound_da00_timestamp_is_accepted_unchanged(self) -> None:
+        timestamp_ns = _future_ns(5)
+        payload = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=timestamp_ns,
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                )
+            ],
+        )
+        message = FakeKafkaMessage(value=payload, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        result = adapter.adapt(message)
+        assert result.timestamp.to_ns() == timestamp_ns
+        assert len(result.value) == 1
+
+    def test_beyond_bound_da00_timestamp_is_clamped(self) -> None:
+        payload = dataarray_da00.serialise_da00(
+            source_name="instrument",
+            timestamp_ns=_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60),
+            data=[
+                dataarray_da00.Variable(
+                    name="signal", data=np.array([1.0]), unit="counts"
+                )
+            ],
+        )
+        message = FakeKafkaMessage(value=payload, topic="instrument")
+        adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
+        before_ns = time.time_ns()
+        result = adapter.adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+        assert len(result.value) == 1
+
+    def test_within_bound_ad00_timestamp_is_accepted_unchanged(self) -> None:
+        timestamp_ns = _future_ns(5)
+        payload = area_detector_ad00.serialise_ad00(
+            source_name="area_detector",
+            unique_id=42,
+            timestamp_ns=timestamp_ns,
+            data=np.array([[1.0, 2.0], [3.0, 4.0]]),
+        )
+        message = FakeKafkaMessage(value=payload, topic="detectors")
+        adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
+        result = adapter.adapt(message)
+        assert result.timestamp.to_ns() == timestamp_ns
+        assert result.stream.name == "area_detector"
+
+    def test_beyond_bound_ad00_timestamp_is_clamped(self) -> None:
+        payload = area_detector_ad00.serialise_ad00(
+            source_name="area_detector",
+            unique_id=42,
+            timestamp_ns=_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60),
+            data=np.array([[1.0, 2.0], [3.0, 4.0]]),
+        )
+        message = FakeKafkaMessage(value=payload, topic="detectors")
+        adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
+        before_ns = time.time_ns()
+        result = adapter.adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+        assert result.stream.name == "area_detector"
+
+    def test_custom_bound_via_ctor_kwarg_clamps_tighter(self) -> None:
+        """A caller-supplied bound overrides the module default: this offset
+        is comfortably within the default and clamped only by the tighter
+        bound."""
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[_future_ns(5)],
+            reference_time_index=0,
+            time_of_flight=[1],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, future_bound_s=1.0
+        )
+        before_ns = time.time_ns()
+        result = adapter.adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+
+    def test_clamp_prefers_plausible_broker_timestamp_over_wall_clock(self) -> None:
+        """When consuming a backlog the wall clock is ahead of the surrounding
+        traffic; the broker CreateTime lands the message among its neighbours
+        instead of turning it into a future outlier for the batcher."""
+        broker_time_ms = (time.time_ns() - 3600 * 1_000_000_000) // 1_000_000
+        timestamp_unix_ns = _future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)
+        payload = logdata_f144.serialise_f144(
+            source_name="temperature1", value=1.0, timestamp_unix_ns=timestamp_unix_ns
+        )
+        message = FakeKafkaMessage(
+            value=payload, topic="sensors", timestamp=broker_time_ms, timestamp_type=1
+        )
+        result = KafkaToF144Adapter().adapt(message)
+        assert result.timestamp == Timestamp.from_ms(broker_time_ms)
+        assert result.value.timestamp_unix_ns == timestamp_unix_ns
+
+    def test_clamp_falls_back_to_wall_clock_for_insane_broker_timestamp(self) -> None:
+        """A producer whose host clock stamps both the payload and CreateTime
+        offers no plausible broker time; the wall clock is the last resort."""
+        broker_time_ms = _future_ns(FUTURE_TIMESTAMP_BOUND_S + 60) // 1_000_000
+        payload = logdata_f144.serialise_f144(
+            source_name="temperature1",
+            value=1.0,
+            timestamp_unix_ns=_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60),
+        )
+        message = FakeKafkaMessage(
+            value=payload, topic="sensors", timestamp=broker_time_ms, timestamp_type=1
+        )
+        before_ns = time.time_ns()
+        result = KafkaToF144Adapter().adapt(message)
+        _assert_clamped_to_now(result.timestamp.to_ns(), before_ns=before_ns)
+
+    def test_clamp_is_recorded_in_stream_counter(self) -> None:
+        counter = StreamCounter()
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time_index=0,
+            time_of_flight=[1],
+            pixel_id=[1],
+        )
+        message = FakeKafkaMessage(value=payload, topic="monitors")
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        adapter.adapt(message)
+
+        stats = counter.drain(window_seconds=30.0)
+        # Clamps are a subset of received messages, so a stream whose every
+        # timestamp was clamped reports count == clamped.
+        assert stats.streams == (
+            StreamStat(
+                topic="monitors",
+                source_name="monitor1",
+                stream="monitor1",
+                count=1,
+                clamped=1,
+            ),
+        )
+
+    def test_warning_logged_only_on_first_clamp_per_stream_per_window(self) -> None:
+        from structlog.testing import capture_logs
+
+        counter = StreamCounter()
+        payload = eventdata_ev44.serialise_ev44(
+            source_name="monitor1",
+            message_id=0,
+            reference_time=[_future_ns(FUTURE_TIMESTAMP_BOUND_S + 60)],
+            reference_time_index=0,
+            time_of_flight=[1],
+            pixel_id=[1],
+        )
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        with capture_logs() as captured:
+            adapter.adapt(FakeKafkaMessage(value=payload, topic="monitors"))
+            adapter.adapt(FakeKafkaMessage(value=payload, topic="monitors"))
+
+        clamp_logs = [
+            log for log in captured if log['event'] == 'future_timestamp_clamped'
+        ]
+        assert len(clamp_logs) == 1
+
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams[0].clamped == 2

@@ -38,6 +38,7 @@ from ess.livedata.core.message_batcher import (
     SimpleMessageBatcher,
 )
 from ess.livedata.core.rate_aware_batcher import RateAwareMessageBatcher
+from ess.livedata.kafka.message_adapter import FakeKafkaMessage
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers import hostile_wire
 from tests.helpers.livedata_app import LivedataApp
@@ -80,9 +81,27 @@ class MonitorServiceHarness:
         self.app.publish_config_message(workflow_config)
         self.app.step()
 
-    def publish_payload(self, payload: bytes) -> None:
-        """Queue a raw payload on the monitor topic without stepping."""
-        self.app.publish_data(topic=self.app.monitor_topic, time=0, data=payload)
+    def publish_payload(
+        self, payload: bytes, *, broker_time_ms: int | None = None
+    ) -> None:
+        """Queue a raw payload on the monitor topic without stepping.
+
+        Without ``broker_time_ms`` the message carries no broker timestamp
+        (``TIMESTAMP_NOT_AVAILABLE``), which forces the adapter's future-clamp
+        onto its wall-clock fallback. Real Kafka messages always carry a
+        CreateTime; pass one to exercise the broker-timestamp clamp target.
+        """
+        if broker_time_ms is None:
+            self.app.publish_data(topic=self.app.monitor_topic, time=0, data=payload)
+        else:
+            self.app.consumer.add_message(
+                FakeKafkaMessage(
+                    value=payload,
+                    topic=self.app.monitor_topic,
+                    timestamp=broker_time_ms,
+                    timestamp_type=1,
+                )
+            )
 
     def next_time_ns(self) -> int:
         """Advance and return the data clock, for hand-built in-sequence payloads."""
@@ -155,10 +174,13 @@ def test_far_future_timestamp_mid_stream_does_not_stall_service(
 ) -> None:
     """A far-future timestamp *after* the first batch must not stop output.
 
-    The batchers must refuse to let the insane value steer window placement,
-    however far ahead it sits. The rate-aware batcher may stay silent for up
-    to ``_REANCHOR_STALLED_CALLS`` polls before re-anchoring, so the liveness
-    window must exceed that.
+    The adapter clamps the insane value to the wall clock. The harness data
+    timeline is a fixed epoch, so the clamped timestamp is still months ahead
+    of the stream *from the batcher's point of view* -- this test therefore
+    exercises the batcher-level in-band outlier defence end-to-end, the band
+    the adapter bound cannot cover. The rate-aware batcher may stay silent
+    for up to ``_REANCHOR_STALLED_CALLS`` polls before re-anchoring, so the
+    liveness window must exceed that.
     """
     harness.run_good_cycles(3)
     harness.publish_payload(
@@ -219,41 +241,24 @@ def test_mismatched_event_vectors_do_not_stall_service(
     assert_service_live(harness)
 
 
-@pytest.mark.parametrize(
-    'harness',
-    [
-        pytest.param(
-            SimpleMessageBatcher,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason='#1038 finding 1 / #1047: a lone far-future timestamp in '
-                'the startup backlog wins plausible_anchor\'s tie-break (one '
-                'message on each side carries no evidence), anchors the first '
-                'batch boundary, and the simple batcher has no recovery path — '
-                'the service goes silent while appearing healthy. Telling a '
-                'lone outlier from real traffic needs arrival-time evidence, '
-                'i.e. validation where messages enter (#1047).',
-            ),
-        ),
-        pytest.param(RateAwareMessageBatcher),
-    ],
-    indirect=True,
-    ids=['simple', 'rate_aware'],
-)
 def test_far_future_timestamp_in_first_batch_does_not_stall_service(
     harness: MonitorServiceHarness,
 ) -> None:
     """The startup backlog is where a far-future timestamp is most dangerous:
     it would anchor the first batch boundary, and every real message would
-    then look early forever. With only one good message beside the outlier,
-    ``plausible_anchor`` has no bulk of traffic to weigh against it, so the
-    first anchor lands on the outlier. The rate-aware batcher recovers by
-    re-anchoring once the buffered traffic unanimously contradicts the
-    window; the simple batcher stays wedged (see the xfail).
+    then look early forever. Two independent layers prevent it — the adapter
+    boundary clamps the timestamp, and the batchers anchor on a plausible
+    timestamp rather than the maximum.
+
+    The message carries a broker CreateTime in the harness's data epoch, as
+    in production consuming a backlog: the clamp must land the message among
+    its neighbours rather than at the wall clock, where it would re-poison
+    the first anchor from within the adapter's bound.
     """
     harness.publish_payload(
-        hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS)
+        hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS),
+        broker_time_ms=hostile_wire.REALISTIC_EPOCH_NS // 1_000_000,
     )
     harness.publish_good()
     harness.app.step()
-    assert_service_live(harness, cycles=60)
+    assert_service_live(harness, cycles=20)

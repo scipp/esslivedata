@@ -8,13 +8,11 @@ serialized payloads that a broken or misconfigured upstream producer could
 emit, in two families:
 
 - **Malformed**: payloads that fail to decode or violate the schema's
-  structural assumptions (garbage bytes, truncated flatbuffers, absent event
-  vectors). These exercise the per-message containment in
-  ``AdaptingMessageSource``.
+  structural assumptions (garbage bytes, truncated flatbuffers). These
+  exercise the per-message containment in ``AdaptingMessageSource``.
 - **Well-formed but insane**: payloads that decode fine but carry data-derived
   values no sane producer would send, e.g. timestamps centuries in the future.
-  These exercise (currently: document the absence of) validation at the
-  adapter boundary — see #1038 and #1047.
+  These exercise the validation at the adapter boundary — see #1038 and #1047.
 
 Used by ``tests/kafka/adapter_robustness_test.py`` (adapter-level containment
 and timestamp-bound invariants) and
@@ -220,7 +218,6 @@ def malformed_corpus(source_name: str) -> dict[str, bytes]:
         'truncated_ev44': truncated(
             ev44_events(source_name, reference_time_ns=REALISTIC_EPOCH_NS)
         ),
-        'ev44_without_event_vectors': ev44_without_event_vectors(source_name),
         'wrong_schema_f144': f144_log(source_name, timestamp_ns=REALISTIC_EPOCH_NS),
         'unmapped_source': ev44_events(
             'not_a_known_source', reference_time_ns=REALISTIC_EPOCH_NS

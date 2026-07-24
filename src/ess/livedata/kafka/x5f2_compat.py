@@ -191,6 +191,7 @@ class StreamStatModel(pydantic.BaseModel):
     source_name: str
     stream: str | None
     count: int
+    clamped: int = 0
 
 
 class StreamStatsModel(pydantic.BaseModel):
@@ -461,6 +462,7 @@ def _stream_stats_to_model(stats: StreamStats | None) -> StreamStatsModel | None
                 source_name=s.source_name,
                 stream=s.stream,
                 count=s.count,
+                clamped=s.clamped,
             )
             for s in stats.streams
         ],
@@ -478,6 +480,7 @@ def _model_to_stream_stats(model: StreamStatsModel | None) -> StreamStats | None
                 source_name=s.source_name,
                 stream=s.stream,
                 count=s.count,
+                clamped=s.clamped,
             )
             for s in model.streams
         ),

@@ -119,6 +119,10 @@ class StreamStat:
     source_name: str
     stream: str | None  # Resolved stream name, or None if unmapped
     count: int
+    # Messages whose implausibly-far-future timestamp was clamped to the wall
+    # clock (see KafkaAdapter._clamp_future). A subset of ``count``, so a
+    # stream whose every timestamp was clamped reports count == clamped.
+    clamped: int = 0
 
 
 @dataclass(frozen=True, slots=True)

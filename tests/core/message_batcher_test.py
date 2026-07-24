@@ -41,7 +41,8 @@ class TestPlausibleAnchor:
         return plausible_anchor(stamps, self.BATCH_LENGTH).to_ns() / 1e9
 
     def test_single_timestamp_is_its_own_anchor(self):
-        """One message carries no evidence against itself."""
+        """One message carries no evidence against itself; clamping an
+        implausible lone value is the adapter boundary's job."""
         assert self.anchor(500.0) == 500.0
 
     def test_contiguous_traffic_keeps_its_maximum(self):
@@ -63,7 +64,7 @@ class TestPlausibleAnchor:
         """With one message on each side there is nothing to weigh. Anchoring
         behind the traffic is the worse failure -- the window walks forward
         only one batch length per call, so a disjoint past epoch never catches
-        up."""
+        up -- and clamping an implausible lone value is the adapter's job."""
         assert self.anchor(100.0, 1e6) == 1e6
 
     def test_gap_just_within_horizon_stays_connected(self):
@@ -853,8 +854,8 @@ class TestSimpleBatcherFutureTimestampLiveness:
     live data and comes to rest at the outlier; from there nothing closes a
     batch until wall time catches up (#1038 finding 1, #1047).
 
-    The batcher cannot assume anything upstream sanitized timestamps, so this
-    band must be survivable on its own.
+    The band tested here sits inside the adapter boundary's future bound, so
+    it is what actually reaches the batcher in production.
     """
 
     RATE_HZ = 14

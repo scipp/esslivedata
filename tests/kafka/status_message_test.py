@@ -1069,3 +1069,40 @@ class TestStreamStatsX5F2RoundTrip:
         assert isinstance(result, ServiceStatus)
         assert result.stream_stats is not None
         assert result.stream_stats.streams[0].count == 42
+
+    def test_round_trip_preserves_clamped(self):
+        """The clamped count survives the x5f2 round trip alongside count,
+        including a stream whose every message was clamped (count=0)."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(
+                StreamStat(
+                    topic="t1", source_name="s1", stream="s1", count=42, clamped=3
+                ),
+                StreamStat(
+                    topic="t2", source_name="s2", stream=None, count=0, clamped=5
+                ),
+            ),
+        )
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.streams[0] == stats.streams[0]
+        assert converted.stream_stats.streams[1] == stats.streams[1]
+
+    def test_round_trip_defaults_clamped_to_zero(self):
+        """StreamStat constructed without clamped still round-trips as 0."""
+        stats = StreamStats(
+            window_seconds=30.0,
+            streams=(StreamStat(topic="t1", source_name="s1", stream="s1", count=1),),
+        )
+        original = make_service_status(stream_stats=stats)
+
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.stream_stats is not None
+        assert converted.stream_stats.streams[0].clamped == 0

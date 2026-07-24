@@ -379,6 +379,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                     window_seconds
                 )
                 self._log_stream_lag(self._stream_stats_provider.drain_lag())
+                self._log_clamped_streams(self._pending_stream_stats)
 
             logger.info(
                 'processor_metrics',
@@ -393,6 +394,26 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             self._empty_batches = 0
             self._errors_since_last_metrics = 0
             self._last_metrics_time = timestamp
+
+    def _log_clamped_streams(self, stats: StreamStats | None) -> None:
+        """Log one line per window summarizing streams with clamped timestamps.
+
+        Complements the per-stream first-occurrence warning logged where the
+        clamp happens (``KafkaAdapter._clamp_future``) with a periodic
+        overview, mirroring :meth:`_log_stream_lag`.
+        """
+        if stats is None:
+            return
+        clamped = [s for s in stats.streams if s.clamped]
+        if not clamped:
+            return
+        logger.warning(
+            'stream_timestamp_clamps',
+            streams=[
+                {'topic': s.topic, 'source': s.source_name, 'clamped': s.clamped}
+                for s in clamped
+            ],
+        )
 
     def _log_stream_lag(self, report: StreamLagReport | None) -> None:
         """Log one line per stream at a severity reflecting its lag.
