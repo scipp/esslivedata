@@ -814,7 +814,7 @@ class PlotGridTabs:
             if cell_widget is None:
                 continue
             if freshness_due:
-                cell_widget.update_freshness(list(per_layer.values()))
+                cell_widget.update_freshness(per_layer)
             if flush_due:
                 for layer_id, bounds in per_layer.items():
                     cell_widget.update_layer_time(layer_id, bounds)

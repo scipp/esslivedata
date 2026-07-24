@@ -49,7 +49,7 @@ from .plot_widgets import (
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
-from .styles import Colors, FreshnessPill, StatusColors
+from .styles import Colors, StatusColors, StatusPill
 
 logger = structlog.get_logger(__name__)
 
@@ -87,10 +87,10 @@ _STALE_MAX_SECONDS = 30.0
 def _freshness_band(age_seconds: float) -> tuple[str, str, str]:
     """Return the ``(background, text, dot)`` pill colors for a data age."""
     if age_seconds < _FRESH_MAX_SECONDS:
-        return FreshnessPill.FRESH
+        return StatusPill.FRESH
     if age_seconds < _STALE_MAX_SECONDS:
-        return FreshnessPill.STALE
-    return FreshnessPill.OLD
+        return StatusPill.STALE
+    return StatusPill.OLD
 
 
 def _format_age_short(age_seconds: float) -> str:
@@ -102,12 +102,39 @@ def _format_age_short(age_seconds: float) -> str:
     return f'{age_seconds / 60:.0f}m'
 
 
-def format_freshness_html(age_seconds: float | None) -> str:
-    """Render the titlebar freshness pill: wall-clock age of the displayed data.
+def _pill_html(
+    band: tuple[str, str, str], label: str, *, square_dot: bool = False
+) -> str:
+    """Render a status pill: colored dot + short label on a tinted background.
 
-    Shows ``now - data_end`` for the oldest layer, color-banded by staleness.
-    Because every cell uses a shared ``now``, ages are directly comparable
-    across plots and grow visibly while a stream is stalled.
+    Shared by the titlebar pill and the per-layer status badges so job state
+    speaks one visual language at both levels. ``square_dot`` renders the dot
+    as a square — the conventional "stop" glyph.
+    """
+    background, text_color, dot_color = band
+    pill_style = (
+        f'display:inline-flex;align-items:center;gap:5px;height:20px;'
+        f'padding:0 8px;border-radius:10px;font-size:11px;'
+        f'font-variant-numeric:tabular-nums;white-space:nowrap;'
+        f'background:{background};color:{text_color};'
+    )
+    dot_radius = '1px' if square_dot else '50%'
+    dot_style = (
+        f'width:7px;height:7px;border-radius:{dot_radius};flex:none;'
+        f'background:{dot_color};'
+    )
+    return f'<span style="{pill_style}"><span style="{dot_style}"></span>{label}</span>'
+
+
+def format_freshness_html(age_seconds: float | None) -> str:
+    """Render the titlebar pill for live data: wall-clock age of what is shown.
+
+    Shows ``now - data_end`` for the oldest live layer, color-banded by
+    staleness. Because every cell uses a shared ``now``, ages are directly
+    comparable across plots and grow visibly while a stream is stalled.
+    Stopped and errored cells freeze the pill via :func:`format_stopped_html`
+    / :func:`format_error_html` instead — a growing age on a deliberately
+    stopped job would read as a pipeline problem.
 
     No hover tooltip: the pill re-renders as the age ticks, which would tear
     down a native ``title`` tooltip on every update. The absolute time range and
@@ -120,20 +147,17 @@ def format_freshness_html(age_seconds: float | None) -> str:
     """
     if age_seconds is None:
         return ''
-    background, text_color, dot_color = _freshness_band(age_seconds)
-    pill_style = (
-        f'display:inline-flex;align-items:center;gap:5px;height:20px;'
-        f'padding:0 8px;border-radius:10px;font-size:11px;'
-        f'font-variant-numeric:tabular-nums;white-space:nowrap;'
-        f'background:{background};color:{text_color};'
-    )
-    dot_style = (
-        f'width:7px;height:7px;border-radius:50%;flex:none;background:{dot_color};'
-    )
-    return (
-        f'<span style="{pill_style}">'
-        f'<span style="{dot_style}"></span>{_format_age_short(age_seconds)}</span>'
-    )
+    return _pill_html(_freshness_band(age_seconds), _format_age_short(age_seconds))
+
+
+def format_stopped_html() -> str:
+    """Neutral gray "stopped" pill: the job ended, the snapshot is deliberate."""
+    return _pill_html(StatusPill.STOPPED, 'stopped', square_dot=True)
+
+
+def format_error_html() -> str:
+    """Red "error" pill for a failed layer; details live in the layer tooltip."""
+    return _pill_html(StatusPill.ERROR, 'error')
 
 
 def create_freshness_pane() -> pn.pane.HTML:
@@ -231,6 +255,8 @@ class CellWidget:
         self._toolbars_shown = toolbars_visible
         self._autoscale_controller: CellAutoscaleController | None = None
         self._freshness_pane = create_freshness_pane()
+        self._stopped_layers: frozenset[LayerId] = frozenset()
+        self._pill_frozen = False
         self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
         # Composing builds the autoscale controller as a side effect.
         self._plot = self._compose_plot()
@@ -271,9 +297,21 @@ class CellWidget:
         """The cell's autoscale controller, if any layer drives autoscale."""
         return self._autoscale_controller
 
-    def update_freshness(self, bounds_list: list[TimeBounds | None]) -> None:
-        """Update the titlebar freshness pane with the worst-case data age."""
-        merged = merge_time_bounds(bounds_list)
+    def update_freshness(
+        self, bounds_by_layer: Mapping[LayerId, TimeBounds | None]
+    ) -> None:
+        """Update the titlebar pill with the worst-case data age of live layers.
+
+        No-op while the pill is frozen to a status ("stopped"/"error", set at
+        build time). Stopped layers are excluded from the merge so their
+        ever-growing age cannot drag the band to red while other layers are
+        live.
+        """
+        if self._pill_frozen:
+            return
+        merged = merge_time_bounds(
+            b for lid, b in bounds_by_layer.items() if lid not in self._stopped_layers
+        )
         age = merged.age_seconds() if merged is not None else None
         html = format_freshness_html(age)
         if self._freshness_pane.object != html:
@@ -314,9 +352,41 @@ class CellWidget:
             result[layer.layer_id] = state
         return result
 
+    def _freeze_pill_for_status(
+        self, layer_states: dict[LayerId, LayerStateMachine]
+    ) -> None:
+        """Freeze the titlebar pill to a status pill when the cell is not live.
+
+        Any errored layer wins (needs attention); otherwise all dynamic layers
+        stopped means the cell shows a deliberate frozen snapshot. Static
+        overlay layers never run a job, so they are ignored for the stopped
+        aggregate. State changes bump layer versions and rebuild the cell, so
+        deciding at build time is sufficient.
+        """
+        self._stopped_layers = frozenset(
+            layer_id
+            for layer_id, state in layer_states.items()
+            if state.state is LayerState.STOPPED
+        )
+        dynamic_ids = [
+            layer.layer_id
+            for layer in self._cell.layers
+            if not layer.config.is_static()
+        ]
+        if any(s.state is LayerState.ERROR for s in layer_states.values()):
+            frozen = format_error_html()
+        elif dynamic_ids and all(lid in self._stopped_layers for lid in dynamic_ids):
+            frozen = format_stopped_html()
+        else:
+            frozen = None
+        self._pill_frozen = frozen is not None
+        if frozen is not None:
+            self._freshness_pane.object = frozen
+
     def _build(self) -> pn.Column:
         """Assemble the cell widget: titlebar, layer toolbars, and content."""
         layer_states = self._layer_states()
+        self._freeze_pill_for_status(layer_states)
 
         # Per-layer toolbars, wrapped in a column the titlebar toggle can hide.
         layer_toolbars = self._build_layer_toolbars(layer_states)
@@ -449,12 +519,13 @@ class CellWidget:
             )
 
             # Add state info to description using explicit state enum
-            stopped = False
+            badge = None
             match state.state:
                 case LayerState.ERROR:
+                    badge = format_error_html()
                     description = f"{description}\n\nError: {state.error_message}"
                 case LayerState.STOPPED:
-                    stopped = True
+                    badge = format_stopped_html()
                     description = f"{description}\n\nStatus: Workflow not running"
                 case LayerState.WAITING_FOR_DATA:
                     description = f"{description}\n\nStatus: Waiting for data..."
@@ -468,7 +539,7 @@ class CellWidget:
                 create_layer_info_row(
                     title=title,
                     description=description,
-                    stopped=stopped,
+                    badge=badge,
                     time_pane=time_pane,
                 )
             )

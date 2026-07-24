@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Regression tests for issue #805: polling must handle Layout-producing plotters
-even when their DynamicMap has already been evaluated by Bokeh.
+Behavior tests for the PlotGridTabs poll loop: cell (re)builds for
+Layout-producing plotters (issue #805), the titlebar status pill, and
+per-layer time panes.
 """
 
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
 import holoviews as hv
@@ -14,6 +16,7 @@ import pydantic
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
@@ -27,12 +30,13 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.plots import PresenterBase
+from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
+from ess.livedata.dashboard.widgets.styles import StatusPill
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
@@ -149,6 +153,18 @@ def _make_layout() -> hv.Layout:
     )
 
 
+def _make_bounds(age_seconds: float) -> TimeBounds:
+    """Bounds whose data age is ``age_seconds`` relative to now."""
+    now_ns = time.time_ns()
+    end_ns = now_ns - int(age_seconds * 1e9)
+    return TimeBounds(
+        min_end=Timestamp.from_ns(end_ns),
+        created_at=Timestamp.from_ns(now_ns),
+        min_start=Timestamp.from_ns(end_ns - int(1e9)),
+        max_end=Timestamp.from_ns(end_ns),
+    )
+
+
 def _inject_layer(
     plot_orchestrator: PlotOrchestrator,
     plot_data_service: PlotDataService,
@@ -184,6 +200,43 @@ def _inject_layer(
     plot_data_service.job_started(layer_id, plotter)
     plot_data_service.data_arrived(layer_id)
     return layer_id
+
+
+def _inject_two_layer_cell(
+    plot_orchestrator: PlotOrchestrator,
+    plot_data_service: PlotDataService,
+    grid_id,
+    plotters: tuple[FakePlotter, FakePlotter],
+) -> tuple[LayerId, LayerId]:
+    """Add one cell with two layers, registering one plotter per layer."""
+    cell_id = CellId(uuid4())
+    layer_ids = (LayerId(uuid4()), LayerId(uuid4()))
+
+    def cfg(view):
+        return PlotConfig(
+            data_sources={
+                'primary': DataSourceConfig(
+                    workflow_id=WorkflowId(instrument='test', name='wf', version=1),
+                    source_names=['src'],
+                    view_name=view,
+                )
+            },
+            plot_name='image',
+            params=_Params(),
+        )
+
+    cell = PlotCell(
+        geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+        layers=[
+            Layer(layer_id=lid, config=cfg(view))
+            for lid, view in zip(layer_ids, ('a', 'b'), strict=True)
+        ],
+    )
+    plot_orchestrator.peek_grid(grid_id).cells[cell_id] = cell
+    for lid, plotter in zip(layer_ids, plotters, strict=True):
+        plot_data_service.job_started(lid, plotter)
+        plot_data_service.data_arrived(lid)
+    return layer_ids
 
 
 # -- Tests -----------------------------------------------------------------
@@ -261,19 +314,9 @@ class TestFreshnessIndicator:
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
         """A poll on the active grid fills the cell's freshness pane with lag."""
-        import time
-
-        from ess.livedata.core.timestamp import Timestamp
-        from ess.livedata.dashboard.plots import TimeBounds
-
-        now_ns = time.time_ns()
-        bounds = TimeBounds(
-            min_end=Timestamp.from_ns(now_ns - int(2e9)),
-            created_at=Timestamp.from_ns(now_ns),
-            min_start=Timestamp.from_ns(now_ns - int(3e9)),
-            max_end=Timestamp.from_ns(now_ns - int(1e9)),
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
         )
-        plotter = FakePlotter(cached_state=_make_layout(), time_bounds=bounds)
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
@@ -305,49 +348,17 @@ class TestFreshnessIndicator:
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
         """Both layers in a multi-layer cell get their time pane populated."""
-        import time
-
-        from ess.livedata.core.timestamp import Timestamp
-        from ess.livedata.dashboard.plots import TimeBounds
-
-        now_ns = time.time_ns()
-        bounds = TimeBounds(
-            min_end=Timestamp.from_ns(now_ns - int(2e9)),
-            created_at=Timestamp.from_ns(now_ns),
-            min_start=Timestamp.from_ns(now_ns - int(3e9)),
-            max_end=Timestamp.from_ns(now_ns - int(1e9)),
-        )
+        bounds = _make_bounds(2.0)
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
-
-        cell_id = CellId(uuid4())
-        l1, l2 = LayerId(uuid4()), LayerId(uuid4())
-
-        def cfg(view):
-            return PlotConfig(
-                data_sources={
-                    'primary': DataSourceConfig(
-                        workflow_id=WorkflowId(instrument='test', name='wf', version=1),
-                        source_names=['src'],
-                        view_name=view,
-                    )
-                },
-                plot_name='image',
-                params=_Params(),
-            )
-
-        cell = PlotCell(
-            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            layers=[
-                Layer(layer_id=l1, config=cfg('a')),
-                Layer(layer_id=l2, config=cfg('b')),
-            ],
+        l1, l2 = _inject_two_layer_cell(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            (
+                FakePlotter(cached_state=_make_layout(), time_bounds=bounds),
+                FakePlotter(cached_state=_make_layout(), time_bounds=bounds),
+            ),
         )
-        plot_orchestrator.peek_grid(grid_id).cells[cell_id] = cell
-        for lid in (l1, l2):
-            plot_data_service.job_started(
-                lid, FakePlotter(cached_state=_make_layout(), time_bounds=bounds)
-            )
-            plot_data_service.data_arrived(lid)
 
         # First poll adds the tab and builds the cell; activate then poll again
         # so the per-layer time panes fill for the now-active grid.
@@ -355,13 +366,11 @@ class TestFreshnessIndicator:
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         plot_grid_tabs._poll_for_plot_updates()
 
-        cell_widget = plot_grid_tabs._cells[cell_id]
+        (cell_widget,) = plot_grid_tabs._cells.values()
         assert 'Lag:' in cell_widget.layer_time_panes[l1].object
         assert 'Lag:' in cell_widget.layer_time_panes[l2].object
         # The cell pill must still show with two layers.
-        pill_panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
-        assert len(pill_panes) == 1
-        assert 'border-radius' in pill_panes[0].object
+        assert 'border-radius' in cell_widget.freshness_pane.object
 
     def test_hidden_grid_does_not_update_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -377,3 +386,71 @@ class TestFreshnessIndicator:
 
         for cell_widget in plot_grid_tabs._cells.values():
             assert cell_widget.freshness_pane.object in ('', None)
+
+
+class TestStoppedJobIndication:
+    """The titlebar pill freezes to a status when jobs stop or error (#1120)."""
+
+    def _poll_active(self, plot_grid_tabs):
+        """Poll once to build, activate the grid tab, poll again to refresh."""
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs._poll_for_plot_updates()
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        return cell_widget
+
+    def test_stopped_job_shows_stopped_pill_despite_fresh_bounds(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        plot_data_service.job_stopped(layer_id)
+
+        cell_widget = self._poll_active(plot_grid_tabs)
+
+        # Frozen "stopped" pill; the fresh bounds seen by the freshness update
+        # above must not overwrite it with an age band.
+        pill = cell_widget.freshness_pane.object
+        assert 'stopped' in pill
+        assert StatusPill.STOPPED[0] in pill
+        assert StatusPill.FRESH[0] not in pill
+
+    def test_errored_layer_shows_error_pill(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        plot_data_service.error_occurred(layer_id, 'boom')
+
+        cell_widget = self._poll_active(plot_grid_tabs)
+
+        assert 'error' in cell_widget.freshness_pane.object
+
+    def test_partial_stop_excludes_stopped_layer_from_freshness(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """A stopped layer's growing age must not drag the live pill to red."""
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        stopped_layer, _live_layer = _inject_two_layer_cell(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            (
+                FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(120)),
+                FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(2.0)),
+            ),
+        )
+        plot_data_service.job_stopped(stopped_layer)
+
+        cell_widget = self._poll_active(plot_grid_tabs)
+
+        pill = cell_widget.freshness_pane.object
+        assert StatusPill.FRESH[0] in pill
+        assert StatusPill.OLD[0] not in pill
+        assert 'stopped' not in pill
