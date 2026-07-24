@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
+
 import pytest
 from streaming_data_types import run_start_pl72, run_stop_6s4t
 from streaming_data_types.exceptions import WrongSchemaException
@@ -82,6 +84,43 @@ class TestRunControlAdapter:
         stop_msg = adapter.adapt(_make_run_stop_message())
         assert start_msg.stream == RUN_CONTROL_STREAM_ID
         assert stop_msg.stream == RUN_CONTROL_STREAM_ID
+
+    def test_far_future_run_times_are_bounded(self):
+        """Run times schedule resets that fire when data time reaches them; a
+        far-future value would park a reset that never fires, losing the run
+        transition. Bounded like the envelope, with the same broker-time
+        preference."""
+        far_future_ms = (time.time_ns() + 3600 * 1_000_000_000) // 1_000_000
+        broker_time_ms = 1_700_000_000_000
+        buf = run_start_pl72.serialise_pl72(
+            job_id='fw-job-1',
+            filename='/data/run_42.nxs',
+            start_time=far_future_ms,
+            stop_time=far_future_ms + 1,
+            run_name='run_42',
+        )
+        message = FakeKafkaMessage(
+            value=buf,
+            topic='inst_filewriter',
+            timestamp=broker_time_ms,
+            timestamp_type=1,
+        )
+        msg = RunControlAdapter().adapt(message)
+        assert isinstance(msg.value, RunStart)
+        assert msg.value.start_time == Timestamp.from_ms(broker_time_ms)
+        assert msg.value.stop_time == Timestamp.from_ms(broker_time_ms)
+
+    def test_far_future_stop_time_falls_back_to_wall_clock(self):
+        far_future_ms = (time.time_ns() + 3600 * 1_000_000_000) // 1_000_000
+        buf = run_stop_6s4t.serialise_6s4t(
+            job_id='fw-job-1', run_name='run_42', stop_time=far_future_ms
+        )
+        message = FakeKafkaMessage(value=buf, topic='inst_filewriter')
+        before_ns = time.time_ns()
+        msg = RunControlAdapter().adapt(message)
+        after_ns = time.time_ns()
+        assert isinstance(msg.value, RunStop)
+        assert before_ns <= msg.value.stop_time.to_ns() <= after_ns
 
     def test_raises_on_unknown_schema(self):
         adapter = RunControlAdapter()

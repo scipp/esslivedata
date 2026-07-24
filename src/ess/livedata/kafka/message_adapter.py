@@ -163,6 +163,14 @@ class NullAdapter(MessageAdapter[KafkaMessage, Any]):
         raise IgnoredMessageError
 
 
+def _clamp_target_ns(message: KafkaMessage, *, bound_ns: int, now_ns: int) -> int:
+    """Broker timestamp when plausible, wall clock otherwise (see the
+    FUTURE_TIMESTAMP_BOUND_S comment for why the order matters)."""
+    kind, broker_ms = message.timestamp()
+    broker_ns = broker_ms * 1_000_000
+    return broker_ns if kind != 0 and broker_ns <= bound_ns else now_ns
+
+
 class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
     """
     Base class for Kafka adapters.
@@ -240,11 +248,7 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         bound_ns = now_ns + self._future_bound_ns
         if timestamp.to_ns() <= bound_ns:
             return timestamp
-        kind, broker_ms = message.timestamp()
-        broker_ns = broker_ms * 1_000_000
-        # Broker timestamp when plausible, wall clock otherwise (see the
-        # FUTURE_TIMESTAMP_BOUND_S comment for why the order matters).
-        clamped_ns = broker_ns if kind != 0 and broker_ns <= bound_ns else now_ns
+        clamped_ns = _clamp_target_ns(message, bound_ns=bound_ns, now_ns=now_ns)
         topic = message.topic()
         is_first_clamp = True
         if self._stream_counter is not None:
@@ -433,7 +437,34 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
 
     Converts timestamps from milliseconds (flatbuffer wire format) to nanoseconds
     (domain convention) at the adapter boundary.
+
+    Run start/stop times are control flow, not science data: they schedule
+    job resets that fire once data time reaches them (see
+    ``JobManager._schedule_reset``), so a far-future value would park a
+    reset that never fires and the run transition would be lost. They are
+    therefore bounded like the envelope timestamp, not passed through like
+    a payload.
     """
+
+    def __init__(self, *, future_bound_s: float = FUTURE_TIMESTAMP_BOUND_S):
+        self._future_bound_ns = int(future_bound_s * 1_000_000_000)
+
+    def _bounded(
+        self, message: KafkaMessage, run_name: str, ts: Timestamp
+    ) -> Timestamp:
+        now_ns = time.time_ns()
+        bound_ns = now_ns + self._future_bound_ns
+        if ts.to_ns() <= bound_ns:
+            return ts
+        clamped_ns = _clamp_target_ns(message, bound_ns=bound_ns, now_ns=now_ns)
+        logger.warning(
+            'future_run_time_clamped',
+            run_name=run_name,
+            timestamp_ns=ts.to_ns(),
+            clamped_to_ns=clamped_ns,
+            bound_ns=bound_ns,
+        )
+        return Timestamp.from_ns(clamped_ns)
 
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
@@ -442,18 +473,26 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
             stop_time = (
-                None if info.stop_time == 0 else Timestamp.from_ms(info.stop_time)
+                None
+                if info.stop_time == 0
+                else self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.stop_time)
+                )
             )
             value: RunStart | RunStop = RunStart(
                 run_name=info.run_name,
-                start_time=Timestamp.from_ms(info.start_time),
+                start_time=self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.start_time)
+                ),
                 stop_time=stop_time,
             )
         elif schema == '6s4t':
             info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
             value = RunStop(
                 run_name=info.run_name,
-                stop_time=Timestamp.from_ms(info.stop_time),
+                stop_time=self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.stop_time)
+                ),
             )
         else:
             raise streaming_data_types.exceptions.WrongSchemaException(
