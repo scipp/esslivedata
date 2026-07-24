@@ -105,21 +105,34 @@ def _format_stream_stats_details(stats: StreamStats | None) -> str:
             "</details>"
         )
     unmapped_count = sum(1 for s in stats.streams if s.stream is None)
+    clamped_total = sum(s.clamped for s in stats.streams)
     summary_extra = ""
     if unmapped_count:
-        summary_extra = (
+        summary_extra += (
             f' — <span style="color: {StatusColors.ERROR}">'
             f"{unmapped_count} unmapped</span>"
+        )
+    if clamped_total:
+        summary_extra += (
+            f' — <span style="color: {StatusColors.WARNING}">'
+            f"{_format_messages(clamped_total)} clamped</span>"
         )
     rows = []
     for s in stats.streams:
         stream_cell = s.stream or (
             f'<span style="color: {StatusColors.ERROR}">unmapped</span>'
         )
+        clamped_cell = (
+            f'<span style="color: {StatusColors.WARNING}">'
+            f"{_format_messages(s.clamped)}</span>"
+            if s.clamped
+            else "0"
+        )
         rows.append(
             f"<tr><td>{escape(s.topic)}</td><td>{escape(s.source_name)}</td>"
             f"<td>{stream_cell}</td><td style='text-align:right'>"
-            f"{_format_messages(s.count)}</td></tr>"
+            f"{_format_messages(s.count)}</td><td style='text-align:right'>"
+            f"{clamped_cell}</td></tr>"
         )
     header_style = f"text-align:left; border-bottom:1px solid {Colors.BORDER}"
     count_style = f"text-align:right; border-bottom:1px solid {Colors.BORDER}"
@@ -130,6 +143,7 @@ def _format_stream_stats_details(stats: StreamStats | None) -> str:
         f'<th style="{header_style}">Source</th>'
         f'<th style="{header_style}">Stream</th>'
         f'<th style="{count_style}">Count</th>'
+        f'<th style="{count_style}">Clamped</th>'
         "</tr>" + "".join(rows) + "</table>"
     )
     return (

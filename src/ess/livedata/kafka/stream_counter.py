@@ -28,6 +28,7 @@ _IGNORED_SOURCE_SUFFIXES = ('.DMOV', '.VAL')
 class _Entry:
     stream: str | None
     count: int
+    clamped: int = 0
 
 
 @dataclass(slots=True)
@@ -79,6 +80,31 @@ class StreamCounter:
         entry.count += 1
         entry.stream = stream
 
+    def record_clamped(self, topic: str, source_name: str) -> bool:
+        """Record a message whose implausibly-far-future timestamp was clamped.
+
+        Clamps are a subset of the messages counted by :meth:`record`, so a
+        stream whose timestamps are *all* clamped reports ``count == clamped``.
+        Sources with known EPICS noise suffixes and out-of-scope streams are
+        dropped, mirroring :meth:`record`.
+
+        Returns
+        -------
+        :
+            True if this is the first clamp recorded for this stream in the
+            current window, so callers can rate-limit logging to once per
+            stream per window instead of once per message.
+        """
+        if source_name.endswith(_IGNORED_SOURCE_SUFFIXES):
+            return False
+        key = (topic, source_name)
+        if key in self._out_of_scope:
+            return False
+        entry = self._counts[key]
+        is_first = entry.clamped == 0
+        entry.clamped += 1
+        return is_first
+
     def record_lag(
         self, topic: str, source_name: str, schema: str, lag_s: float
     ) -> None:
@@ -108,6 +134,7 @@ class StreamCounter:
                     source_name=source_name,
                     stream=entry.stream,
                     count=entry.count,
+                    clamped=entry.clamped,
                 )
                 for (topic, source_name), entry in sorted(self._counts.items())
             ),

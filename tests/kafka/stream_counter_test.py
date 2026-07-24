@@ -133,6 +133,88 @@ class TestStreamCounter:
         assert stats.streams[0].topic == "other_topic"
 
 
+class TestStreamCounterClamped:
+    def test_record_clamped_creates_entry_with_zero_count(self) -> None:
+        """A stream whose timestamps are all clamped must still be visible."""
+        counter = StreamCounter()
+        counter.record_clamped("topic_a", "source_1")
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == (
+            StreamStat(
+                topic="topic_a",
+                source_name="source_1",
+                stream=None,
+                count=0,
+                clamped=1,
+            ),
+        )
+
+    def test_record_clamped_accumulates(self) -> None:
+        counter = StreamCounter()
+        counter.record_clamped("topic_a", "source_1")
+        counter.record_clamped("topic_a", "source_1")
+        counter.record_clamped("topic_a", "source_1")
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams[0].clamped == 3
+
+    def test_record_and_record_clamped_share_the_same_entry(self) -> None:
+        counter = StreamCounter()
+        counter.record("topic_a", "source_1", "stream_1")
+        counter.record_clamped("topic_a", "source_1")
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == (
+            StreamStat(
+                topic="topic_a",
+                source_name="source_1",
+                stream="stream_1",
+                count=1,
+                clamped=1,
+            ),
+        )
+
+    def test_record_clamped_returns_true_on_first_call_in_window(self) -> None:
+        counter = StreamCounter()
+        assert counter.record_clamped("topic_a", "source_1") is True
+
+    def test_record_clamped_returns_false_on_subsequent_calls_in_window(self) -> None:
+        counter = StreamCounter()
+        counter.record_clamped("topic_a", "source_1")
+        assert counter.record_clamped("topic_a", "source_1") is False
+
+    def test_record_clamped_is_first_again_after_drain(self) -> None:
+        counter = StreamCounter()
+        counter.record_clamped("topic_a", "source_1")
+        counter.drain(window_seconds=30.0)
+        assert counter.record_clamped("topic_a", "source_1") is True
+
+    def test_first_clamp_is_per_stream(self) -> None:
+        counter = StreamCounter()
+        assert counter.record_clamped("topic_a", "source_1") is True
+        assert counter.record_clamped("topic_a", "source_2") is True
+
+    def test_drain_resets_clamped(self) -> None:
+        counter = StreamCounter()
+        counter.record_clamped("topic_a", "source_1")
+        counter.drain(window_seconds=30.0)
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == ()
+
+    def test_ignores_epics_noise_suffixes(self) -> None:
+        counter = StreamCounter()
+        assert counter.record_clamped("motion", "PV.DMOV") is False
+        assert counter.record_clamped("motion", "PV.VAL") is False
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == ()
+
+    def test_drops_out_of_scope_streams(self) -> None:
+        counter = StreamCounter(
+            out_of_scope=[InputStreamKey(topic="logs", source_name="other_pv.RBV")]
+        )
+        assert counter.record_clamped("logs", "other_pv.RBV") is False
+        stats = counter.drain(window_seconds=30.0)
+        assert stats.streams == ()
+
+
 class TestStreamCounterLag:
     def test_drain_lag_empty_returns_none(self) -> None:
         assert StreamCounter().drain_lag() is None

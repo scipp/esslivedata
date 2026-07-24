@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
@@ -46,6 +47,34 @@ from .stream_mapping import InputStreamKey, StreamLUT
 from .x5f2_compat import x5f2_to_status
 
 logger = structlog.get_logger(__name__)
+
+# Data-derived timestamps further ahead of the wall clock than this have no
+# legitimate producer and are clamped. The batchers use message timestamps as
+# their only clock, so a far-future value would become that clock (#1038
+# finding 1). Clamping rather than dropping keeps the data visible: a device
+# with a broken or drifting clock -- expected to be common during
+# commissioning -- still delivers, with an arrival-time estimate standing in
+# for the bogus source time.
+#
+# The clamp target is the Kafka broker timestamp when it is itself plausible,
+# the consumer's wall clock otherwise. The distinction matters when consuming
+# a backlog: there the surrounding traffic sits at an older epoch, and a
+# wall-clock substitute would be a future outlier relative to it -- exactly
+# the input the batchers' bulk-of-traffic anchoring must then defend against
+# -- while the broker timestamp lands the message among its neighbours. The
+# wall-clock fallback covers a missing broker timestamp and the producer
+# whose host clock (which stamps CreateTime) is broken along with its payload.
+#
+# Producer skew does not set this value: NTP-synced hosts skew by
+# milliseconds (see LAG_FUTURE_TOLERANCE_S, which treats 0.1 s as already
+# anomalous), an unsynced host is typically hours out, and no future-dated
+# payload has been observed in production at all. Anything from seconds to
+# minutes would separate those cases equally well. The comparison is against
+# *this* host's wall clock, so a backend whose own clock runs slow clamps
+# everything more than (bound - error) ahead; since a misfire merely rewrites
+# a timestamp to roughly the correct value, the bound needs only modest
+# headroom for that.
+FUTURE_TIMESTAMP_BOUND_S = 30.0
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -134,6 +163,14 @@ class NullAdapter(MessageAdapter[KafkaMessage, Any]):
         raise IgnoredMessageError
 
 
+def _clamp_target_ns(message: KafkaMessage, *, bound_ns: int, now_ns: int) -> int:
+    """Broker timestamp when plausible, wall clock otherwise (see the
+    FUTURE_TIMESTAMP_BOUND_S comment for why the order matters)."""
+    kind, broker_ms = message.timestamp()
+    broker_ns = broker_ms * 1_000_000
+    return broker_ns if kind != 0 and broker_ns <= bound_ns else now_ns
+
+
 class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
     """
     Base class for Kafka adapters.
@@ -154,10 +191,16 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         stream_lut: StreamLUT | None = None,
         stream_kind: StreamKind,
         stream_counter: StreamCounter | None = None,
+        future_bound_s: float = FUTURE_TIMESTAMP_BOUND_S,
     ):
         self._stream_lut = stream_lut
         self._stream_kind = stream_kind
         self._stream_counter = stream_counter
+        self._future_bound_ns = int(future_bound_s * 1_000_000_000)
+        # Rate-limits clamp warnings when no StreamCounter is wired in (e.g.
+        # dashboard-side routes): once per stream per adapter lifetime,
+        # instead of once per message.
+        self._clamp_logged: set[tuple[str, str]] = set()
 
     def get_stream_id(self, topic: str, source_name: str) -> StreamId:
         if self._stream_lut is None:
@@ -176,6 +219,58 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
             self._stream_counter.record(topic, source_name, resolved)
         return stream_id
 
+    def _clamp_future(
+        self, message: KafkaMessage, source_name: str, timestamp: Timestamp
+    ) -> Timestamp:
+        """Clamp a timestamp implausibly far ahead of the wall clock.
+
+        The clamp target is the broker timestamp when plausible, the wall
+        clock otherwise. Applies to whichever timestamp ``adapt`` ultimately
+        chose, whether payload-derived or the Kafka-broker fallback -- a
+        stalled or misconfigured broker clock is just as capable of wedging
+        the batcher as a broken producer clock. Called after
+        ``get_stream_id`` so that
+        streams this service does not consume keep failing as unmapped:
+        Kafka subscription is per-topic, and a foreign producer's broken
+        clock is not this service's concern.
+
+        Only the envelope timestamp is rewritten, never the payload. The
+        envelope is livedata's transport clock -- it drives batching,
+        scheduling, and run resets, and must therefore be plausible. Payload
+        times are the device's claim and flow to science consumers
+        unmodified: a wrong device clock is then visible and attributable in
+        the data instead of silently replaced by an estimate, and consumers
+        must tolerate wrong device times anyway -- a clock running *behind*
+        passes any future bound.
+
+        Clamps are counted per stream and surfaced in the backend stream
+        stats; the first clamp per stream per stats window is also logged, so
+        a device with a broken clock is visible without a log line per
+        message. Without a StreamCounter (e.g. dashboard-side routes) the
+        warning fires once per stream for the adapter's lifetime instead.
+        """
+        now_ns = time.time_ns()
+        bound_ns = now_ns + self._future_bound_ns
+        if timestamp.to_ns() <= bound_ns:
+            return timestamp
+        clamped_ns = _clamp_target_ns(message, bound_ns=bound_ns, now_ns=now_ns)
+        topic = message.topic()
+        if self._stream_counter is not None:
+            is_first_clamp = self._stream_counter.record_clamped(topic, source_name)
+        else:
+            is_first_clamp = (topic, source_name) not in self._clamp_logged
+            self._clamp_logged.add((topic, source_name))
+        if is_first_clamp:
+            logger.warning(
+                'future_timestamp_clamped',
+                topic=topic,
+                source_name=source_name,
+                timestamp_ns=timestamp.to_ns(),
+                clamped_to_ns=clamped_ns,
+                bound_ns=bound_ns,
+            )
+        return Timestamp.from_ns(clamped_ns)
+
     def _record_lag(
         self, message: KafkaMessage, source_name: str, timestamp: Timestamp
     ) -> None:
@@ -193,17 +288,33 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         )
 
 
+def _vector_or_empty(vector: Any, dtype: type) -> np.ndarray:
+    """Normalize a flatbuffers vector accessor for an absent vector.
+
+    The ev44 schema allows event vectors (reference_time, time_of_flight,
+    pixel_id) to be absent entirely, not just empty. flatbuffers-python's
+    ``*AsNumpy()`` accessors then return the Python ``int`` ``0`` instead of
+    an empty array, breaking any caller expecting ``.size`` or indexing
+    (#1038 finding 2). An absent vector is equivalent to an empty one.
+    """
+    if isinstance(vector, np.ndarray):
+        return vector
+    return np.empty(0, dtype=dtype)
+
+
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
     schema = 'ev44'
 
     def adapt(self, message: KafkaMessage) -> Message[eventdata_ev44.EventData]:
         ev44 = eventdata_ev44.deserialise_ev44(message.value())
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
+        reference_time = _vector_or_empty(ev44.reference_time, dtype=np.int64)
         # A fallback, useful in particular for testing so serialized data can be reused.
-        if ev44.reference_time.size > 0:
-            timestamp = Timestamp.from_ns(ev44.reference_time[-1])
+        if reference_time.size > 0:
+            timestamp = Timestamp.from_ns(reference_time[-1])
         else:
             timestamp = Timestamp.from_ms(message.timestamp()[1])
+        timestamp = self._clamp_future(message, ev44.source_name, timestamp)
         self._record_lag(message, ev44.source_name, timestamp)
         return Message(timestamp=timestamp, stream=stream, value=ev44)
 
@@ -240,14 +351,17 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
 
     def adapt(self, message: KafkaMessage) -> Message[list[dataarray_da00.Variable]]:
         da00: dataarray_da00.da00_DataArray_t
-        da00 = dataarray_da00.deserialise_da00(message.value())  # type: ignore[reportAssignmentType]
-        key = self.get_stream_id(topic=message.topic(), source_name=da00.source_name)
+        da00 = dataarray_da00.deserialise_da00(  # type: ignore[reportAssignmentType]
+            message.value()
+        )
         # Prefer reference_time from the data variables (mirroring ev44 behavior)
         # over the opaque top-level timestamp_ns whose semantics are unspecified.
+        key = self.get_stream_id(topic=message.topic(), source_name=da00.source_name)
         ref_time = _extract_reference_time(da00.data)
         timestamp = (
             ref_time if ref_time is not None else Timestamp.from_ns(da00.timestamp_ns)
         )
+        timestamp = self._clamp_future(message, da00.source_name, timestamp)
         self._record_lag(message, da00.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
@@ -263,11 +377,13 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
         *,
         stream_lut: StreamLUT | None = None,
         stream_counter: StreamCounter | None = None,
+        future_bound_s: float = FUTURE_TIMESTAMP_BOUND_S,
     ):
         super().__init__(
             stream_lut=stream_lut,
             stream_kind=StreamKind.LOG,
             stream_counter=stream_counter,
+            future_bound_s=future_bound_s,
         )
 
     def adapt(self, message: KafkaMessage) -> Message[logdata_f144.ExtractedLogData]:
@@ -276,6 +392,7 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
             topic=message.topic(), source_name=log_data.source_name
         )
         timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
+        timestamp = self._clamp_future(message, log_data.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 
@@ -327,7 +444,34 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
 
     Converts timestamps from milliseconds (flatbuffer wire format) to nanoseconds
     (domain convention) at the adapter boundary.
+
+    Run start/stop times are control flow, not science data: they schedule
+    job resets that fire once data time reaches them (see
+    ``JobManager._schedule_reset``), so a far-future value would park a
+    reset that never fires and the run transition would be lost. They are
+    therefore bounded like the envelope timestamp, not passed through like
+    a payload.
     """
+
+    def __init__(self, *, future_bound_s: float = FUTURE_TIMESTAMP_BOUND_S):
+        self._future_bound_ns = int(future_bound_s * 1_000_000_000)
+
+    def _bounded(
+        self, message: KafkaMessage, run_name: str, ts: Timestamp
+    ) -> Timestamp:
+        now_ns = time.time_ns()
+        bound_ns = now_ns + self._future_bound_ns
+        if ts.to_ns() <= bound_ns:
+            return ts
+        clamped_ns = _clamp_target_ns(message, bound_ns=bound_ns, now_ns=now_ns)
+        logger.warning(
+            'future_run_time_clamped',
+            run_name=run_name,
+            timestamp_ns=ts.to_ns(),
+            clamped_to_ns=clamped_ns,
+            bound_ns=bound_ns,
+        )
+        return Timestamp.from_ns(clamped_ns)
 
     def adapt(self, message: KafkaMessage) -> Message[RunStart | RunStop]:
         buf = message.value()
@@ -336,18 +480,26 @@ class RunControlAdapter(MessageAdapter[KafkaMessage, Message[RunStart | RunStop]
         if schema == 'pl72':
             info = run_start_pl72.deserialise_pl72(buf)
             stop_time = (
-                None if info.stop_time == 0 else Timestamp.from_ms(info.stop_time)
+                None
+                if info.stop_time == 0
+                else self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.stop_time)
+                )
             )
             value: RunStart | RunStop = RunStart(
                 run_name=info.run_name,
-                start_time=Timestamp.from_ms(info.start_time),
+                start_time=self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.start_time)
+                ),
                 stop_time=stop_time,
             )
         elif schema == '6s4t':
             info = run_stop_6s4t.deserialise_6s4t(buf)  # type: ignore[assignment]
             value = RunStop(
                 run_name=info.run_name,
-                stop_time=Timestamp.from_ms(info.stop_time),
+                stop_time=self._bounded(
+                    message, info.run_name, Timestamp.from_ms(info.stop_time)
+                ),
             )
         else:
             raise streaming_data_types.exceptions.WrongSchemaException(
@@ -378,11 +530,13 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
         *,
         pixellated_sources: frozenset[str] = frozenset(),
         stream_counter: StreamCounter | None = None,
+        future_bound_s: float = FUTURE_TIMESTAMP_BOUND_S,
     ):
         super().__init__(
             stream_lut=stream_lut,
             stream_kind=StreamKind.MONITOR_EVENTS,
             stream_counter=stream_counter,
+            future_bound_s=future_bound_s,
         )
         self._pixellated_sources = pixellated_sources
 
@@ -392,23 +546,31 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
         event = Event44Message.Event44Message.GetRootAs(buffer, 0)
         source_name = event.SourceName().decode("utf-8")
         stream = self.get_stream_id(topic=message.topic(), source_name=source_name)
-        reference_time = event.ReferenceTimeAsNumpy()
-        time_of_arrival = event.TimeOfFlightAsNumpy()
+        reference_time = _vector_or_empty(event.ReferenceTimeAsNumpy(), dtype=np.int64)
+        time_of_arrival = _vector_or_empty(event.TimeOfFlightAsNumpy(), dtype=np.int32)
+        pixel_id = _vector_or_empty(event.PixelIdAsNumpy(), dtype=np.int32)
 
         # A fallback, useful in particular for testing so serialized data can be reused.
-        if reference_time.size > 0:
-            timestamp = Timestamp.from_ns(reference_time[-1])
+        reference_time_ns = int(reference_time[-1]) if reference_time.size > 0 else None
+        if reference_time_ns is not None:
+            timestamp = Timestamp.from_ns(reference_time_ns)
         else:
             timestamp = Timestamp.from_ms(message.timestamp()[1])
+        timestamp = self._clamp_future(message, source_name, timestamp)
 
         if stream.name in self._pixellated_sources:
             value: MonitorEvents | DetectorEvents = DetectorEvents(
-                pixel_id=event.PixelIdAsNumpy(),
+                pixel_id=pixel_id,
                 time_of_arrival=time_of_arrival,
                 unit='ns',
+                reference_time_ns=reference_time_ns,
             )
         else:
-            value = MonitorEvents(time_of_arrival=time_of_arrival, unit='ns')
+            value = MonitorEvents(
+                time_of_arrival=time_of_arrival,
+                unit='ns',
+                reference_time_ns=reference_time_ns,
+            )
         self._record_lag(message, source_name, timestamp)
         return Message(timestamp=timestamp, stream=stream, value=value)
 
@@ -461,6 +623,7 @@ class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
         ad00 = area_detector_ad00.deserialise_ad00(message.value())
         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
         timestamp = Timestamp.from_ns(ad00.timestamp_ns)
+        timestamp = self._clamp_future(message, ad00.source_name, timestamp)
         self._record_lag(message, ad00.source_name, timestamp)
         return Message(timestamp=timestamp, stream=key, value=ad00)
 

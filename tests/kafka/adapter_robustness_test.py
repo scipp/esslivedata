@@ -7,15 +7,12 @@ Two invariants, driven by the corpus in ``tests/helpers/hostile_wire``:
 1. **Containment** (holds today, guarded here against regression): a payload
    that cannot be adapted is dropped by ``AdaptingMessageSource`` without the
    exception escaping and without affecting subsequent messages.
-2. **Timestamp sanity** (does not hold today — strict xfail): data-derived
-   timestamps should be bounded against the wall clock before crossing the
-   adapter boundary, because the batcher uses them as its only clock and a
-   single far-future value wedges the whole service (#1038 finding 1). These
-   tests are the acceptance criterion for the boundary-validation layer
-   proposed in #1047: when it lands, the xfails flip to XPASS (strict, so
-   pytest will insist the markers are removed). Any resolution — dropping,
-   clamping, or falling back to the Kafka broker timestamp — satisfies the
-   assertion as written.
+2. **Timestamp sanity**: data-derived timestamps are bounded against the wall
+   clock before crossing the adapter boundary, because the batcher uses them
+   as its only clock and a single far-future value would otherwise wedge the
+   whole service (#1038 finding 1). ``KafkaAdapter._clamp_future`` implements
+   this as a clamp to the wall clock; these tests are agnostic between that,
+   rejecting, and falling back to the Kafka broker timestamp.
 """
 
 from __future__ import annotations
@@ -101,11 +98,6 @@ def test_ev44_mismatched_event_vectors_accepted_on_plain_monitor_path() -> None:
     assert len(adapted.value.time_of_arrival) == 10
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='#1038 finding 2: absent event vectors raise deep in the adapter '
-    'and the message is dropped instead of using the Kafka-timestamp fallback',
-)
 def test_ev44_without_event_vectors_falls_back_to_kafka_timestamp() -> None:
     payload = hostile_wire.ev44_without_event_vectors(SOURCE)
     message = _kafka_message(payload, timestamp_ms=5678)
@@ -155,12 +147,6 @@ def _far_future_cases() -> list[tuple[str, KafkaAdapter, bytes]]:
 @pytest.mark.parametrize(
     ('adapter', 'payload'),
     [pytest.param(a, p, id=name) for name, a, p in _far_future_cases()],
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason='#1038 finding 1 / #1047: data-derived timestamps cross the '
-    'adapter boundary unvalidated; a single far-future value wedges the '
-    'batcher service-wide',
 )
 def test_far_future_data_timestamp_does_not_cross_adapter_boundary(
     adapter: KafkaAdapter, payload: bytes

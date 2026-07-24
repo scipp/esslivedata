@@ -27,9 +27,10 @@ class MessageBatch:
 # batchers' only clock, so window placement must not follow one outlier
 # arbitrarily far into the future: an over-anchored window stalls delivery
 # until wall time catches up, while an under-anchored one self-heals forward
-# as newer traffic arrives.  The cap holds regardless of where a message
-# came from: sources are not trusted to deliver sane timestamps, and the
-# batcher is the one place every message passes through.
+# as newer traffic arrives.  The adapter boundary clamps far-future
+# timestamps to an arrival estimate; this cap is defense in depth for values
+# inside the adapter's bound -- including wall-clock clamps, which land ahead
+# of the traffic when consuming a backlog -- and for non-Kafka sources.
 MAX_TIMESTAMP_AHEAD_BATCHES = 3
 
 
@@ -55,7 +56,9 @@ def plausible_anchor(timestamps: list[Timestamp], batch_length: Duration) -> Tim
     traffic is not the safe default it appears to be: a window only walks
     forward one batch length per call, so an anchor stranded in a disjoint
     past epoch takes astronomically many calls to catch up, where one
-    stranded ahead merely waits out its own distance.
+    stranded ahead merely waits out its own distance.  Resolving these is
+    the adapter boundary's job, which clamps an implausible timestamp to an
+    arrival estimate rather than weighing it against its neighbours.
     """
     ordered = sorted(timestamps)
     horizon = MAX_TIMESTAMP_AHEAD_BATCHES * batch_length
@@ -242,8 +245,8 @@ class SimpleMessageBatcher(MessageBatcher):
         a message parked implausibly far ahead advances the window on every
         call -- once per poll rather than once per batch length. The window
         then overruns the live data and comes to rest at the outlier, and
-        nothing closes a batch until wall time catches up: the #1038 wedge.
-        Refusing to advance past
+        nothing closes a batch until wall time catches up: the #1038 wedge,
+        merely bounded by the adapter's future bound. Refusing to advance past
         the frontier of the data in hand keeps the window with the traffic,
         and the frontier moves forward as real messages arrive.
 

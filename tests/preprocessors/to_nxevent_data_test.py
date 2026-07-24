@@ -25,6 +25,22 @@ def test_MonitorEvents_from_ev44() -> None:
     monitor_events = MonitorEvents.from_ev44(ev44)
     assert monitor_events.time_of_arrival == [1, 2, 3]
     assert monitor_events.unit == 'ns'
+    assert monitor_events.reference_time_ns is None
+
+
+@pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
+def test_from_ev44_captures_payload_pulse_time(
+    events_cls: type[MonitorEvents],
+) -> None:
+    ev44 = eventdata_ev44.EventData(
+        source_name='ignored',
+        message_id=0,
+        reference_time=[123_000],
+        reference_time_index=[0],
+        pixel_id=[1, 1, 1],
+        time_of_flight=[1, 2, 3],
+    )
+    assert events_cls.from_ev44(ev44).reference_time_ns == 123_000
 
 
 @pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
@@ -75,6 +91,25 @@ def test_MonitorEvents_ToNXevent_data() -> None:
     assert empty_events.sizes == {'event_time_zero': 0}
     to_nx.release_buffers()
     assert_identical(empty_events, events[0:0])
+
+
+def test_event_time_zero_prefers_payload_pulse_time_over_envelope() -> None:
+    """The payload's pulse time is the device's claim and flows through
+    unmodified; the envelope may have been clamped at the adapter boundary
+    and only stands in when the payload carries no pulse time."""
+    to_nx = ToNXevent_data()
+    to_nx.add(
+        Timestamp.from_ns(500),
+        MonitorEvents(time_of_arrival=[1], unit='ns', reference_time_ns=71_000_000),
+    )
+    to_nx.add(Timestamp.from_ns(1000), MonitorEvents(time_of_arrival=[2], unit='ns'))
+    events = to_nx.get()
+    assert_identical(
+        events.coords['event_time_zero'],
+        sc.epoch(unit='ns')
+        + sc.array(dims=['event_time_zero'], values=[71_000_000, 1000], unit='ns'),
+    )
+    to_nx.release_buffers()
 
 
 def test_DetectorEvents_ToNXevent_data() -> None:
