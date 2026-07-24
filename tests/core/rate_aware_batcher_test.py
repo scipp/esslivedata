@@ -54,6 +54,32 @@ def msgs_at(
     return [msg(start + i * period, stream) for i in range(count)]
 
 
+def longest_silence(
+    batcher: RateAwareMessageBatcher,
+    start: float,
+    cycles: int,
+    rate_hz: float = 14.0,
+    polls_per_batch: int = 10,
+) -> float:
+    """Longest stretch of data time yielding no messages, in seconds.
+
+    Polls faster than the batch length, as the service loop does: batch() is
+    called once per poll cycle, not once per batch length, so a window that
+    advances per call outruns the live data.
+    """
+    step = 1.0 / polls_per_batch
+    t = start
+    last_delivery = start
+    worst = 0.0
+    for _ in range(cycles * polls_per_batch):
+        batch = batcher.batch(msgs_at(rate_hz, t, step))
+        t += step
+        if batch is not None and batch.messages:
+            last_delivery = t
+        worst = max(worst, t - last_delivery)
+    return worst
+
+
 def make_converged_batcher(
     rate_hz: float = 14.0,
     batch_length_s: float = 1.0,
@@ -2263,3 +2289,163 @@ class TestNonGatedEndTimeProgression:
         assert max_lag < cycle_s + mon_period_s + 1.0, (
             f"Freshness lag grew unbounded at {rate_hz} Hz: {max_lag}"
         )
+
+
+class TestFarFutureTimestampLiveness:
+    """A single implausibly-far-future timestamp must not stall the batcher.
+
+    Data-derived timestamps are the batcher's only clock, so an outlier that
+    anchors the active window (or the high-water mark) parks that clock in the
+    future: real traffic then looks perpetually early, no slot gate is ever
+    satisfied, the timeout threshold is never reached, and delivery stops
+    permanently while messages accumulate (#1038 finding 1, #1047).
+
+    The adapter boundary clamps such timestamps before they reach a batcher;
+    these tests pin the batcher's own defense, which also covers non-Kafka
+    sources and values inside the adapter's bound.
+    """
+
+    ONE_YEAR_S = 365 * 24 * 3600.0
+    # Inside the adapter boundary's future bound, so this band is exactly what
+    # reaches a batcher in production. It is also far enough ahead to be
+    # implausible as live traffic, and -- unlike year-scale values -- it stays
+    # within the disjoint-epoch horizon, so it exercises the ordinary routing
+    # path rather than the outlier-absorption one.
+    IN_BAND_S = 240.0
+
+    def _drive(
+        self, batcher: RateAwareMessageBatcher, start: float, cycles: int
+    ) -> tuple[int, int]:
+        """Feed *cycles* seconds of 14 Hz traffic; return (closed, delivered)."""
+        closed = delivered = 0
+        for k in range(cycles):
+            for batch in (
+                batcher.batch(msgs_at(14.0, start + k, 1.0)),
+                batcher.batch([]),
+            ):
+                if batch is not None:
+                    closed += 1
+                    delivered += len(batch.messages)
+        return closed, delivered
+
+    def test_far_future_timestamp_in_bootstrap_does_not_stall(self):
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0)
+        batcher.batch([*msgs_at(14.0, 100.0, 1.0), msg(100.0 + self.ONE_YEAR_S)])
+        closed, delivered = self._drive(batcher, start=101.0, cycles=60)
+        assert closed > 0, "batcher stalled after a poisoned bootstrap backlog"
+        assert delivered > 0
+
+    def test_far_future_timestamp_mid_stream_does_not_stall(self):
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        batcher.batch([msg(start + self.ONE_YEAR_S)])
+        closed, delivered = self._drive(batcher, start=start, cycles=60)
+        assert closed > 0, "batcher stalled after a mid-stream far-future timestamp"
+        assert delivered > 0
+
+    def test_far_future_timestamp_does_not_buffer_unboundedly(self):
+        """The wedge's second symptom: messages pile up in un-emitted batches."""
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0)
+        batcher.batch([*msgs_at(14.0, 100.0, 1.0), msg(100.0 + self.ONE_YEAR_S)])
+        self._drive(batcher, start=101.0, cycles=100)
+        buffered = (
+            sum(len(s.messages) for s in batcher._streams.values())
+            + len(batcher._non_gated)
+            + len(batcher._overflow)
+            + len(batcher._future)
+        )
+        assert buffered < 14 * 10, f"messages accumulating un-emitted: {buffered}"
+
+    def test_poisoned_message_is_still_delivered(self):
+        """Outliers ride along with a batch rather than being held forever --
+        dropping is the adapter's job, not the batcher's."""
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        poison = msg(start + self.ONE_YEAR_S, value="poison")
+        seen = poison in batcher.batch([poison]).messages
+        for k in range(60):
+            for batch in (
+                batcher.batch(msgs_at(14.0, start + k, 1.0)),
+                batcher.batch([]),
+            ):
+                if batch is not None and poison in batch.messages:
+                    seen = True
+        assert seen, "poisoned message was neither delivered nor dropped"
+
+    def test_window_tracks_real_traffic_after_poison(self):
+        """Recovery must re-anchor the window at real traffic, not merely
+        resume closing batches somewhere in the far future."""
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0)
+        batcher.batch([*msgs_at(14.0, 100.0, 1.0), msg(100.0 + self.ONE_YEAR_S)])
+        self._drive(batcher, start=101.0, cycles=60)
+        window_start_s = batcher._active_window.start.to_ns() / 1e9
+        assert abs(window_start_s - 160.0) < 10.0, (
+            f"window at {window_start_s:.1f}s, real traffic near 160s"
+        )
+
+    def test_in_band_future_timestamp_does_not_stall(self):
+        """The band between the batcher's horizon and the adapter's future
+        bound is the one that reaches a batcher in production."""
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        batcher.batch([msg(start + self.IN_BAND_S)])
+        closed, delivered = self._drive(batcher, start=start, cycles=60)
+        assert closed > 0, "batcher stalled after an in-band future timestamp"
+        assert delivered > 0
+
+    def test_in_band_future_timestamp_stall_is_brief(self):
+        """Delivery must resume promptly, not merely eventually: the wedge
+        this guards against is bounded by the poison's distance ahead, which
+        for an in-band value is minutes of silent data loss."""
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        batcher.batch([msg(start + self.IN_BAND_S)])
+        gap = longest_silence(batcher, start=start, cycles=300)
+        assert gap < 10.0, f"delivery silent for {gap:.1f}s of data time"
+
+
+class TestWindowReanchoring:
+    """Re-anchoring corrects a window that traffic contradicts, but must not
+    fire on ordinary buffer states or cost anything when nothing is wrong.
+    """
+
+    LAGGING = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="lagging")
+
+    def test_lagging_partition_does_not_drag_the_window_backwards(self):
+        """Kafka returns per-partition chunks, so one poll can carry only a
+        lagging partition's backlog -- every message legitimately behind the
+        window. Following it would emit a batch starting before the previous
+        one ended."""
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        for _ in range(5):  # drain, as just after a close
+            batcher.batch([])
+        before = batcher._active_window.start
+        batcher.batch(msgs_at(14.0, start - 20.0, 0.5))
+        assert batcher._active_window.start >= before
+
+    def test_batch_boundaries_stay_monotonic_across_lagging_traffic(self):
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        previous_end: Timestamp | None = None
+        for k in range(40):
+            for batch in (
+                batcher.batch(msgs_at(14.0, start + k, 1.0)),
+                batcher.batch(msgs_at(14.0, start - 30.0 + k, 0.3)),
+            ):
+                if batch is None:
+                    continue
+                if previous_end is not None:
+                    assert batch.start_time >= previous_end, (
+                        "batch starts before its predecessor ended"
+                    )
+                previous_end = batch.end_time
+
+    def test_disjoint_epoch_message_is_still_delivered(self):
+        batcher, start = make_converged_batcher(rate_hz=14.0)
+        stray = msg(start + 10_000.0, value="stray")
+        first = batcher.batch([stray])
+        if first is not None and stray in first.messages:
+            return
+        for k in range(40):
+            for batch in (
+                batcher.batch(msgs_at(14.0, start + k, 1.0)),
+                batcher.batch([]),
+            ):
+                if batch is not None and stray in batch.messages:
+                    return
+        raise AssertionError("disjoint-epoch message was never delivered")

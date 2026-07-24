@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
-from ess.livedata.core.message_batcher import MessageBatch, MessageBatcher
+from ess.livedata.core.message_batcher import (
+    MAX_TIMESTAMP_AHEAD_BATCHES,
+    MessageBatch,
+    MessageBatcher,
+    plausible_anchor,
+)
 from ess.livedata.core.timestamp import Duration, Timestamp
 
 GATED_STREAM_KINDS = frozenset(
@@ -31,6 +36,17 @@ GATED_STREAM_KINDS = frozenset(
 MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
+
+# Quorum for window re-anchoring (see ``_should_reanchor``): the minimum
+# number of buffered messages that must unanimously contradict the window
+# placement before the window follows them.
+_MIN_REANCHOR_MESSAGES = 4
+
+# Consecutive non-closing calls before re-anchoring is even considered.  The
+# pathologies it corrects never resolve on their own, so this only delays an
+# unavoidable correction, while keeping the scan off the healthy hot path and
+# ignoring momentary buffer states such as a single poll of lagging traffic.
+_REANCHOR_STALLED_CALLS = 20
 
 # Tolerance for snapping the raw rate to its nearest integer Hz.  Uses
 # the larger of a relative bound and an absolute floor: relative scales
@@ -52,39 +68,30 @@ _INTEGER_SNAP_ABSOLUTE_TOLERANCE_HZ = 0.1
 # refusing to absorb true phase offsets at low rates.
 _DRIFT_TOLERANCE_NS = 1_000_000
 
-# Max allowed distance between a new grid's origin and the active
-# batch_start, in multiples of batch_length.  Protects against streams
-# whose timestamps live in a disjoint epoch (wrong schema field, unit
-# mismatch, run-local clock): such a stream's grid would place every
-# slot billions of slots away from batch_start, pinning the bucket's
-# max_slot at -1 and vetoing every slot-gate closure for the whole batcher.
-# 1000 batches (>=16 min at 1 s batches) is well above any legitimate
-# cold-start or post-eviction origin offset but below any real epoch
-# mismatch by many orders of magnitude.
+# Disjoint-epoch horizon, in multiples of batch_length: the maximum distance
+# between a timestamp and the active window at which the timestamp is still
+# treated as belonging to the same epoch.  Beyond it, the timestamp is
+# assumed pathological (wrong schema field, unit mismatch, run-local clock)
+# rather than a legitimate silence gap.  Used to bound the distance between
+# a new grid's origin and the active batch_start -- a disjoint-epoch grid
+# would place every slot billions of slots away from batch_start, pinning
+# the bucket's max_slot at -1 and vetoing every slot-gate closure for the
+# whole batcher -- and to divert disjoint-epoch messages out of routing
+# (see ``_route_message``).  1000 batches (>=16 min at 1 s batches) is well
+# above any legitimate cold-start, post-eviction, or silence-gap offset but
+# below any real epoch mismatch by many orders of magnitude.
 _MAX_ORIGIN_OFFSET_BATCHES = 1000
 
-# Max distance ``_high_water_mark`` is allowed to sit past
-# ``_active_window.start``, in multiples of batch_length.  Protects
-# against a single malformed timestamp (e.g. upstream epoch bug
-# producing a value years ahead) permanently pinning the HWM in the
-# future, which would otherwise force every subsequent ``batch()`` call
-# to close a batch via the timeout path for millions of iterations --
-# effectively a DoS until the process restarts.
-#
-# Bounding HWM relative to the active window (rather than to the prior
-# HWM) keeps HWM self-healing: each batch close advances the window by
-# one batch_length, so after a bounded number of cascading empty
-# closures the HWM is no longer past the timeout threshold and timeout
-# firing stops on its own.  An absolute per-call cap doesn't self-heal
-# because the window keeps moving away from the clamped HWM.
-#
-# Must be >= ``timeout_factor`` (default 1.2) for the timeout path to
-# ever fire -- and comfortably above that for sub-Hz-only streams whose
-# sparse arrivals rely on multi-batch HWM jumps to trigger cascading
-# timeout closes of empty batches between pulses.  Three batches allows
-# one pulse's worth of HWM advance to cover the preceding empty batch,
-# matching the natural cadence of 0.5 Hz-and-below gated streams.
-_MAX_HWM_PAST_WINDOW_BATCHES = 3
+# ``MAX_TIMESTAMP_AHEAD_BATCHES`` (imported from message_batcher) is the
+# plausibility horizon shared by all uses in this module: the HWM clamp,
+# the future-message hold-back cap, and the outlier absorption in
+# ``_route_message``.  It must be >= ``timeout_factor`` (default 1.2) for
+# the timeout path to ever fire -- and comfortably above that for
+# sub-Hz-only streams whose sparse arrivals rely on multi-batch HWM jumps
+# to trigger cascading timeout closes of empty batches between pulses.
+# Three batches allows one pulse's worth of HWM advance to cover the
+# preceding empty batch, matching the natural cadence of 0.5 Hz-and-below
+# gated streams.
 
 
 @dataclass(slots=True)
@@ -392,6 +399,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
         self._future: list[Message[Any]] = []
+        self._stalled_calls = 0
 
     @property
     def batch_length_s(self) -> float:
@@ -443,16 +451,34 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         if self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
+        elif self._should_reanchor(window):
+            window = self._reanchor(window)
+            self._stalled_calls = 0
 
         if self._is_batch_complete(window):
+            self._stalled_calls = 0
             return self._close_batch(window)
+        self._stalled_calls += 1
         return None
 
     def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
         """Clamp an HWM update to a bounded distance past the active window.
 
-        See ``_MAX_HWM_PAST_WINDOW_BATCHES``.  Cold start (no window or no
-        prior HWM) accepts ``latest`` as-is.  Otherwise the new value is
+        Protects against a single malformed timestamp (e.g. upstream epoch
+        bug producing a value years ahead) permanently pinning the HWM in
+        the future, which would otherwise force every subsequent ``batch()``
+        call to close a batch via the timeout path for millions of
+        iterations -- effectively a DoS until the process restarts.
+
+        Bounding HWM relative to the active window (rather than to the
+        prior HWM) keeps HWM self-healing: each batch close advances the
+        window by one batch_length, so after a bounded number of cascading
+        empty closures the HWM is no longer past the timeout threshold and
+        timeout firing stops on its own.  An absolute per-call cap doesn't
+        self-heal because the window keeps moving away from the clamped HWM.
+
+        Cold start (no window or no prior HWM) accepts ``latest`` as-is;
+        ``_bootstrap_batch`` re-anchors it.  Otherwise the new value is
         capped at ``window.start + cap`` and floored at the current HWM
         so it never regresses -- a window advance (close or gap advance)
         may briefly leave HWM past the cap, and the next update must hold
@@ -460,9 +486,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         """
         if self._active_window is None or self._high_water_mark is None:
             return latest
-        cap = Duration.from_ns(
-            _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length.to_ns()
-        )
+        cap = MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length
         ceiling = self._active_window.start + cap
         return max(self._high_water_mark, min(latest, ceiling))
 
@@ -470,18 +494,24 @@ class RateAwareMessageBatcher(MessageBatcher):
         """Flush the startup backlog and open the active window.
 
         Seeds estimators from gated-stream arrivals, opens the window at
-        the max input timestamp (so it starts immediately after the
-        flush), builds grids for any streams whose estimators already
-        converged, and returns the flushed messages as the first batch.
+        the newest plausible input timestamp (so it starts immediately
+        after the flush; see :func:`plausible_anchor` for why a bare max
+        must not be used), builds grids for any streams whose estimators
+        already converged, and returns the flushed messages as the first
+        batch.  The high-water mark is re-anchored likewise, since at cold
+        start ``_clamped_hwm`` accepted the raw maximum unclamped.
+        Outlier timestamps beyond the anchor are excluded from estimator
+        seeding so they cannot pin ``last_ts_ns`` in the far future.
         """
         start_time = min(m.timestamp for m in messages)
-        end_time = max(m.timestamp for m in messages)
+        end_time = plausible_anchor([m.timestamp for m in messages], self._batch_length)
         for msg in messages:
-            if msg.stream.kind in GATED_STREAM_KINDS:
+            if msg.stream.kind in GATED_STREAM_KINDS and msg.timestamp <= end_time:
                 self._streams[msg.stream].observe(msg)
         self._active_window = _ActiveWindow(
             start=end_time, end=end_time + self._batch_length
         )
+        self._high_water_mark = end_time
         for stream in self._streams.values():
             stream.refresh_grid(end_time, self._batch_length)
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
@@ -489,19 +519,34 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
         """Bucket a message by stream kind and timestamp relative to the window.
 
-        Ungridded streams (non-gated kind OR sub-Hz gated without a grid) hold
-        messages with ``window.end < ts <= window.end + K * batch_length`` in
-        ``_future`` so batch contents stay bounded by the batch's time range.
-        ``K`` reuses ``_MAX_HWM_PAST_WINDOW_BATCHES``: beyond that, a timestamp
-        is implausibly far and the message falls through to the active batch,
-        preventing a pathological timestamp (epoch bug, unit mismatch) from
-        caching messages indefinitely.
+        Messages beyond the disjoint-epoch horizon
+        (``_MAX_ORIGIN_OFFSET_BATCHES`` past ``window.end``) are delivered
+        with the active batch, bypassing estimators, slot gates, overflow,
+        and the future hold-back: such a timestamp cannot come from a
+        legitimate silence gap and must not be cached indefinitely, drive
+        gap recovery, or pin a stream's estimator.
+
+        Ungridded streams (non-gated kind OR sub-Hz gated without a grid)
+        hold messages with ``window.end < ts <= window.end + K * batch_length``
+        in ``_future`` so batch contents stay bounded by the batch's time
+        range.  ``K`` is ``MAX_TIMESTAMP_AHEAD_BATCHES``: beyond that, the
+        message falls through to the active batch instead of being cached.
 
         Gridded gated streams use the slot-based overflow path instead, which
-        drives gap recovery via ``_should_recover_from_gap``.
+        drives gap recovery via ``_should_recover_from_gap``; overflow
+        timestamps are therefore bounded by the disjoint-epoch horizon, and
+        so is the gap-recovery jump.
         """
         is_gated = msg.stream.kind in GATED_STREAM_KINDS
         stream = self._streams[msg.stream] if is_gated else None
+        if self._is_disjoint_epoch(msg, window):
+            # Deliberately not placed in the stream's own bucket: that would
+            # mark the stream as having contributed to the batch (vetoing gap
+            # recovery for every other stream) while never satisfying its slot
+            # gate, since the message has no slot. Delivery is unaffected --
+            # both buffers drain into the same batch.
+            self._non_gated.append(msg)
+            return
         if (stream is None or not stream.is_gating) and self._is_future(msg, window):
             self._future.append(msg)
             return
@@ -512,11 +557,16 @@ class RateAwareMessageBatcher(MessageBatcher):
         if overflow is not None:
             self._overflow.append(overflow)
 
+    def _is_disjoint_epoch(self, msg: Message[Any], window: _ActiveWindow) -> bool:
+        """True if ``msg`` is implausibly far ahead of the active window."""
+        cap = _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length
+        return msg.timestamp - window.end > cap
+
     def _is_future(self, msg: Message[Any], window: _ActiveWindow) -> bool:
         """True if ``msg`` belongs in a future window within the hold-back cap."""
-        if not (msg.timestamp > window.end):
+        if msg.timestamp <= window.end:
             return False
-        cap = _MAX_HWM_PAST_WINDOW_BATCHES * self._batch_length
+        cap = MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length
         return msg.timestamp - window.end <= cap
 
     def _is_batch_complete(self, window: _ActiveWindow) -> bool:
@@ -578,6 +628,77 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._route_message(msg, window)
         return window
 
+    def _should_reanchor(self, window: _ActiveWindow) -> bool:
+        """True if buffered traffic consistently contradicts the window placement.
+
+        Two mirror-image pathologies share this signature:
+
+        - Every buffered message is beyond the disjoint-epoch horizon ahead
+          of the window: traffic lives in a later epoch than the window
+          (e.g. an upstream clock jumped, or the plausible part of a
+          poisoned bootstrap backlog was stale).  Such messages bypass slot
+          gates and overflow, so neither gate closure nor gap recovery
+          would ever move the window to them.
+        - The newest buffered message is implausibly far behind the window:
+          the window was anchored ahead of real traffic (e.g. by a poisoned
+          gap jump), so no slot gate can ever be satisfied and the
+          high-water mark can never reach the timeout threshold.
+
+        Held-back future or overflow messages disprove both conditions,
+        since they sit near the window by construction.  The quorum keeps a
+        lone stray (one late replayed message, one poisoned timestamp) from
+        re-anchoring the window that all other traffic agrees with; below
+        the quorum, strays simply ride along with the next batch close.
+
+        Only a batcher that has failed to close for ``_REANCHOR_STALLED_CALLS``
+        consecutive calls is considered.  Both pathologies are permanent
+        until corrected, so waiting costs nothing, whereas evaluating every
+        call would scan the whole buffer on the healthy hot path and would
+        also let one poll carrying only a lagging partition's backlog --
+        every message of it legitimately behind the window -- drag the
+        window backwards and emit a batch starting before its predecessor
+        ended.
+        """
+        if self._stalled_calls < _REANCHOR_STALLED_CALLS:
+            return False
+        if self._future or self._overflow:
+            return False
+        buffered = self._buffered_messages()
+        if len(buffered) < _MIN_REANCHOR_MESSAGES:
+            return False
+        # The message that misplaced the window is itself buffered, so a bare
+        # max would let it veto the recovery it caused.
+        newest = plausible_anchor([m.timestamp for m in buffered], self._batch_length)
+        if window.start - newest > MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length:
+            return True
+        oldest = min(m.timestamp for m in buffered)
+        return oldest - window.end > _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length
+
+    def _reanchor(self, window: _ActiveWindow) -> _ActiveWindow:
+        """Re-anchor the window at the buffered traffic and re-route it.
+
+        The high-water mark is reset to the new anchor: it was derived from
+        the same implausible timestamps that misplaced the window, and
+        keeping it would force a long cascade of empty timeout closures
+        instead of an immediate recovery.  Grids with implausible origins
+        rebuild at the next close via ``_refresh_stream_registry``.
+        """
+        stashed = self._drain_window()
+        anchor = plausible_anchor([m.timestamp for m in stashed], self._batch_length)
+        window = _ActiveWindow(start=anchor, end=anchor + self._batch_length)
+        self._active_window = window
+        self._high_water_mark = anchor
+        for msg in stashed:
+            self._route_message(msg, window)
+        return window
+
+    def _buffered_messages(self) -> list[Message[Any]]:
+        """All messages currently buffered for the active batch."""
+        messages = list(self._non_gated)
+        for stream in self._streams.values():
+            messages.extend(stream.messages)
+        return messages
+
     def _drain_window(self) -> list[Message[Any]]:
         """Remove and return all messages buffered for the active batch."""
         messages = self._non_gated
@@ -602,12 +723,19 @@ class RateAwareMessageBatcher(MessageBatcher):
             # leave the batch's timestamps behind the data when traffic spans
             # several batch_lengths per call.  Mirror ``SimpleMessageBatcher``:
             # include all held-back traffic and set ``end_time`` to the newest
-            # message so the batch covers its real time range.
+            # plausible message so the batch covers its real time range -- a
+            # bare max would let one absorbed outlier anchor the next window
+            # in the far future (see ``plausible_anchor``).
             messages += self._future + self._overflow
             self._future = []
             self._overflow = []
-            end_time = max((m.timestamp for m in messages), default=window.end)
-            end_time = max(end_time, window.end)
+            if messages:
+                anchor = plausible_anchor(
+                    [m.timestamp for m in messages], self._batch_length
+                )
+                end_time = max(anchor, window.end)
+            else:
+                end_time = window.end
 
         batch = MessageBatch(
             start_time=window.start, end_time=end_time, messages=messages

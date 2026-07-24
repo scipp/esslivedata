@@ -17,9 +17,65 @@ logger = structlog.get_logger(__name__)
 
 @dataclass(slots=True, kw_only=True)
 class MessageBatch:
+    """Messages delivered together, spanning the given time range.
+
+    The time range is load-bearing beyond delivery cadence: downstream it is
+    the service's data clock -- job activation and run resets fire once these
+    times advance past their scheduled points (``JobManager._advance_to_time``).
+    Window placement is therefore a correctness concern, not only a liveness
+    one: an end time in a wrong epoch fires or parks every pending schedule,
+    even while batches keep flowing.
+    """
+
     start_time: Timestamp
     end_time: Timestamp
     messages: list[Message[Any]]
+
+
+# Largest jump between consecutive timestamps that still reads as continuous
+# traffic, in multiples of the batch length.  Data-derived timestamps are the
+# batchers' only clock, so window placement must not follow one outlier
+# arbitrarily far into the future: an over-anchored window stalls delivery
+# until wall time catches up, while an under-anchored one self-heals forward
+# as newer traffic arrives.  The cap holds regardless of where a message
+# came from: sources are not trusted to deliver sane timestamps, and the
+# batcher is the one place every message passes through.
+MAX_TIMESTAMP_AHEAD_BATCHES = 3
+
+
+def plausible_anchor(timestamps: list[Timestamp], batch_length: Duration) -> Timestamp:
+    """Newest timestamp still connected to the bulk of the given traffic.
+
+    Batch windows are anchored at the newest timestamp seen.  A bare ``max``
+    lets a single pathological far-future timestamp pin the window (and with
+    it the batcher's data-derived clock), stalling delivery until wall time
+    catches up.
+
+    Splitting the sorted timestamps at every jump wider than the horizon
+    yields groups of mutually-connected traffic; the anchor is the newest
+    timestamp of the largest group.  Membership of the bulk is what marks a
+    timestamp as genuine, not distance from an average: a burst spread evenly
+    over many batch lengths stays one group and keeps its true maximum, while
+    a tight cluster plus one stray yields the cluster -- whether the stray
+    sits ahead of the traffic or behind it, as a stream in a disjoint epoch
+    does.
+
+    Ties go to the later group, and a lone timestamp is necessarily its own
+    anchor.  Neither case has evidence to weigh, and anchoring behind the
+    traffic is not the safe default it appears to be: a window only walks
+    forward one batch length per call, so an anchor stranded in a disjoint
+    past epoch takes astronomically many calls to catch up, where one
+    stranded ahead merely waits out its own distance.
+    """
+    ordered = sorted(timestamps)
+    horizon = MAX_TIMESTAMP_AHEAD_BATCHES * batch_length
+    groups = [[ordered[0]]]
+    for timestamp in ordered[1:]:
+        if timestamp - groups[-1][-1] > horizon:
+            groups.append([])
+        groups[-1].append(timestamp)
+    largest = max(len(group) for group in groups)
+    return next(group for group in reversed(groups) if len(group) == largest)[-1]
 
 
 class MessageBatcher(ABC):
@@ -101,6 +157,9 @@ class SimpleMessageBatcher(MessageBatcher):
 
     If messages arrive late, they will be included in the next batch. This means that
     batches may contain messages with timestamps outside (before) the batch time range.
+    The initial batch may also contain messages after its end time, since its end
+    time is an outlier-robust anchor rather than a bare maximum (see
+    :func:`plausible_anchor`).
 
     If no messages are available for a given batch, an empty batch is returned.
 
@@ -150,6 +209,8 @@ class SimpleMessageBatcher(MessageBatcher):
         # batch.
         batch = self._active_batch
         new_end_time = batch.end_time + self._batch_length
+        if not self._may_advance_to(new_end_time):
+            return None
         new_active, self._future_messages = self._split_messages(
             self._future_messages, new_end_time
         )
@@ -159,11 +220,18 @@ class SimpleMessageBatcher(MessageBatcher):
         return batch
 
     def _make_initial_batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        """Make initial batch that includes everything."""
+        """Make initial batch that includes everything.
+
+        The end time anchors all subsequent batch boundaries, so it must be
+        robust against a pathological far-future timestamp in the startup
+        backlog (see :func:`plausible_anchor`).
+        """
         if not messages:
             return None
         start_time = min(msg.timestamp for msg in messages)
-        end_time = max(msg.timestamp for msg in messages)
+        end_time = plausible_anchor(
+            [msg.timestamp for msg in messages], self._batch_length
+        )
         batch = MessageBatch(
             start_time=start_time, end_time=end_time, messages=messages
         )
@@ -176,6 +244,29 @@ class SimpleMessageBatcher(MessageBatcher):
             messages=[],
         )
         return batch
+
+    def _may_advance_to(self, end_time: Timestamp) -> bool:
+        """Whether advancing the window to ``end_time`` keeps it near the data.
+
+        Closing a batch is driven by the mere presence of a future message, so
+        a message parked implausibly far ahead advances the window on every
+        call -- once per poll rather than once per batch length. The window
+        then overruns the live data and comes to rest at the outlier, and
+        nothing closes a batch until wall time catches up: the #1038 wedge.
+        Refusing to advance past
+        the frontier of the data in hand keeps the window with the traffic,
+        and the frontier moves forward as real messages arrive.
+
+        The active batch's own messages are the frontier: they landed before
+        its end time by construction, so they mark where the traffic actually
+        is, and no future-dated value can inflate them. An empty active batch
+        raises no objection -- that is a genuine silence gap, which advances
+        window by window as it always has.
+        """
+        if not self._active_batch.messages:
+            return True
+        frontier = max(msg.timestamp for msg in self._active_batch.messages)
+        return end_time <= frontier + MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length
 
     def _split_messages(
         self, messages: list[Message[Any]], timestamp: Timestamp

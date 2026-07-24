@@ -8,8 +8,10 @@ from ess.livedata.core.message_batcher import (
     DEESCALATION_IDLE_WINDOWS,
     DEESCALATION_UNDERLOAD_THRESHOLD,
     ESCALATION_OVERLOAD_THRESHOLD,
+    MAX_TIMESTAMP_AHEAD_BATCHES,
     AdaptiveMessageBatcher,
     SimpleMessageBatcher,
+    plausible_anchor,
 )
 from ess.livedata.core.timestamp import Duration, Timestamp
 
@@ -20,6 +22,65 @@ def make_message(timestamp_ns: int, value: str = "test") -> Message[str]:
     return Message(
         timestamp=Timestamp.from_ns(timestamp_ns), stream=stream, value=value
     )
+
+
+class TestPlausibleAnchor:
+    """Window anchors must follow the bulk of the traffic, not a stray value.
+
+    Anchoring on an outlier parks the batcher's data-derived clock away from
+    the live data, which is the #1038 wedge. Both directions hurt: ahead of
+    the traffic the window waits out the outlier's distance, behind it the
+    window walks forward only one batch length per call.
+    """
+
+    BATCH_LENGTH = Duration.from_seconds(1.0)
+    HORIZON_S = MAX_TIMESTAMP_AHEAD_BATCHES
+
+    def anchor(self, *seconds: float) -> float:
+        stamps = [Timestamp.from_ns(int(s * 1e9)) for s in seconds]
+        return plausible_anchor(stamps, self.BATCH_LENGTH).to_ns() / 1e9
+
+    def test_single_timestamp_is_its_own_anchor(self):
+        """One message carries no evidence against itself."""
+        assert self.anchor(500.0) == 500.0
+
+    def test_contiguous_traffic_keeps_its_maximum(self):
+        assert self.anchor(100.0, 100.1, 100.2, 100.3) == 100.3
+
+    def test_burst_spread_over_many_batches_keeps_its_maximum(self):
+        """Evenly-spread traffic is legitimate however wide it spans; only
+        gaps wider than the horizon mark a discontinuity."""
+        assert self.anchor(*[float(t) for t in range(1, 11)]) == 10.0
+
+    def test_far_future_stray_yields_the_cluster(self):
+        assert self.anchor(100.0, 100.1, 100.2, 100.3, 1e6) == 100.3
+
+    def test_far_past_stray_yields_the_cluster(self):
+        """A stream in a disjoint past epoch must not drag the anchor back."""
+        assert self.anchor(-1e6, 100.0, 100.1, 100.2, 100.3) == 100.3
+
+    def test_two_disconnected_timestamps_prefer_the_later(self):
+        """With one message on each side there is nothing to weigh. Anchoring
+        behind the traffic is the worse failure -- the window walks forward
+        only one batch length per call, so a disjoint past epoch never catches
+        up."""
+        assert self.anchor(100.0, 1e6) == 1e6
+
+    def test_gap_just_within_horizon_stays_connected(self):
+        assert self.anchor(100.0, 100.1, 100.1 + self.HORIZON_S) == (
+            100.1 + self.HORIZON_S
+        )
+
+    def test_gap_just_beyond_horizon_disconnects(self):
+        assert self.anchor(100.0, 100.1, 100.1 + self.HORIZON_S + 0.1) == 100.1
+
+    def test_identical_timestamps(self):
+        assert self.anchor(100.0, 100.0, 100.0) == 100.0
+
+    def test_order_of_input_does_not_matter(self):
+        assert self.anchor(1e6, 100.2, 100.0, 100.1) == self.anchor(
+            100.0, 100.1, 100.2, 1e6
+        )
 
 
 class TestSimpleMessageBatcher:
@@ -781,3 +842,54 @@ class TestAdaptiveMessageBatcher:
         for _ in range(DEESCALATION_UNDERLOAD_THRESHOLD - 1):
             batcher.report_batch(100, processing_time_s=underloaded_time)
         assert batcher.state.level == 2
+
+
+class TestSimpleBatcherFutureTimestampLiveness:
+    """A timestamp parked ahead of the traffic must not silence delivery.
+
+    Closing a batch is driven by the presence of a future message, so a parked
+    one advances the window once per call rather than once per batch length.
+    The service polls faster than the batch length, so the window outruns the
+    live data and comes to rest at the outlier; from there nothing closes a
+    batch until wall time catches up (#1038 finding 1, #1047).
+
+    The batcher cannot assume anything upstream sanitized timestamps, so this
+    band must be survivable on its own.
+    """
+
+    RATE_HZ = 14
+    POLLS_PER_BATCH = 10
+
+    def longest_silence(
+        self, batcher: SimpleMessageBatcher, poison_ahead_s: float, cycles: int = 300
+    ) -> float:
+        """Longest stretch of data time yielding no messages, in seconds."""
+        second = 1_000_000_000
+        per_poll = self.RATE_HZ // self.POLLS_PER_BATCH
+        step = second // self.POLLS_PER_BATCH
+        t = 100 * second
+        for _ in range(20 * self.POLLS_PER_BATCH):  # establish steady traffic
+            batcher.batch([make_message(t + i * step) for i in range(per_poll)])
+            t += step
+        batcher.batch([make_message(t + int(poison_ahead_s * second))])
+        last_delivery = t
+        worst = 0
+        for _ in range(cycles * self.POLLS_PER_BATCH):
+            batch = batcher.batch([make_message(t + i * step) for i in range(per_poll)])
+            t += step
+            if batch is not None and batch.messages:
+                last_delivery = t
+            worst = max(worst, t - last_delivery)
+        return worst / second
+
+    @pytest.mark.parametrize('ahead_s', [10.0, 60.0, 240.0])
+    def test_future_timestamp_stall_is_brief(self, ahead_s: float):
+        batcher = SimpleMessageBatcher(batch_length_s=1.0)
+        gap = self.longest_silence(batcher, poison_ahead_s=ahead_s)
+        assert gap < 10.0, f"delivery silent for {gap:.1f}s of data time"
+
+    def test_future_timestamp_does_not_buffer_unboundedly(self):
+        batcher = SimpleMessageBatcher(batch_length_s=1.0)
+        self.longest_silence(batcher, poison_ahead_s=240.0)
+        buffered = len(batcher._active_batch.messages) + len(batcher._future_messages)
+        assert buffered < self.RATE_HZ * 10, f"messages accumulating: {buffered}"
