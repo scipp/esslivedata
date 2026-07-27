@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
+import operator
+from functools import reduce
+
 import numpy as np
 import scipp as sc
 from streaming_data_types import dataarray_da00
@@ -21,12 +24,13 @@ def scipp_to_da00(
 ) -> list[dataarray_da00.Variable]:
     # Encode DataArray.name in the 'label' field of the signal variable
     label = da.name if da.name is not None else None
-    if da.variances is None:
-        variables = [_to_da00_variable(signal_name, da.data, label=label)]
+    data = _masked_to_nan(da) if da.masks else da.data
+    if data.variances is None:
+        variables = [_to_da00_variable(signal_name, data, label=label)]
     else:
         variables = [
-            _to_da00_variable(signal_name, sc.values(da.data), label=label),
-            _to_da00_variable('errors', sc.stddevs(da.data)),
+            _to_da00_variable(signal_name, sc.values(data), label=label),
+            _to_da00_variable('errors', sc.stddevs(data)),
         ]
     variables.extend(
         [
@@ -64,6 +68,39 @@ def da00_to_scipp(
 
     # scipp expects name to be a string (empty string for "no name")
     return sc.DataArray(data, coords=compatible_coords, name=label)
+
+
+def _masked_to_nan(da: sc.DataArray) -> sc.Variable:
+    """
+    Return the data of ``da`` with masked elements (and their variances) set to NaN.
+
+    Requires ``da`` to have at least one mask.
+
+    Transporting masks is perfectly feasible: da00's variable list is generic enough
+    to carry them by naming convention. The obstacle is the consumer side. Nothing in
+    the dashboard reads ``DataArray.masks`` -- neither the buffering and extraction
+    chain nor the plotters -- so a transported mask would be dropped before it could
+    affect what is drawn. NaN is honored end to end instead: transparent image pixels,
+    gaps in curves, autoscaling and aggregation over finite values only. That is what
+    a mask is meant to convey.
+
+    Applying masks here thus discards the mask/data distinction deliberately. Adding
+    mask support across transport, dashboard data chain, and plotters is a viable
+    option should that distinction be needed.
+
+    Integer data is promoted to float64 since it cannot represent NaN.
+    """
+    mask = reduce(operator.or_, da.masks.values())
+    data = da.data
+    if data.dtype not in (sc.DType.float64, sc.DType.float32):
+        data = data.to(dtype=sc.DType.float64)
+    nan = sc.scalar(
+        np.nan,
+        unit=data.unit,
+        dtype=data.dtype,
+        variance=None if data.variances is None else np.nan,
+    )
+    return sc.where(mask, nan, data)
 
 
 def _to_da00_variable(
