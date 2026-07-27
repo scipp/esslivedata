@@ -65,12 +65,12 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='total',
             title='Total',
-            fields={'since_start': 'counts_total_cumulative'},
+            fields=('counts_total_cumulative',),
         ),
         OutputView(
             name='histogram',
             title='Histogram',
-            fields={'since_start': 'histogram'},
+            fields=('histogram',),
         ),
     )
 

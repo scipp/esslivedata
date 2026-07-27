@@ -203,21 +203,6 @@ def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
-def resolve_field_name(
-    spec: WorkflowSpec,
-    view_name: str,
-    *,
-    windowing: Windowing = 'since_start',
-) -> str:
-    """Resolve a (view, windowing) pair to the backend pydantic field name.
-
-    Falls back to ``view_name`` as a raw field name when no matching view
-    is declared (lets unannotated reduction outputs work unchanged).
-    """
-    view = spec.get_output_view(view_name)
-    return view.field_for(windowing) if view is not None else view_name
-
-
 def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     """Return the windowing wanted by a data role.
 
@@ -244,9 +229,7 @@ def _build_resolved_data_sources(
     for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
         output_name = (
-            resolve_field_name(
-                spec, ds.view_name, windowing=_windowing_for_role(role, config.params)
-            )
+            spec.field_for(ds.view_name, _windowing_for_role(role, config.params))
             if spec is not None
             else ds.view_name
         )
@@ -1053,7 +1036,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.fields.values():
+                if field_name in view.fields:
                     return view.title
             return field_name
 

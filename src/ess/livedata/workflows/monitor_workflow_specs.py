@@ -15,7 +15,9 @@ from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     MONITORS,
     AuxSources,
+    CumulativeOutput,
     OutputView,
+    WindowOutput,
     WorkflowOutputsBase,
 )
 from .detector_view_specs import CoordinateMode, CoordinateModeSettings
@@ -192,7 +194,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            fields={'since_start': 'cumulative', 'per_update': 'current'},
+            fields=('cumulative', 'current'),
             description=(
                 'Monitor histogram. With "since run start" shows accumulated '
                 'counts; with "latest update" or a window, shows recent counts.'
@@ -202,10 +204,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_counts',
             title='Total',
-            fields={
-                'since_start': 'counts_total_cumulative',
-                'per_update': 'counts_total',
-            },
+            fields=('counts_total_cumulative', 'counts_total'),
             description=(
                 'Total number of monitor events. With "since run start" shows '
                 'the accumulated total; with "latest update" or a window, shows '
@@ -215,10 +214,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_in_range',
             title='Total in range',
-            fields={
-                'since_start': 'counts_in_toa_range_cumulative',
-                'per_update': 'counts_in_toa_range',
-            },
+            fields=('counts_in_toa_range_cumulative', 'counts_in_toa_range'),
             description=(
                 'Number of monitor events within the configured range filter. '
                 'With "since run start" shows the accumulated total; with '
@@ -231,7 +227,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     # Field names are kept stable as wire-format identifiers (ResultKey,
     # da00 serialisation) and are referenced by ``output_views`` above.
 
-    cumulative: sc.DataArray = pydantic.Field(
+    cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
             coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
@@ -243,7 +239,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             'TOA mode a move is not detected and counts accumulate across it.'
         ),
     )
-    current: sc.DataArray = pydantic.Field(
+    current: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
             coords={
@@ -257,7 +253,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             'Resets each update interval.'
         ),
     )
-    counts_total: sc.DataArray = pydantic.Field(
+    counts_total: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
@@ -268,7 +264,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             'Resets each update interval.'
         ),
     )
-    counts_in_toa_range: sc.DataArray = pydantic.Field(
+    counts_in_toa_range: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
@@ -279,13 +275,13 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
             'for the latest update interval only. Resets each update interval.'
         ),
     )
-    counts_total_cumulative: sc.DataArray = pydantic.Field(
+    counts_total_cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Total',
         description='Total number of monitor events accumulated since the start '
         'of the run.',
     )
-    counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
+    counts_in_toa_range_cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Total in range',
         description='Number of monitor events within the configured range filter '

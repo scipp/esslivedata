@@ -10,7 +10,12 @@ import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import TIMESERIES, OutputView, WorkflowOutputsBase
+from ..config.workflow_spec import (
+    TIMESERIES,
+    OutputView,
+    SeriesOutput,
+    WorkflowOutputsBase,
+)
 from .workflow_factory import SpecHandle
 
 
@@ -18,23 +23,23 @@ class TimeseriesOutputs(WorkflowOutputsBase):
     """Outputs for the timeseries workflow.
 
     The template defines a 0-D DataArray with a scalar ``time`` coordinate.
-    Conceptually, each timeseries value is a timestamped scalar. In practice,
+    Conceptually, each timeseries value is a timestamped scalar; in practice,
     ``TimeseriesStreamProcessor.finalize()`` returns batches (1-D along ``time``)
-    for efficiency, but the ``time`` coordinate remains the defining property:
-    it signals that the data carries its own wall-clock timestamps, so
-    ``_add_time_coords`` will not attach ``start_time``/``end_time``.
+    for efficiency. Either way the ``time`` coordinate is real data — the
+    per-sample wall-clock timestamps — which is what
+    :attr:`Temporality.series` declares.
     """
 
     output_views: ClassVar[tuple[OutputView, ...]] = (
         OutputView(
             name='delta',
             title='Timeseries',
-            fields={'per_update': 'delta'},
+            fields=('delta',),
             description='Timestamped device values; plots accumulate the history.',
         ),
     )
 
-    delta: sc.DataArray = pydantic.Field(
+    delta: SeriesOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0.0),
             coords={'time': sc.scalar(0, unit='ns')},

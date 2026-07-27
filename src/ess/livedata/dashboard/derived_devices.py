@@ -154,7 +154,7 @@ def view_device_names(
     names = {
         name
         for source_name in source_names
-        for field_name in view.fields.values()
+        for field_name in view.fields
         if (name := contract.device_name(workflow_id, source_name, field_name))
         is not None
     }

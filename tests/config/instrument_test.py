@@ -708,7 +708,7 @@ class TestInstrumentRegisterSpec:
         """Test register_spec() with all parameters."""
         import pydantic
 
-        from ess.livedata.config.workflow_spec import AuxSources
+        from ess.livedata.config.workflow_spec import AuxSources, WorkflowOutputsBase
         from ess.livedata.workflows.workflow_factory import SpecHandle
 
         class MyParams(pydantic.BaseModel):
@@ -716,7 +716,7 @@ class TestInstrumentRegisterSpec:
 
         my_aux_sources = AuxSources({'monitor': 'monitor1'})
 
-        class MyOutputs(pydantic.BaseModel):
+        class MyOutputs(WorkflowOutputsBase):
             result: int
 
         instrument = Instrument(name="test_instrument")

@@ -2106,6 +2106,94 @@ class TestTitleResolver:
             assert resolver.include_output_in_label is True
 
 
+class TestTitleResolverOutputViews:
+    """The resolver maps backing field names to their owning view's title."""
+
+    @pytest.fixture
+    def workflow_spec(self, workflow_id):
+        """A spec whose single view bundles a cumulative and a window field."""
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import (
+            REDUCTION,
+            CumulativeOutput,
+            OutputView,
+            WindowOutput,
+            WorkflowOutputsBase,
+            WorkflowSpec,
+        )
+
+        class Params(pydantic.BaseModel):
+            threshold: float = 100.0
+
+        class ViewedOutputs(WorkflowOutputsBase):
+            output_views = (
+                OutputView(
+                    name='histogram',
+                    title='Histogram',
+                    fields=('cumulative', 'current'),
+                ),
+            )
+
+            cumulative: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+            current: WindowOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Current',
+            )
+
+        return WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='Test Workflow',
+            description='A test workflow',
+            source_names=['source1'],
+            params=Params,
+            aux_sources=None,
+            outputs=ViewedOutputs,
+            group=REDUCTION,
+        )
+
+    def test_backing_field_resolves_to_view_title(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import DataKey
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id, source_names=['source1'], output_name='histogram'
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+
+        fake_data_service[
+            DataKey(
+                workflow_id=workflow_id,
+                source_name='source1',
+                output_name='current',
+            )
+        ] = sc.scalar(1.0)
+        plot_orchestrator.flush_frames()
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        resolver = plotter.compute_calls[0]['title_resolver']
+        assert resolver.output('cumulative') == 'Histogram'
+        assert resolver.output('current') == 'Histogram'
+        assert resolver.output('unknown_field') == 'unknown_field'
+
+
 class TestRenameGrid:
     """Tests for grid rename functionality."""
 

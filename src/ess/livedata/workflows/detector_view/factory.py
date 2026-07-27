@@ -15,11 +15,15 @@ from ess.reduce.unwrap import LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
 
-from ...preprocessors.accumulators import make_no_copy_accumulator_pair
-
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
-from ..detector_view_specs import DetectorViewParams
+from ...config.workflow_spec import Temporality
+from ...preprocessors.accumulators import make_no_copy_accumulator_pair
+from ..detector_view_specs import (
+    DetectorViewOutputs,
+    DetectorViewOutputsBase,
+    DetectorViewParams,
+)
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
@@ -227,12 +231,6 @@ class DetectorViewFactory:
             else:
                 workflow[SpectrumViewTransform] = raw_transform
             target_keys['spectrum_view'] = SpectrumView
-        window_outputs = (
-            'current',
-            'counts_total',
-            'counts_in_toa_range',
-        )
-
         if roi_support:
             # Add ROI-related outputs only when supported
             target_keys.update(
@@ -255,12 +253,6 @@ class DetectorViewFactory:
                     aux_source_names['roi_polygon']: ROIPolygonRequest,
                 }
             )
-            window_outputs = (
-                'current',
-                'counts_total',
-                'counts_in_toa_range',
-                'roi_spectra_current',
-            )
 
         # Reset the cumulative histogram when the detector moves: summing across a
         # move mixes incompatible geometries (geometric views shift screen bins;
@@ -275,7 +267,9 @@ class DetectorViewFactory:
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
             context_keys=context_keys,
             target_keys=target_keys,
-            window_outputs=window_outputs,
+            window_outputs=(
+                DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+            ).fields_with(Temporality.window),
             accumulators={
                 AccumulatedHistogram[Cumulative]: cumulative,
                 AccumulatedHistogram[Current]: window,

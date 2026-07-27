@@ -9,6 +9,7 @@ from functools import cache
 import scipp as sc
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.workflow_spec import Temporality
 
 from . import specs
 from .specs import (
@@ -114,7 +115,9 @@ def setup_factories(instrument: Instrument) -> None:
                 DetectorRegionCounts[Cumulative]: cumulative,
                 DetectorRegionCounts[Current]: window,
             },
-            window_outputs=['detector_region_counts'],
+            window_outputs=specs.DetectorRatemeterOutputs.fields_with(
+                Temporality.window
+            ),
         )
 
     # Q-map workflow factories
